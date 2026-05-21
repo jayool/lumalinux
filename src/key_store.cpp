@@ -10,8 +10,14 @@
 
 namespace {
 
-std::map<uint32_t, KeyStore::DepotKey> g_keys;
-std::mutex g_mutex;
+auto& Keys() {
+    static std::map<uint32_t, KeyStore::DepotKey> instance;
+    return instance;
+}
+auto& Mtx() {
+    static std::mutex instance;
+    return instance;
+}
 
 bool HexCharToNibble(char c, uint8_t& out) {
     if (c >= '0' && c <= '9') { out = c - '0';      return true; }
