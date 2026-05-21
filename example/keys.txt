@@ -1,0 +1,16 @@
+# lumalinux depot key store — EXAMPLE
+#
+# Copy this file to ~/.config/lumalinux/keys.txt and populate with your own keys.
+#
+# Format: <depot_id>;<64 hex chars representing 32-byte AES-256 key>
+#
+# One key per line. Lines starting with # are comments. Blank lines ignored.
+#
+# Keys come from .lua files in SteamTools/LumaCore format. Example .lua line:
+#   addappid(246621, 1, "a1b2c3d4e5f6...64hexchars")
+# becomes:
+#   246621;a1b2c3d4e5f6...64hexchars
+#
+# Example entries (FAKE keys — do NOT use these, they won't work):
+246621;0000000000000000000000000000000000000000000000000000000000000000
+246622;1111111111111111111111111111111111111111111111111111111111111111
