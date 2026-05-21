@@ -12,35 +12,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-# Compiler hardening + clean output
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -fvisibility=hidden)
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# libmem dependency
-#
-# libmem is the function-detour library SLSsteam also uses. We need a 32-bit
-# build of it for our .so.
-#
-# Approach: try FetchContent from source. If that fails for your build setup,
-# alternative paths documented in README:
-#   - Vendor liblibmem.a from SLSsteam (it's GPL-3.0, same license as us)
-#   - Build libmem manually with -m32 and point CMake at the install dir
+# subhook — inline function detour library (small, zero external deps).
+# Was: libmem (bloated, drags capstone/keystone/LLVM via ExternalProject_Add
+# which doesn't compose with ninja).
 # ─────────────────────────────────────────────────────────────────────────────
 
 include(FetchContent)
 
-set(LIBMEM_BUILD_STATIC ON  CACHE BOOL "")
-set(LIBMEM_BUILD_TESTS  OFF CACHE BOOL "")
+set(SUBHOOK_STATIC       ON  CACHE BOOL "")
+set(SUBHOOK_TESTS        OFF CACHE BOOL "")
+set(SUBHOOK_INSTALL      OFF CACHE BOOL "")
+set(SUBHOOK_FORCE_32BIT  ON  CACHE BOOL "")
 
 FetchContent_Declare(
-    libmem
-    GIT_REPOSITORY https://github.com/rdbo/libmem.git
-    GIT_TAG        5.0.2
+    subhook
+    GIT_REPOSITORY https://github.com/Cxbx-Reloaded/subhook.git
+    GIT_TAG        master
     GIT_SHALLOW    TRUE
 )
-FetchContent_MakeAvailable(libmem)
+FetchContent_MakeAvailable(subhook)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Our shared library
@@ -55,7 +50,7 @@ add_library(lumalinux SHARED
 )
 
 target_include_directories(lumalinux PRIVATE src/)
-target_link_libraries(lumalinux PRIVATE libmem)
+target_link_libraries(lumalinux PRIVATE subhook)
 
 set_target_properties(lumalinux PROPERTIES
     OUTPUT_NAME "lumalinux"
@@ -63,7 +58,6 @@ set_target_properties(lumalinux PROPERTIES
     SUFFIX ".so"
 )
 
-# Strip in release builds — but keep version info readable
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set_target_properties(lumalinux PROPERTIES LINK_FLAGS_RELEASE "-s")
 endif()
