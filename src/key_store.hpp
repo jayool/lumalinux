@@ -27,4 +27,6 @@ size_t Size();
 // ~/.config/lumalinux/keys.txt
 std::string DefaultPath();
 
+const void* DebugKeysAddr();
+
 } // namespace KeyStore
