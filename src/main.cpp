@@ -58,6 +58,7 @@ void LumalinuxInit() {
     if (g_initialized.exchange(true)) return;
 
     Log::Init();
+    Log::Info("DEBUG: &g_keys (main) = %p", KeyStore::DebugKeysAddr());
     Log::Info("lumalinux v0.1.0 loading...");
 
     // Load local key store
