@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-linux-i386:
+    name: Build 32-bit Linux .so
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install 32-bit toolchain and deps
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-multilib \
+            g++-multilib \
+            libstdc++-dev:i386 \
+            cmake \
+            ninja-build
+
+      - name: Configure
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cd build
+          ninja -v
+
+      - name: Verify output
+        run: |
+          file build/liblumalinux.so
+          # Should report "ELF 32-bit LSB shared object, Intel 80386"
+          file build/liblumalinux.so | grep -q "ELF 32-bit.*Intel 80386" || {
+              echo "ERROR: output is not 32-bit ELF"
+              exit 1
+          }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: lumalinux
+          path: |
+            build/liblumalinux.so
+            install.sh
+            example/keys.txt
+            README.md
