@@ -63,10 +63,19 @@ void LumalinuxInit() {
     // Load local key store
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
+
+    // ── DEBUG ──
+    Log::Info("DEBUG: post-load Size=%zu", KeyStore::Size());
+    auto k1 = KeyStore::Lookup(246621);
+    auto k2 = KeyStore::Lookup(1145360);
+    Log::Info("DEBUG: Lookup(246621)=%s, Lookup(1145360)=%s",
+              k1 ? "FOUND" : "MISSING",
+              k2 ? "FOUND" : "MISSING");
+    // ── /DEBUG ──
+
     if (KeyStore::Size() == 0) {
-        Log::Warn("Init: no keys loaded. Hook will install but won't intercept anything.");
-        Log::Warn("Init: populate %s with lines of format: <depot_id>;<64-hex-char key>",
-                  keysPath.c_str());
+        Log::Warn("Init: no keys loaded. ...");
+        ...
     }
 
     // Detach the init thread so it runs in background and doesn't block Steam's startup
