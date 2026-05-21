@@ -101,6 +101,12 @@ bool Install() {
         return false;
     }
 
+    // ── DEBUG ──
+    Log::Info("DEBUG: pre-INSTALL Size=%zu", KeyStore::Size());
+    auto kx = KeyStore::Lookup(246621);
+    Log::Info("DEBUG: pre-INSTALL Lookup(246621)=%s", kx ? "FOUND" : "MISSING");
+    // ── /DEBUG ──
+
     Log::Info("DepotKey hook: INSTALLED (target=0x%lx, trampoline=%p, %zu keys loaded)",
               (unsigned long)target, (void*)g_origFn, KeyStore::Size());
     return true;
