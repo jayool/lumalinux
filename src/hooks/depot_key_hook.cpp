@@ -3,7 +3,7 @@
 #include "../key_store.hpp"
 #include "../log.hpp"
 
-#include <libmem/libmem.h>
+#include <subhook.h>
 
 #include <cstring>
 #include <cstdint>
@@ -24,15 +24,12 @@ namespace {
 //   2 = Fail
 //
 // ★ THIS SIGNATURE IS DEDUCED — VERIFY EMPIRICALLY ★
-// If the calling convention or arg order is different in your build, the hook
-// may crash or return garbage. Use Frida on a few real install attempts to
-// confirm arg layout before trusting this code in production.
 
 using LoadDepotKeyFn = int32_t (*)(void* /*this*/, uint32_t /*app_id*/,
                                    uint32_t /*depot_id*/, void* /*out_key*/);
 
+subhook_t      g_hook = nullptr;
 LoadDepotKeyFn g_origFn = nullptr;
-lm_hook_t      g_hookHandle = 0;
 
 constexpr int32_t kResultOK   = 1;
 constexpr int32_t kResultFail = 2;
@@ -51,15 +48,12 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id, void* out_key) {
         return g_origFn(this_, app_id, depot_id, out_key);
     }
 
-    // Check our local key store
     if (auto key = KeyStore::Lookup(depot_id)) {
         std::memcpy(out_key, key->data(), kDepotKeyBytes);
         Log::Info("LoadDepotKey: SERVED local key for depot %u (app %u)", depot_id, app_id);
         return kResultOK;
     }
 
-    // No local key — let Steam handle it normally (will fail server-side if user doesn't own,
-    // succeed if they do own or game is free/family-shared)
     if (!g_origFn) {
         Log::Error("LoadDepotKey: no original fn pointer — should never happen");
         return kResultFail;
@@ -81,28 +75,42 @@ bool Install() {
         return false;
     }
 
-    // libmem's LM_HookCode installs an inline detour: writes a JMP at the
-    // target's prologue and copies displaced instructions to a trampoline.
-    // The trampoline is returned as `g_origFn`.
-    lm_address_t trampoline = 0;
-    g_hookHandle = LM_HookCode(target, reinterpret_cast<lm_address_t>(&HookFn), &trampoline);
-    if (g_hookHandle == 0 || trampoline == 0) {
-        Log::Error("DepotKey hook: LM_HookCode failed (target=0x%lx)", (unsigned long)target);
+    g_hook = subhook_new(reinterpret_cast<void*>(target),
+                         reinterpret_cast<void*>(&HookFn),
+                         static_cast<subhook_flags_t>(0));
+    if (!g_hook) {
+        Log::Error("DepotKey hook: subhook_new failed");
         return false;
     }
 
-    g_origFn = reinterpret_cast<LoadDepotKeyFn>(trampoline);
-    Log::Info("DepotKey hook: INSTALLED (target=0x%lx, trampoline=0x%lx, %zu keys loaded)",
-              (unsigned long)target, (unsigned long)trampoline, KeyStore::Size());
+    if (subhook_install(g_hook) != 0) {
+        Log::Error("DepotKey hook: subhook_install failed (target=0x%lx)",
+                   (unsigned long)target);
+        subhook_free(g_hook);
+        g_hook = nullptr;
+        return false;
+    }
+
+    g_origFn = reinterpret_cast<LoadDepotKeyFn>(subhook_get_trampoline(g_hook));
+    if (!g_origFn) {
+        Log::Error("DepotKey hook: subhook_get_trampoline returned null — "
+                   "function prologue may have instructions subhook can't relocate");
+        subhook_remove(g_hook);
+        subhook_free(g_hook);
+        g_hook = nullptr;
+        return false;
+    }
+
+    Log::Info("DepotKey hook: INSTALLED (target=0x%lx, trampoline=%p, %zu keys loaded)",
+              (unsigned long)target, (void*)g_origFn, KeyStore::Size());
     return true;
 }
 
 void Uninstall() {
-    if (g_hookHandle == 0) return;
-    LM_UnhookCode(reinterpret_cast<lm_address_t>(g_origFn),
-                  reinterpret_cast<lm_address_t>(g_origFn),
-                  g_hookHandle);
-    g_hookHandle = 0;
+    if (!g_hook) return;
+    subhook_remove(g_hook);
+    subhook_free(g_hook);
+    g_hook = nullptr;
     g_origFn = nullptr;
     Log::Info("DepotKey hook: uninstalled");
 }
