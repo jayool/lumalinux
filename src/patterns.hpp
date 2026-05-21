@@ -5,29 +5,44 @@
 
 namespace Patterns {
 
-// Byte pattern for LoadDepotDecryptionKey-equivalent function in steamclient.so
+// Byte pattern for the depot key wrapper function in steamclient.so.
 //
-// Origin: static analysis of an older steamclient.so (BuildID a2a96cd00...)
-// performed during Hito 1. The function:
-//   - Constructs CMsgClientGetDepotDecryptionKey (EMsg 5438)
-//   - Waits for response (EMsg 5439)
-//   - Returns the depot decryption key
+// This is the function that LumaCore calls LoadDepotDecryptionKey on Windows.
+// It does:
+//   1. Cache check via inner helper (returns 1/OK if cache hit)
+//   2. RPC fallback: constructs CMsgClientGetDepotDecryptionKey (EMsg 5438)
+//      and sends it via an inner function (~0x109caa0 in dev binary)
+//   3. Returns 0/Fail or 1/OK
 //
-// Signature (deduced from caller examination):
-//   EResult LoadDepotDecryptionKey(void* this_, uint32_t app_id,
-//                                  uint32_t depot_id, void* out_key_buffer);
+// Located in build 1778284286 (May 2025) at VMA 0x1769cc0. The pattern matches
+// the function prologue:
+//   push ebp / push edi / push esi / push ebx
+//   call <GOT thunk>
+//   add  ebx, IMM
+//   sub  esp, 0x20
+//   mov  esi, [esp+0x34]   ; arg0 (this pointer)
+//   mov  edi, [esp+0x3c]   ; arg2 (one of: app_id, depot_id, out_buf)
+//   mov  ebp, [esp+0x40]   ; arg3
 //
-// ★ MUST BE VERIFIED ★ against the actual steamclient.so on your Steam Deck.
-// If this pattern doesn't match or matches multiple locations, extend it with
-// additional bytes from the function prologue. Run Ghidra search:
-//   Search → Memory → For Strings: replace ? with .* (regex mode)
+// Notes:
+//   - This combination of save-set, exact stack frame size (0x20), and the
+//     three arg loads from offsets 0x34/0x3c/0x40 was unique in the binary
+//     analyzed during dev. Verified single match.
+//   - The middle arg (arg1 at [esp+0x38]) is NOT loaded into a register at
+//     the top — it's accessed later by displacement. The function takes 4
+//     args total.
 //
-// Wildcards (??) are for:
-//   - The relative offset of the GOT-thunk call (E8 ?? ?? ?? ??)
-//   - The GOT base offset added to ebx (81 C3 ?? ?? ?? ??)
-// These vary by build, but the surrounding instruction encoding is stable.
+// SIGNATURE — best deduction (NOT empirically confirmed):
+//   EResult LoadDepotDecryptionKey(
+//       void*     this_,            // arg0 — some object pointer
+//       uint32_t  arg1,             // arg1 — likely app_id (TO VERIFY via Frida)
+//       uint32_t  arg2,             // arg2 — likely depot_id (TO VERIFY)
+//       void*     out_key_buffer);  // arg3 — output buffer for the AES key
+//
+// ★ The actual arg order may differ from this assumption. First runtime test
+// will reveal if app_id/depot_id are swapped. Frida verification needed.
 inline constexpr const char* kDepotKeyFnPattern =
-    "55 57 BF 03 00 00 00 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 6C";
+    "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 20 8B 74 24 34 8B 7C 24 3C 8B 6C 24 40";
 
 // Searches steamclient.so for the depot key function.
 // Returns the absolute address of the function start, or 0 on failure.
