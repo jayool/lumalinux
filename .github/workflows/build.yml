@@ -35,6 +35,12 @@ jobs:
       - name: Build
         run: |
           cd build
+          # libmem uses ExternalProject_Add internally for capstone, which doesn't
+          # interact cleanly with ninja's dependency graph: ninja tries to link
+          # liblumalinux.so before capstone has been built, causing a missing
+          # libcapstone.a error. Workaround: two-pass build. First pass builds
+          # capstone (link will fail). Second pass succeeds because the .a now exists.
+          ninja -v || true
           ninja -v
 
       - name: Verify output
