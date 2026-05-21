@@ -102,6 +102,7 @@ bool Install() {
     }
 
     // ── DEBUG ──
+    Log::Info("DEBUG: &g_keys (worker) = %p", KeyStore::DebugKeysAddr());
     Log::Info("DEBUG: pre-INSTALL Size=%zu", KeyStore::Size());
     auto kx = KeyStore::Lookup(246621);
     Log::Info("DEBUG: pre-INSTALL Lookup(246621)=%s", kx ? "FOUND" : "MISSING");
