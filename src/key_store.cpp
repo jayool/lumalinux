@@ -115,4 +115,8 @@ std::string DefaultPath() {
     return "/tmp/lumalinux-keys.txt";
 }
 
+const void* DebugKeysAddr() {
+    return &g_keys;
+}
+
 } // namespace KeyStore
