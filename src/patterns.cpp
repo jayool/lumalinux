@@ -1,34 +1,82 @@
 #include "patterns.hpp"
 #include "log.hpp"
 
-#include <libmem/libmem.h>
-
 #include <cstring>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
-#include <climits>
+#include <cstdint>
+#include <cstdlib>
 
 namespace {
 
-// Read /proc/self/maps and find the load base of a module whose path contains
-// the given substring (e.g. "steamclient.so").
-uintptr_t FindModuleBaseFromMaps(const char* needle) {
+struct ModuleRange {
+    uintptr_t base = 0;
+    size_t    size = 0;
+};
+
+// Read /proc/self/maps and find the first r-x mapping of the .so identified by `needle`.
+// Returns base address and size of that executable mapping. {0, 0} on failure.
+ModuleRange FindModuleRangeFromMaps(const char* needle) {
     std::ifstream maps("/proc/self/maps");
-    if (!maps.is_open()) return 0;
+    if (!maps.is_open()) return {};
 
     std::string line;
     while (std::getline(maps, line)) {
         if (line.find(needle) == std::string::npos) continue;
-        // Lines look like: "f7c00000-f8e00000 r-xp 00000000 08:01 12345 /path/to/steamclient.so"
-        // We want the start of the FIRST executable mapping (r-xp).
         if (line.find("r-x") == std::string::npos) continue;
         auto dash = line.find('-');
-        if (dash == std::string::npos) continue;
+        auto sp   = line.find(' ');
+        if (dash == std::string::npos || sp == std::string::npos) continue;
+
         std::string startHex = line.substr(0, dash);
-        uintptr_t base = std::strtoul(startHex.c_str(), nullptr, 16);
-        return base;
+        std::string endHex   = line.substr(dash + 1, sp - dash - 1);
+        uintptr_t start = std::strtoul(startHex.c_str(), nullptr, 16);
+        uintptr_t end   = std::strtoul(endHex.c_str(),   nullptr, 16);
+        if (end <= start) continue;
+        return ModuleRange{start, end - start};
+    }
+    return {};
+}
+
+// Parse "55 57 ?? BF 03" → bytes + mask. Mask is true (=fixed) or false (=wildcard).
+struct ParsedPattern {
+    std::vector<uint8_t> bytes;
+    std::vector<bool>    fixed;
+};
+
+ParsedPattern ParsePattern(const char* sig) {
+    ParsedPattern p;
+    std::istringstream iss(sig);
+    std::string tok;
+    while (iss >> tok) {
+        if (tok == "?" || tok == "??") {
+            p.bytes.push_back(0);
+            p.fixed.push_back(false);
+        } else {
+            p.bytes.push_back(static_cast<uint8_t>(std::strtoul(tok.c_str(), nullptr, 16)));
+            p.fixed.push_back(true);
+        }
+    }
+    return p;
+}
+
+uintptr_t SigScan(uintptr_t base, size_t size, const ParsedPattern& p) {
+    if (p.bytes.empty() || size < p.bytes.size()) return 0;
+    const uint8_t* haystack = reinterpret_cast<const uint8_t*>(base);
+    const size_t   patLen   = p.bytes.size();
+    const size_t   scanEnd  = size - patLen;
+
+    for (size_t i = 0; i <= scanEnd; i++) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; j++) {
+            if (p.fixed[j] && haystack[i + j] != p.bytes[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) return base + i;
     }
     return 0;
 }
@@ -38,30 +86,28 @@ uintptr_t FindModuleBaseFromMaps(const char* needle) {
 namespace Patterns {
 
 uintptr_t FindSteamclientBase() {
-    uintptr_t base = FindModuleBaseFromMaps("steamclient.so");
-    if (base) {
-        Log::Info("Patterns: steamclient.so loaded at 0x%lx", (unsigned long)base);
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (r.base) {
+        Log::Info("Patterns: steamclient.so r-x mapping at 0x%lx (size 0x%lx)",
+                  (unsigned long)r.base, (unsigned long)r.size);
     } else {
-        Log::Error("Patterns: steamclient.so not found in /proc/self/maps — Steam may not have loaded it yet");
+        Log::Error("Patterns: steamclient.so r-x mapping not found in /proc/self/maps");
     }
-    return base;
+    return r.base;
 }
 
 uintptr_t FindDepotKeyFunction() {
-    // Use libmem's SigScan over the steamclient.so module.
-    // LM_SigScan expects the pattern in IDA-style "AA BB ? CC" notation.
-    uintptr_t base = FindSteamclientBase();
-    if (!base) return 0;
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
 
-    lm_module_t mod;
-    std::memset(&mod, 0, sizeof(mod));
-    if (LM_FindModule("steamclient.so", &mod) != LM_TRUE) {
-        Log::Error("Patterns: LM_FindModule failed for steamclient.so");
+    auto parsed = ParsePattern(kDepotKeyFnPattern);
+    if (parsed.bytes.empty()) {
+        Log::Error("Patterns: empty/invalid pattern string");
         return 0;
     }
 
-    lm_address_t found = LM_SigScan(kDepotKeyFnPattern, mod.base, mod.size);
-    if (found == LM_ADDRESS_BAD || found == 0) {
+    uintptr_t found = SigScan(r.base, r.size, parsed);
+    if (!found) {
         Log::Error("Patterns: depot key function pattern NOT FOUND in steamclient.so. "
                    "Steam may have updated. Pattern needs to be re-extracted via Ghidra.");
         return 0;
@@ -69,8 +115,8 @@ uintptr_t FindDepotKeyFunction() {
 
     Log::Info("Patterns: depot key function found at 0x%lx (RVA 0x%lx)",
               (unsigned long)found,
-              (unsigned long)(found - mod.base));
-    return static_cast<uintptr_t>(found);
+              (unsigned long)(found - r.base));
+    return found;
 }
 
 } // namespace Patterns
