@@ -10,10 +10,14 @@
 
 namespace {
 
+// Function-local statics — guaranteed thread-safe lazy initialization (C++11)
+// This avoids the static initialization order fiasco between this TU and
+// main.cpp's __attribute__((constructor)) function.
 auto& Keys() {
     static std::map<uint32_t, KeyStore::DepotKey> instance;
     return instance;
 }
+
 auto& Mtx() {
     static std::mutex instance;
     return instance;
@@ -55,8 +59,8 @@ bool LoadFromFile(const std::string& path) {
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_keys.clear();
+    std::lock_guard<std::mutex> lock(Mtx());
+    Keys().clear();
 
     std::string line;
     size_t lineNo = 0;
@@ -88,7 +92,7 @@ bool LoadFromFile(const std::string& path) {
             continue;
         }
 
-        g_keys[static_cast<uint32_t>(depotId)] = key;
+        Keys()[static_cast<uint32_t>(depotId)] = key;
         loaded++;
     }
 
@@ -97,15 +101,16 @@ bool LoadFromFile(const std::string& path) {
 }
 
 std::optional<DepotKey> Lookup(uint32_t depotId) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    auto it = g_keys.find(depotId);
-    if (it == g_keys.end()) return std::nullopt;
+    std::lock_guard<std::mutex> lock(Mtx());
+    auto& k = Keys();
+    auto it = k.find(depotId);
+    if (it == k.end()) return std::nullopt;
     return it->second;
 }
 
 size_t Size() {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    return g_keys.size();
+    std::lock_guard<std::mutex> lock(Mtx());
+    return Keys().size();
 }
 
 std::string DefaultPath() {
@@ -122,7 +127,7 @@ std::string DefaultPath() {
 }
 
 const void* DebugKeysAddr() {
-    return &g_keys;
+    return &Keys();
 }
 
 } // namespace KeyStore
