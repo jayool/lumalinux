@@ -10,7 +10,7 @@
 
 namespace {
 
-std::unordered_map<uint32_t, KeyStore::DepotKey> g_keys;
+std::map<uint32_t, KeyStore::DepotKey> g_keys;
 std::mutex g_mutex;
 
 bool HexCharToNibble(char c, uint8_t& out) {
