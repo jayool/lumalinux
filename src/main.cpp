@@ -74,8 +74,9 @@ void LumalinuxInit() {
     // ── /DEBUG ──
 
     if (KeyStore::Size() == 0) {
-        Log::Warn("Init: no keys loaded. ...");
-        ...
+        Log::Warn("Init: no keys loaded. Hook will install but won't intercept anything.");
+        Log::Warn("Init: populate %s with lines of format: <depot_id>;<64-hex-char key>",
+                  keysPath.c_str());
     }
 
     // Detach the init thread so it runs in background and doesn't block Steam's startup
