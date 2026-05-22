@@ -81,6 +81,33 @@ uintptr_t SigScan(uintptr_t base, size_t size, const ParsedPattern& p) {
     return 0;
 }
 
+// Shared scan helper: locate `pattern` in steamclient.so. Logs success/failure
+// with `logName` so the failure mode is identifiable in the log.
+uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern(pattern);
+    if (parsed.bytes.empty()) {
+        Log::Error("Patterns: %s — empty/invalid pattern string", logName);
+        return 0;
+    }
+
+    uintptr_t found = SigScan(r.base, r.size, parsed);
+    if (!found) {
+        Log::Error("Patterns: %s — pattern NOT FOUND in steamclient.so. "
+                   "Steam may have updated; re-extract via tools/analyze_steamclient.py.",
+                   logName);
+        return 0;
+    }
+
+    Log::Info("Patterns: %s found at 0x%lx (RVA 0x%lx)",
+              logName,
+              (unsigned long)found,
+              (unsigned long)(found - r.base));
+    return found;
+}
+
 } // namespace
 
 namespace Patterns {
@@ -97,26 +124,11 @@ uintptr_t FindSteamclientBase() {
 }
 
 uintptr_t FindDepotKeyFunction() {
-    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
-    if (!r.base) return 0;
+    return FindInSteamclient(kDepotKeyFnPattern, "depot key function");
+}
 
-    auto parsed = ParsePattern(kDepotKeyFnPattern);
-    if (parsed.bytes.empty()) {
-        Log::Error("Patterns: empty/invalid pattern string");
-        return 0;
-    }
-
-    uintptr_t found = SigScan(r.base, r.size, parsed);
-    if (!found) {
-        Log::Error("Patterns: depot key function pattern NOT FOUND in steamclient.so. "
-                   "Steam may have updated. Pattern needs to be re-extracted via Ghidra.");
-        return 0;
-    }
-
-    Log::Info("Patterns: depot key function found at 0x%lx (RVA 0x%lx)",
-              (unsigned long)found,
-              (unsigned long)(found - r.base));
-    return found;
+uintptr_t FindBuildDepotDependencyFunction() {
+    return FindInSteamclient(kBuildDepotDependencyPattern, "BuildDepotDependency");
 }
 
 } // namespace Patterns
