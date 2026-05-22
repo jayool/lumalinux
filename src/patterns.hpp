@@ -67,9 +67,13 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 //       bool        textMode,     // [ebp+0x14]
 //       void*       symTable);    // [ebp+0x18]
 //
-// Verified UNIQUE at VMA 0x23ee820.
+// Verified UNIQUE at file offset 0x02477310 in build BuildID ea3e0c7660...
+// (~Steam Deck May 2026 ubuntu12_32/steamclient.so).
+//
+// NOTE: differs from earlier linux32 variant only in `sub esp, 0x9C` (vs 0x8C);
+// stack frame grew between builds. All else identical.
 inline constexpr const char* kKeyValuesReadAsBinaryPattern =
-    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 8C 00 00 00 8B 45 14 89 45";
+    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 9C 00 00 00 8B 45 14 89 45";
 
 
 // =============================================================================

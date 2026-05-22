@@ -63,7 +63,7 @@ void LumalinuxInit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (main) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.4.0 loading...");
+    Log::Info("lumalinux v0.4.1 loading...");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
