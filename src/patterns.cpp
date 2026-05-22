@@ -16,12 +16,10 @@ struct ModuleRange {
     size_t    size = 0;
 };
 
-// Read /proc/self/maps and find the EXTENT of executable mappings of the .so
-// identified by `needle`. Modern Steam often splits steamclient.so into many
-// adjacent r-xp regions (e.g. via mprotect for in-place patching). We aggregate
-// all r-x mappings into one [min_start, max_end] range, which is valid for
-// scanning since the regions are contiguous (no gaps inside the executable
-// LOAD segment).
+// Aggregate all r-x mappings of the .so identified by `needle` into a single
+// [min_start, max_end] range. Modern Steam may split steamclient.so into many
+// adjacent r-xp regions via mprotect; they're contiguous so we can treat them
+// as one big scan range.
 ModuleRange FindModuleRangeFromMaps(const char* needle) {
     std::ifstream maps("/proc/self/maps");
     if (!maps.is_open()) return {};
@@ -139,6 +137,10 @@ uintptr_t FindDepotKeyFunction() {
 
 uintptr_t FindBuildDepotDependencyFunction() {
     return FindInSteamclient(kBuildDepotDependencyPattern, "BuildDepotDependency");
+}
+
+uintptr_t FindKeyValuesReadAsBinaryFunction() {
+    return FindInSteamclient(kKeyValuesReadAsBinaryPattern, "KeyValues::ReadAsBinary");
 }
 
 } // namespace Patterns

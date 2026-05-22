@@ -1,18 +1,17 @@
-// lumalinux — function-level depot key & depot-list hooks for Steam Linux client.
+// lumalinux — function-level hooks for Steam Linux client.
 //
 // v0.1: depot key resolution hook (LoadDepotDecryptionKey equivalent)
-// v0.2: BuildDepotDependency hook in diagnostic mode (logs only)
-// v0.3: BuildDepotDependency hook in INJECTION mode — adds content depots
-//       from keys.txt (extended format) into pDepotInfo so Steam will
-//       request keys and download them for unowned apps.
-//
-// Entry point: __attribute__((constructor)) → LumalinuxInit. We wait for
-// steamclient.so to load, then install hooks from a worker thread.
+// v0.2: BuildDepotDependency hook in diagnostic mode
+// v0.3: BuildDepotDependency injection (allocator issues — abandoned)
+// v0.4: KeyValues::ReadAsBinary diagnostic hook for appinfo identification.
+//       Injection currently DISABLED — recon phase to map call patterns
+//       before implementing KV-tree mutation in v0.5.
 
 #include "log.hpp"
 #include "key_store.hpp"
 #include "hooks/depot_key_hook.hpp"
 #include "hooks/depot_dependency_hook.hpp"
+#include "hooks/keyvalues_hook.hpp"
 #include "patterns.hpp"
 
 #include <thread>
@@ -48,7 +47,11 @@ void InitWorker() {
     }
 
     if (!Hooks::DepotDependency::Install()) {
-        Log::Warn("Init: BuildDepotDependency hook failed (non-fatal — single-depot games still work)");
+        Log::Warn("Init: BuildDepotDependency hook failed (diagnostic only — non-fatal)");
+    }
+
+    if (!Hooks::KeyValues::Install()) {
+        Log::Warn("Init: KeyValues hook failed (recon mode — non-fatal)");
     }
 
     Log::Info("Init: lumalinux active");
@@ -60,15 +63,14 @@ void LumalinuxInit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (main) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.3.3 loading...");
+    Log::Info("lumalinux v0.4.0 loading...");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
-
     Log::Info("DEBUG: post-load Size=%zu", KeyStore::Size());
 
     if (KeyStore::Size() == 0) {
-        Log::Warn("Init: no keys loaded. Hooks install but will not intercept anything.");
+        Log::Warn("Init: no keys loaded. Hooks install but won't intercept anything.");
         Log::Warn("Init: populate %s — see example/keys.txt for format.",
                   keysPath.c_str());
     }
@@ -79,6 +81,7 @@ void LumalinuxInit() {
 
 __attribute__((destructor))
 void LumalinuxShutdown() {
+    Hooks::KeyValues::Uninstall();
     Hooks::DepotDependency::Uninstall();
     Hooks::DepotKey::Uninstall();
     Log::Shutdown();

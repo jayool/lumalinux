@@ -15,18 +15,8 @@ namespace Patterns {
 // It does:
 //   1. Cache check via inner helper (returns 1/OK if cache hit)
 //   2. RPC fallback: constructs CMsgClientGetDepotDecryptionKey (EMsg 5438)
-//      and sends it via an inner function (~0x109caa0 in dev binary)
+//      and sends it via an inner function
 //   3. Returns 0/Fail or 1/OK
-//
-// Located in build 1778284286 (May 2025) at VMA 0x1769cc0. The pattern matches
-// the function prologue:
-//   push ebp / push edi / push esi / push ebx
-//   call <GOT thunk>
-//   add  ebx, IMM
-//   sub  esp, 0x20
-//   mov  esi, [esp+0x34]   ; arg0 (this pointer)
-//   mov  edi, [esp+0x3c]   ; arg2 (one of: app_id, depot_id, out_buf)
-//   mov  ebp, [esp+0x40]   ; arg3
 //
 // SIGNATURE (verified empirically on Steam Deck):
 //   EResult LoadDepotDecryptionKey(
@@ -39,29 +29,14 @@ inline constexpr const char* kDepotKeyFnPattern =
 
 
 // =============================================================================
-// v0.2 — appinfo / depot list (LumaCore-equivalent on Linux)
+// v0.2/v0.3 — BuildDepotDependency (diagnostic / injection mode)
 // =============================================================================
 //
-// CUserAppManager::BuildDepotDependency
+// CUserAppManager::BuildDepotDependency. Linux i386 prologue uses ESI as PIC
+// base. Function takes 8 args via cdecl on the stack. Verified UNIQUE in build
+// 81b357094db... at VMA 0xf30e80.
 //
-// On Windows, LumaCore hooks this function to patch ManifestGid/ManifestSize
-// of depot entries AFTER Steam builds the depot list for an app. The Linux
-// i386 prologue uses ESI as PIC base (NOT EBX), and the function takes 8 args
-// via cdecl on the stack:
-//
-//   55                  push ebp
-//   89 E5               mov  ebp, esp
-//   57 56               push edi; push esi
-//   E8 ?? ?? ?? ??      call <PIC thunk>
-//   81 C6 ?? ?? ?? ??   add  esi, IMM        ; ★ PIC base = esi
-//   53                  push ebx
-//   81 EC 2C 02 00 00   sub  esp, 0x22C
-//   8B 45 08            mov  eax, [ebp+0x8]  ; arg0 (this pointer)
-//   89 85 ...           mov  [ebp-X], eax
-//
-// Verified UNIQUE in build ~May 2026 steamclient.so at VMA 0xf30e80.
-//
-// SIGNATURE (Linux i386 cdecl — all args on stack at [ebp+0x8..0x24]):
+// SIGNATURE (Linux i386 cdecl):
 //   bool BuildDepotDependency(
 //       void*       this_,                              // [ebp+0x08]
 //       uint32_t    AppId,                              // [ebp+0x0C]
@@ -75,9 +50,24 @@ inline constexpr const char* kBuildDepotDependencyPattern =
     "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 2C 02 00 00 8B 45 08 89 85";
 
 
-// KeyValues::ReadAsBinary — KV-tree deserializer used to parse appinfo.
-// Linux i386 prologue (uses esi as PIC base). Verified unique at VMA 0x23ee820.
-// Not currently hooked; kept here for future v0.3 use.
+// =============================================================================
+// v0.4 — KeyValues::ReadAsBinary (appinfo KV-tree injection point)
+// =============================================================================
+//
+// Steam's KV-tree binary deserializer. Used during appinfo parsing — our entry
+// point for injecting depots BEFORE Steam builds pDepotInfo (which is what
+// LumaCore-style works on but is too late on Linux because Valve filters
+// unowned depots out of appinfo before the BuildDepotDependency stage).
+//
+// SIGNATURE (Linux i386, member function, all args on stack):
+//   bool KeyValues::ReadAsBinary(
+//       KeyValues*  this_root,    // [ebp+0x08]
+//       void*       buf,          // [ebp+0x0C]
+//       int         depth,        // [ebp+0x10]
+//       bool        textMode,     // [ebp+0x14]
+//       void*       symTable);    // [ebp+0x18]
+//
+// Verified UNIQUE at VMA 0x23ee820.
 inline constexpr const char* kKeyValuesReadAsBinaryPattern =
     "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 8C 00 00 00 8B 45 14 89 45";
 
@@ -86,13 +76,10 @@ inline constexpr const char* kKeyValuesReadAsBinaryPattern =
 // Finders
 // =============================================================================
 
-// v0.1 — depot key resolution wrapper. Returns 0 on failure.
 uintptr_t FindDepotKeyFunction();
-
-// v0.2 — CUserAppManager::BuildDepotDependency. Returns 0 on failure.
 uintptr_t FindBuildDepotDependencyFunction();
+uintptr_t FindKeyValuesReadAsBinaryFunction();
 
-// Helper: locate steamclient.so's executable base in this process.
 uintptr_t FindSteamclientBase();
 
 } // namespace Patterns
