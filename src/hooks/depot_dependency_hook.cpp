@@ -84,16 +84,18 @@ void LogDepotVector(const char* label, CUtlVector<DepotEntry>* v) {
 }
 
 
-// Inject extra depots into pDepotInfo by swapping m_pMemory to a static
-// thread-local buffer. The buffer survives across calls within the same
-// thread but is overwritten each call — safe because the caller of
-// BuildDepotDependency consumes pDepotInfo synchronously within its own
-// frame before any other call can land here.
+// Inject extra depots into pDepotInfo by replacing m_pMemory with a fresh
+// malloc()-allocated buffer.
 //
-// m_nGrowSize is set to -1 as a Source SDK signal for "externally managed
-// memory — destructor should not free m_pMemory". If Valve respects that
-// convention we avoid a crash when the caller's CUtlVector goes out of
-// scope. If they don't, we'll know from a SIGSEGV in the log.
+// Why malloc and not a static buffer? Empirically, Valve's MemAlloc_Free
+// (in libtier0_s.so) ends up calling libc free() on m_pMemory when the
+// CUtlVector goes out of scope. libc free() of a non-heap pointer aborts.
+// malloc()'d memory IS valid input to free(), so the destructor succeeds.
+//
+// We leak the ORIGINAL m_pMemory because we don't know its allocator (it
+// might be Valve's pool, not libc) — calling free() on it would also abort.
+// The leak is bounded: a few dozen bytes per BuildDepotDependency call for
+// the apps we inject into. Acceptable for a Steam session.
 //
 // Capped at 64 entries — more than enough for any sensible game.
 constexpr size_t kMaxDepots = 64;
@@ -107,17 +109,21 @@ void InjectDepots(uint32_t AppId, CUtlVector<DepotEntry>* pDepotInfo,
         return;
     }
 
-    static thread_local DepotEntry s_buf[kMaxDepots];
+    auto* new_buf = static_cast<DepotEntry*>(std::malloc(total * sizeof(DepotEntry)));
+    if (!new_buf) {
+        Log::Error("BuildDepotDependency: malloc(%u entries) failed", total);
+        return;
+    }
+    std::memset(new_buf, 0, total * sizeof(DepotEntry));
 
     // Copy original entries (could be 0..N).
     for (uint32_t i = 0; i < pDepotInfo->m_Size; ++i) {
-        s_buf[i] = pDepotInfo->m_pMemory[i];
+        new_buf[i] = pDepotInfo->m_pMemory[i];
     }
 
     // Append injected entries.
     for (size_t i = 0; i < injects.size(); ++i) {
-        DepotEntry& e = s_buf[pDepotInfo->m_Size + i];
-        std::memset(&e, 0, sizeof(e));
+        DepotEntry& e = new_buf[pDepotInfo->m_Size + i];
         e.DepotId      = injects[i].depot_id;
         e.AppId        = AppId;
         e.ManifestGid  = injects[i].manifest_gid;
@@ -128,14 +134,18 @@ void InjectDepots(uint32_t AppId, CUtlVector<DepotEntry>* pDepotInfo,
                   (unsigned long long)injects[i].manifest_size);
     }
 
-    // Swap to our buffer. Mark as externally managed.
-    pDepotInfo->m_pMemory          = s_buf;
+    // ★ LEAK original m_pMemory: we don't know which allocator owns it.
+    // Replace with our malloc()'d buffer — Valve's MemAlloc_Free will call
+    // libc free() on it, which is safe for malloc()'d memory.
+    pDepotInfo->m_pMemory          = new_buf;
     pDepotInfo->m_Size             = total;
-    pDepotInfo->m_nAllocationCount = static_cast<int>(kMaxDepots);
-    pDepotInfo->m_nGrowSize        = -1;
+    pDepotInfo->m_nAllocationCount = static_cast<int>(total);
+    // m_nGrowSize left as-is. If Valve grows the vector, realloc will hit
+    // libc realloc which handles malloc'd memory fine.
 
-    Log::Debug("BuildDepotDependency: AppId=%u — pDepotInfo now Size=%u (orig=%u + injected=%zu)",
-               AppId, total, total - static_cast<uint32_t>(injects.size()), injects.size());
+    Log::Debug("BuildDepotDependency: AppId=%u — pDepotInfo now Size=%u (orig=%u + injected=%zu, buf=%p)",
+               AppId, total, total - static_cast<uint32_t>(injects.size()),
+               injects.size(), (void*)new_buf);
 }
 
 
