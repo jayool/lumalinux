@@ -1,4 +1,4 @@
-// lumalinux — function-level depot key resolution hook for Steam Linux client.
+// lumalinux — function-level depot key & depot-list hooks for Steam Linux client.
 //
 // Entry point: this .so is loaded via LD_PRELOAD into the Steam process by
 // patching steam.sh (see install.sh). On load, __attribute__((constructor))
@@ -6,7 +6,10 @@
 //   1. Initializes logging
 //   2. Loads local depot keys from ~/.config/lumalinux/keys.txt
 //   3. Spawns a worker thread that waits for steamclient.so to load, then
-//      installs the depot key hook
+//      installs the hooks
+//
+// v0.1 hooks: depot key resolution (LoadDepotDecryptionKey equivalent)
+// v0.2 hooks: BuildDepotDependency — DIAGNOSTIC ONLY (logs Steam's depot list)
 //
 // We use a worker thread because steamclient.so may not be loaded yet at
 // LD_PRELOAD time (Steam loads it later in its init sequence).
@@ -14,6 +17,7 @@
 #include "log.hpp"
 #include "key_store.hpp"
 #include "hooks/depot_key_hook.hpp"
+#include "hooks/depot_dependency_hook.hpp"
 #include "patterns.hpp"
 
 #include <thread>
@@ -50,6 +54,12 @@ void InitWorker() {
         return;
     }
 
+    // v0.2 — diagnostic hook on BuildDepotDependency. Non-fatal if it fails;
+    // depot-key hook still works on its own for single-depot games.
+    if (!Hooks::DepotDependency::Install()) {
+        Log::Warn("Init: BuildDepotDependency hook failed (diagnostic — non-fatal)");
+    }
+
     Log::Info("Init: lumalinux active");
 }
 
@@ -59,7 +69,7 @@ void LumalinuxInit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (main) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.1.0 loading...");
+    Log::Info("lumalinux v0.2.0 loading...");
 
     // Load local key store
     std::string keysPath = KeyStore::DefaultPath();
@@ -87,6 +97,7 @@ void LumalinuxInit() {
 
 __attribute__((destructor))
 void LumalinuxShutdown() {
+    Hooks::DepotDependency::Uninstall();
     Hooks::DepotKey::Uninstall();
     Log::Shutdown();
 }
