@@ -2,19 +2,20 @@
 #include "log.hpp"
 
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
-#include <sstream>
+#include <map>
 #include <mutex>
-#include <unistd.h>
-#include <pwd.h>
+#include <sstream>
+#include <string>
+#include <vector>
 
 namespace {
 
-// Function-local statics — guaranteed thread-safe lazy initialization (C++11)
-// This avoids the static initialization order fiasco between this TU and
-// main.cpp's __attribute__((constructor)) function.
+// Function-local statics avoid the static-initialization-order fiasco that
+// bit us in v0.1 (main thread saw a different g_keys than worker thread).
 auto& Keys() {
-    static std::map<uint32_t, KeyStore::DepotKey> instance;
+    static std::map<uint32_t, KeyStore::DepotInfo> instance;
     return instance;
 }
 
@@ -23,107 +24,131 @@ auto& Mtx() {
     return instance;
 }
 
-bool HexCharToNibble(char c, uint8_t& out) {
-    if (c >= '0' && c <= '9') { out = c - '0';      return true; }
-    if (c >= 'a' && c <= 'f') { out = c - 'a' + 10; return true; }
-    if (c >= 'A' && c <= 'F') { out = c - 'A' + 10; return true; }
-    return false;
-}
-
-bool ParseHex32(const std::string& hex, KeyStore::DepotKey& out) {
+bool ParseHexKey(const std::string& hex, KeyStore::DepotKey& out) {
     if (hex.size() != 64) return false;
-    for (size_t i = 0; i < 32; i++) {
-        uint8_t hi, lo;
-        if (!HexCharToNibble(hex[i * 2 + 0], hi)) return false;
-        if (!HexCharToNibble(hex[i * 2 + 1], lo)) return false;
-        out[i] = (hi << 4) | lo;
+    for (size_t i = 0; i < 32; ++i) {
+        char buf[3] = { hex[2*i], hex[2*i+1], 0 };
+        char* end = nullptr;
+        unsigned long b = std::strtoul(buf, &end, 16);
+        if (end != buf + 2) return false;
+        out[i] = static_cast<uint8_t>(b);
     }
     return true;
 }
 
-std::string Trim(const std::string& s) {
-    size_t a = s.find_first_not_of(" \t\r\n");
-    if (a == std::string::npos) return {};
-    size_t b = s.find_last_not_of(" \t\r\n");
-    return s.substr(a, b - a + 1);
+std::vector<std::string> SplitTrim(const std::string& line, char sep) {
+    std::vector<std::string> parts;
+    std::stringstream ss(line);
+    std::string item;
+    while (std::getline(ss, item, sep)) {
+        size_t a = item.find_first_not_of(" \t\r\n");
+        size_t b = item.find_last_not_of(" \t\r\n");
+        if (a == std::string::npos) { parts.push_back(""); continue; }
+        parts.push_back(item.substr(a, b - a + 1));
+    }
+    return parts;
+}
+
+bool ParseLine(const std::string& line, KeyStore::DepotInfo& out) {
+    auto parts = SplitTrim(line, ';');
+
+    if (parts.size() == 2) {
+        // Legacy: <depot_id>;<64-hex-key>
+        out.depot_id      = static_cast<uint32_t>(std::strtoul(parts[0].c_str(), nullptr, 10));
+        out.parent_app_id = 0;
+        out.manifest_gid  = 0;
+        out.manifest_size = 0;
+        if (out.depot_id == 0) return false;
+        return ParseHexKey(parts[1], out.key);
+    }
+    if (parts.size() == 5) {
+        // Extended: <depot_id>;<parent_app_id>;<manifest_gid>;<manifest_size>;<64-hex-key>
+        out.depot_id      = static_cast<uint32_t>(std::strtoul(parts[0].c_str(), nullptr, 10));
+        out.parent_app_id = static_cast<uint32_t>(std::strtoul(parts[1].c_str(), nullptr, 10));
+        out.manifest_gid  = std::strtoull(parts[2].c_str(), nullptr, 10);
+        out.manifest_size = std::strtoull(parts[3].c_str(), nullptr, 10);
+        if (out.depot_id == 0) return false;
+        return ParseHexKey(parts[4], out.key);
+    }
+    return false;
 }
 
 } // namespace
 
 namespace KeyStore {
 
+std::string DefaultPath() {
+    const char* home = std::getenv("HOME");
+    if (!home) return "/tmp/lumalinux-keys.txt";
+    return std::string(home) + "/.config/lumalinux/keys.txt";
+}
+
 bool LoadFromFile(const std::string& path) {
     std::ifstream f(path);
     if (!f.is_open()) {
-        Log::Warn("KeyStore: cannot open %s — running with empty key store", path.c_str());
+        Log::Warn("KeyStore: cannot open %s", path.c_str());
         return false;
     }
 
     std::lock_guard<std::mutex> lock(Mtx());
-    Keys().clear();
+    auto& keys = Keys();
+    keys.clear();
 
-    std::string line;
     size_t lineNo = 0;
     size_t loaded = 0;
+    size_t injectable = 0;
+    std::string line;
     while (std::getline(f, line)) {
         lineNo++;
-        std::string t = Trim(line);
-        if (t.empty() || t[0] == '#') continue;
+        if (line.empty()) continue;
+        size_t firstNonWs = line.find_first_not_of(" \t");
+        if (firstNonWs == std::string::npos) continue;
+        if (line[firstNonWs] == '#') continue;
 
-        auto sep = t.find(';');
-        if (sep == std::string::npos) {
-            Log::Warn("KeyStore: %s:%zu — missing ';' separator, skipping", path.c_str(), lineNo);
+        DepotInfo info;
+        if (!ParseLine(line, info)) {
+            Log::Warn("KeyStore: skipping malformed line %zu", lineNo);
             continue;
         }
-
-        std::string idStr  = Trim(t.substr(0, sep));
-        std::string hexStr = Trim(t.substr(sep + 1));
-
-        char* endp = nullptr;
-        unsigned long depotId = std::strtoul(idStr.c_str(), &endp, 10);
-        if (!endp || *endp != '\0' || depotId == 0 || depotId > 0xFFFFFFFFul) {
-            Log::Warn("KeyStore: %s:%zu — bad depot_id '%s'", path.c_str(), lineNo, idStr.c_str());
-            continue;
-        }
-
-        DepotKey key{};
-        if (!ParseHex32(hexStr, key)) {
-            Log::Warn("KeyStore: %s:%zu — bad hex key (need 64 hex chars)", path.c_str(), lineNo);
-            continue;
-        }
-
-        Keys()[static_cast<uint32_t>(depotId)] = key;
+        keys[info.depot_id] = info;
         loaded++;
+        if (info.parent_app_id != 0 && info.manifest_gid != 0) injectable++;
     }
 
-    Log::Info("KeyStore: loaded %zu key(s) from %s", loaded, path.c_str());
+    Log::Info("KeyStore: loaded %zu key(s) from %s (%zu injectable)",
+              loaded, path.c_str(), injectable);
     return true;
 }
 
-std::optional<DepotKey> Lookup(uint32_t depotId) {
+std::optional<DepotKey> Lookup(uint32_t depot_id) {
     std::lock_guard<std::mutex> lock(Mtx());
-    auto& k = Keys();
-    auto it = k.find(depotId);
-    if (it == k.end()) return std::nullopt;
+    auto it = Keys().find(depot_id);
+    if (it == Keys().end()) return std::nullopt;
+    return it->second.key;
+}
+
+std::optional<DepotInfo> LookupInfo(uint32_t depot_id) {
+    std::lock_guard<std::mutex> lock(Mtx());
+    auto it = Keys().find(depot_id);
+    if (it == Keys().end()) return std::nullopt;
     return it->second;
+}
+
+std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id) {
+    std::lock_guard<std::mutex> lock(Mtx());
+    std::vector<DepotInfo> result;
+    if (app_id == 0) return result;
+    for (const auto& [_, info] : Keys()) {
+        if (info.parent_app_id == app_id && info.manifest_gid != 0) {
+            result.push_back(info);
+        }
+    }
+    return result;
 }
 
 size_t Size() {
     std::lock_guard<std::mutex> lock(Mtx());
     return Keys().size();
-}
-
-std::string DefaultPath() {
-    const char* xdg = std::getenv("XDG_CONFIG_HOME");
-    if (xdg && *xdg) return std::string(xdg) + "/lumalinux/keys.txt";
-
-    const char* home = std::getenv("HOME");
-    if (!home || !*home) {
-        if (passwd* pw = getpwuid(getuid())) home = pw->pw_dir;
-    }
-    if (home && *home) return std::string(home) + "/.config/lumalinux/keys.txt";
-
-    return "/tmp/lumalinux-keys.txt";
 }
 
 const void* DebugKeysAddr() {
