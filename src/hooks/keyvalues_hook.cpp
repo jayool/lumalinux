@@ -58,27 +58,35 @@ bool HookFn(void* this_root, void* buf, int depth, int textMode, void* symTable)
     uint64_t n = g_callCount.fetch_add(1) + 1;
     bool isTop = (depth == 0);
 
-    // Snapshot of buffer BEFORE original runs (Steam may advance/consume it).
-    // Limit logging to top-level calls to avoid log explosion.
+    // Snapshot of buffer BEFORE original runs.
     uint8_t buf_snapshot[128];
-    size_t  buf_snapshot_len = 0;
+    uint8_t data_snapshot[256];
+    size_t  data_snapshot_len = 0;
+    void*   data_ptr = nullptr;
+
     if (isTop && buf) {
-        // Defensive copy — if buf is invalid the read may segfault, but
-        // Steam wouldn't have passed it to us in that case.
         std::memcpy(buf_snapshot, buf, sizeof(buf_snapshot));
-        buf_snapshot_len = sizeof(buf_snapshot);
+        // The first 4 bytes of buf are a pointer to the actual binary KV
+        // stream Steam is reading. Deref it for the real data.
+        data_ptr = *reinterpret_cast<void**>(buf);
+        if (data_ptr) {
+            std::memcpy(data_snapshot, data_ptr, sizeof(data_snapshot));
+            data_snapshot_len = sizeof(data_snapshot);
+        }
     }
 
     if (isTop) {
         g_topLevelCount.fetch_add(1);
-        Log::Debug("ReadAsBinary[#%llu top=%llu]: this=%p buf=%p depth=%d textMode=%d symTable=%p",
+        Log::Debug("ReadAsBinary[#%llu top=%llu]: this=%p buf=%p depth=%d textMode=%d symTable=%p data=%p",
                    (unsigned long long)n,
                    (unsigned long long)(g_topLevelCount.load()),
-                   this_root, buf, depth, textMode, symTable);
+                   this_root, buf, depth, textMode, symTable, data_ptr);
         // Dump KV root (first 48 bytes)
         DumpHex("kv  ", this_root, 48);
-        // Dump buffer content (first 128 bytes) — what Steam is about to parse
-        DumpHex("buf ", buf_snapshot, buf_snapshot_len);
+        // Dump buffer descriptor (first 128 bytes)
+        DumpHex("buf ", buf_snapshot, 128);
+        // Dump actual binary KV stream (first 256 bytes) — what Steam is about to parse
+        DumpHex("data", data_snapshot, data_snapshot_len);
     }
 
     return g_origFn(this_root, buf, depth, textMode, symTable);
