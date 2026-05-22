@@ -4,12 +4,78 @@
 #include "../log.hpp"
 
 #include <subhook.h>
+#include <dlfcn.h>
 
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 namespace {
+
+// ── Valve allocator access ──────────────────────────────────────────────────
+//
+// libtier0_s.so exports `g_pMemAllocSteam` as a data symbol (pointer to a
+// global IMemAlloc instance). We resolve it via dlopen/dlsym at hook install
+// time, then call its vtable methods to allocate/free.
+//
+// IMemAlloc vtable layout (Source SDK i386, Itanium C++ ABI):
+//   vtable[0]  void*  Alloc(size_t size)
+//   vtable[1]  void*  Realloc(void* p, size_t size)
+//   vtable[2]  void   Free(void* p)
+//
+// On i386 Itanium ABI, virtual methods take `this` as the first stack arg,
+// so we can call them as ordinary cdecl function pointers.
+//
+// Why we need this: __libc_free aborts when given a pointer Valve's wrapper
+// didn't allocate (it stores its own metadata before each chunk). Using
+// Valve's own allocator means MemAlloc_Free recognizes our pointer.
+
+struct ValveAlloc {
+    void** g_pMemAllocSteam = nullptr;   // -> IMemAlloc*
+
+    bool Resolve() {
+        void* handle = dlopen("libtier0_s.so", RTLD_NOLOAD | RTLD_NOW);
+        if (!handle) {
+            Log::Warn("ValveAlloc: dlopen('libtier0_s.so', RTLD_NOLOAD) failed: %s", dlerror());
+            return false;
+        }
+        g_pMemAllocSteam = static_cast<void**>(dlsym(handle, "g_pMemAllocSteam"));
+        if (!g_pMemAllocSteam) {
+            Log::Warn("ValveAlloc: dlsym('g_pMemAllocSteam') failed: %s", dlerror());
+            return false;
+        }
+        if (!*g_pMemAllocSteam) {
+            Log::Warn("ValveAlloc: g_pMemAllocSteam is NULL at resolve time");
+            return false;
+        }
+        Log::Info("ValveAlloc: resolved g_pMemAllocSteam=%p, IMemAlloc*=%p, vtable=%p",
+                  (void*)g_pMemAllocSteam,
+                  *g_pMemAllocSteam,
+                  **static_cast<void***>(*g_pMemAllocSteam));
+        return true;
+    }
+
+    bool IsReady() const { return g_pMemAllocSteam && *g_pMemAllocSteam; }
+
+    void* Alloc(size_t size) {
+        if (!IsReady()) return nullptr;
+        void* iface = *g_pMemAllocSteam;
+        using AllocFn = void* (*)(void*, size_t);
+        AllocFn fn = reinterpret_cast<AllocFn>((*static_cast<void***>(iface))[0]);
+        return fn(iface, size);
+    }
+
+    void Free(void* p) {
+        if (!IsReady() || !p) return;
+        void* iface = *g_pMemAllocSteam;
+        using FreeFn = void (*)(void*, void*);
+        FreeFn fn = reinterpret_cast<FreeFn>((*static_cast<void***>(iface))[2]);
+        fn(iface, p);
+    }
+};
+
+ValveAlloc g_valveAlloc;
+
 
 // ── Valve internal data layouts ─────────────────────────────────────────────
 //
@@ -102,6 +168,10 @@ constexpr size_t kMaxDepots = 64;
 
 void InjectDepots(uint32_t AppId, CUtlVector<DepotEntry>* pDepotInfo,
                   const std::vector<KeyStore::DepotInfo>& injects) {
+    if (!g_valveAlloc.IsReady()) {
+        Log::Warn("BuildDepotDependency: ValveAlloc not ready — skipping injection for AppId=%u", AppId);
+        return;
+    }
     uint32_t total = pDepotInfo->m_Size + static_cast<uint32_t>(injects.size());
     if (total > kMaxDepots) {
         Log::Warn("BuildDepotDependency: too many depots (orig=%u + inject=%zu > cap=%zu) — skipping",
@@ -109,9 +179,9 @@ void InjectDepots(uint32_t AppId, CUtlVector<DepotEntry>* pDepotInfo,
         return;
     }
 
-    auto* new_buf = static_cast<DepotEntry*>(std::malloc(total * sizeof(DepotEntry)));
+    auto* new_buf = static_cast<DepotEntry*>(g_valveAlloc.Alloc(total * sizeof(DepotEntry)));
     if (!new_buf) {
-        Log::Error("BuildDepotDependency: malloc(%u entries) failed", total);
+        Log::Error("BuildDepotDependency: ValveAlloc.Alloc(%u entries) failed", total);
         return;
     }
     std::memset(new_buf, 0, total * sizeof(DepotEntry));
@@ -134,18 +204,22 @@ void InjectDepots(uint32_t AppId, CUtlVector<DepotEntry>* pDepotInfo,
                   (unsigned long long)injects[i].manifest_size);
     }
 
-    // ★ LEAK original m_pMemory: we don't know which allocator owns it.
-    // Replace with our malloc()'d buffer — Valve's MemAlloc_Free will call
-    // libc free() on it, which is safe for malloc()'d memory.
+    // Free the original m_pMemory using Valve's allocator (it allocated it).
+    // Then point Valve at our buffer (also allocated via Valve's allocator)
+    // so the eventual MemAlloc_Free in the CUtlVector destructor succeeds.
+    DepotEntry* old_buf = pDepotInfo->m_pMemory;
     pDepotInfo->m_pMemory          = new_buf;
     pDepotInfo->m_Size             = total;
     pDepotInfo->m_nAllocationCount = static_cast<int>(total);
-    // m_nGrowSize left as-is. If Valve grows the vector, realloc will hit
-    // libc realloc which handles malloc'd memory fine.
+    // m_nGrowSize left as-is.
 
-    Log::Debug("BuildDepotDependency: AppId=%u — pDepotInfo now Size=%u (orig=%u + injected=%zu, buf=%p)",
+    if (old_buf) {
+        g_valveAlloc.Free(old_buf);
+    }
+
+    Log::Debug("BuildDepotDependency: AppId=%u — pDepotInfo now Size=%u (orig=%u + injected=%zu, new_buf=%p, old_buf=%p)",
                AppId, total, total - static_cast<uint32_t>(injects.size()),
-               injects.size(), (void*)new_buf);
+               injects.size(), (void*)new_buf, (void*)old_buf);
 }
 
 
@@ -186,6 +260,12 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
 namespace Hooks::DepotDependency {
 
 bool Install() {
+    // Resolve Valve's allocator first — without it, injection will refuse.
+    if (!g_valveAlloc.Resolve()) {
+        Log::Error("DepotDependency hook: cannot resolve g_pMemAllocSteam — injection disabled");
+        // Fall through and install hook anyway so the diagnostic logging still works.
+    }
+
     uintptr_t target = Patterns::FindBuildDepotDependencyFunction();
     if (!target) {
         Log::Error("DepotDependency hook: cannot install — target not found");
