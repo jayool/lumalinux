@@ -16,11 +16,19 @@ struct ModuleRange {
     size_t    size = 0;
 };
 
-// Read /proc/self/maps and find the first r-x mapping of the .so identified by `needle`.
-// Returns base address and size of that executable mapping. {0, 0} on failure.
+// Read /proc/self/maps and find the EXTENT of executable mappings of the .so
+// identified by `needle`. Modern Steam often splits steamclient.so into many
+// adjacent r-xp regions (e.g. via mprotect for in-place patching). We aggregate
+// all r-x mappings into one [min_start, max_end] range, which is valid for
+// scanning since the regions are contiguous (no gaps inside the executable
+// LOAD segment).
 ModuleRange FindModuleRangeFromMaps(const char* needle) {
     std::ifstream maps("/proc/self/maps");
     if (!maps.is_open()) return {};
+
+    uintptr_t min_start = static_cast<uintptr_t>(-1);
+    uintptr_t max_end   = 0;
+    int       count     = 0;
 
     std::string line;
     while (std::getline(maps, line)) {
@@ -35,12 +43,16 @@ ModuleRange FindModuleRangeFromMaps(const char* needle) {
         uintptr_t start = std::strtoul(startHex.c_str(), nullptr, 16);
         uintptr_t end   = std::strtoul(endHex.c_str(),   nullptr, 16);
         if (end <= start) continue;
-        return ModuleRange{start, end - start};
+
+        if (start < min_start) min_start = start;
+        if (end > max_end)     max_end   = end;
+        count++;
     }
-    return {};
+
+    if (count == 0) return {};
+    return ModuleRange{min_start, max_end - min_start};
 }
 
-// Parse "55 57 ?? BF 03" → bytes + mask. Mask is true (=fixed) or false (=wildcard).
 struct ParsedPattern {
     std::vector<uint8_t> bytes;
     std::vector<bool>    fixed;
@@ -81,8 +93,6 @@ uintptr_t SigScan(uintptr_t base, size_t size, const ParsedPattern& p) {
     return 0;
 }
 
-// Shared scan helper: locate `pattern` in steamclient.so. Logs success/failure
-// with `logName` so the failure mode is identifiable in the log.
 uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
     ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
     if (!r.base) return 0;
