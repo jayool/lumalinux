@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.1.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.2.0)
 
 # Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")
@@ -18,8 +18,6 @@ endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # subhook — inline function detour library (small, zero external deps).
-# Was: libmem (bloated, drags capstone/keystone/LLVM via ExternalProject_Add
-# which doesn't compose with ninja).
 # ─────────────────────────────────────────────────────────────────────────────
 
 include(FetchContent)
@@ -47,6 +45,7 @@ add_library(lumalinux SHARED
     src/key_store.cpp
     src/patterns.cpp
     src/hooks/depot_key_hook.cpp
+    src/hooks/depot_dependency_hook.cpp
 )
 
 target_include_directories(lumalinux PRIVATE src/)
