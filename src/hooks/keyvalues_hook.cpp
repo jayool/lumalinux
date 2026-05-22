@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -29,18 +30,25 @@ std::atomic<uint64_t> g_callCount{0};
 std::atomic<uint64_t> g_topLevelCount{0};
 
 
-// Try to extract a printable name from the KeyValues object. Source SDK's
-// CKeyValues stores the name as a string pointer (offset varies by build).
-// We log the first few words of the object for inspection — we'll narrow
-// down the layout from the dumps.
-void DumpKVHeader(void* kv) {
-    if (!kv) {
-        Log::Debug("    kv: <null>");
-        return;
+void DumpHex(const char* label, const void* p, size_t n) {
+    if (!p) { Log::Debug("    %s: <null>", label); return; }
+    const uint8_t* b = static_cast<const uint8_t*>(p);
+    // Print in chunks of 16 bytes
+    char line[80];
+    for (size_t off = 0; off < n; off += 16) {
+        char* w = line;
+        for (size_t i = 0; i < 16 && off + i < n; ++i) {
+            w += std::snprintf(w, sizeof(line) - (w - line), "%02X ", b[off + i]);
+        }
+        // ASCII column
+        *w++ = ' ';
+        for (size_t i = 0; i < 16 && off + i < n; ++i) {
+            uint8_t c = b[off + i];
+            *w++ = (c >= 0x20 && c < 0x7f) ? (char)c : '.';
+        }
+        *w = 0;
+        Log::Debug("    %s+%02zx: %s", label, off, line);
     }
-    const uint32_t* w = reinterpret_cast<const uint32_t*>(kv);
-    Log::Debug("    kv@%p: [+0]=0x%08x [+4]=0x%08x [+8]=0x%08x [+12]=0x%08x [+16]=0x%08x [+20]=0x%08x",
-               kv, w[0], w[1], w[2], w[3], w[4], w[5]);
 }
 
 
@@ -49,13 +57,28 @@ bool HookFn(void* this_root, void* buf, int depth, int textMode, void* symTable)
 
     uint64_t n = g_callCount.fetch_add(1) + 1;
     bool isTop = (depth == 0);
+
+    // Snapshot of buffer BEFORE original runs (Steam may advance/consume it).
+    // Limit logging to top-level calls to avoid log explosion.
+    uint8_t buf_snapshot[128];
+    size_t  buf_snapshot_len = 0;
+    if (isTop && buf) {
+        // Defensive copy — if buf is invalid the read may segfault, but
+        // Steam wouldn't have passed it to us in that case.
+        std::memcpy(buf_snapshot, buf, sizeof(buf_snapshot));
+        buf_snapshot_len = sizeof(buf_snapshot);
+    }
+
     if (isTop) {
         g_topLevelCount.fetch_add(1);
         Log::Debug("ReadAsBinary[#%llu top=%llu]: this=%p buf=%p depth=%d textMode=%d symTable=%p",
                    (unsigned long long)n,
                    (unsigned long long)(g_topLevelCount.load()),
                    this_root, buf, depth, textMode, symTable);
-        DumpKVHeader(this_root);
+        // Dump KV root (first 48 bytes)
+        DumpHex("kv  ", this_root, 48);
+        // Dump buffer content (first 128 bytes) — what Steam is about to parse
+        DumpHex("buf ", buf_snapshot, buf_snapshot_len);
     }
 
     return g_origFn(this_root, buf, depth, textMode, symTable);
