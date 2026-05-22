@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.2.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.4.0)
 
 # Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")
@@ -16,10 +16,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -fvisibility=hidden)
 endif()
 
-# ─────────────────────────────────────────────────────────────────────────────
-# subhook — inline function detour library (small, zero external deps).
-# ─────────────────────────────────────────────────────────────────────────────
-
 include(FetchContent)
 
 set(SUBHOOK_STATIC       ON  CACHE BOOL "")
@@ -35,10 +31,6 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(subhook)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Our shared library
-# ─────────────────────────────────────────────────────────────────────────────
-
 add_library(lumalinux SHARED
     src/main.cpp
     src/log.cpp
@@ -46,6 +38,7 @@ add_library(lumalinux SHARED
     src/patterns.cpp
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp
+    src/hooks/keyvalues_hook.cpp
 )
 
 target_include_directories(lumalinux PRIVATE src/)
