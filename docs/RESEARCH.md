@@ -220,6 +220,43 @@ What worked, after a lot of what didn't:
 5. **Note:** patterns are build-specific. On a Steam update, re-run the Ghidra
    pass and re-derive the patterns.
 
+### 8.1 Semi-automatic re-derivation — `tools/derive_patterns.py`
+
+To turn step 4 from a full RE session into a single command, `derive_patterns.py`
+is a Ghidra **headless postScript** that re-locates each hook and prints a fresh,
+correctly-wildcarded pattern. Run it against the *new* `steamclient.so`:
+
+```sh
+# one-time import (analysis ~5–15 min):
+analyzeHeadless <proj> <name> -import steamclient.so
+# then, any time, re-derive:
+analyzeHeadless <proj> <name> -process steamclient.so \
+    -noanalysis -scriptPath tools -postScript derive_patterns.py
+```
+
+It works two ways per hook, because **not every function has a usable anchor**:
+
+| Hook | Anchor string | How the tool handles it |
+|---|---|---|
+| **BuildDep** | `"BuildDepotDependency"` | finds the string → the referencing function → re-extracts a fresh prologue pattern (PIC `call` rel32 + the GOT `add reg,imm32` auto-wildcarded). **Fully auto.** |
+| **GMRC** | `"ContentServerDirectory.GetManifestRequestCode#1"` | same — **fully auto**, prints e.g. `E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 …`. |
+| **DepotKey** | *none* (leaf-ish, logs nothing) | re-validates the **current** pattern against the new binary; if it still matches **uniquely**, "keep it", else flags for manual re-derivation. |
+| **LoadPackage** | *none* | same validation, but a **multi-match is expected** (the runtime enumerates candidates and picks one via `LUMA_LOADPKG_IDX`, default 0) so the tool just lists the candidate sites. |
+
+So the two string-anchored hooks (BuildDep, GMRC) — the ones most likely to move
+across builds — are auto-derived; the two anchorless ones are auto-*validated* and
+flagged if they ever stop matching, at which point you re-derive them by hand in
+the Ghidra GUI (locate the function per §4, copy ~28 prologue bytes, wildcard the
+get_pc_thunk `call` rel32 and the following `add reg,imm32`).
+
+**The wildcarding gotcha** (worth knowing if you extend the tool): the
+get_pc_thunk-relative `add` has two encodings — `0x05` (`add eax,imm32`, 5 bytes)
+and `0x81 /0` (`add r/m32,imm32`, 6 bytes). Both must have their imm32 masked;
+GMRC uses the short `0x05` form, BuildDep/LoadPackage the `0x81` form.
+
+Paste the printed `UNIQUE` patterns into `src/patterns.hpp`, rebuild, redeploy.
+(`tools/ghidra_find_gmrc.py` is the original GMRC-only finder kept for reference.)
+
 ## 9. Per-game data (handled by tools/steamidra_lite.py)
 
 For a game you have a `.lua` + `.manifest` set for (e.g. ManifestHub zip):

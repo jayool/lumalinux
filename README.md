@@ -97,8 +97,10 @@ exec /usr/lib/steam/steam -steamdeck "$@"
 SLSsteam):
 - `lumalinux: v0.8.1 loaded — 4/4 hooks active` → all good.
 - `lumalinux: v0.8.1: 3/4 hooks — GMRC FAILED. Steam update? See …` → a hook's
-  byte pattern stopped matching (almost always a Steam update). Re-derive the
-  patterns (see [`docs/RESEARCH.md`](docs/RESEARCH.md) §8) and rebuild.
+  byte pattern stopped matching (almost always a Steam update). Re-derive with
+  `tools/derive_patterns.py` (a Ghidra headless postScript that auto-derives the
+  anchored hooks and validates the rest — see [`docs/RESEARCH.md`](docs/RESEARCH.md)
+  §8.1), paste the fresh patterns into `src/patterns.hpp`, and rebuild.
 
 To confirm from the log instead:
 ```sh
