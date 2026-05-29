@@ -2,7 +2,6 @@ build/
 *.o
 *.so
 *.a
-!lib/liblibmem.a
 *.d
 .vscode/
 .idea/
