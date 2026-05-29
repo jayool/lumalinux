@@ -8,6 +8,12 @@ you don't own, by hooking `steamclient.so`. Designed to **coexist with SLSsteam*
 downloads and runs via the native Install button on a Steam Deck (SteamOS),
 with SLSsteam loaded and the depot keys / manifests in place.
 
+> 📒 **Extending this?** Read [`docs/RESEARCH.md`](docs/RESEARCH.md) first — full
+> internals, every hook's signature/pattern and how it was found, the Steam
+> content-install flow, the dead-ends we hit (and why), the GMRC endpoint notes,
+> and the Ghidra reverse-engineering workflow to re-derive patterns on a new
+> Steam build.
+
 ## What it does
 
 The Linux piracy stack normally needs an external downloader (DepotDownloader)
@@ -54,25 +60,53 @@ make -j
 
 CI (`.github/workflows/build.yml`) builds it on every push to `main`.
 
-## Install / load
+## Install / load (the exact recipe that works on a Steam Deck)
 
-1. Copy the built `.so`:
-   ```sh
-   mkdir -p ~/.local/share/lumalinux
-   cp build/liblumalinux.so ~/.local/share/lumalinux/liblumalinux.so
-   ```
-2. Make Steam's launcher load it via `LD_PRELOAD`. On SteamOS, SLSsteam patches
-   `/usr/bin/steam` with an `LD_AUDIT=` line; add lumalinux right **after** it
-   and before the final `exec`:
-   ```sh
-   sudo steamos-readonly disable
-   # add this line in /usr/bin/steam, just before `exec /usr/lib/steam/steam ...`:
-   export LD_PRELOAD="$HOME/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
-   ```
-   (`install.sh` automates copying the `.so` + creating dirs; the launcher edit
-   is left manual because the launcher path/format varies by setup.)
-3. Log: `~/.cache/lumalinux/lumalinux.log`. Debug env vars to disable individual
-   hooks: `LUMA_NO_LOADPKG`, `LUMA_NO_DEPOTKEY`, `LUMA_NO_BUILDDEP`, `LUMA_NO_GMRC`.
+Prerequisites: **SLSsteam already installed** (it injects via `LD_AUDIT` in
+`/usr/bin/steam`). lumalinux loads via **`LD_PRELOAD`** (see "Why LD_PRELOAD").
+
+**1. Deploy the `.so`** (Desktop Mode, Konsole):
+```sh
+mkdir -p ~/.local/share/lumalinux ~/.config/lumalinux
+cp build/liblumalinux.so ~/.local/share/lumalinux/liblumalinux.so
+chmod +x ~/.local/share/lumalinux/liblumalinux.so
+file ~/.local/share/lumalinux/liblumalinux.so   # must say: ELF 32-bit ... Intel 80386
+```
+(`./install.sh` does this step and creates an empty `keys.txt`.)
+
+**2. Add the `LD_PRELOAD` line to `/usr/bin/steam`.** SteamOS makes `/usr/bin/steam`
+the entry point and SLSsteam patches it with an `LD_AUDIT=` export. Add lumalinux
+as `LD_PRELOAD` just **before the final `exec`**:
+```sh
+sudo steamos-readonly disable
+sudo sed -i '/^exec \/usr\/lib\/steam\/steam/i export LD_PRELOAD="/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"' /usr/bin/steam
+tail -3 /usr/bin/steam
+```
+The tail should look like:
+```sh
+export LD_AUDIT="/home/deck/.local/share/SLSsteam/library-inject.so:/home/deck/.local/share/SLSsteam/SLSsteam.so"
+export LD_PRELOAD="/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
+exec /usr/lib/steam/steam -steamdeck "$@"
+```
+> ⚠️ Do **NOT** put lumalinux in the `LD_AUDIT` line — a 32-bit lib in LD_AUDIT
+> corrupts the heap and Steam crashes on startup (`realloc(): invalid pointer`).
+> ⚠️ SteamOS **updates reset `/usr/bin/steam`** — re-apply this line after each
+> SteamOS update.
+
+**3. Start Steam and verify** the four hooks installed:
+```sh
+rm -f ~/.cache/lumalinux/lumalinux.log ~/.steam/steam.pid
+steam &
+sleep 35
+grep -E "v0\.8|hook: INSTALLED" ~/.cache/lumalinux/lumalinux.log
+```
+Expect: `LoadPackage hook: INSTALLED`, `DepotKey hook: INSTALLED`,
+`DepotDependency hook: INSTALLED`, `GMRC hook: INSTALLED`.
+
+Log: `~/.cache/lumalinux/lumalinux.log`. To disable a hook for debugging, set the
+env var before launching: `LUMA_NO_LOADPKG`, `LUMA_NO_DEPOTKEY`,
+`LUMA_NO_BUILDDEP`, `LUMA_NO_GMRC` (and `LUMA_LOADPKG_IDX=N` if LoadPackage picks
+the wrong candidate).
 
 ## Setting up a game (the full recipe)
 
