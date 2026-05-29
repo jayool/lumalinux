@@ -1,178 +1,105 @@
 # lumalinux
 
-Function-level depot key resolution hook for the Steam Linux client. Enables Steam's native "Install" button to work for depots whose decryption keys you have locally.
+Makes Steam's native **Install** button work on the Steam Deck / Linux for games
+you don't own, by hooking `steamclient.so`. Designed to **coexist with SLSsteam**
+(it does not replace or modify it).
 
-**Status:** v0.1.0 — alpha / POC. Designed to coexist with SLSsteam. Tested empirically: not yet.
+**Status:** v0.8.0 — working end-to-end. Verified: Balatro (AppID 2379780)
+downloads and runs via the native Install button on a Steam Deck (SteamOS),
+with SLSsteam loaded and the depot keys / manifests in place.
 
-## What this does
+## What it does
 
-The standard Linux Steam piracy stack (SteaMidra Linux + SLSsteam) requires an external tool (DepotDownloaderMod) to actually download games, because SLSsteam only spoofs ownership at the API level — it doesn't intercept depot decryption keys. So Steam asks Valve for keys, Valve refuses for unowned content, and downloads fail.
+The Linux piracy stack normally needs an external downloader (DepotDownloader)
+because SLSsteam only spoofs *ownership* — it doesn't provide depot decryption
+keys, doesn't surface the content depots, and can't get the manifest request
+code Valve hands out to authorize a download. So the native Install button
+either jumps straight to "Play" (0 depots) or dies with *"Missing decryption
+key"* / *"No connection"*.
 
-`lumalinux` closes that gap by intercepting the depot key resolution function inside `steamclient.so` (the equivalent of what LumaCore does on Windows). When Steam asks for a key during install:
+`lumalinux` closes those gaps with four function-level hooks inside
+`steamclient.so` (the Linux equivalents of what LumaCore does on Windows):
 
-1. Steam internally calls `LoadDepotDecryptionKey(this, app_id, depot_id, out_buffer)`
-2. `lumalinux` intercepts the call
-3. If `depot_id` is in our local key store, write the key to `out_buffer` and return `EResult::OK`
-4. Otherwise, fall through to Steam's original implementation (which will do the normal RPC to Valve)
+| Hook | Function | What it does |
+|---|---|---|
+| **LoadPackage** | `CPackageInfoCache::LoadPackage` | Injects our depot ids into `PackageId=0`'s `AppIdVec`, so Steam's per-depot license filter keeps the content depots instead of dropping them. |
+| **DepotKey** | `LoadDepotDecryptionKey` | Serves the depot AES keys from `keys.txt` (Steam can't get them from Valve, and `config.vdf` gets pruned for unowned depots). |
+| **BuildDep** | `CUserAppManager::BuildDepotDependency` | Patches each surfaced depot's `ManifestGid`/`ManifestSize` to pin the right manifest (LumaCore-style — patch only, never inject). |
+| **GMRC** | `CContentServerDirectory…BYieldingGetManifestRequestCode` | The missing piece: fetches the **manifest request code** from `gmrc.wudrm.com` and returns it as if Valve had authorized the download. |
 
-Result: clicking "Install" in Steam UI on the Steam Deck works natively for depots you have keys for, without DepotDownloaderMod or any external tool.
+The division of labour:
 
-## How it differs from existing tools
+- **SLSsteam** (loaded via `LD_AUDIT`) → ownership spoof, PICS access token, family-share bypass.
+- **lumalinux** (loaded via `LD_PRELOAD`) → the four hooks above.
 
-| | LumaCore (Windows) | SLSsteam (Linux) | lumalinux (Linux) |
-|---|---|---|---|
-| Ownership spoof | ✓ | ✓ | ✗ (relies on SLSsteam) |
-| Depot key hook | ✓ | ✗ | ✓ |
-| Steam UI Install button works | ✓ | ✗ | ✓ |
-| Family Share bypass | ✗ | ✓ | ✗ (relies on SLSsteam) |
+## Why LD_PRELOAD (not LD_AUDIT)
 
-`lumalinux` is designed to coexist with SLSsteam, not replace it. SLSsteam handles ownership/licensing; lumalinux handles depot decryption.
+lumalinux is a 32-bit library that hooks `steamclient.so` (also 32-bit). Loading
+it via `LD_AUDIT` places it in a separate linker namespace and corrupts the heap
+(observed: `realloc(): invalid pointer` crash on startup). Loading via
+`LD_PRELOAD` runs it in the normal namespace and works. It exports both
+`la_objopen`/`la_preinit` and a `constructor` fallback, but **LD_PRELOAD is the
+supported path**.
 
-## Requirements
+## Build
 
-- Linux x86_64 host with multilib support (or SteamOS)
-- SLSsteam installed and configured (lumalinux assumes Steam thinks you "own" the apps you want to install)
-- Local depot keys for the apps you want to install (extracted from SteamTools/LumaCore `.lua` files)
-- Steam client must be the 32-bit Linux version (the standard one — there is no 64-bit Steam Linux client at time of writing)
+32-bit Linux shared object. Needs a multilib toolchain + cmake.
 
-## Build from source
-
-```bash
-# Install 32-bit toolchain
-sudo apt install gcc-multilib g++-multilib cmake ninja-build
-# (or equivalent on your distro)
-
-# Configure and build
+```sh
 mkdir build && cd build
-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release ..
-ninja
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j
+# -> build/liblumalinux.so  (ELF 32-bit i386)
 ```
 
-The output is `build/liblumalinux.so`. If CMake fails to fetch libmem, see the troubleshooting section below.
+CI (`.github/workflows/build.yml`) builds it on every push to `main`.
 
-## Install
+## Install / load
 
-```bash
-# Close Steam first
-./install.sh
+1. Copy the built `.so`:
+   ```sh
+   mkdir -p ~/.local/share/lumalinux
+   cp build/liblumalinux.so ~/.local/share/lumalinux/liblumalinux.so
+   ```
+2. Make Steam's launcher load it via `LD_PRELOAD`. On SteamOS, SLSsteam patches
+   `/usr/bin/steam` with an `LD_AUDIT=` line; add lumalinux right **after** it
+   and before the final `exec`:
+   ```sh
+   sudo steamos-readonly disable
+   # add this line in /usr/bin/steam, just before `exec /usr/lib/steam/steam ...`:
+   export LD_PRELOAD="$HOME/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
+   ```
+   (`install.sh` automates copying the `.so` + creating dirs; the launcher edit
+   is left manual because the launcher path/format varies by setup.)
+3. Log: `~/.cache/lumalinux/lumalinux.log`. Debug env vars to disable individual
+   hooks: `LUMA_NO_LOADPKG`, `LUMA_NO_DEPOTKEY`, `LUMA_NO_BUILDDEP`, `LUMA_NO_GMRC`.
+
+## Setting up a game (the full recipe)
+
+You need: SLSsteam installed, lumalinux loaded, and the game's `.lua` +
+`.manifest` files (e.g. from a ManifestHub-style zip). Then:
+
+```sh
+# places manifests into depotcache (+ config/depotcache), writes keys.txt in the
+# extended format (depot;parent_app;manifest_gid;size;hexkey), and adds the app
+# + depots to SLSsteam's AdditionalApps in config.yaml
+python3 tools/steamidra_lite.py <appid>.zip
 ```
 
-The script:
-1. Detects your Steam installation (native or Flatpak)
-2. Copies `liblumalinux.so` to `~/.local/share/lumalinux/`
-3. Patches `steam.sh` to add lumalinux to `LD_PRELOAD`
-4. Creates `~/.config/lumalinux/keys.txt` (empty) if it doesn't exist
-5. Backs up the original `steam.sh` to `steam.sh.bak`
+Restart Steam → click **Install** on the game. lumalinux fetches the manifest
+request codes from `gmrc.wudrm.com` on demand and serves the depot keys; Steam
+downloads and mounts the depots natively.
 
-To uninstall:
-```bash
-./install.sh --uninstall
-```
+`keys.txt` lives at `~/.config/lumalinux/keys.txt`. `tools/vdf_inject_keys.py` is
+an optional helper that writes depot keys into Steam's `config.vdf` without
+needing the `vdf` python module — but Steam prunes those entries for unowned
+depots, which is exactly why the runtime DepotKey hook is what actually serves
+the keys.
 
-## Populate keys
+## Credits / notes
 
-Edit `~/.config/lumalinux/keys.txt`. Format:
-
-```
-<depot_id>;<64 hex chars>
-```
-
-One key per line. Lines starting with `#` are comments.
-
-Where to get keys: SteamTools/LumaCore `.lua` files contain them. Each `addappid(N, 1, "hex_key")` line gives you depot `N` with key `hex_key`. Convert to lumalinux format:
-
-```
-N;hex_key
-```
-
-You can use SteaMidra's `saved_lua/` directory as your source — same `.lua` files you use on Windows.
-
-## Verify it's working
-
-After running `install.sh` and starting Steam:
-
-```bash
-tail -f ~/.cache/lumalinux/lumalinux.log
-```
-
-You should see lines like:
-
-```
-[2026-05-21 14:32:01] [INFO] lumalinux v0.1.0 loading...
-[2026-05-21 14:32:01] [INFO] KeyStore: loaded 5 key(s) from /home/deck/.config/lumalinux/keys.txt
-[2026-05-21 14:32:02] [INFO] Patterns: steamclient.so loaded at 0xf6c00000
-[2026-05-21 14:32:02] [INFO] Patterns: depot key function found at 0xf6f9ec00 (RVA 0x39ec00)
-[2026-05-21 14:32:02] [INFO] DepotKey hook: INSTALLED (target=0xf6f9ec00, trampoline=0xf7a14000, 5 keys loaded)
-```
-
-Then try clicking "Install" on an unowned game (with key present in keys.txt). When the hook fires:
-
-```
-[2026-05-21 14:32:45] [INFO] LoadDepotKey: SERVED local key for depot 246621 (app 246620)
-```
-
-If you don't see "depot key function found", the byte pattern in `src/patterns.hpp` doesn't match your build of `steamclient.so`. Steam updates can change this. See troubleshooting below.
-
-## Troubleshooting
-
-### Pattern not found
-
-Steam updates can shift internal functions. To re-extract the pattern:
-
-1. Open `~/.steam/steam/linux64/steamclient.so` in Ghidra
-2. Search → Defined Strings → "Failed to get decryption key for depot"
-3. Click the result, then References → References to this address
-4. Navigate to the function that uses this string. That's `LoadDepotDecryptionKey`.
-5. Copy the first ~24 bytes of the function as a byte pattern, replacing GOT-relative offsets with `??`
-6. Update `kDepotKeyFnPattern` in `src/patterns.hpp` and rebuild
-
-### libmem fetch fails
-
-If `cmake` fails during the libmem `FetchContent`, you can vendor libmem manually:
-
-1. Get `liblibmem.a` from a working SLSsteam build (it's in `lib/` of their source repo, GPL-3.0 compatible with our license)
-2. Get `libmem.h` and `libmem.hpp` from the same source's `include/libmem/`
-3. Modify `CMakeLists.txt` to use these local files instead of FetchContent
-
-### Hook installs but doesn't fire
-
-Means the pattern matched a wrong function. Verify:
-- Pattern matches exactly ONE address in the binary (use Ghidra search)
-- The function at that address contains the EMsg 5438 reference (look for `mov [eax], 0x8000153e` or similar)
-- The arg layout matches: `(this*, app_id, depot_id, out_buffer)`
-
-If layout differs, adjust the hook function signature in `src/hooks/depot_key_hook.cpp`.
-
-### Steam crashes on startup
-
-If lumalinux causes Steam to crash:
-
-1. Run `./install.sh --uninstall`
-2. Steam launches normally (using the `steam.sh.bak` backup)
-3. Check `~/.cache/lumalinux/lumalinux.log` for the last entries before crash
-4. File an issue with the log
-
-## Roadmap
-
-This is v0.1.0. Only depot keys are hooked. Future versions may add:
-
-- `LoadPackage` hook for package-level license injection
-- `KeyValues_ReadAsBinary` hook for manifest pinning enforcement
-- `MarkLicenseAsChanged` for license refresh without Steam restart
-- `SpawnProcess` for online-fix.me game launch handling
-
-If you want any of these specifically, open an issue describing the use case.
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE).
-
-This project uses libmem (rdbo/libmem), also GPL-3.0.
-
-## Acknowledgements
-
-- LumaCore (Midrags/SFF/LumaCore) — Windows reference implementation that informed the function-level hook approach
-- SLSsteam (AceSLS/SLSsteam) — Linux infrastructure precedent; lumalinux complements rather than replaces
-- DepotDownloader (SteamRE/DepotDownloader) — flow reference for understanding Steam's depot key RPC
-- SteamKit (SteamRE/SteamKit) — protocol definitions
-- libmem (rdbo/libmem) — function detour library
+- Hook design mirrors **LumaCore** (Windows).
+- Coexists with **SLSsteam** (ownership/licensing); does not fork or modify it.
+- Manifest request codes via **gmrc.wudrm.com** (the endpoint SteaMidra uses;
+  the `manifest.steam.run` endpoint LumaCore used is dead).
+- Educational / for your own Steam setup. Don't redistribute Valve binaries.
