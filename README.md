@@ -52,13 +52,21 @@ supported path**.
 32-bit Linux shared object. Needs a multilib toolchain + cmake.
 
 ```sh
+./tools/fetch_libmem.sh         # one-time: drops the pinned libmem release
+                                # tarball into lib/ + include/libmem/
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
 # -> build/liblumalinux.so  (ELF 32-bit i386)
 ```
 
-CI (`.github/workflows/build.yml`) builds it on every push to `main`.
+`tools/fetch_libmem.sh` downloads the official pre-built static lib +
+headers from `rdbo/libmem`'s GitHub release (version + SHA256 pinned in
+the script). The fetched files are gitignored, not vendored — bump the
+version in the script when upgrading.
+
+CI (`.github/workflows/build.yml`) builds it on every push to `main`,
+invoking the same `fetch_libmem.sh` step before cmake.
 
 ## Install / load (the exact recipe that works on a Steam Deck)
 

@@ -24,6 +24,9 @@ jobs:
             cmake \
             ninja-build
 
+      - name: Fetch libmem (pinned release tarball)
+        run: ./tools/fetch_libmem.sh
+
       - name: Configure
         run: |
           mkdir -p build
@@ -35,12 +38,6 @@ jobs:
       - name: Build
         run: |
           cd build
-          # libmem uses ExternalProject_Add internally for capstone, which doesn't
-          # interact cleanly with ninja's dependency graph: ninja tries to link
-          # liblumalinux.so before capstone has been built, causing a missing
-          # libcapstone.a error. Workaround: two-pass build. First pass builds
-          # capstone (link will fail). Second pass succeeds because the .a now exists.
-          ninja -v || true
           ninja -v
 
       - name: Verify output

@@ -11,3 +11,9 @@ build/
 .DS_Store
 CMakeUserPresets.json
 compile_commands.json
+
+# Fetched from the libmem release tarball by tools/fetch_libmem.sh,
+# pinned to a specific upstream version. Not vendored.
+/lib/liblibmem.a
+/include/libmem/
+compile_commands.json
