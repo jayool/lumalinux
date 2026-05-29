@@ -135,6 +135,44 @@ needing the `vdf` python module — but Steam prunes those entries for unowned
 depots, which is exactly why the runtime DepotKey hook is what actually serves
 the keys.
 
+## Updating after a Steam / SteamOS update
+
+Two different updates can break the setup. Symptoms tell them apart:
+
+### A) Steam **client** update → a hook stops matching
+The hook byte patterns are tied to a specific `steamclient.so` build. After a
+Steam client update the startup toast may say `N/4 hooks — <HOOK> FAILED`
+(or the log shows `pattern NOT FOUND`). Fix:
+
+1. **Grab the new binary** from the Deck:
+   `~/.local/share/Steam/linux32/steamclient.so`.
+2. **Re-derive the patterns** with the maintainer script — a Ghidra headless
+   postScript that auto-derives the string-anchored hooks (BuildDep, GMRC) and
+   validates the rest:
+   ```sh
+   # one-time import (analysis ~5–15 min):
+   analyzeHeadless <proj> sc -import steamclient.so
+   # re-derive:
+   analyzeHeadless <proj> sc -process steamclient.so \
+       -noanalysis -scriptPath tools -postScript derive_patterns.py
+   ```
+   It prints a fresh `UNIQUE` pattern per anchored hook. For the anchorless ones
+   (DepotKey, LoadPackage) it re-validates the current pattern: "keep it" means
+   no change needed; a "no longer matches" means re-derive that one by hand in
+   the Ghidra GUI (see [`docs/RESEARCH.md`](docs/RESEARCH.md) §8.1).
+3. **Paste** the printed patterns into `src/patterns.hpp`, then **rebuild and
+   redeploy** the `.so` (the Build + step 1 of Install above).
+
+> Most updates only move the two anchored hooks, which the script fixes
+> automatically — so this is usually copy-paste-rebuild, not a full RE session.
+
+### B) **SteamOS** update → `/usr/bin/steam` is reset
+SteamOS updates overwrite `/usr/bin/steam`, dropping the `LD_PRELOAD` line (and
+SLSsteam's `LD_AUDIT` line). Steam then starts with **no hooks** (no toast at
+all). Fix: re-apply step 2 of Install (the `sed` that adds the `LD_PRELOAD`
+line) after each SteamOS update. The deployed `.so` and your `keys.txt` survive;
+only the launcher line needs re-adding.
+
 ## Credits / notes
 
 - Hook design mirrors **LumaCore** (Windows).
