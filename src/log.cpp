@@ -87,4 +87,27 @@ void Warn(const char* fmt, ...)  { va_list ap; va_start(ap, fmt); WriteLine("WAR
 void Error(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine("ERROR", fmt, ap); va_end(ap); }
 void Debug(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine("DEBUG", fmt, ap); va_end(ap); }
 
+void Notify(const char* fmt, ...) {
+    char msg[512];
+    va_list ap; va_start(ap, fmt);
+    std::vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    // Always log it.
+    Info("NOTIFY: %s", msg);
+
+    if (std::getenv("LUMA_NO_NOTIFY")) return;
+
+    // Neutralize shell metacharacters (messages are internal/fixed, but be safe).
+    for (char* p = msg; *p; ++p)
+        if (*p == '"' || *p == '`' || *p == '$' || *p == '\\') *p = '\'';
+
+    char cmd[700];
+    std::snprintf(cmd, sizeof(cmd),
+                  "notify-send -t 8000 -u normal 'lumalinux' \"%s\" >/dev/null 2>&1 &",
+                  msg);
+    int rc = std::system(cmd);
+    (void)rc;
+}
+
 } // namespace Log

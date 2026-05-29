@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.8.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.8.1)
 
 # Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")

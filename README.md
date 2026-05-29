@@ -93,20 +93,23 @@ exec /usr/lib/steam/steam -steamdeck "$@"
 > ⚠️ SteamOS **updates reset `/usr/bin/steam`** — re-apply this line after each
 > SteamOS update.
 
-**3. Start Steam and verify** the four hooks installed:
-```sh
-rm -f ~/.cache/lumalinux/lumalinux.log ~/.steam/steam.pid
-steam &
-sleep 35
-grep -E "v0\.8|hook: INSTALLED" ~/.cache/lumalinux/lumalinux.log
-```
-Expect: `LoadPackage hook: INSTALLED`, `DepotKey hook: INSTALLED`,
-`DepotDependency hook: INSTALLED`, `GMRC hook: INSTALLED`.
+**3. Start Steam.** On load you get a desktop toast (via `notify-send`, same as
+SLSsteam):
+- `lumalinux: v0.8.1 loaded — 4/4 hooks active` → all good.
+- `lumalinux: v0.8.1: 3/4 hooks — GMRC FAILED. Steam update? See …` → a hook's
+  byte pattern stopped matching (almost always a Steam update). Re-derive the
+  patterns (see [`docs/RESEARCH.md`](docs/RESEARCH.md) §8) and rebuild.
 
-Log: `~/.cache/lumalinux/lumalinux.log`. To disable a hook for debugging, set the
-env var before launching: `LUMA_NO_LOADPKG`, `LUMA_NO_DEPOTKEY`,
-`LUMA_NO_BUILDDEP`, `LUMA_NO_GMRC` (and `LUMA_LOADPKG_IDX=N` if LoadPackage picks
-the wrong candidate).
+To confirm from the log instead:
+```sh
+grep -E "v0\.8|hook: INSTALLED|NOTIFY" ~/.cache/lumalinux/lumalinux.log
+```
+Expect `LoadPackage`, `DepotKey`, `DepotDependency`, `GMRC` all `INSTALLED`.
+
+Log: `~/.cache/lumalinux/lumalinux.log`. Env vars (set before launching):
+- `LUMA_NO_NOTIFY` — silence the startup toast.
+- `LUMA_NO_LOADPKG` / `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable a hook.
+- `LUMA_LOADPKG_IDX=N` — pick a different LoadPackage candidate if it grabs the wrong one.
 
 ## Setting up a game (the full recipe)
 

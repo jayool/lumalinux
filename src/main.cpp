@@ -50,7 +50,7 @@ void DoPreinit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (preinit) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.8.0 preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
+    Log::Info("lumalinux v0.8.1 preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
@@ -81,37 +81,44 @@ void InstallHooks() {
     // depots as download targets ("0 target depots"). LoadPackage injects the
     // depot ids into PackageId=0 so the per-depot license check passes and the
     // depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
-    // keys. This mirrors LumaCore exactly (minus the packet hook, which
-    // SLSsteam covers).
-    if (std::getenv("LUMA_NO_LOADPKG")) {
-        Log::Warn("Install: LoadPackage hook DISABLED via LUMA_NO_LOADPKG");
-    } else if (!Hooks::LoadPackage::Install()) {
-        Log::Error("Install: LoadPackage hook installation failed");
+    // keys; GMRC injects the manifest request code. Mirrors LumaCore.
+    //
+    // Each hook reports ok / disabled / FAILED. A FAILED hook almost always
+    // means its byte pattern stopped matching after a Steam update — that's the
+    // early-warning signal surfaced in the startup toast.
+    struct HookSpec { const char* name; const char* disableEnv; bool (*install)(); };
+    const HookSpec specs[] = {
+        {"LoadPackage", "LUMA_NO_LOADPKG",  &Hooks::LoadPackage::Install},
+        {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
+        {"BuildDep",    "LUMA_NO_BUILDDEP", &Hooks::DepotDependency::Install},
+        {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
+    };
+
+    int active = 0, expected = 0;
+    std::string failed;
+    for (const auto& s : specs) {
+        if (std::getenv(s.disableEnv)) {
+            Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
+            continue;
+        }
+        ++expected;
+        if (s.install()) {
+            ++active;
+        } else {
+            Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
+                       "updated — see docs/RESEARCH.md to re-derive patterns)", s.name);
+            if (!failed.empty()) failed += ", ";
+            failed += s.name;
+        }
     }
 
-    if (std::getenv("LUMA_NO_DEPOTKEY")) {
-        Log::Warn("Install: DepotKey hook DISABLED via LUMA_NO_DEPOTKEY");
-    } else if (!Hooks::DepotKey::Install()) {
-        Log::Error("Install: depot key hook installation failed");
+    Log::Info("Install: lumalinux active (%d/%d hooks)", active, expected);
+    if (failed.empty()) {
+        Log::Notify("v0.8.1 loaded — %d/%d hooks active", active, expected);
+    } else {
+        Log::Notify("v0.8.1: %d/%d hooks — %s FAILED. Steam update? See "
+                    "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
     }
-
-    if (std::getenv("LUMA_NO_BUILDDEP")) {
-        Log::Warn("Install: BuildDepotDependency hook DISABLED via LUMA_NO_BUILDDEP");
-    } else if (!Hooks::DepotDependency::Install()) {
-        Log::Warn("Install: BuildDepotDependency hook failed — non-fatal");
-    }
-
-    // GMRC hook: injects the manifest request code (from gmrc.wudrm.com) for
-    // our forced manifests, so Steam can download unowned content. Plain
-    // function hook (like DepotKey) — installs synchronously.
-    if (std::getenv("LUMA_NO_GMRC")) {
-        Log::Warn("Install: GMRC hook DISABLED via LUMA_NO_GMRC");
-    } else if (!Hooks::Gmrc::Install()) {
-        Log::Error("Install: GMRC hook installation failed — manifest downloads "
-                   "for unowned content will fail with Access Denied");
-    }
-
-    Log::Info("Install: lumalinux active (LoadPackage + DepotKey + BuildDep + GMRC)");
 }
 
 bool IsSteamclient(const char* name) {

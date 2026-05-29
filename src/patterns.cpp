@@ -104,7 +104,8 @@ uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
     uintptr_t found = SigScan(r.base, r.size, parsed);
     if (!found) {
         Log::Error("Patterns: %s — pattern NOT FOUND in steamclient.so. "
-                   "Steam may have updated; re-extract via tools/analyze_steamclient.py.",
+                   "Steam likely updated; re-derive the patterns (see docs/RESEARCH.md "
+                   "section 8, and tools/ghidra_find_gmrc.py).",
                    logName);
         return 0;
     }
