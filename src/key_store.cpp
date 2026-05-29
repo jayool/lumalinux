@@ -128,13 +128,6 @@ std::optional<DepotKey> Lookup(uint32_t depot_id) {
     return it->second.key;
 }
 
-std::optional<DepotInfo> LookupInfo(uint32_t depot_id) {
-    std::lock_guard<std::mutex> lock(Mtx());
-    auto it = Keys().find(depot_id);
-    if (it == Keys().end()) return std::nullopt;
-    return it->second;
-}
-
 std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id) {
     std::lock_guard<std::mutex> lock(Mtx());
     std::vector<DepotInfo> result;

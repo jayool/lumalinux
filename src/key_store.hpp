@@ -36,11 +36,8 @@ std::string DefaultPath();
 // Lines starting with # and blank lines are ignored.
 bool LoadFromFile(const std::string& path);
 
-// Lookup just the 32-byte key for a depot. Used by v0.1 depot_key_hook.
+// Lookup just the 32-byte key for a depot. Used by depot_key_hook.
 std::optional<DepotKey> Lookup(uint32_t depot_id);
-
-// Lookup full DepotInfo. nullopt if depot_id not in store.
-std::optional<DepotInfo> LookupInfo(uint32_t depot_id);
 
 // All depots whose parent_app_id == app_id AND have manifest_gid set.
 // Used by depot_dependency_hook to know what gid/size to patch. Empty if none.

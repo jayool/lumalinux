@@ -51,59 +51,6 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 
 
 // =============================================================================
-// v0.4 — KeyValues::ReadAsBinary (appinfo KV-tree injection point)
-// =============================================================================
-//
-// Steam's KV-tree binary deserializer. Used during appinfo parsing — our entry
-// point for injecting depots BEFORE Steam builds pDepotInfo (which is what
-// LumaCore-style works on but is too late on Linux because Valve filters
-// unowned depots out of appinfo before the BuildDepotDependency stage).
-//
-// SIGNATURE (Linux i386, member function, all args on stack):
-//   bool KeyValues::ReadAsBinary(
-//       KeyValues*  this_root,    // [ebp+0x08]
-//       void*       buf,          // [ebp+0x0C]
-//       int         depth,        // [ebp+0x10]
-//       bool        textMode,     // [ebp+0x14]
-//       void*       symTable);    // [ebp+0x18]
-//
-// Verified UNIQUE at file offset 0x02477310 in build BuildID ea3e0c7660...
-// (~Steam Deck May 2026 ubuntu12_32/steamclient.so).
-//
-// NOTE: differs from earlier linux32 variant only in `sub esp, 0x9C` (vs 0x8C);
-// stack frame grew between builds. All else identical.
-inline constexpr const char* kKeyValuesReadAsBinaryPattern =
-    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 9C 00 00 00 8B 45 14 89 45";
-
-
-// =============================================================================
-// v0.5 — CProtoBufMsgBase::InitFromPacket (network response interception)
-// =============================================================================
-//
-// Hooked to rewrite denied Valve responses for unowned content:
-//   eMsg 858  CMsgClientGetAppOwnershipTicketResponse  -> eresult=OK
-//   eMsg 5439 CMsgClientGetDepotDecryptionKeyResponse   -> inject key + eresult=OK
-//
-// InitFromPacket prologue (Linux i386). Uses EDI as PIC/GOT base. Only 4 bytes
-// precede the get_pc_thunk call, so subhook can't relocate it safely — we hook
-// it with a hand-built trampoline (see packet_hook.cpp). Matched directly by
-// prologue; the `mov eax,[edi+0x8b0]` tail makes it unique.
-//
-//   55             push ebp
-//   89 E5          mov ebp, esp
-//   57             push edi
-//   E8 ?? ?? ?? ?? call __i686.get_pc_thunk.di
-//   81 C7 ?? ?? ?? ?? add edi, <GOT>
-//   56             push esi
-//   53             push ebx
-//   83 EC 2C       sub esp, 0x2C
-//   8B 75 08       mov esi, [ebp+8]        ; pMsg (this)
-//   8B 87 B0 08 00 00  mov eax, [edi+0x8B0]
-inline constexpr const char* kInitFromPacketPattern =
-    "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 83 EC 2C 8B 75 08 8B 87 B0 08 00 00";
-
-
-// =============================================================================
 // v0.5 — LoadPackage (PackageId=0 appid injection)
 // =============================================================================
 //
@@ -169,8 +116,6 @@ inline constexpr const char* kGmrcFunctionPattern =
 
 uintptr_t FindDepotKeyFunction();
 uintptr_t FindBuildDepotDependencyFunction();
-uintptr_t FindKeyValuesReadAsBinaryFunction();
-uintptr_t FindInitFromPacketFunction();
 uintptr_t FindLoadPackageFunction();
 uintptr_t FindGmrcFunction();
 
