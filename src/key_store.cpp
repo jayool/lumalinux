@@ -1,6 +1,7 @@
 #include "key_store.hpp"
 #include "log.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -144,6 +145,25 @@ std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id) {
         }
     }
     return result;
+}
+
+std::vector<uint32_t> GetAllDepotIds() {
+    std::lock_guard<std::mutex> lock(Mtx());
+    std::vector<uint32_t> result;
+    result.reserve(Keys().size());
+    for (const auto& [depot_id, _] : Keys()) {
+        result.push_back(depot_id);
+    }
+    return result;
+}
+
+bool HasManifestGid(uint64_t manifest_gid) {
+    if (manifest_gid == 0) return false;
+    std::lock_guard<std::mutex> lock(Mtx());
+    for (const auto& [_, info] : Keys()) {
+        if (info.manifest_gid == manifest_gid) return true;
+    }
+    return false;
 }
 
 size_t Size() {

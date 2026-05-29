@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.4.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.8.0)
 
 # Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")
@@ -16,33 +16,23 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -fvisibility=hidden)
 endif()
 
-include(FetchContent)
-
-set(SUBHOOK_STATIC       ON  CACHE BOOL "")
-set(SUBHOOK_TESTS        OFF CACHE BOOL "")
-set(SUBHOOK_INSTALL      OFF CACHE BOOL "")
-set(SUBHOOK_FORCE_32BIT  ON  CACHE BOOL "")
-
-FetchContent_Declare(
-    subhook
-    GIT_REPOSITORY https://github.com/Cxbx-Reloaded/subhook.git
-    GIT_TAG        master
-    GIT_SHALLOW    TRUE
-)
-FetchContent_MakeAvailable(subhook)
-
 add_library(lumalinux SHARED
     src/main.cpp
     src/log.cpp
     src/key_store.cpp
     src/patterns.cpp
+    src/lmhook.cpp
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp
-    src/hooks/keyvalues_hook.cpp
+    src/hooks/load_package_hook.cpp
+    src/hooks/gmrc_hook.cpp
 )
 
-target_include_directories(lumalinux PRIVATE src/)
-target_link_libraries(lumalinux PRIVATE subhook)
+target_include_directories(lumalinux PRIVATE src/ include/)
+target_link_libraries(lumalinux PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/liblibmem.a
+    ${CMAKE_DL_LIBS}
+)
 
 set_target_properties(lumalinux PROPERTIES
     OUTPUT_NAME "lumalinux"

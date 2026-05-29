@@ -43,8 +43,20 @@ std::optional<DepotKey> Lookup(uint32_t depot_id);
 std::optional<DepotInfo> LookupInfo(uint32_t depot_id);
 
 // All depots whose parent_app_id == app_id AND have manifest_gid set.
-// Used by v0.3 depot_dependency_hook to know what to inject. Empty if none.
+// Used by depot_dependency_hook to know what gid/size to patch. Empty if none.
 std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id);
+
+// Every depot_id present in the store (i.e. every key we have). This is the
+// faithful Linux equivalent of LumaCore's LuaLoader::GetAllDepotIds() — it
+// returns the DEPOT ids (not parent app ids). The LoadPackage hook injects
+// these into PackageId=0's AppIdVec so Steam's per-depot license check in
+// BuildDepotDependency finds them "owned" and keeps them in the depot list.
+std::vector<uint32_t> GetAllDepotIds();
+
+// True if `manifest_gid` is the manifest of one of our forced depots. The GMRC
+// hook uses this to only inject a manifest request code for manifests we
+// actually manage (leaving genuinely-owned content to Steam's normal path).
+bool HasManifestGid(uint64_t manifest_gid);
 
 // Total count of keys loaded.
 size_t Size();

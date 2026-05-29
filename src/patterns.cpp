@@ -143,4 +143,105 @@ uintptr_t FindKeyValuesReadAsBinaryFunction() {
     return FindInSteamclient(kKeyValuesReadAsBinaryPattern, "KeyValues::ReadAsBinary");
 }
 
+uintptr_t FindGmrcFunction() {
+    return FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
+}
+
+uintptr_t FindLoadPackageFunction() {
+    // The prologue `55 89 E5 57 ... 81 EC 1C 01 00 00` may match multiple
+    // functions. Enumerate all matches; pick by index via LUMA_LOADPKG_IDX
+    // (default 0). Logs all candidates so we can re-tune if a Steam update
+    // shifts the offset.
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern(kLoadPackagePattern);
+    if (parsed.bytes.empty()) return 0;
+
+    std::vector<uintptr_t> hits;
+    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
+    const size_t   patLen = parsed.bytes.size();
+    for (size_t i = 0; i + patLen <= r.size; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
+        }
+        if (match) hits.push_back(r.base + i);
+    }
+
+    if (hits.empty()) {
+        Log::Error("Patterns: LoadPackage — no candidates found");
+        return 0;
+    }
+
+    for (size_t i = 0; i < hits.size(); ++i) {
+        Log::Info("Patterns: LoadPackage candidate[%zu] at 0x%lx (RVA 0x%lx)",
+                  i, (unsigned long)hits[i], (unsigned long)(hits[i] - r.base));
+    }
+
+    size_t idx = 0;
+    if (const char* env = std::getenv("LUMA_LOADPKG_IDX")) {
+        idx = static_cast<size_t>(std::strtoul(env, nullptr, 10));
+        if (idx >= hits.size()) {
+            Log::Warn("Patterns: LUMA_LOADPKG_IDX=%zu out of range (%zu) — using 0",
+                      idx, hits.size());
+            idx = 0;
+        }
+    }
+
+    Log::Info("Patterns: LoadPackage selected candidate[%zu] = 0x%lx (RVA 0x%lx)",
+              idx, (unsigned long)hits[idx], (unsigned long)(hits[idx] - r.base));
+    return hits[idx];
+}
+
+uintptr_t FindInitFromPacketFunction() {
+    // The prologue of InitFromPacket is NOT unique (several funcs share
+    // `55 89 e5 57 e8 .. 81 c7 ..`). Resolve it the reliable way: find the
+    // call site `call InitFromPacket; pop eax; mov eax,[ebp+x]; mov ecx,[..]`
+    // and follow the rel32. Verify the target actually has the expected
+    // get_pc_thunk prologue; if a match resolves elsewhere, try the next.
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern("E8 ?? ?? ?? ?? 58 8B 45 ?? 8B 8D");
+    if (parsed.bytes.empty()) return 0;
+
+    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
+    const size_t   patLen = parsed.bytes.size();
+    for (size_t i = 0; i + patLen <= r.size; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
+        }
+        if (!match) continue;
+
+        uintptr_t callSite = r.base + i;
+        int32_t rel = *reinterpret_cast<const int32_t*>(callSite + 1);
+        uintptr_t target = callSite + 5 + static_cast<uintptr_t>(static_cast<intptr_t>(rel));
+        if (target < r.base || target >= r.base + r.size) continue;
+
+        const uint8_t* tp = reinterpret_cast<const uint8_t*>(target);
+        // Accept either:
+        //  - Original prologue:  55 89 E5 57 E8 .. .. .. .. 81 C7
+        //  - Already-hooked:     E9 .. .. .. ..  (a previous loader, e.g. SLSsteam,
+        //                                          has placed its detour here)
+        // In the second case we trust the call-site verification — we've found
+        // a real `call InitFromPacket`, so the target IS InitFromPacket, just
+        // already detoured. Our LmHook's RelocateChainedJmp handles chaining.
+        bool prologueOK = tp[0] == 0x55 && tp[1] == 0x89 && tp[2] == 0xE5 &&
+                          tp[3] == 0x57 && tp[4] == 0xE8 &&
+                          tp[9] == 0x81 && tp[10] == 0xC7;
+        bool alreadyHooked = tp[0] == 0xE9;
+        if (prologueOK || alreadyHooked) {
+            Log::Info("Patterns: InitFromPacket call@0x%lx -> target 0x%lx (RVA 0x%lx)%s",
+                      (unsigned long)callSite, (unsigned long)target,
+                      (unsigned long)(target - r.base),
+                      alreadyHooked ? " [already E9-hooked]" : "");
+            return target;
+        }
+    }
+    Log::Error("Patterns: InitFromPacket — no call-site resolved to a valid prologue");
+    return 0;
+}
+
 } // namespace Patterns

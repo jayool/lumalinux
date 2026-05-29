@@ -3,86 +3,203 @@
 // v0.1: depot key resolution hook (LoadDepotDecryptionKey equivalent)
 // v0.2: BuildDepotDependency hook in diagnostic mode
 // v0.3: BuildDepotDependency injection (allocator issues — abandoned)
-// v0.4: KeyValues::ReadAsBinary diagnostic hook for appinfo identification.
-//       Injection currently DISABLED — recon phase to map call patterns
-//       before implementing KV-tree mutation in v0.5.
+// v0.4: KeyValues::ReadAsBinary recon (mapping call patterns) — abandoned
+// v0.5: LD_AUDIT migration + LoadPackage injection (LumaCore-style).
+//       LoadPackage hook adds forced appids into PackageId=0 so Steam fetches
+//       their appinfo. BuildDep hook then PATCHES existing depot entries' gid
+//       and size (never injects).
+// v0.5.1: Dual-load support. Works both as LD_AUDIT (la_preinit / la_objopen
+//         fire) and as LD_PRELOAD (the __attribute__((constructor)) kicks in
+//         and polls /proc/self/maps for steamclient.so). On 64-bit hosts that
+//         reject 32-bit audit libs (most Steam launchers), LD_PRELOAD is the
+//         only path that runs, and the constructor handles it.
+// v0.5.6: Aligned exactly to LumaCore's hook logic, no extras (avoids crashes):
+//         - LoadPackage injects the DEPOT ids (== LumaCore GetAllDepotIds),
+//           not the parent app id, so BuildDep's per-depot license filter
+//           keeps them. In-place append only (no risky manual realloc).
+//         - BuildDep is PATCH-only and honours size==0 → keep original.
+//         - Packet/858 hook REMOVED: SLSsteam already covers ownership
+//           (CheckAppOwnership) and PICS access tokens. Nothing extra.
 
 #include "log.hpp"
 #include "key_store.hpp"
 #include "hooks/depot_key_hook.hpp"
 #include "hooks/depot_dependency_hook.hpp"
-#include "hooks/keyvalues_hook.hpp"
+#include "hooks/load_package_hook.hpp"
+#include "hooks/gmrc_hook.hpp"
 #include "patterns.hpp"
 
-#include <thread>
-#include <chrono>
 #include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <link.h>
+#include <string>
+#include <thread>
 
 namespace {
 
-std::atomic<bool> g_initialized{false};
-std::thread       g_initThread;
+std::atomic<bool> g_preinitDone{false};
+std::atomic<bool> g_hooksInstalled{false};
 
-void InitWorker() {
-    using namespace std::chrono_literals;
-
-    constexpr int kMaxAttempts = 300;
-    for (int i = 0; i < kMaxAttempts; i++) {
-        if (Patterns::FindSteamclientBase() != 0) {
-            Log::Info("Init: steamclient.so detected (attempt %d)", i + 1);
-            break;
-        }
-        if (i == kMaxAttempts - 1) {
-            Log::Error("Init: steamclient.so never loaded — giving up after 5min");
-            return;
-        }
-        std::this_thread::sleep_for(1s);
-    }
-
-    std::this_thread::sleep_for(500ms);
-
-    if (!Hooks::DepotKey::Install()) {
-        Log::Error("Init: depot key hook installation failed");
-        return;
-    }
-
-    if (!Hooks::DepotDependency::Install()) {
-        Log::Warn("Init: BuildDepotDependency hook failed (diagnostic only — non-fatal)");
-    }
-
-    if (!Hooks::KeyValues::Install()) {
-        Log::Warn("Init: KeyValues hook failed (recon mode — non-fatal)");
-    }
-
-    Log::Info("Init: lumalinux active");
-}
-
-__attribute__((constructor))
-void LumalinuxInit() {
-    if (g_initialized.exchange(true)) return;
+// Called once, before Steam's main thread starts running user code, by
+// the dynamic linker auditing API. Set up logging and load the key file
+// so the hooks (which can install later in la_objopen) have data ready.
+void DoPreinit() {
+    if (g_preinitDone.exchange(true)) return;
 
     Log::Init();
-    Log::Info("DEBUG: &g_keys (main) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.4.2 loading...");
+    Log::Info("DEBUG: &g_keys (preinit) = %p", KeyStore::DebugKeysAddr());
+    Log::Info("lumalinux v0.8.0 preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
     Log::Info("DEBUG: post-load Size=%zu", KeyStore::Size());
 
     if (KeyStore::Size() == 0) {
-        Log::Warn("Init: no keys loaded. Hooks install but won't intercept anything.");
-        Log::Warn("Init: populate %s — see example/keys.txt for format.",
+        Log::Warn("Preinit: no keys loaded. Hooks install but won't intercept anything.");
+        Log::Warn("Preinit: populate %s — see example/keys.txt for format.",
                   keysPath.c_str());
     }
+}
 
-    g_initThread = std::thread(InitWorker);
-    g_initThread.detach();
+void InstallHooks() {
+    if (g_hooksInstalled.exchange(true)) return;
+
+    if (Patterns::FindSteamclientBase() == 0) {
+        Log::Warn("Install: steamclient.so r-x not visible yet — backing off 200ms");
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        if (Patterns::FindSteamclientBase() == 0) {
+            Log::Error("Install: steamclient.so still not visible — aborting");
+            return;
+        }
+    }
+
+    // v0.6.1 — full hook set, loaded via LD_PRELOAD (NOT LD_AUDIT; the audit
+    // namespace corrupts the heap → realloc abort). SLSsteam gives ownership
+    // but Steam's fresh appinfo for an unowned app does NOT surface its content
+    // depots as download targets ("0 target depots"). LoadPackage injects the
+    // depot ids into PackageId=0 so the per-depot license check passes and the
+    // depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
+    // keys. This mirrors LumaCore exactly (minus the packet hook, which
+    // SLSsteam covers).
+    if (std::getenv("LUMA_NO_LOADPKG")) {
+        Log::Warn("Install: LoadPackage hook DISABLED via LUMA_NO_LOADPKG");
+    } else if (!Hooks::LoadPackage::Install()) {
+        Log::Error("Install: LoadPackage hook installation failed");
+    }
+
+    if (std::getenv("LUMA_NO_DEPOTKEY")) {
+        Log::Warn("Install: DepotKey hook DISABLED via LUMA_NO_DEPOTKEY");
+    } else if (!Hooks::DepotKey::Install()) {
+        Log::Error("Install: depot key hook installation failed");
+    }
+
+    if (std::getenv("LUMA_NO_BUILDDEP")) {
+        Log::Warn("Install: BuildDepotDependency hook DISABLED via LUMA_NO_BUILDDEP");
+    } else if (!Hooks::DepotDependency::Install()) {
+        Log::Warn("Install: BuildDepotDependency hook failed — non-fatal");
+    }
+
+    // GMRC hook: injects the manifest request code (from gmrc.wudrm.com) for
+    // our forced manifests, so Steam can download unowned content. Plain
+    // function hook (like DepotKey) — installs synchronously.
+    if (std::getenv("LUMA_NO_GMRC")) {
+        Log::Warn("Install: GMRC hook DISABLED via LUMA_NO_GMRC");
+    } else if (!Hooks::Gmrc::Install()) {
+        Log::Error("Install: GMRC hook installation failed — manifest downloads "
+                   "for unowned content will fail with Access Denied");
+    }
+
+    Log::Info("Install: lumalinux active (LoadPackage + DepotKey + BuildDep + GMRC)");
+}
+
+bool IsSteamclient(const char* name) {
+    if (!name) return false;
+    std::string s(name);
+    return s.size() >= std::string("steamclient.so").size() &&
+           (s.ends_with("/steamclient.so") || s == "steamclient.so");
+}
+
+} // namespace
+
+// =============================================================================
+// LD_AUDIT entry points
+// =============================================================================
+//
+// The dynamic linker calls these when our library is loaded via LD_AUDIT.
+// We pick up steamclient.so being loaded (la_objopen) and install our hooks
+// right then — earlier than the LD_PRELOAD constructor approach, which is
+// what enables hooking LoadPackage before Steam parses its first PICS
+// response.
+extern "C" {
+
+#define LUMA_EXPORT __attribute__((visibility("default")))
+
+// Return whatever ld.so asked for, clamped to what we support. Returning a
+// hard-coded LAV_CURRENT compiled against a newer glibc would get us silently
+// disabled on older runtimes (e.g. SteamOS ld.so), which is exactly what
+// happened in v0.5.0.
+LUMA_EXPORT unsigned int la_version(unsigned int version) {
+    return (version > LAV_CURRENT) ? LAV_CURRENT : version;
+}
+
+LUMA_EXPORT void la_preinit(uintptr_t* cookie) {
+    (void)cookie;
+    DoPreinit();
+}
+
+LUMA_EXPORT unsigned int la_objopen(struct link_map* map, Lmid_t lmid, uintptr_t* cookie) {
+    (void)lmid;
+    (void)cookie;
+    if (!map || !map->l_name) return 0;
+    if (!IsSteamclient(map->l_name)) return 0;
+
+    // la_preinit only runs for the main executable's auditing pass. For
+    // safety (e.g. if Steam dlopens steamclient.so before any other audit
+    // event reaches us), make sure preinit ran.
+    DoPreinit();
+
+    Log::Info("la_objopen: steamclient.so detected at link_map=%p (name=%s) — "
+              "installing hooks", (void*)map, map->l_name);
+    InstallHooks();
+    return 0;
+}
+
+} // extern "C"
+
+namespace {
+
+// LD_PRELOAD fallback path. Fires when the library is loaded via LD_PRELOAD
+// (no LD_AUDIT path active). Polls /proc/self/maps for steamclient.so, then
+// installs hooks. Idempotent with the LD_AUDIT path via the g_hooksInstalled
+// atomic in InstallHooks().
+__attribute__((constructor))
+void LumalinuxCtor() {
+    DoPreinit();
+
+    std::thread([] {
+        using namespace std::chrono_literals;
+        constexpr int kMaxAttempts = 300;  // ~5 min
+        for (int i = 0; i < kMaxAttempts; ++i) {
+            if (g_hooksInstalled.load()) return;  // la_objopen path already ran
+            if (Patterns::FindSteamclientBase() != 0) {
+                Log::Info("Ctor: steamclient.so detected (attempt %d) — installing hooks", i + 1);
+                std::this_thread::sleep_for(200ms);
+                InstallHooks();
+                return;
+            }
+            std::this_thread::sleep_for(1s);
+        }
+        Log::Warn("Ctor: steamclient.so never appeared — giving up");
+    }).detach();
 }
 
 __attribute__((destructor))
 void LumalinuxShutdown() {
-    Hooks::KeyValues::Uninstall();
+    Hooks::Gmrc::Uninstall();
     Hooks::DepotDependency::Uninstall();
+    Hooks::LoadPackage::Uninstall();
     Hooks::DepotKey::Uninstall();
     Log::Shutdown();
 }

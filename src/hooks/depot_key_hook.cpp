@@ -1,9 +1,8 @@
 #include "depot_key_hook.hpp"
 #include "../patterns.hpp"
 #include "../key_store.hpp"
+#include "../lmhook.hpp"
 #include "../log.hpp"
-
-#include <subhook.h>
 
 #include <cstring>
 #include <cstdint>
@@ -28,8 +27,13 @@ namespace {
 using LoadDepotKeyFn = int32_t (*)(void* /*this*/, uint32_t /*app_id*/,
                                    uint32_t /*depot_id*/, void* /*out_key*/);
 
-subhook_t      g_hook = nullptr;
 LoadDepotKeyFn g_origFn = nullptr;
+
+// Last depot id whose key we served from the KeyStore — read by the GMRC hook
+// for response→manifest correlation. Plain volatile is fine: single writer
+// (this hook), single reader (GMRC hook), and a stale value at worst injects
+// the wrong code (recoverable), never crashes.
+volatile uint32_t g_lastServedDepot = 0;
 
 constexpr int32_t kResultOK   = 1;
 constexpr int32_t kResultFail = 2;
@@ -50,6 +54,7 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id, void* out_key) {
 
     if (auto key = KeyStore::Lookup(depot_id)) {
         std::memcpy(out_key, key->data(), kDepotKeyBytes);
+        g_lastServedDepot = depot_id;
         Log::Info("LoadDepotKey: SERVED local key for depot %u (app %u)", depot_id, app_id);
         return kResultOK;
     }
@@ -75,38 +80,14 @@ bool Install() {
         return false;
     }
 
-    g_hook = subhook_new(reinterpret_cast<void*>(target),
-                         reinterpret_cast<void*>(&HookFn),
-                         static_cast<subhook_flags_t>(0));
-    if (!g_hook) {
-        Log::Error("DepotKey hook: subhook_new failed");
-        return false;
-    }
-
-    if (subhook_install(g_hook) != 0) {
-        Log::Error("DepotKey hook: subhook_install failed (target=0x%lx)",
+    // libmem hook + get_pc_thunk fixup (thread-safe; handles the PIC prologue).
+    void* tramp = nullptr;
+    if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
+        Log::Error("DepotKey hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
-        subhook_free(g_hook);
-        g_hook = nullptr;
         return false;
     }
-
-    g_origFn = reinterpret_cast<LoadDepotKeyFn>(subhook_get_trampoline(g_hook));
-    if (!g_origFn) {
-        Log::Error("DepotKey hook: subhook_get_trampoline returned null — "
-                   "function prologue may have instructions subhook can't relocate");
-        subhook_remove(g_hook);
-        subhook_free(g_hook);
-        g_hook = nullptr;
-        return false;
-    }
-
-    // ── DEBUG ──
-    Log::Info("DEBUG: &g_keys (worker) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("DEBUG: pre-INSTALL Size=%zu", KeyStore::Size());
-    auto kx = KeyStore::Lookup(246621);
-    Log::Info("DEBUG: pre-INSTALL Lookup(246621)=%s", kx ? "FOUND" : "MISSING");
-    // ── /DEBUG ──
+    g_origFn = reinterpret_cast<LoadDepotKeyFn>(tramp);
 
     Log::Info("DepotKey hook: INSTALLED (target=0x%lx, trampoline=%p, %zu keys loaded)",
               (unsigned long)target, (void*)g_origFn, KeyStore::Size());
@@ -114,12 +95,12 @@ bool Install() {
 }
 
 void Uninstall() {
-    if (!g_hook) return;
-    subhook_remove(g_hook);
-    subhook_free(g_hook);
-    g_hook = nullptr;
+    // Hook persists for process lifetime.
     g_origFn = nullptr;
-    Log::Info("DepotKey hook: uninstalled");
+}
+
+uint32_t LastServedDepot() {
+    return g_lastServedDepot;
 }
 
 } // namespace Hooks::DepotKey

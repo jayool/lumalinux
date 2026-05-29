@@ -118,7 +118,10 @@ EOF
         sed -i.bak '/# lumalinux start/,/# lumalinux end/d' "$steam_sh"
     fi
 
-    # Insert LD_PRELOAD extension near the top of steam.sh (right after the shebang)
+    # v0.5+: lumalinux uses LD_AUDIT (la_objopen) so it can hook LoadPackage
+    # before Steam parses the first PICS response. Insert near the top of
+    # steam.sh; if Steam's GameLauncher later runs `export $INJECT_CR` that
+    # clobbers LD_AUDIT, the user must add our path after that line manually.
     local tmpfile
     tmpfile="$(mktemp)"
     awk -v so="$LUMA_INSTALL_DIR/${LUMA_SO_NAME}" '
@@ -127,7 +130,7 @@ EOF
             print
             print ""
             print "# lumalinux start"
-            print "export LD_PRELOAD=\"" so "${LD_PRELOAD:+:}$LD_PRELOAD\""
+            print "export LD_AUDIT=\"" so "${LD_AUDIT:+:}$LD_AUDIT\""
             print "# lumalinux end"
             print ""
             inserted = 1
