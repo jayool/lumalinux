@@ -196,22 +196,47 @@ needed.
 
 ## Configuring a game
 
-The runtime side is generic — you point lumalinux at any app whose `.lua` +
-`.manifest` files you legitimately have, and it fills the gaps that SLSsteam
-doesn't cover so the native Install button can complete the flow. Tooling:
+You point lumalinux at any app whose `.lua` + `.manifest` files you
+legitimately have (Hubcap-style zip works directly). Run with Steam **closed**:
 
 ```sh
-# Places .manifest files into depotcache (+ config/depotcache), writes
-# keys.txt in the extended format (depot;parent_app;manifest_gid;size;hexkey),
-# and adds the app + depots to SLSsteam's AdditionalApps in config.yaml.
-python3 tools/steamidra_lite.py <your-zip>.zip
+python3 tools/steamidra_lite.py <appid>.zip
 ```
 
-`keys.txt` lives at `~/.config/lumalinux/keys.txt`. `tools/vdf_inject_keys.py`
-is a belt-and-suspenders helper that writes depot keys into Steam's
-`config.vdf` without the `vdf` Python module — but Steam prunes those entries
-for depots you don't own, which is exactly why the runtime DepotKey hook is
-the path that actually serves the keys.
+That single command does **all five** pieces SteaMidra Linux's `process_lua_full`
+does (see `sff/ui.py`), in order:
+
+1. **Extracts `.manifest` files** into both `~/.local/share/Steam/depotcache/`
+   AND `~/.local/share/Steam/config/depotcache/` (Steam reads either; syncing
+   both avoids intermittent "missing manifest").
+2. **Adds the AppID** (only the main one — not the depots) to
+   `~/.config/SLSsteam/config.yaml` under `AdditionalApps:`. Replicates
+   `sff/app_injector/sls.py:add_ids` exactly.
+3. **Writes `~/.config/lumalinux/keys.txt`** with the right format per depot:
+   - **Content depots** → EXTENDED: `depot;parent_app;manifest_gid;size;key`
+     (lumalinux injects these in `pDepotInfo` via the BuildDep hook).
+   - **Shared depots** (e.g. VC Redist that Steam already has in
+     `pSharedDepotInfo`) → LEGACY: `depot;key` (no injection — just serve the
+     key when Steam asks). Detected from the `-- SHARED DEPOTS` header in the
+     Hubcap `.lua`.
+   - **AppID dummy** → LEGACY: `app_id;000…000`. Placeholder for when Steam
+     queries the app's own "key" during install bootstrap.
+4. **Injects the DecryptionKeys into `~/.local/share/Steam/config/config.vdf`**
+   under `InstallConfigStore > Software > Valve > Steam > depots`. This is the
+   path Steam actually consults first to decrypt manifest signatures; serving
+   the keys only via the runtime hook isn't enough for the initial validation.
+   `--no-vdf` skips this step if you really don't want it. Requires
+   `pip install --user vdf` for the VDF library; without it the step is
+   skipped with a warning (the lumalinux DepotKey hook covers most cases but
+   not the early manifest validation).
+5. **AppToken** (optional, `--token APPID:HEX`) — only needed for games whose
+   PICS appinfo Valve doesn't return without a token. Most games don't need it.
+
+`keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
+file touched are written next to the originals before any change.
+
+`tools/vdf_inject_keys.py` is the same VDF logic in a standalone script — use
+it if you need to inject keys without re-running the full pipeline.
 
 ## Updating after a Steam / SteamOS update
 

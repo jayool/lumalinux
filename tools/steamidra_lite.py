@@ -6,20 +6,26 @@ Lee un .zip estilo Hubcap (nombre típico: {appid}.zip, contiene UN .lua y N
 .manifest) y escribe en disco lo que necesita Steam para ofrecer el Install de
 un juego no-owned cuando lumalinux + SLSsteam están cargados.
 
-Acciones:
-  1. Extrae los .manifest del ZIP a ~/.local/share/Steam/depotcache/
-     (los .manifest del Hubcap ya vienen con nombre {depot}_{gid}.manifest)
-  2. Añade el appid + depot ids al AdditionalApps de
-     ~/.config/SLSsteam/config.yaml (edición line-based segura, backup .bak)
-  3. Escribe las depot keys en ~/.config/lumalinux/keys.txt (formato simple)
-  4. (opcional, --vdf) Mete las keys también en
-     ~/.local/share/Steam/config/config.vdf (requiere 'pip install --user vdf';
-     si no, se salta sin error — lumalinux ya sirve las keys vía hook)
-  5. (opcional, --token APPID:HEX) Añade un AppToken al config.yaml de SLSsteam
+Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
+  1. Extrae los .manifest del ZIP a AMBOS ~/.local/share/Steam/depotcache/ y
+     ~/.local/share/Steam/config/depotcache/ (Steam lee de cualquiera).
+  2. Añade SOLO el AppID principal a AdditionalApps de
+     ~/.config/SLSsteam/config.yaml (replica sff/app_injector/sls.py:add_ids;
+     meter los depots ahí confunde a Steam).
+  3. Escribe ~/.config/lumalinux/keys.txt:
+       - Content depots → EXTENDED  (parent;gid;size;key)
+       - Shared depots  → LEGACY    (solo depot;key, NO se inyectan)
+       - AppID dummy    → LEGACY    (placeholder 000...0)
+     Los shared se detectan del header "-- SHARED DEPOTS" del .lua de Hubcap.
+  4. Inyecta las DecryptionKeys en ~/.local/share/Steam/config/config.vdf
+     (POR DEFECTO; --no-vdf para saltar). Requiere 'pip install --user vdf'.
+     Cierra Steam ANTES de correr el script (Steam reescribe config.vdf al
+     salir).
+  5. (opcional, --token APPID:HEX) Añade un AppToken al config.yaml de SLSsteam.
 
 Uso:
   python3 steamidra_lite.py 2379780.zip
-  python3 steamidra_lite.py 2379780.zip --vdf
+  python3 steamidra_lite.py 2379780.zip --no-vdf
   python3 steamidra_lite.py 2379780.zip --token 2379780:0x123abc...
 
   # también acepta un .lua + dir manifests si no tienes ZIP:
@@ -37,9 +43,15 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-RE_APPID        = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*\)", re.MULTILINE)
-RE_DEPOT_KEY    = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*,\s*\d\s*,\s*[\"'](\S+?)[\"']\s*\)", re.MULTILINE)
-RE_MANIFEST_GID = re.compile(r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*\)", re.MULTILINE)
+RE_APPID         = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*\)", re.MULTILINE)
+RE_DEPOT_KEY     = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*,\s*\d\s*,\s*[\"'](\S+?)[\"']\s*\)", re.MULTILINE)
+# Hubcap .lua emits setManifestid with 3 args (depot, "gid", size). Older formats
+# had only 2 (depot, "gid"). Accept both — the size is captured but optional.
+RE_MANIFEST_GID  = re.compile(r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*(?:,\s*(\d+))?\s*\)", re.MULTILINE)
+# Hubcap .lua marks shared depots with this comment block. Everything declared
+# after this header until the next blank-line / EOF is treated as shared (Steam
+# has these in pSharedDepotInfo already; we serve their key but DO NOT inject).
+RE_SHARED_HEADER = re.compile(r"--\s*SHARED DEPOTS\b", re.IGNORECASE)
 
 
 def parse_lua_text(text):
@@ -49,8 +61,19 @@ def parse_lua_text(text):
     app_id = appids[0]
     extra_appids = appids[1:]
     depot_keys = {int(d): k for d, k in RE_DEPOT_KEY.findall(text)}
-    manifests  = {int(d): g for d, g in RE_MANIFEST_GID.findall(text)}
-    return app_id, extra_appids, depot_keys, manifests
+    manifests  = {int(d): g for d, g, _size in RE_MANIFEST_GID.findall(text)}
+    manifest_sizes_from_lua = {int(d): int(s) for d, _g, s in RE_MANIFEST_GID.findall(text) if s}
+
+    # Detect which depots are SHARED (Steam already has them in pSharedDepotInfo).
+    # We split the .lua at the "-- SHARED DEPOTS" header and treat every depot
+    # declared after that as shared.
+    shared_depots = set()
+    m = RE_SHARED_HEADER.search(text)
+    if m:
+        for did, _key in RE_DEPOT_KEY.findall(text[m.end():]):
+            shared_depots.add(int(did))
+
+    return app_id, extra_appids, depot_keys, manifests, manifest_sizes_from_lua, shared_depots
 
 
 _MANIFEST_NAME_RE = re.compile(r"^(\d+)_(\d+)\.manifest$")
@@ -245,49 +268,56 @@ def update_sls_yaml(yaml_path, all_appids, app_tokens=None):
     return n_apps, n_tokens
 
 
-def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_id):
-    """keys.txt formato EXTENDIDO de lumalinux:
-       `depot_id;parent_app_id;manifest_gid;manifest_size;hex_key`
+def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_id, shared_depots):
+    """Mezcla con lo existente (no rompe entries de otros juegos) y escribe:
 
-    - parent_app_id: el appid principal del .lua para TODOS los depots con key.
-      lumalinux usa GetDepotsForApp(app) para saber qué entries de pDepotInfo
-      parchear cuando construye las deps de ese app; los content depots y los
-      shared (p.ej. Steamworks redist 228989) aparecen al construir las deps
-      del app, así que todos deben llevar parent=app_id para que el PATCH los
-      cubra. (Antes se usaba una heurística de "distancia al appid" frágil; el
-      .lua no distingue content vs shared, así que asignamos todos al app.)
-    - manifest_size: cb_disk_original parseado del .manifest. NO es crítico —
-      LumaCore solo lo usa para el display de progreso (si es 0, mantiene el
-      original). El crash que vimos al seleccionar el juego NO venía del size=0
-      sino de inyectar depots en BuildDep; eso ya no se hace."""
+    - Content depots (no shared, no es el AppID) → EXTENDED:
+        depot_id;parent_app_id;manifest_gid;manifest_size;hex_key
+      lumalinux inyecta estos en pDepotInfo cuando Steam construye las deps de
+      parent_app_id (BuildDepotDependency hook).
+
+    - Shared depots (e.g. VC 2019 Redist 228988 desde el comment "-- SHARED
+      DEPOTS" del .lua de Hubcap) → LEGACY:
+        depot_id;hex_key
+      Steam ya los tiene en pSharedDepotInfo (cualquier juego owned que los use
+      como dependencia los registra). Si los pusiéramos en EXTENDED, lumalinux
+      intentaría inyectarlos en pDepotInfo → duplicación, Steam los rechaza con
+      "configuración de contenido no válida".
+
+    - El AppID principal → entry dummy con key de ceros (LEGACY-ish):
+        app_id;0000...0000
+      Steam pregunta por la "key del AppID" durante el bootstrap del install;
+      el DepotKey hook responde con el placeholder para que el flow no se quede
+      esperando."""
     keys_path.parent.mkdir(parents=True, exist_ok=True)
     # Merge with existing entries (preserves entries from previous runs for other apps)
-    existing = {}  # {depot_id: (parent_app_id, manifest_gid, manifest_size, hex_key)}
+    existing = {}  # {depot_id: tuple — 5-tuple (ext) or 2-tuple (legacy)}
     if keys_path.exists():
         for line in keys_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
             if not line or line.startswith("#"): continue
             parts = line.split(";")
             try:
-                if len(parts) == 5:  # extended
+                if len(parts) == 5:
                     did = int(parts[0])
-                    existing[did] = (int(parts[1]), int(parts[2]), int(parts[3]), parts[4])
-                elif len(parts) == 2:  # legacy, upgrade to extended with zeros
+                    existing[did] = ("ext", int(parts[1]), int(parts[2]), int(parts[3]), parts[4])
+                elif len(parts) == 2:
                     did = int(parts[0])
-                    existing[did] = (0, 0, 0, parts[1])
+                    existing[did] = ("leg", parts[1])
             except ValueError:
                 continue
 
     added = 0
     updated = 0
     for did, key in depot_keys.items():
-        gid = manifests.get(did, 0)
-        size = manifest_sizes.get(did, 0)
-        # parent = app_id para todos los depots con key (ver docstring). El
-        # propio app (did == app_id, sin manifest) no es un depot de contenido,
-        # así que lo dejamos con parent=0 para no confundir GetDepotsForApp.
-        parent = app_id if did != app_id else 0
-        new_entry = (parent, gid, size, key)
+        if did == app_id:
+            new_entry = ("leg", "0" * 64)
+        elif did in shared_depots:
+            new_entry = ("leg", key)
+        else:
+            gid = manifests.get(did, 0)
+            size = manifest_sizes.get(did, 0)
+            new_entry = ("ext", app_id, gid, size, key)
         if did not in existing:
             existing[did] = new_entry
             added += 1
@@ -295,11 +325,24 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
             existing[did] = new_entry
             updated += 1
 
-    lines = ["# Formato extendido: depot_id;parent_app_id;manifest_gid;manifest_size;hex_key",
-             "# (gestionado por steamidra_lite.py)"]
+    # Ensure AppID dummy line exists even if the .lua didn't list it as a depot_key
+    if app_id not in existing:
+        existing[app_id] = ("leg", "0" * 64)
+        added += 1
+
+    lines = [
+        "# lumalinux keys.txt — managed by steamidra_lite.py",
+        "# EXTENDED: depot_id;parent_app_id;manifest_gid;manifest_size;hex_key   (content depots — lumalinux inyecta en pDepotInfo)",
+        "# LEGACY:   depot_id;hex_key                                            (shared depots + AppID dummy — lumalinux solo sirve la key)",
+    ]
     for did in sorted(existing):
-        parent, gid, size, key = existing[did]
-        lines.append(f"{did};{parent};{gid};{size};{key}")
+        e = existing[did]
+        if e[0] == "ext":
+            _, parent, gid, size, key = e
+            lines.append(f"{did};{parent};{gid};{size};{key}")
+        else:
+            _, key = e
+            lines.append(f"{did};{key}")
     keys_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return added, updated
 
@@ -358,8 +401,10 @@ def main():
                     help="config.yaml de SLSsteam")
     ap.add_argument("--luma-keys", type=Path, default=Path.home()/".config/lumalinux/keys.txt",
                     help="keys.txt de lumalinux")
-    ap.add_argument("--vdf", action="store_true",
-                    help="también añadir las keys a Steam config.vdf (redundante)")
+    ap.add_argument("--no-vdf", action="store_true",
+                    help="NO escribir las DecryptionKeys en Steam config.vdf. "
+                         "Por defecto SÍ se escriben (SteaMidra Linux también lo hace; "
+                         "el hook DepotKey de lumalinux es backup runtime).")
     ap.add_argument("--token", action="append", default=[], metavar="APPID:HEX",
                     help="añadir un AppToken al config.yaml de SLSsteam. Puedes pasarlo varias veces.")
     args = ap.parse_args()
@@ -398,13 +443,19 @@ def main():
     print()
 
     print(f"== Parseando .lua ==")
-    app_id, extra_appids, depot_keys, manifests_from_lua = parse_lua_text(lua_text)
+    app_id, extra_appids, depot_keys, manifests_from_lua, sizes_from_lua, shared_depots = parse_lua_text(lua_text)
     # Merge: los del .lua tienen prioridad, los de los filenames del zip rellenan huecos
     manifests = dict(manifests_from_names)
     manifests.update(manifests_from_lua)
+    # Sizes: el .lua manda (Hubcap los incluye en setManifestid 3-arg); si no, el
+    # binary parse hecho en extract_zip.
+    for d, s in sizes_from_lua.items():
+        manifest_sizes.setdefault(d, s)
     print(f"  appid principal:    {app_id}")
     if extra_appids: print(f"  appids extra:       {extra_appids}")
     print(f"  depots con key:     {sorted(depot_keys.keys())}")
+    if shared_depots:
+        print(f"  shared depots:      {sorted(shared_depots)}  (LEGACY format, no injection)")
     print(f"  manifests GID:      {sorted(manifests.keys())}")
     print(f"  manifest sizes (cb_disk_original):")
     for d in sorted(manifest_sizes):
@@ -423,27 +474,39 @@ def main():
         print()
 
     # ── SLSsteam config.yaml ──────────────────────────────────────────────
+    # SteaMidra (sff/app_injector/sls.py:add_ids) mete SOLO el AppID principal,
+    # no los depots. Replicamos ese comportamiento — meter depots como AppIDs
+    # confunde a Steam (los ve como "este depot es un app", contradicción).
     print(f"== Actualizando {args.sls_config} ==")
-    all_appids = [app_id] + extra_appids + list(depot_keys.keys())
     tokens_dict = dict(parse_token_arg(t) for t in args.token) if args.token else None
-    n_apps, n_tokens = update_sls_yaml(args.sls_config, all_appids, tokens_dict)
-    print(f"  [+] {n_apps} appids nuevos en AdditionalApps")
+    n_apps, n_tokens = update_sls_yaml(args.sls_config, [app_id], tokens_dict)
+    print(f"  [+] {n_apps} appids nuevos en AdditionalApps (solo {app_id} — replicamos SteaMidra)")
     if tokens_dict:
         print(f"  [+] {n_tokens} tokens nuevos en AppTokens")
     print()
 
-    # ── lumalinux keys.txt (formato EXTENDIDO) ────────────────────────────
-    print(f"== Escribiendo {args.luma_keys} (formato extendido) ==")
-    n_new, n_upd = write_lumalinux_keys(args.luma_keys, depot_keys, manifests, manifest_sizes, app_id)
+    # ── lumalinux keys.txt ────────────────────────────────────────────────
+    # Content depots → EXTENDED (lumalinux inyecta en pDepotInfo).
+    # Shared depots → LEGACY (Steam ya los tiene en pSharedDepotInfo).
+    # AppID principal → entry dummy con key de ceros (DepotKey hook responde
+    # cuando Steam pregunta por la "key del app" durante el flow de install).
+    print(f"== Escribiendo {args.luma_keys} ==")
+    n_new, n_upd = write_lumalinux_keys(
+        args.luma_keys, depot_keys, manifests, manifest_sizes, app_id, shared_depots)
     print(f"  [+] {n_new} keys nuevas, {n_upd} actualizadas")
-    patchable = [d for d in depot_keys if d != app_id and manifests.get(d, 0) != 0]
-    print(f"  [*] depots que BuildDep parcheará (parent={app_id}, gid≠0): {patchable}")
+    patchable = [d for d in depot_keys if d != app_id and d not in shared_depots
+                 and manifests.get(d, 0) != 0]
+    print(f"  [*] depots que BuildDep parcheará (parent={app_id}, gid≠0, NO shared): {patchable}")
     if not patchable:
-        print(f"  [!] AVISO: ningún depot con gid≠0. BuildDep no parcheará nada.")
+        print(f"  [!] AVISO: ningún content depot con gid≠0. BuildDep no parcheará nada.")
     print()
 
-    # ── config.vdf (opcional) ─────────────────────────────────────────────
-    if args.vdf:
+    # ── config.vdf — siempre por defecto (--no-vdf para skipear) ──────────
+    # SteaMidra Linux (sff/ui.py:process_lua_full) lo hace siempre. Steam consulta
+    # config.vdf primero para depot keys; aunque lumalinux las sirve runtime via
+    # el hook DepotKey, tenerlas también ahí cubre paths donde Steam no llama al
+    # hook (p.ej. validación pre-descarga del manifest signature).
+    if not args.no_vdf:
         print(f"== Añadiendo keys a {args.steam_root/'config/config.vdf'} ==")
         n_vdf = update_config_vdf(args.steam_root/"config/config.vdf", depot_keys)
         print(f"  [+] {n_vdf} keys nuevas en config.vdf")
