@@ -80,25 +80,37 @@ file ~/.local/share/lumalinux/liblumalinux.so   # must say: ELF 32-bit ... Intel
 ```
 (`./install.sh` does this step and creates an empty `keys.txt`.)
 
-**2. Add lumalinux to the `LD_PRELOAD` line that loads with Steam.** The exact
-file depends on which SLSsteam installer you used:
+**2. Add lumalinux + CloudRedirect to the launcher.** SLSsteam's `setup.sh`
+patches `/usr/bin/steam` with an `LD_AUDIT=...SLSsteam.so` line just before
+the final `exec`. lumalinux (and CloudRedirect, if you use it — see next
+section) load via `LD_PRELOAD` on the **same file**, concatenated with `:`:
 
-- **Stock SLSsteam (`setup.sh` from AceSLS):** patches `/usr/bin/steam` with
-  an `LD_AUDIT=` export. Add a `LD_PRELOAD` line just before the final `exec`:
-  ```sh
-  sudo steamos-readonly disable
-  sudo sed -i '/^exec \/usr\/lib\/steam\/steam/i export LD_PRELOAD="/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"' /usr/bin/steam
-  ```
+```sh
+sudo steamos-readonly disable
+sudo nano /usr/bin/steam
+```
 
-- **h3adcr-b (cr-testbranch) — also installs CloudRedirect:** see the next
-  section, *"Coexisting with CloudRedirect"*. The fix is different (h3adcr-b
-  reshapes `~/.local/share/Steam/steam.sh` and that flow needs lumalinux added
-  to its `INJECT_CR` line instead).
+Right before the final line `exec /usr/lib/steam/steam -steamdeck "$@"`,
+make sure the file looks like this:
 
-> ⚠️ Do **NOT** put lumalinux in the `LD_AUDIT` line — a 32-bit lib in
-> LD_AUDIT corrupts the heap and Steam crashes on startup.
-> ⚠️ SteamOS updates **reset `/usr/bin/steam`** — re-apply this line after
-> each SteamOS update.
+```bash
+export LD_AUDIT="/home/deck/.local/share/SLSsteam/library-inject.so:/home/deck/.local/share/SLSsteam/SLSsteam.so"
+export LD_PRELOAD="/home/deck/.local/share/CloudRedirect/cloud_redirect.so:/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
+exec /usr/lib/steam/steam -steamdeck "$@"
+```
+
+If you don't use CloudRedirect, just remove the `cloud_redirect.so:` prefix
+from the `LD_PRELOAD`. Save and re-enable read-only:
+
+```sh
+sudo steamos-readonly enable
+```
+
+> ⚠️ Do **NOT** put lumalinux or cloud_redirect in `LD_AUDIT` — they are
+> 32-bit and the audit interface in a separate linker namespace corrupts
+> the heap (Steam crashes on startup with `realloc(): invalid pointer`).
+> ⚠️ SteamOS updates and re-runs of SLSsteam's `setup.sh` **overwrite
+> `/usr/bin/steam`** — re-apply the two `export` lines after each.
 
 **3. Start Steam.** On load you get a desktop toast (via `notify-send`):
 - `lumalinux: v0.8.1 loaded — 4/4 hooks active` → all good.
@@ -128,53 +140,59 @@ the log file is still written.
 CloudRedirect (Selectively11/CloudRedirect) targets the **cloud-save RPC path**
 in `steamclient.so` via vtable swaps; lumalinux targets the **content / depot
 path** via inline byte hooks. The two hooked sets are disjoint, the mechanisms
-don't overlap, and they're designed to run side by side. There's only one
-gotcha — the install order of the `LD_PRELOAD` env var.
+don't overlap, and they're designed to run side by side.
 
-The h3adcr-b installer (cr-testbranch) drops a wrapper at
-`~/.local/share/Steam/steam.sh` that ends with:
+### Install CloudRedirect (recommended: the flatpak directly from upstream)
+
+The h3adcr-b installer used to bundle CloudRedirect, but **its bundled copy is
+stale**. Quoting Selectively11 in the v2.0.5 release notes (~Apr 2026):
+
+> *Linux users, read! This release requires a change to your Steam.sh! This is
+> not being pushed out as an automatic update through the Flatpak repo/posted
+> to the Linux release tag that h3adcr-b uses pending an update! […] Switched
+> Linux injection from LD_AUDIT to LD_PRELOAD for broader distro compatibility.
+> All distros/setups should work now. If you manually edit your steam.sh,
+> remove cloud_redirect.so from your LD_AUDIT and specify it as an LD_PRELOAD.*
+
+So the supported path is: install the CloudRedirect **flatpak** from its own
+repo (gives you the up-to-date `cloud_redirect.so` plus the configuration UI
+for the cloud provider), and add `LD_PRELOAD` by hand to `/usr/bin/steam`
+(covered in step 2 of "Install / load" above — that's why the line there
+already includes `cloud_redirect.so:`).
+
+### The ordering gotcha
+
+`LD_PRELOAD` entries are separated by `:`. They all get loaded; the order
+matters only for symbol-resolution conflicts (rare between CR and lumalinux —
+their hooks are on different functions). Put both in the same line:
 
 ```bash
-INJECT_SLS="LD_AUDIT=$HOME/.local/share/SLSsteam/library-inject.so:$HOME/.local/share/SLSsteam/SLSsteam.so"
-INJECT_CR="LD_PRELOAD=$HOME/.local/share/CloudRedirect/cloud_redirect.so"
-GameLauncher(){
-    export $INJECT_SLS &> /dev/null
-    export $INJECT_CR &> /dev/null
-    source $STEAM_CLIENT "$@" &> /dev/null
-}
+export LD_PRELOAD="/home/deck/.local/share/CloudRedirect/cloud_redirect.so:/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
 ```
 
-The `export $INJECT_CR` line **overwrites** whatever `LD_PRELOAD` you may have
-set earlier (e.g. in `/usr/bin/steam` or in the shell env) — it does not append.
-If you only add lumalinux to `/usr/bin/steam`, this `export` will erase it and
-only `cloud_redirect.so` ends up loaded.
+(The `${LD_PRELOAD:+:}${LD_PRELOAD:-}` suffix preserves any existing entries
+the runtime might add later.)
 
-**Fix:** add lumalinux's `.so` to the same `INJECT_CR` line, separated by `:`:
+### Verifying both loaded
 
-```sh
-# Backup first
-cp ~/.local/share/Steam/steam.sh ~/.local/share/Steam/steam.sh.bak
+After restarting Steam:
+- lumalinux log: `~/.cache/lumalinux/lumalinux.log` should show
+  `4/4 hooks active`.
+- CloudRedirect log: `~/.config/CloudRedirect/cloud_redirect.log` should end
+  with `CloudRedirect initialized successfully`.
 
-# Append lumalinux to the cloud_redirect entry
-sed -i 's|cloud_redirect.so"|cloud_redirect.so:/home/deck/.local/share/lumalinux/liblumalinux.so"|' \
-    ~/.local/share/Steam/steam.sh
+If only one of the two appears, the `LD_PRELOAD` got truncated somewhere
+upstream of the Steam process — most often by a re-run of SLSsteam's
+`setup.sh` or by a SteamOS update overwriting `/usr/bin/steam`.
 
-# Verify
-grep INJECT_CR ~/.local/share/Steam/steam.sh
-```
+### About h3adcr-b's bundled wrapper
 
-The line should now read:
-```bash
-INJECT_CR="LD_PRELOAD=$HOME/.local/share/CloudRedirect/cloud_redirect.so:/home/deck/.local/share/lumalinux/liblumalinux.so"
-```
-
-Restart Steam and check the lumalinux log: all four hooks should report
-`INSTALLED` alongside CloudRedirect coming up successfully in its own log
-(`~/.config/CloudRedirect/cloud_redirect.log` shows `CloudRedirect initialized
-successfully`).
-
-If a future `h3adcr-b` update rewrites that `steam.sh`, you'll need to re-apply
-the `sed`. Same idea as the SteamOS-update note above.
+If you previously used `h3adcr-b`'s `cr-testbranch`, you may still have a
+wrapper at `~/.local/share/Steam/steam.sh` with `INJECT_SLS` / `INJECT_CR`
+helpers. **It's not needed with the manual `/usr/bin/steam` flow.** Delete it
+(or rename to `.bak`) so it doesn't conflict with the exports above. Steam
+will regenerate a vanilla `~/.local/share/Steam/steam.sh` on next launch if
+needed.
 
 ## Configuring a game
 
