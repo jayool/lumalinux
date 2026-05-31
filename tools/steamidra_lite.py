@@ -47,37 +47,75 @@ import shutil
 import sys
 import tempfile
 import zipfile
+from dataclasses import dataclass, field
 from pathlib import Path
 
-# Regexes — copiados verbatim de sff/lua/manager.py de SteaMidra (lo único
-# añadido: el grupo opcional (?:,\s*(\d+))? en setManifestid para capturar el
-# tercer arg que Hubcap usa hoy — SteaMidra ignora ese tercer arg, nosotros lo
-# guardamos para el manifest_size en keys.txt).
-RE_DEPOT_NO_KEY      = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*\)", re.MULTILINE)
-RE_DEPOT_DEC_KEY     = re.compile(r"^\s*addappid\s*\(\s*(\d+)\s*,\s*\d\s*,\s*[\"'](\S+?)[\"']\s*\)", re.MULTILINE)
-RE_GENERAL_ADDAPPID  = re.compile(r"^\s*addappid\s*\(\s*(\d+)", re.MULTILINE)
-RE_SETMANIFESTID     = re.compile(r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*(?:,\s*(\d+))?\s*\)", re.MULTILINE)
+# ─── Verbatim de SteaMidra ────────────────────────────────────────────────
+#
+# Lo que sigue (DepotKeyPair, LuaParsedInfo + los 4 regex + parse_lua_contents)
+# está copiado literal de la rama main de Midrags/SFF:
+#   sff/structs.py (DepotKeyPair: líneas 319-326, LuaParsedInfo: 337-343)
+#   sff/lua/manager.py (regexes: 42-54, parse_lua_contents: 57-72)
+#
+# Sin reescribir nada. Si SteaMidra cambia su parser, hay que re-copiar.
+
+@dataclass
+class DepotKeyPair:
+    """A depot and its decryption key"""
+    depot_id: str
+    "Depot ID"
+    decryption_key: str
+    "Decryption Key of the Depot. Can be blank if it's not a depot"
 
 
-def parse_lua_text(text):
-    """Replica sff/lua/manager.py:parse_lua_contents. El primer 'addappid(N'
-    (regex general — captura el match aunque la línea siga con argumentos) es
-    el AppID principal. Los demás 'addappid(N, 1, "key")' son depots con key;
-    los 'addappid(N)' sueltos son DLCs sin depot dedicado. SteaMidra NO
-    diferencia 'shared' vs 'content' — esa distinción la había inventado yo
-    y rompía el parser (el comentario de stats '-- Shared Depots: 2' me
-    confundía como header). Aquí solo replico SteaMidra y emito keys.txt."""
-    m = RE_GENERAL_ADDAPPID.search(text)
-    if not m:
-        sys.exit("ERROR: ningún addappid(...) en el .lua. Revisa el archivo.")
-    app_id = int(m.group(1))
+@dataclass
+class _RawLua:
+    path: Path
+    contents: str
 
-    depot_keys = {int(d): k for d, k in RE_DEPOT_DEC_KEY.findall(text)}
-    dlcs_no_key = [int(d) for d in RE_DEPOT_NO_KEY.findall(text) if int(d) != app_id]
-    manifests = {int(d): g for d, g, _s in RE_SETMANIFESTID.findall(text)}
-    manifest_sizes_from_lua = {int(d): int(s) for d, _g, s in RE_SETMANIFESTID.findall(text) if s}
 
-    return app_id, dlcs_no_key, depot_keys, manifests, manifest_sizes_from_lua
+@dataclass
+class LuaParsedInfo(_RawLua):
+    app_id: str
+    "The base app ID"
+    depots: list
+    manifest_overrides: dict = field(default_factory=dict)
+    "depot_id -> manifest_gid pins from setManifestid() Lua calls"
+
+
+_DEPOT_NO_KEY_REGEX = re.compile(
+    r"^\s*addappid\s*\(\s*(\d+)\s*\)", flags=re.MULTILINE
+)
+_DEPOT_DEC_KEY_REGEX = re.compile(
+    r"^\s*addappid\s*\(\s*(\d+)\s*,\s*\d\s*,\s*(?:\"|\')(\S+)(?:\"|\')\s*\)",
+    flags=re.MULTILINE,
+)
+_GENERAL_ADDAPPID_REGEX = re.compile(r"^\s*addappid\s*\(\s*(\d+)", flags=re.MULTILINE)
+_SETMANIFESTID_REGEX = re.compile(
+    r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*\)",
+    flags=re.MULTILINE,
+)
+
+
+def parse_lua_contents(contents, path):
+    """
+    Parse Lua contents into LuaParsedInfo without prompts.
+    Returns None if parsing fails (no app ID or no decryption keys).
+    """
+    if not (any_addappid := _GENERAL_ADDAPPID_REGEX.search(contents)):
+        return None
+    app_id = any_addappid.group(1)
+    ids_with_no_key = _DEPOT_NO_KEY_REGEX.findall(contents)
+    depot_dec_key = _DEPOT_DEC_KEY_REGEX.findall(contents)
+    if not depot_dec_key:
+        return None
+    depot_pairs = [DepotKeyPair(*x) for x in depot_dec_key]
+    depot_pairs.extend([DepotKeyPair(x, "") for x in ids_with_no_key])
+    manifest_overrides = dict(_SETMANIFESTID_REGEX.findall(contents))
+    return LuaParsedInfo(path, contents, app_id, depot_pairs, manifest_overrides)
+
+
+# ─── Fin verbatim de SteaMidra ────────────────────────────────────────────
 
 
 _MANIFEST_NAME_RE = re.compile(r"^(\d+)_(\d+)\.manifest$")
@@ -612,18 +650,25 @@ def main():
                     manifest_sizes[p[0]] = size
     print()
 
-    print(f"== Parseando .lua ==")
-    app_id, dlcs_no_key, depot_keys, manifests_from_lua, sizes_from_lua = parse_lua_text(lua_text)
-    # Merge: los del .lua tienen prioridad, los de los filenames del zip rellenan huecos
+    print(f"== Parseando .lua (parse_lua_contents verbatim de SteaMidra) ==")
+    parsed = parse_lua_contents(lua_text, args.input)
+    if parsed is None:
+        sys.exit("ERROR: parse_lua_contents devolvió None (sin addappid o sin depot keys).")
+    # Adapt LuaParsedInfo to the existing pipeline (script existente usa dicts).
+    app_id = int(parsed.app_id)
+    depot_keys = {int(p.depot_id): p.decryption_key for p in parsed.depots if p.decryption_key}
+    dlcs_no_key = [int(p.depot_id) for p in parsed.depots if not p.decryption_key and int(p.depot_id) != app_id]
+    manifests_from_lua = {int(d): g for d, g in parsed.manifest_overrides.items()}
+    # Merge: los del .lua tienen prioridad, los de los filenames del zip rellenan huecos.
+    # NOTA: SteaMidra verbatim NO captura el tercer arg (size) del setManifestid
+    # — lo capturamos del .manifest binario en extract_zip via parse_manifest_size.
     manifests = dict(manifests_from_names)
     manifests.update(manifests_from_lua)
-    for d, s in sizes_from_lua.items():
-        manifest_sizes.setdefault(d, s)
     print(f"  appid principal:    {app_id}")
     if dlcs_no_key: print(f"  DLCs sin depot:     {dlcs_no_key}  (no key, no manifest)")
     print(f"  depots con key:     {sorted(depot_keys.keys())}")
     print(f"  manifests GID:      {sorted(manifests.keys())}")
-    print(f"  manifest sizes (cb_disk_original):")
+    print(f"  manifest sizes (cb_disk_original, del binario):")
     for d in sorted(manifest_sizes):
         print(f"    depot {d}: {manifest_sizes[d]:>14} bytes  ({manifest_sizes[d]/1024/1024:.1f} MB)")
     if not manifest_sizes:
