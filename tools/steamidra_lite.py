@@ -22,6 +22,12 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
      Cierra Steam ANTES de correr el script (Steam reescribe config.vdf al
      salir).
   5. (opcional, --token APPID:HEX) Añade un AppToken al config.yaml de SLSsteam.
+  6. Resetea el error-state del .acf (sff/lua/writer.py:_patch_acf_error_state).
+     UpdateResult, Bytes*, StagingSize → 0; StateFlags &= ~16. Sin este paso,
+     Steam suele mostrar "NO INTERNET CONNECTION" al primer Install tras
+     cualquier fallo previo (el bug está en cómo Steam interpreta UpdateResult
+     stale, no en la red — verbatim del comment del propio SteaMidra). Si no
+     hay .acf todavía, escribimos uno limpio.
 
 Uso:
   python3 steamidra_lite.py 2379780.zip
@@ -386,6 +392,148 @@ def parse_token_arg(s):
         sys.exit(f"ERROR: --token mal formado: '{s}'. Usa APPID:HEX")
 
 
+# ── .acf error-state handling (replica sff/lua/writer.py:_patch_acf_error_state) ──
+#
+# After a failed install, Steam writes UpdateResult=<errcode> + StateFlags|=16
+# (Update Required) in the appmanifest_<appid>.acf. On the NEXT Steam launch
+# the client reads that stale error and shows "NO INTERNET CONNECTION"
+# (regardless of whether the network is actually up). The fix SteaMidra applies
+# is to reset those fields to 0 before the user clicks Install again. See the
+# verbatim comment in sff/lua/writer.py:113 ("this is what causes 'NO INTERNET
+# CONNECTION'").
+_ACF_ERROR_FIELDS = (
+    ("UpdateResult", "0"),
+    ("FullValidateAfterNextUpdate", "0"),
+    ("ScheduledAutoUpdate", "0"),
+    ("BytesToDownload", "0"),
+    ("BytesDownloaded", "0"),
+    ("BytesToStage", "0"),
+    ("BytesStaged", "0"),
+    ("StagingSize", "0"),
+)
+
+
+def _vdf_dump_acf(path, data):
+    """Minimal VDF text writer for .acf — no external dep. The format is
+    "<key>"\t\t"<value>" with nested {} blocks. Steam ignores leading/trailing
+    whitespace, so we just emit something it accepts."""
+    def emit(node, indent):
+        out = []
+        pad = "\t" * indent
+        for k, v in node.items():
+            if isinstance(v, dict):
+                out.append(f'{pad}"{k}"\n{pad}{{\n')
+                out.append(emit(v, indent + 1))
+                out.append(f'{pad}}}\n')
+            else:
+                out.append(f'{pad}"{k}"\t\t"{v}"\n')
+        return "".join(out)
+    with path.open("w", encoding="utf-8") as f:
+        f.write(emit(data, 0))
+
+
+_VDF_TOKEN = re.compile(r'"((?:[^"\\]|\\.)*)"|(\{)|(\})', re.DOTALL)
+
+
+def _vdf_load_acf(path):
+    """Minimal VDF text reader for .acf. Returns nested dict."""
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    tokens = []
+    for m in _VDF_TOKEN.finditer(text):
+        s, lb, rb = m.group(1), m.group(2), m.group(3)
+        if s is not None: tokens.append(("S", s.replace('\\"', '"')))
+        elif lb:           tokens.append(("L", None))
+        elif rb:           tokens.append(("R", None))
+    i = 0
+    def parse_block():
+        nonlocal i
+        node = {}
+        while i < len(tokens):
+            tt, tv = tokens[i]
+            if tt == "R":
+                i += 1
+                return node
+            if tt != "S":
+                i += 1; continue
+            key = tv; i += 1
+            if i >= len(tokens): break
+            tt2, tv2 = tokens[i]
+            if tt2 == "L":
+                i += 1
+                node[key] = parse_block()
+            else:
+                node[key] = tv2
+                i += 1
+        return node
+    # top-level: { "AppState" { ... } }
+    return parse_block()
+
+
+def write_or_patch_acf(steam_root, app_id, manifest_gids):
+    """Step 6 of the install flow (replicates sff/lua/writer.py:write_acf +
+    _patch_acf_error_state). Without this step Steam often shows 'NO INTERNET
+    CONNECTION' on the next install attempt after any failure, even with the
+    network actually up.
+
+    - If the .acf already exists → patch the error-state fields (UpdateResult,
+      Bytes*, etc.) back to 0 and clear the Update-Required bit (StateFlags
+      AND 0xFFEF). This matches _patch_acf_error_state verbatim.
+    - If the .acf doesn't exist yet → write a fresh one with StateFlags=4
+      (Fully Installed placeholder) so Steam has a clean slate. write_acf in
+      SteaMidra Windows does this; in Linux native we want the same.
+
+    manifest_gids: {depot_id: gid} for InstalledDepots stub (optional, only
+    written when creating a new .acf — Steam fills the real entries during
+    install)."""
+    acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
+    if acf_path.exists():
+        try:
+            shutil.copy2(acf_path, acf_path.with_suffix(".acf.bak"))
+            data = _vdf_load_acf(acf_path)
+            app_state = data.get("AppState", {})
+            patched = False
+            for k, clean in _ACF_ERROR_FIELDS:
+                if app_state.get(k) != clean:
+                    app_state[k] = clean
+                    patched = True
+            try:
+                flags = int(app_state.get("StateFlags", "0"))
+                if flags & 16:
+                    app_state["StateFlags"] = str(flags & ~16)
+                    patched = True
+            except (ValueError, TypeError):
+                pass
+            if patched:
+                _vdf_dump_acf(acf_path, data)
+                return "patched"
+            return "clean"
+        except Exception as e:
+            print(f"  [WARN] No pude patchar {acf_path}: {e}")
+            return "error"
+
+    # No .acf yet — write a fresh stub. Steam will overwrite it with real
+    # depot info during install; we just want to ensure no stale state.
+    acf_path.parent.mkdir(parents=True, exist_ok=True)
+    app_state = {
+        "appid": str(app_id),
+        "Universe": "1",
+        "StateFlags": "4",
+        "installdir": str(app_id),
+        "LastUpdated": "0",
+        "UpdateResult": "0",
+        "SizeOnDisk": "0",
+        "BytesToDownload": "0",
+        "BytesDownloaded": "0",
+    }
+    if manifest_gids:
+        app_state["InstalledDepots"] = {
+            str(d): {"manifest": str(g), "size": "0"}
+            for d, g in manifest_gids.items() if g
+        }
+    _vdf_dump_acf(acf_path, {"AppState": app_state})
+    return "created"
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Replica el deploy de SteaMidra (Linux) sin instalarlo.",
@@ -511,6 +659,16 @@ def main():
         n_vdf = update_config_vdf(args.steam_root/"config/config.vdf", depot_keys)
         print(f"  [+] {n_vdf} keys nuevas en config.vdf")
         print()
+
+    # ── .acf error-state reset ────────────────────────────────────────────
+    # Without this Steam often shows "NO INTERNET CONNECTION" on the first
+    # install attempt — it's not a network issue, it's stale UpdateResult /
+    # Bytes* fields in the .acf from a previous failure. Verbatim from
+    # sff/lua/writer.py:113: "this is what causes 'NO INTERNET CONNECTION'".
+    print(f"== Reseteando error-state del .acf (paso que evita 'no internet') ==")
+    acf_result = write_or_patch_acf(args.steam_root, app_id, manifests)
+    print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
+    print()
 
     print("== Hecho ==")
     print("Backups creados con sufijo .bak.")

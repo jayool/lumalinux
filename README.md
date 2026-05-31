@@ -231,6 +231,15 @@ does (see `sff/ui.py`), in order:
    not the early manifest validation).
 5. **AppToken** (optional, `--token APPID:HEX`) — only needed for games whose
    PICS appinfo Valve doesn't return without a token. Most games don't need it.
+6. **Resets the `.acf` error state**
+   (`appmanifest_<appid>.acf`: `UpdateResult` / `BytesToDownload` / `Bytes*` /
+   `StagingSize` → 0, and clears the Update-Required bit of `StateFlags`).
+   Replicates `sff/lua/writer.py:_patch_acf_error_state` whose own comment
+   reads: *"this is what causes 'NO INTERNET CONNECTION'"*. Without this step
+   Steam frequently shows that error on the first Install attempt after any
+   prior failure, even with the network fully up — it's stale state in the
+   `.acf`, not a real network problem. If the `.acf` doesn't exist yet, a
+   clean stub is written instead.
 
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
 file touched are written next to the originals before any change.
