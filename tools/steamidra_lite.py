@@ -354,32 +354,64 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
 
 
 def update_config_vdf(vdf_path, depot_keys):
-    """Opcional: añade DecryptionKey al config.vdf de Steam. Requiere 'vdf'."""
-    try:
-        import vdf
-    except ImportError:
-        print("  [SKIP] config.vdf: módulo 'vdf' no instalado. "
-              "Sin problema: lumalinux servirá las keys vía hook.")
-        return 0
+    """Añade DecryptionKey al config.vdf de Steam sin depender del módulo
+    'vdf' externo (SteamOS no lo trae y no se puede pip-install fácilmente).
+
+    En vez de parsear el VDF completo (formato delicado, riesgo de corromper
+    config.vdf), encontramos el bloque depots literalmente como texto e
+    insertamos los nuevos bloques justo antes del cierre del bloque. Es
+    exactamente la técnica del Python inline que probamos a mano para Mina y
+    funcionó (las 5 DecryptionKeys quedaron correctamente metidas)."""
     if not vdf_path.exists():
         print(f"  [SKIP] config.vdf no existe en {vdf_path}. ¿Steam nunca arrancó?")
         return 0
     shutil.copy2(vdf_path, vdf_path.with_suffix(".vdf.bak"))
-    with vdf_path.open(encoding="utf-8") as f:
-        data = vdf.load(f, mapper=vdf.VDFDict)
-    node = data
-    for key in ("InstallConfigStore", "Software", "Valve", "Steam", "depots"):
-        if key not in node:
-            node[key] = vdf.VDFDict()
-        node = node[key]
+    txt = vdf_path.read_text(encoding="utf-8")
+
+    # Find the "depots" block inside InstallConfigStore > Software > Valve > Steam
+    m = re.search(r'^(\s*)"depots"\s*\n\s*\{', txt, re.MULTILINE)
+    if not m:
+        print(f"  [SKIP] No se encontró el bloque 'depots' en {vdf_path}.")
+        return 0
+    depot_block_indent = m.group(1)
+    child_indent = depot_block_indent + "\t"
+    inner_indent = child_indent + "\t"
+
+    # Find the matching closing brace of the depots block
+    depth = 0
+    i = m.end() - 1
+    end = -1
+    while i < len(txt):
+        if txt[i] == '{':
+            depth += 1
+        elif txt[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+        i += 1
+    if end < 0:
+        print(f"  [SKIP] Cierre del bloque 'depots' no encontrado en {vdf_path}.")
+        return 0
+
+    existing_section = txt[m.end():end]
+    new_blocks = ""
     added = 0
-    for did, k in depot_keys.items():
+    for did, key in depot_keys.items():
         sid = str(did)
-        if sid not in node:
-            node[sid] = {"DecryptionKey": k}
-            added += 1
-    with vdf_path.open("w", encoding="utf-8") as f:
-        vdf.dump(data, f, pretty=True)
+        if re.search(r'^\s*"' + re.escape(sid) + r'"\s*$', existing_section, re.MULTILINE):
+            continue  # ya está
+        new_blocks += (
+            f'{child_indent}"{sid}"\n'
+            f'{child_indent}{{\n'
+            f'{inner_indent}"DecryptionKey"\t\t"{key}"\n'
+            f'{child_indent}}}\n'
+        )
+        added += 1
+
+    if new_blocks:
+        txt = txt[:end] + new_blocks + txt[end:]
+        vdf_path.write_text(txt, encoding="utf-8")
     return added
 
 
