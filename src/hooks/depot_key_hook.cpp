@@ -53,6 +53,15 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id, void* out_key) {
     }
 
     if (auto key = KeyStore::Lookup(depot_id)) {
+        // We assume Steam always provides a 32-byte buffer for `out_key`
+        // (that's the size of a depot AES key, and what Steam stores
+        // internally). Unlike LumaCore — which hooks the KeyValues-path
+        // variant LoadDepotDecryptionKey(KeyName, Key, KeySize) and
+        // validates KeySize >= 32 — the function we hook here doesn't pass
+        // an explicit buffer size, so this assumption is unchecked. If a
+        // future Steam build calls this with a smaller buffer we'd write
+        // beyond it. Flagged in RESEARCH.md §11.3.
+        static_assert(kDepotKeyBytes == 32, "depot keys are 32-byte AES");
         std::memcpy(out_key, key->data(), kDepotKeyBytes);
         g_lastServedDepot = depot_id;
         Log::Info("LoadDepotKey: SERVED local key for depot %u (app %u)", depot_id, app_id);

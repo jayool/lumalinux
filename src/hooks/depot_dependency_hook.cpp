@@ -65,12 +65,19 @@ void LogDepotVector(const char* label, CUtlVector<DepotEntry>* v) {
     }
 }
 
-// PATCH existing entries' gid/size to match KeyStore. Never injects new
-// entries (LumaCore-style): injection requires the depot to appear in
-// appinfo, which is what the LoadPackage hook arranges. By the time we get
-// here, the depots SHOULD already be in pDepotInfo with gid=0/size=0 (because
-// Steam fetched the appinfo via PackageId=0 injection), and we just fill in
-// the manifest pinning.
+// PATCH existing entries' MANIFEST GID only — never touches ManifestSize and
+// never inject new entries (LumaCore-style):
+//
+//  - Size: LumaCore explicitly forces the override size to 0 with a verbatim
+//    comment "to prevent incorrect size from breaking Steam" (LuaLoader.cpp:172).
+//    Replicating that means leaving e.ManifestSize untouched here — Steam keeps
+//    whatever size it computed from the appinfo. Earlier versions of this hook
+//    overwrote it with our stored size, which is what RESEARCH.md §11.1 flags
+//    as a deviation from LumaCore. Removed.
+//
+//  - Injection: requires the depot to appear in appinfo, which is what the
+//    LoadPackage hook arranges. v0.5.4 tried injecting depots that weren't in
+//    the appinfo and Steam crashed when the app was selected; never inject.
 size_t PatchVector(CUtlVector<DepotEntry>* v, uint32_t AppId,
                    const std::unordered_map<uint32_t, KeyStore::DepotInfo>& byDepot) {
     if (!v || v->m_Size == 0 || !v->m_pMemory) return 0;
@@ -81,19 +88,13 @@ size_t PatchVector(CUtlVector<DepotEntry>* v, uint32_t AppId,
         auto it = byDepot.find(e.DepotId);
         if (it == byDepot.end()) continue;
         const auto& info = it->second;
-        // Match LumaCore (ManifestBind.cpp:66): if the override size is 0,
-        // keep the original size — it affects the download-progress display
-        // but not the actual download. Always pin the gid.
-        uint64_t newSize = info.manifest_size ? info.manifest_size : e.ManifestSize;
-        if (e.ManifestGid != info.manifest_gid || e.ManifestSize != newSize) {
-            Log::Info("BuildDep: PATCH app=%u depot=%u gid %llu -> %llu, size %llu -> %llu",
+        if (info.manifest_gid != 0 && e.ManifestGid != info.manifest_gid) {
+            Log::Info("BuildDep: PATCH app=%u depot=%u gid %llu -> %llu (size kept at %llu)",
                       AppId, e.DepotId,
                       (unsigned long long)e.ManifestGid,
                       (unsigned long long)info.manifest_gid,
-                      (unsigned long long)e.ManifestSize,
-                      (unsigned long long)newSize);
-            e.ManifestGid  = info.manifest_gid;
-            e.ManifestSize = newSize;
+                      (unsigned long long)e.ManifestSize);
+            e.ManifestGid = info.manifest_gid;
             patched++;
         }
     }
@@ -127,22 +128,32 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
     for (const auto& d : depots) byDepot.emplace(d.depot_id, d);
 
     // PATCH ONLY — LumaCore-style. We never inject depots that aren't already
-    // in pDepotInfo/pSharedDepotInfo. Steam must surface them itself, which
-    // it does once SLSsteam's ownership injection + our LoadPackage are in
-    // place. Injection from here was tested in v0.5.4 and produced a crash
-    // on app selection — Steam doesn't tolerate depots that bypass its
-    // license-filter pass.
-    size_t patched = 0;
-    patched += PatchVector(pDepotInfo,       AppId, byDepot);
-    patched += PatchVector(pSharedDepotInfo, AppId, byDepot);
+    // in pDepotInfo. Steam must surface them itself, which it does once
+    // SLSsteam's ownership injection + our LoadPackage are in place. Injection
+    // from here was tested in v0.5.4 and produced a crash on app selection.
+    //
+    // Only pDepotInfo is patched. LumaCore explicitly skips pSharedDepotInfo
+    // (ManifestBind.cpp loops only the primary vector); shared depots belong
+    // to their own parent app (e.g. VC 2022 Redist = 228989 under app 228980)
+    // and Steam already has them with the legitimate gids from that app's
+    // appinfo. Overwriting those broke Formula Legends (heap corruption →
+    // SIGSEGV in libc malloc_usable_size when Steam reached the install step).
+    // See RESEARCH.md §11.4 for the diagnosis.
+    size_t patched = PatchVector(pDepotInfo, AppId, byDepot);
 
     if (patched > 0) {
-        Log::Info("BuildDep: patched %zu depot entr(ies) for app %u", patched, AppId);
+        Log::Info("BuildDep: patched %zu depot entr(ies) in pDepotInfo for app %u",
+                  patched, AppId);
     } else {
-        Log::Warn("BuildDep: app %u has %zu KeyStore depots but NONE matched in "
-                  "pDepotInfo/pSharedDepotInfo — Steam filtered them out "
-                  "(missing license? appinfo missing depots?)",
-                  AppId, depots.size());
+        // Note: this is normal when Steam's appinfo already has the right
+        // gids (no patch needed), or when our keystore has depots for this
+        // app that aren't surfaced in pDepotInfo (Steam filtered them out by
+        // OS/branch/language — e.g. a Windows-only redist on a Linux native
+        // install).
+        Log::Debug("BuildDep: app %u has %zu KeyStore depots — none required "
+                   "patching in pDepotInfo (Steam already had right gids, or "
+                   "Steam filtered the depots out by OS/branch).",
+                   AppId, depots.size());
     }
     return result;
 }
