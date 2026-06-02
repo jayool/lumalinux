@@ -92,7 +92,7 @@ _DEPOT_DEC_KEY_REGEX = re.compile(
 )
 _GENERAL_ADDAPPID_REGEX = re.compile(r"^\s*addappid\s*\(\s*(\d+)", flags=re.MULTILINE)
 _SETMANIFESTID_REGEX = re.compile(
-    r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*\)",
+    r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*(?:,\s*\d+\s*)?\)",
     flags=re.MULTILINE,
 )
 
