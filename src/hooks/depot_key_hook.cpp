@@ -37,7 +37,6 @@ using LoadDepotKeyFn = int32_t (*)(void* /*pObject*/, uint32_t /*foo*/,
 
 LoadDepotKeyFn g_origFn = nullptr;
 
-volatile uint32_t g_lastServedDepot = 0;
 constexpr size_t kDepotKeyBytes = 32;
 
 // Parse the depot id out of "Software\Valve\Steam\Depots\<depot>\DecryptionKey".
@@ -66,7 +65,6 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
             static_assert(kDepotKeyBytes == 32, "depot keys are 32-byte AES");
             if (keySize >= kDepotKeyBytes && key != nullptr) {
                 std::memcpy(key, k->data(), kDepotKeyBytes);
-                g_lastServedDepot = depot;
                 Log::Info("LoadDepotKey: SERVED local key for depot %u "
                           "(KeyName accessor, KeySize=%u)", depot, keySize);
                 return static_cast<int32_t>(kDepotKeyBytes);
@@ -105,6 +103,5 @@ bool Install() {
 }
 
 void Uninstall() { g_origFn = nullptr; }
-uint32_t LastServedDepot() { return g_lastServedDepot; }
 
 } // namespace Hooks::DepotKey
