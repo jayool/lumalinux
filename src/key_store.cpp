@@ -53,12 +53,30 @@ std::vector<std::string> SplitTrim(const std::string& line, char sep) {
 bool ParseLine(const std::string& line, KeyStore::DepotInfo& out) {
     auto parts = SplitTrim(line, ';');
 
+    // No-key (presence-only) format: `<depot_id>;` — written by
+    // steamidra_lite.py for the main AppID when the .lua has addappid(N) with
+    // no key argument. std::getline used by SplitTrim drops the trailing empty
+    // token after the separator, so we detect this by checking that the
+    // original line ended in ';' and only one token was parsed.
+    bool legacy_no_key = (parts.size() == 2 && parts[1].empty()) ||
+                        (parts.size() == 1 && !line.empty() && line.back() == ';');
+    if (legacy_no_key) {
+        out.depot_id      = static_cast<uint32_t>(std::strtoul(parts[0].c_str(), nullptr, 10));
+        out.parent_app_id = 0;
+        out.manifest_gid  = 0;
+        out.manifest_size = 0;
+        out.has_key       = false;
+        out.key           = {};
+        return out.depot_id != 0;
+    }
+
     if (parts.size() == 2) {
         // Legacy: <depot_id>;<64-hex-key>
         out.depot_id      = static_cast<uint32_t>(std::strtoul(parts[0].c_str(), nullptr, 10));
         out.parent_app_id = 0;
         out.manifest_gid  = 0;
         out.manifest_size = 0;
+        out.has_key       = true;
         if (out.depot_id == 0) return false;
         return ParseHexKey(parts[1], out.key);
     }
@@ -68,6 +86,7 @@ bool ParseLine(const std::string& line, KeyStore::DepotInfo& out) {
         out.parent_app_id = static_cast<uint32_t>(std::strtoul(parts[1].c_str(), nullptr, 10));
         out.manifest_gid  = std::strtoull(parts[2].c_str(), nullptr, 10);
         out.manifest_size = std::strtoull(parts[3].c_str(), nullptr, 10);
+        out.has_key       = true;
         if (out.depot_id == 0) return false;
         return ParseHexKey(parts[4], out.key);
     }
@@ -125,6 +144,12 @@ std::optional<DepotKey> Lookup(uint32_t depot_id) {
     std::lock_guard<std::mutex> lock(Mtx());
     auto it = Keys().find(depot_id);
     if (it == Keys().end()) return std::nullopt;
+    // Presence-only entries (no key in the .lua): tell the caller "not found"
+    // so the DepotKey hook falls through to Steam's original implementation
+    // instead of serving zeros. Mirrors LumaCore (DepotKeys.cpp:14): if the
+    // DepotKeySet value is an empty string, GetDecryptionKey returns an empty
+    // vector and the hook does not respond.
+    if (!it->second.has_key) return std::nullopt;
     return it->second.key;
 }
 

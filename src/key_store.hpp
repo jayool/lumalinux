@@ -16,17 +16,32 @@ struct DepotInfo {
     uint32_t parent_app_id = 0;   // 0 if not set (legacy format / shared depot)
     uint64_t manifest_gid  = 0;   // 0 if not set
     uint64_t manifest_size = 0;   // 0 if not set
+    bool     has_key       = true; // false for "presence-only" entries (the
+                                   // .lua had addappid(N) without a key — used
+                                   // for the main AppID in older Hubcap .luas
+                                   // like Balatro's). Mirrors LumaCore's
+                                   // empty-string semantics in DepotKeySet.
     DepotKey key{};
 };
 
 // Default keys file path (~/.config/lumalinux/keys.txt).
 std::string DefaultPath();
 
-// Load keys from file. Two line formats supported:
+// Load keys from file. Three line formats supported:
 //
 //   Legacy:    <depot_id>;<64-hex-key>
 //                          → key only; no injection (used for depots Steam
 //                            already knows about, e.g. shared dependencies).
+//
+//   No-key:    <depot_id>;
+//                          → presence-only entry (trailing ';' with empty key
+//                            field). The depot id IS returned by
+//                            GetAllDepotIds() so LoadPackage injects it into
+//                            AppIdVec, but Lookup() returns nullopt so the
+//                            DepotKey hook falls through to Steam's original
+//                            instead of serving a fake key. Matches LumaCore's
+//                            DepotKeySet[id] = "" semantics for addappid(N)
+//                            without a key argument.
 //
 //   Extended:  <depot_id>;<parent_app_id>;<manifest_gid>;<manifest_size>;<64-hex-key>
 //                          → full info; lumalinux will INJECT this depot into
@@ -37,6 +52,9 @@ std::string DefaultPath();
 bool LoadFromFile(const std::string& path);
 
 // Lookup just the 32-byte key for a depot. Used by depot_key_hook.
+// Returns nullopt if the depot is not in the store OR if its entry is
+// presence-only (has_key=false) — in the latter case the hook should
+// passthrough to the original LoadDepotDecryptionKey.
 std::optional<DepotKey> Lookup(uint32_t depot_id);
 
 // All depots whose parent_app_id == app_id AND have manifest_gid set.
