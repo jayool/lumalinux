@@ -238,8 +238,15 @@ does (see `sff/ui.py`), in order:
    reads: *"this is what causes 'NO INTERNET CONNECTION'"*. Without this step
    Steam frequently shows that error on the first Install attempt after any
    prior failure, even with the network fully up — it's stale state in the
-   `.acf`, not a real network problem. If the `.acf` doesn't exist yet, a
-   clean stub is written instead.
+   `.acf`, not a real network problem. **If the `.acf` doesn't exist yet,
+   nothing is written**: leaving a stub with `StateFlags=4` makes Steam show
+   "Play" instead of "Install" (because on Linux native there's no DDL to
+   complete the install behind that stub), which is worse than the transient
+   "No internet" message that Steam will show on the first Install attempt.
+   The practical workflow for a brand-new app is therefore: run the script,
+   click Install (Steam creates the `.acf`), if Steam shows "No internet"
+   close Steam, re-run the script — this second pass finds the `.acf` and
+   patches it clean — then reopen Steam and Install again.
 
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
 file touched are written next to the originals before any change.
