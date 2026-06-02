@@ -117,6 +117,12 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
     Log::Debug("BuildDepotDependency: AppId=%u result=%d buildId=%u",
                AppId, (int)result, pBuildId ? *pBuildId : 0);
 
+    // LumaCore guards on result before touching pDepotInfo (ManifestBind.cpp:55).
+    // If Steam's BuildDepotDependency returned false the output vector may be
+    // partially constructed or invalid; iterating and writing into it is at
+    // best a no-op and at worst memory corruption. Mirror the guard.
+    if (!result) return result;
+
     auto depots = KeyStore::GetDepotsForApp(AppId);
     if (depots.empty()) return result;
 
