@@ -5,6 +5,7 @@
 #include "../log.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -118,18 +119,41 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
 
     uint32_t total = oldSize + static_cast<uint32_t>(toAdd.size());
 
-    // Append in-place. This mirrors LumaCore's CUtlMemoryGrow when capacity is
-    // already sufficient (the common case — the free package is allocated with
-    // generous slack). We deliberately do NOT manual-realloc when capacity is
-    // short: swapping m_pMemory crashed the appinfo-cache rebuild thread in
-    // earlier builds (null deref in libvstdlib_s.so), and we don't have a
-    // verified pattern for Steam's own CUtlMemoryGrow on Linux i386 yet. If we
-    // ever hit the no-capacity case we skip rather than risk a crash.
+    // Grow if needed. Steam Linux i386 uses raw libc realloc for CUtlMemory
+    // (verified by disassembling the only 5 callers of realloc@plt in
+    // steamclient.so — the leaf helper at +0x5c79d30 is `realloc(ptr, count *
+    // elem_size)` with no tier0 allocator wrapper, confirming that m_pMemory
+    // was malloc-allocated and is safe to realloc from outside. This is the
+    // Linux equivalent of LumaCore's oCUtlMemoryGrow on Windows.
+    //
+    // Growth policy mirrors Source SDK CUtlMemory::Grow: double capacity if
+    // possible, else snap to the requested size; minimum first allocation is
+    // 32 entries to avoid a ladder of small reallocs.
     if (!vec->m_pMemory || vec->m_nAllocationCount < static_cast<int>(total)) {
-        Log::Warn("LoadPackage: PackageId=0 AppIdVec has no spare capacity "
-                  "(alloc=%d, need=%u) — skipping injection to avoid a risky "
-                  "realloc. (Needs Steam's CUtlMemoryGrow.)",
-                  vec->m_nAllocationCount, total);
+        int new_alloc;
+        if (vec->m_nAllocationCount <= 0) {
+            new_alloc = static_cast<int>(total) > 32 ? static_cast<int>(total) : 32;
+        } else {
+            int doubled = vec->m_nAllocationCount * 2;
+            new_alloc = doubled > static_cast<int>(total) ? doubled : static_cast<int>(total);
+        }
+        void* new_mem = std::realloc(vec->m_pMemory,
+                                      static_cast<size_t>(new_alloc) * sizeof(uint32_t));
+        if (!new_mem) {
+            Log::Warn("LoadPackage: realloc failed for %d entries — skipping injection",
+                      new_alloc);
+            return result;
+        }
+        Log::Info("LoadPackage: grew AppIdVec capacity %d -> %d via realloc "
+                  "(m_pMemory %p -> %p)",
+                  vec->m_nAllocationCount, new_alloc, (void*)vec->m_pMemory, new_mem);
+        vec->m_pMemory = static_cast<uint32_t*>(new_mem);
+        vec->m_nAllocationCount = new_alloc;
+    }
+
+    // Unreachable safeguard — kept so static analysis sees a path that returns.
+    if (!vec->m_pMemory) {
+        Log::Error("LoadPackage: vec->m_pMemory is null after grow attempt");
         return result;
     }
 
@@ -137,8 +161,8 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         vec->m_pMemory[oldSize + i] = toAdd[i];
     }
     vec->m_Size = total;
-    Log::Info("LoadPackage: APPENDED %zu depot id(s) in-place to PackageId=0 "
-              "(size %u -> %u, capacity %d untouched)",
+    Log::Info("LoadPackage: APPENDED %zu depot id(s) to PackageId=0 "
+              "(size %u -> %u, capacity now %d)",
               toAdd.size(), oldSize, total, vec->m_nAllocationCount);
     for (uint32_t a : toAdd) {
         Log::Info("LoadPackage:   + depot %u", a);
