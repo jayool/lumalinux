@@ -499,3 +499,33 @@ hook v1.0 SÍ valida `KeySize` (como LumaCore) porque ahora hookea la variante
 KeyName-based que recibe el tamaño. El crash, sin embargo, no era el buffer
 (cabían los 32 bytes en 128) sino el cortocircuito del dispatcher — resuelto al
 hookear la accessor interna.
+
+## 13. Tracking de upstream (SLSsteam / AceSLS)
+
+Issues observados en SLSsteam upstream durante el cross-check con LumaCore.
+No son de lumalinux — quedan apuntados aquí para tracking; el fix vive en
+AceSLS, no en este repo.
+
+### 13.1 `hkClientUser_RunIPCFrame` con cuerpo vacío
+
+`src/hooks.cpp:782-796` planta el hook sobre `CClientUser::RunIPCFrame` pero
+**todo el cuerpo está comentado**: solo llama a la trampoline y vuelve. Es un
+trampolín gratuito que añade overhead en cada IPC frame (mucho tráfico, miles
+de invocaciones por segundo) sin hacer nada útil.
+
+Probablemente fue un experimento de logging/debugging que se dejó plantado tras
+limpiar el cuerpo. Fix: o quitar el hook entero (lo más limpio), o restaurar
+el cuerpo si había una intención que no se ha documentado.
+
+### 13.2 `BIsDlcEnabled` pasando `appId` a `shouldUnlockDlc` — NO es bug
+
+Apuntado inicialmente como sospecha de bug (`hooks.cpp:413` pasa `appId` en
+vez de `dlcId` a `DLC::isDlcEnabled`, asimétrico con `IsAppDlcInstalled` que
+pasa `dlcId`). Tras rastrear `CUser::isSubscribed` y ver que llama la
+**trampoline** (`.tramp.fn`, no `.originalFn.fn`), el patrón resulta ser una
+feature deliberada: cubre el caso "el juego entero está en AdditionalApps →
+desbloquear todos sus DLCs sin tener que listar cada uno". El caso "tengo el
+base, no el DLC" se cubre por otra ruta (el hook de `CheckAppOwnership` del
+`dlcId`).
+
+Anotado aquí porque la asimetría desconcierta al primer leer. No tocar.
