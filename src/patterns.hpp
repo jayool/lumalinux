@@ -6,24 +6,37 @@
 namespace Patterns {
 
 // =============================================================================
-// v0.1 — depot key resolution
+// v1.0 — depot key resolution (KeyValues accessor, LumaCore-style)
 // =============================================================================
 //
-// Byte pattern for the depot key wrapper function in steamclient.so.
+// We hook the INNER KeyValues accessor, exactly the function LumaCore hooks on
+// Windows — NOT the outer dispatcher. Steam's depot-key flow is:
 //
-// This is the function that LumaCore calls LoadDepotDecryptionKey on Windows.
-// It does:
-//   1. Cache check via inner helper (returns 1/OK if cache hit)
-//   2. RPC fallback: constructs CMsgClientGetDepotDecryptionKey (EMsg 5438)
-//      and sends it via an inner function
-//   3. Returns 0/Fail or 1/OK
+//   outer dispatcher (this_, app_id, depot_id, out_key)
+//     └─ cache lookup → builds the KeyName
+//          "Software\Valve\Steam\Depots\<depot>\DecryptionKey"
+//          and virtual-calls THIS accessor with (pObject, foo, KeyName, Key,
+//          KeySize) to read the key from Steam's KeyValues store.
 //
-// SIGNATURE (verified empirically on Steam Deck):
-//   EResult LoadDepotDecryptionKey(
-//       void*     this_,            // arg0
-//       uint32_t  app_id,           // arg1
-//       uint32_t  depot_id,         // arg2
-//       void*     out_key_buffer);  // arg3
+// Hooking the outer dispatcher (v0.1) and short-circuiting it corrupts Steam's
+// heap when we serve an owned depot (verified: `free(): invalid pointer`).
+// Hooking THIS accessor instead just answers the KeyValues query: the cache
+// gets a clean hit and the dispatcher proceeds through its normal path — no
+// short-circuit, no corruption, works for owned and unowned depots alike. This
+// is precisely LumaCore's DepotKeys.cpp approach.
+//
+// SIGNATURE (cdecl, i386 — 5 stack args, matches LumaCore):
+//   int32_t LoadDepotDecryptionKey(
+//       void*     pObject,    // arg0
+//       uint32_t  foo,        // arg1 (KeyValues value-type selector; 1 for keys)
+//       char*     KeyName,    // arg2 "Software\Valve\Steam\Depots\<depot>\DecryptionKey"
+//       char*     Key,        // arg3 output buffer (32-byte AES key on success)
+//       uint32_t  KeySize);   // arg4 size of Key buffer — VALIDATE before writing
+//   returns the number of key bytes written on success (32), 0 on miss.
+//
+// Prologue (PIC get_pc_thunk; sub esp,0x24; then the 5-arg load sequence
+// mov eax,[esp+0x44]; mov ebp,[esp+0x38]; mov edi,[esp+0x3c]; mov esi,[esp+0x40];
+// mov [esp+0x10],eax; mov eax,[esp+0x48]; mov [esp+0x14],eax). Verified UNIQUE.
 inline constexpr const char* kDepotKeyFnPattern =
     "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 24 8B 44 24 44 8B 6C 24 38 8B 7C 24 3C 8B 74 24 40 89 44 24 10 8B 44 24 48 89 44 24 14";
 

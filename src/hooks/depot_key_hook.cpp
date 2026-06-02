@@ -11,18 +11,38 @@
 
 namespace {
 
-// LumaCore-style: hook the inner KeyValues accessor, not the outer dispatcher.
-//   int32_t LoadDepotDecryptionKey(void* pObject, uint32_t foo,
-//                                  char* KeyName, char* Key, uint32_t KeySize);
-//   KeyName = "Software\Valve\Steam\Depots\<depot>\DecryptionKey"
-// Answering the query here (instead of short-circuiting the dispatcher) is what
-// keeps Steam from corrupting its heap. See RESEARCH.md §12.
-using LoadDepotKeyFn = int32_t (*)(void*, uint32_t, const char*, char*, uint32_t);
+// ── Function signature ──────────────────────────────────────────────────────
+//
+// We hook the inner KeyValues accessor, exactly like LumaCore (DepotKeys.cpp).
+// Verified empirically on Steam Deck / codespace by resolving the virtual call
+// the cache makes and disassembling it:
+//
+//   int32_t LoadDepotDecryptionKey(
+//       void*     pObject,    // arg0  KeyValues store object
+//       uint32_t  foo,        // arg1  value-type selector (1 for binary keys)
+//       char*     KeyName,    // arg2  "Software\Valve\Steam\Depots\<depot>\DecryptionKey"
+//       char*     Key,        // arg3  output buffer
+//       uint32_t  KeySize);   // arg4  size of Key — we MUST honour it
+//   returns bytes written on success (32), 0 on miss.
+//
+// Hooking HERE (not the outer dispatcher) is what makes this not crash: we only
+// answer the KeyValues query. Steam's cache then sees a hit and the dispatcher
+// proceeds through its normal owned-or-unowned path — no short-circuit, no heap
+// corruption. Works for every depot, owned and unowned, with no static list.
+// See RESEARCH.md §12.
+
+using LoadDepotKeyFn = int32_t (*)(void* /*pObject*/, uint32_t /*foo*/,
+                                   const char* /*KeyName*/, char* /*Key*/,
+                                   uint32_t /*KeySize*/);
+
 LoadDepotKeyFn g_origFn = nullptr;
 
 volatile uint32_t g_lastServedDepot = 0;
 constexpr size_t kDepotKeyBytes = 32;
 
+// Parse the depot id out of "Software\Valve\Steam\Depots\<depot>\DecryptionKey".
+// Returns 0 if the name isn't a depot-key path (so we passthrough). Mirrors
+// LumaCore: find "\DecryptionKey", then the backslash before it bounds the id.
 uint32_t DepotIdFromKeyName(const char* keyName) {
     if (!keyName) return 0;
     std::string name(keyName);
@@ -36,6 +56,8 @@ uint32_t DepotIdFromKeyName(const char* keyName) {
     return static_cast<uint32_t>(std::strtoul(id.c_str(), nullptr, 10));
 }
 
+// ── Hook implementation (LumaCore-style) ─────────────────────────────────────
+
 int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
                char* key, uint32_t keySize) {
     uint32_t depot = DepotIdFromKeyName(keyName);
@@ -45,15 +67,19 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
             if (keySize >= kDepotKeyBytes && key != nullptr) {
                 std::memcpy(key, k->data(), kDepotKeyBytes);
                 g_lastServedDepot = depot;
-                Log::Info("LoadDepotKey: SERVED local key for depot %u (KeySize=%u)",
-                          depot, keySize);
+                Log::Info("LoadDepotKey: SERVED local key for depot %u "
+                          "(KeyName accessor, KeySize=%u)", depot, keySize);
                 return static_cast<int32_t>(kDepotKeyBytes);
             }
-            Log::Warn("LoadDepotKey: depot %u buffer too small (KeySize=%u) — passthrough",
-                      depot, keySize);
+            Log::Warn("LoadDepotKey: depot %u key too large for buffer "
+                      "(KeySize=%u < 32) — passthrough", depot, keySize);
         }
     }
-    if (!g_origFn) { Log::Error("LoadDepotKey: no orig fn"); return 0; }
+
+    if (!g_origFn) {
+        Log::Error("LoadDepotKey: no original fn pointer — should never happen");
+        return 0;
+    }
     return g_origFn(pObject, foo, keyName, key, keySize);
 }
 
@@ -71,8 +97,10 @@ bool Install() {
         return false;
     }
     g_origFn = reinterpret_cast<LoadDepotKeyFn>(tramp);
-    Log::Info("DepotKey hook: INSTALLED (KeyValues accessor, target=0x%lx, %zu keys)",
-              (unsigned long)target, KeyStore::Size());
+
+    Log::Info("DepotKey hook: INSTALLED (KeyValues accessor, target=0x%lx, "
+              "trampoline=%p, %zu keys loaded)",
+              (unsigned long)target, (void*)g_origFn, KeyStore::Size());
     return true;
 }
 

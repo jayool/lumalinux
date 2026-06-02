@@ -133,7 +133,7 @@ uintptr_t FindSteamclientBase() {
 }
 
 uintptr_t FindDepotKeyFunction() {
-    return FindInSteamclient(kDepotKeyFnPattern, "depot key function");
+    return FindInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 
 uintptr_t FindBuildDepotDependencyFunction() {
