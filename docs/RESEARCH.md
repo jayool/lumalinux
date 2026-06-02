@@ -70,11 +70,16 @@ All hooks installed via libmem inline hooking (`LM_HookCode`) + a get_pc_thunk
 fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD**
 (see §5).
 
-### DepotKey — `LoadDepotDecryptionKey`
-- `EResult LoadDepotDecryptionKey(void* this, uint32 app_id, uint32 depot_id, void* out_key)`
+### DepotKey — `LoadDepotDecryptionKey` (inner KeyValues accessor, v1.0)
+- `int32_t LoadDepotDecryptionKey(void* pObject, uint32 foo, char* KeyName, char* Key, uint32 KeySize)`
 - Pattern: `patterns.hpp::kDepotKeyFnPattern`.
-- Hook: if `depot_id` in keystore → `memcpy(out_key, key, 32); return 1 (OK)`.
-- Also records `g_lastServedDepot` (was used for correlation experiments).
+- This is the INNER KeyValues accessor (the function LumaCore hooks), NOT the
+  outer dispatcher. `KeyName` = `"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
+- Hook: parse the depot id from `KeyName`; if in keystore and `KeySize >= 32`,
+  `memcpy(Key, key, 32); return 32`; otherwise passthrough.
+- Records `g_lastServedDepot` for GMRC correlation.
+- WHY this function and not the outer dispatcher: see §12. Hooking the outer
+  dispatcher and short-circuiting it corrupts Steam's heap on owned depots.
 
 ### BuildDep — `CUserAppManager::BuildDepotDependency`
 - 8 args, cdecl; `pDepotInfo`/`pSharedDepotInfo` are `CUtlVector<DepotEntry>`.
@@ -399,3 +404,98 @@ sospecha basado en estas divergencias es:
 3. **`manifest_size != 0`** en KeyStore — LumaCore lo fuerza a 0 con
    advertencia explícita en el comentario; nosotros usamos el size real.
 4. **DepotKey hook sin validar `KeySize`** — buffer overrun latente.
+
+
+## 12. El crash del DepotKey hook y su solución (Formula Legends)
+
+Investigación completa, reproducida en un Steam Linux real (codespace Ubuntu
+24.04, Xvfb+noVNC, SLSsteam + lumalinux), no hipótesis.
+
+### 12.1 Síntoma
+
+Al pulsar Install en un juego con shared depots (Formula Legends, app 3194360,
+con redists 228989/228990 del app 228980), Steam crasheaba con
+`free(): invalid pointer` → abort. El crash era **heap corruption**, no un
+segfault en nuestros hooks: ocurría en código de Steam DESPUÉS de que el hook
+DepotKey devolvía.
+
+### 12.2 Aislamiento (qué hook, qué depots)
+
+Desactivando hooks por env-var (`LUMA_NO_GMRC`, `LUMA_NO_DEPOTKEY`):
+- Sin lumalinux → no crash (pero "content still encrypted": el flujo nativo
+  necesita el hook para servir la key del depot de contenido).
+- Con DepotKey desactivado → no crash, descarga, pero `Missing decryption key`
+  para 3194361 → el hook DepotKey **es necesario**.
+- El crash correlacionaba con **servir las keys de 228989/228990** (los redists
+  que Steam YA POSEE vía la licencia de 228980). Servir la key del depot de
+  contenido (3194361, no-owned) NO crasheaba.
+
+### 12.3 Causa raíz
+
+lumalinux ≤v0.8 hookeaba el **dispatcher externo** de depot keys
+(`(this, app_id, depot_id, out_key)`) y lo **cortocircuitaba** (servía y
+devolvía OK sin dejar correr la maquinaria de Steam). Para un depot que Steam
+posee, eso deja su estado interno inconsistente (la ruta owned esperaba pasar
+por su cache/refcount) → corrupción de heap.
+
+Confirmado además que el `out_key` de esa función NO es un buffer de 32 bytes
+crudo: la función de cache lo inicializa como estructura de 128 bytes
+(`KeySize=128`). Nuestro `memcpy` de 32 cabía (no era overflow), así que el
+crash era de **estado**, no de buffer.
+
+### 12.4 Por qué la detección dinámica de ownership NO funciona en Linux
+
+Intentamos replicar el `MarkOwned` de LumaCore (servir solo lo no-owned):
+- **`CheckAppOwnership`**: SLSsteam lo spoofea → un app no-owned parece owned.
+  Señal inservible.
+- **Llamar al dispatcher original primero** (option-C): el original devuelve OK
+  para 3194361 porque su key está en `config.vdf` → indistinguible de owned. Y
+  para los que sí fallan, el **RPC denegado deja estado que crashea** al servir.
+- **Llamar solo a la función de cache interna** (cache-first): detecta ownership
+  bien (la cache refleja licencias reales, no `config.vdf`), pero su ruta de
+  *miss* tiene un **efecto secundario interno** que crashea igual — verificado
+  sondeando incluso con un buffer scratch (el `out_key` real quedaba intacto y
+  aun así petaba). Conclusión: **no se puede llamar a ninguna función depot-key
+  de Steam alrededor de servir sin envenenar el estado.**
+
+### 12.5 La solución (paridad con LumaCore)
+
+LumaCore no hookea el dispatcher: hookea la **KeyValues accessor interna**
+`LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)`, que el dispatcher
+invoca (vía virtual call) para leer la key del store con el KeyName
+`"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
+
+Hookeando AHÍ solo **respondemos la query**: la cache de Steam recibe un "hit"
+limpio y el dispatcher continúa por su ruta normal (owned o no) — sin
+cortocircuito, sin corrupción. Funciona para owned y no-owned por igual, **sin
+lista estática de shared depots**.
+
+Resolución de la función en Linux i386 (no estaba en patterns):
+1. Localizar la cache fn (su propio patrón).
+2. Seguir su virtual call: `this=*(global)+0xd60; vtable=*this; fn=*(vtable+0x18)`
+   leyendo `/proc/PID/mem` del Steam vivo (root). Da la accessor interna.
+3. Volcar su prólogo, derivar el patrón único (`kDepotKeyFnPattern`, v1.0).
+
+Firma (cdecl i386, 5 args en pila): `pObject, foo, KeyName, Key, KeySize`.
+El hook parsea el depot del KeyName, valida `KeySize >= 32`, hace
+`memcpy(Key, ourkey, 32)` y `return 32`; passthrough si el KeyName no es de
+depot o no tenemos la key.
+
+### 12.6 Verificación end-to-end
+
+Con el hook v1.0: FL sirve 228989, 228990 y 3194361 (`KeySize=128`) **sin un
+solo crash dump**, descarga y descifra los 13 GB (`ASC.exe` + contenido en
+disco), `appmanifest_3194360.acf` con `StateFlags=4` y `InstalledDepots`
+poblado. Install nativo completo.
+
+Residuo benigno: tras completar, Steam encola una auto-actualización que da
+`Missing decryption key` / `UpdateResult=8` sin cambiar `StateFlags` de 4 — es
+el residuo que `_patch_acf_error_state` (SteaMidra) limpia; no bloquea Play.
+
+### 12.7 Implicación para el inventario §11.3
+
+La divergencia §11.3 ("DepotKey hook sin validar KeySize") queda resuelta: el
+hook v1.0 SÍ valida `KeySize` (como LumaCore) porque ahora hookea la variante
+KeyName-based que recibe el tamaño. El crash, sin embargo, no era el buffer
+(cabían los 32 bytes en 128) sino el cortocircuito del dispatcher — resuelto al
+hookear la accessor interna.
