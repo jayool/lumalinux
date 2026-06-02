@@ -25,7 +25,7 @@ namespace Patterns {
 //       uint32_t  depot_id,         // arg2
 //       void*     out_key_buffer);  // arg3
 inline constexpr const char* kDepotKeyFnPattern =
-    "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 20 8B 74 24 34 8B 7C 24 3C 8B 6C 24 40";
+    "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 24 8B 44 24 44 8B 6C 24 38 8B 7C 24 3C 8B 74 24 40 89 44 24 10 8B 44 24 48 89 44 24 14";
 
 
 // =============================================================================

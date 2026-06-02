@@ -6,76 +6,55 @@
 
 #include <cstring>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 
 namespace {
 
-// ── Function signature ──────────────────────────────────────────────────────
-//
-// Deduced from static analysis of steamclient.so:
-//   EResult LoadDepotDecryptionKey(
-//       void*     this_,           // CClientUser instance pointer
-//       uint32_t  app_id,
-//       uint32_t  depot_id,
-//       void*     out_key_buffer); // 32 bytes filled with AES-256 key on success
-//
-// Steam EResult values (verified from SteamKit/Resources/SteamLanguage/eresult.steamd):
-//   1 = OK
-//   2 = Fail
-//
-// ★ THIS SIGNATURE IS DEDUCED — VERIFY EMPIRICALLY ★
-
-using LoadDepotKeyFn = int32_t (*)(void* /*this*/, uint32_t /*app_id*/,
-                                   uint32_t /*depot_id*/, void* /*out_key*/);
-
+// LumaCore-style: hook the inner KeyValues accessor, not the outer dispatcher.
+//   int32_t LoadDepotDecryptionKey(void* pObject, uint32_t foo,
+//                                  char* KeyName, char* Key, uint32_t KeySize);
+//   KeyName = "Software\Valve\Steam\Depots\<depot>\DecryptionKey"
+// Answering the query here (instead of short-circuiting the dispatcher) is what
+// keeps Steam from corrupting its heap. See RESEARCH.md §12.
+using LoadDepotKeyFn = int32_t (*)(void*, uint32_t, const char*, char*, uint32_t);
 LoadDepotKeyFn g_origFn = nullptr;
 
-// Last depot id whose key we served from the KeyStore — read by the GMRC hook
-// for response→manifest correlation. Plain volatile is fine: single writer
-// (this hook), single reader (GMRC hook), and a stale value at worst injects
-// the wrong code (recoverable), never crashes.
 volatile uint32_t g_lastServedDepot = 0;
+constexpr size_t kDepotKeyBytes = 32;
 
-constexpr int32_t kResultOK   = 1;
-constexpr int32_t kResultFail = 2;
+uint32_t DepotIdFromKeyName(const char* keyName) {
+    if (!keyName) return 0;
+    std::string name(keyName);
+    size_t dk = name.find("\\DecryptionKey");
+    if (dk == std::string::npos || dk == 0) return 0;
+    size_t start = name.find_last_of('\\', dk - 1);
+    if (start == std::string::npos) return 0;
+    std::string id = name.substr(start + 1, dk - start - 1);
+    if (id.empty()) return 0;
+    for (char c : id) if (c < '0' || c > '9') return 0;
+    return static_cast<uint32_t>(std::strtoul(id.c_str(), nullptr, 10));
+}
 
-constexpr size_t  kDepotKeyBytes = 32;
-
-// ── Hook implementation ─────────────────────────────────────────────────────
-
-int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id, void* out_key) {
-    Log::Debug("LoadDepotKey hook fired: app_id=%u depot_id=%u out_buf=%p",
-               app_id, depot_id, out_key);
-
-    if (out_key == nullptr) {
-        Log::Warn("LoadDepotKey: null output buffer, falling through to original");
-        if (!g_origFn) return kResultFail;
-        return g_origFn(this_, app_id, depot_id, out_key);
+int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
+               char* key, uint32_t keySize) {
+    uint32_t depot = DepotIdFromKeyName(keyName);
+    if (depot != 0) {
+        if (auto k = KeyStore::Lookup(depot)) {
+            static_assert(kDepotKeyBytes == 32, "depot keys are 32-byte AES");
+            if (keySize >= kDepotKeyBytes && key != nullptr) {
+                std::memcpy(key, k->data(), kDepotKeyBytes);
+                g_lastServedDepot = depot;
+                Log::Info("LoadDepotKey: SERVED local key for depot %u (KeySize=%u)",
+                          depot, keySize);
+                return static_cast<int32_t>(kDepotKeyBytes);
+            }
+            Log::Warn("LoadDepotKey: depot %u buffer too small (KeySize=%u) — passthrough",
+                      depot, keySize);
+        }
     }
-
-    if (auto key = KeyStore::Lookup(depot_id)) {
-        // We assume Steam always provides a 32-byte buffer for `out_key`
-        // (that's the size of a depot AES key, and what Steam stores
-        // internally). Unlike LumaCore — which hooks the KeyValues-path
-        // variant LoadDepotDecryptionKey(KeyName, Key, KeySize) and
-        // validates KeySize >= 32 — the function we hook here doesn't pass
-        // an explicit buffer size, so this assumption is unchecked. If a
-        // future Steam build calls this with a smaller buffer we'd write
-        // beyond it. Flagged in RESEARCH.md §11.3.
-        static_assert(kDepotKeyBytes == 32, "depot keys are 32-byte AES");
-        std::memcpy(out_key, key->data(), kDepotKeyBytes);
-        g_lastServedDepot = depot_id;
-        Log::Info("LoadDepotKey: SERVED local key for depot %u (app %u)", depot_id, app_id);
-        return kResultOK;
-    }
-
-    if (!g_origFn) {
-        Log::Error("LoadDepotKey: no original fn pointer — should never happen");
-        return kResultFail;
-    }
-
-    int32_t result = g_origFn(this_, app_id, depot_id, out_key);
-    Log::Debug("LoadDepotKey: passthrough to original returned %d", result);
-    return result;
+    if (!g_origFn) { Log::Error("LoadDepotKey: no orig fn"); return 0; }
+    return g_origFn(pObject, foo, keyName, key, keySize);
 }
 
 } // namespace
@@ -84,12 +63,7 @@ namespace Hooks::DepotKey {
 
 bool Install() {
     uintptr_t target = Patterns::FindDepotKeyFunction();
-    if (!target) {
-        Log::Error("DepotKey hook: cannot install — target function not found");
-        return false;
-    }
-
-    // libmem hook + get_pc_thunk fixup (thread-safe; handles the PIC prologue).
+    if (!target) { Log::Error("DepotKey hook: target not found"); return false; }
     void* tramp = nullptr;
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("DepotKey hook: LmHook::Install failed (target=0x%lx)",
@@ -97,19 +71,12 @@ bool Install() {
         return false;
     }
     g_origFn = reinterpret_cast<LoadDepotKeyFn>(tramp);
-
-    Log::Info("DepotKey hook: INSTALLED (target=0x%lx, trampoline=%p, %zu keys loaded)",
-              (unsigned long)target, (void*)g_origFn, KeyStore::Size());
+    Log::Info("DepotKey hook: INSTALLED (KeyValues accessor, target=0x%lx, %zu keys)",
+              (unsigned long)target, KeyStore::Size());
     return true;
 }
 
-void Uninstall() {
-    // Hook persists for process lifetime.
-    g_origFn = nullptr;
-}
-
-uint32_t LastServedDepot() {
-    return g_lastServedDepot;
-}
+void Uninstall() { g_origFn = nullptr; }
+uint32_t LastServedDepot() { return g_lastServedDepot; }
 
 } // namespace Hooks::DepotKey
