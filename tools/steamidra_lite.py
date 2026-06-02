@@ -92,6 +92,14 @@ _DEPOT_DEC_KEY_REGEX = re.compile(
 )
 _GENERAL_ADDAPPID_REGEX = re.compile(r"^\s*addappid\s*\(\s*(\d+)", flags=re.MULTILINE)
 _SETMANIFESTID_REGEX = re.compile(
+    # Accept both 2-arg and 3-arg forms. Hubcap currently writes
+    #   setManifestid(depot, "gid", size)
+    # (the size is the third argument). LumaCore's Lua interpreter accepts
+    # both shapes and ignores the third arg (size is forced to 0 internally,
+    # see LuaLoader.cpp:187). We mirror that: capture depot + gid, ignore size.
+    # SteaMidra's upstream regex still requires `)` immediately after the gid
+    # quote, so 3-arg .luas would silently match nothing there too; we diverge
+    # from upstream deliberately on this one.
     r"^\s*setManifestid\s*\(\s*(\d+)\s*,\s*[\"'](\d+)[\"']\s*(?:,\s*\d+\s*)?\)",
     flags=re.MULTILINE,
 )
@@ -116,6 +124,40 @@ def parse_lua_contents(contents, path):
 
 
 # ─── Fin verbatim de SteaMidra ────────────────────────────────────────────
+
+
+# Shared depots are redists (VC++, DirectX, etc.) that belong to ANOTHER app
+# (228980 = "Steamworks Common Redistributables") which EVERY Steam account
+# owns. Hubcap marks them with a "-- SHARED DEPOTS" section header.
+#
+# These must NOT be served by lumalinux's DepotKey hook: Steam already owns
+# them and has their keys, and intercepting LoadDepotDecryptionKey for an
+# owned depot corrupts Steam's heap (verified empirically — the codespace
+# reproduction crashed with `free(): invalid pointer` while serving 228989/
+# 228990, and stopped crashing + downloaded+decrypted FL the moment those two
+# were removed from keys.txt). This mirrors LumaCore, whose HasDepot() excludes
+# owned apps (MarkOwned) so it never serves keys for them.
+_SHARED_SECTION_RE = re.compile(r"^\s*--\s*SHARED\s+DEPOTS", re.IGNORECASE | re.MULTILINE)
+_SECTION_HEADER_RE = re.compile(r"^\s*--\s*[A-Z]", re.MULTILINE)
+_ADDAPPID_ANY_RE = re.compile(r"^\s*addappid\s*\(\s*(\d+)", re.MULTILINE)
+
+
+def parse_shared_depots(lua_text):
+    """Return the set of depot ids under the `-- SHARED DEPOTS` section.
+
+    The section runs from the `-- SHARED DEPOTS` header to the next top-level
+    `-- SOMETHING` comment header (e.g. `-- DLCS WITHOUT...`) or EOF. Every
+    addappid() in that range is a shared depot. Empty set if no such section
+    (older .luas, or games with no shared redists like Mina)."""
+    m = _SHARED_SECTION_RE.search(lua_text)
+    if not m:
+        return set()
+    region_start = m.end()
+    # Find the next section header after the SHARED DEPOTS one.
+    nxt = _SECTION_HEADER_RE.search(lua_text, region_start)
+    region_end = nxt.start() if nxt else len(lua_text)
+    region = lua_text[region_start:region_end]
+    return {int(x) for x in _ADDAPPID_ANY_RE.findall(region)}
 
 
 _MANIFEST_NAME_RE = re.compile(r"^(\d+)_(\d+)\.manifest$")
@@ -321,10 +363,18 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
     - El AppID principal → entry LEGACY con key (la del .lua si la trae, o
       000...000 como dummy). Steam pregunta por la 'key del AppID' durante
       el bootstrap del install; el DepotKey hook responde para que el flow
-      no se quede esperando."""
+      no se quede esperando.
+
+    TODOS los depots (content y shared) van a keys.txt. El hook DepotKey de
+    lumalinux v1.0 hookea la KeyValues accessor interna (como LumaCore), así que
+    servir la key de cualquier depot — owned o no — solo responde la query y NO
+    corrompe el heap. Para un shared depot owned (228989/228990) servir nuestra
+    key es redundante pero inofensivo; para uno que NO poseas, es necesario. Sin
+    lista estática: el hook sirve lo que esté en keys.txt y hace passthrough del
+    resto. Espejo de LumaCore (DepotKeys.cpp sirve todo el DepotKeySet)."""
     keys_path.parent.mkdir(parents=True, exist_ok=True)
     # Merge with existing entries (preserves entries from previous runs for other apps)
-    existing = {}  # {depot_id: tuple — 5-tuple (ext) or 2-tuple (legacy)}
+    existing = {}  # {depot_id: tuple — variants below}
     if keys_path.exists():
         for line in keys_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
@@ -336,21 +386,31 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
                     existing[did] = ("ext", int(parts[1]), int(parts[2]), int(parts[3]), parts[4])
                 elif len(parts) == 2:
                     did = int(parts[0])
-                    existing[did] = ("leg", parts[1])
+                    # `<did>;` with empty key field = presence-only (no-key) entry.
+                    if parts[1] == "":
+                        existing[did] = ("leg_no_key",)
+                    else:
+                        existing[did] = ("leg", parts[1])
             except ValueError:
                 continue
 
     added = 0
     updated = 0
+    app_id_key_from_lua = None
     for did, key in depot_keys.items():
         if did == app_id:
-            # AppID with its own key in the .lua (Hubcap does this for some
-            # games like Formula Legends): keep the real key in LEGACY format.
-            new_entry = ("leg", key)
-        else:
-            gid = manifests.get(did, 0)
-            size = manifest_sizes.get(did, 0)
-            new_entry = ("ext", app_id, gid, size, key)
+            # The .lua may include `addappid(APP_ID, 1, "real_key")` (Hubcap
+            # does this for Formula Legends and similar). LumaCore keeps that
+            # real key in its DepotKeySet — we mirror that here as a LEGACY
+            # entry. We only filter the AppID out of `config.vdf` (where it
+            # genuinely breaks Steam — confirmed by FL vs Mina); keeping the
+            # real key in keys.txt is harmless because the AppID is never
+            # queried as a depot key during download.
+            app_id_key_from_lua = key
+            continue
+        gid = manifests.get(did, 0)
+        size = manifest_sizes.get(did, 0)
+        new_entry = ("ext", app_id, gid, size, key)
         if did not in existing:
             existing[did] = new_entry
             added += 1
@@ -358,22 +418,37 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
             existing[did] = new_entry
             updated += 1
 
-    # Ensure AppID line exists (dummy 000...000 if the .lua didn't include
-    # the AppID as a depot_key — happens for older-style luas like Balatro's).
+    # AppID entry. Two cases, both mirror LumaCore:
+    #   - .lua has `addappid(APP_ID, 1, "real_key")` → LEGACY with the real key.
+    #     DepotKey hook will serve it if Steam asks (same as LumaCore).
+    #   - .lua has `addappid(APP_ID)` (no key) → presence-only entry written
+    #     as `APP_ID;` with the empty key field. KeyStore loads it with
+    #     has_key=false so Lookup returns nullopt and the DepotKey hook
+    #     passthroughs to Steam's original — matches LumaCore's
+    #     DepotKeySet[id] = "" semantics. The id is still returned by
+    #     GetAllDepotIds() so LoadPackage injects it into AppIdVec.
+    new_app_entry = ("leg", app_id_key_from_lua) if app_id_key_from_lua else ("leg_no_key",)
     if app_id not in existing:
-        existing[app_id] = ("leg", "0" * 64)
+        existing[app_id] = new_app_entry
         added += 1
+    elif existing[app_id] != new_app_entry:
+        existing[app_id] = new_app_entry
+        updated += 1
 
     lines = [
         "# lumalinux keys.txt — managed by steamidra_lite.py",
         "# EXTENDED: depot_id;parent_app_id;manifest_gid;manifest_size;hex_key   (content depots — lumalinux inyecta en pDepotInfo)",
-        "# LEGACY:   depot_id;hex_key                                            (shared depots + AppID dummy — lumalinux solo sirve la key)",
+        "# LEGACY:   depot_id;hex_key                                            (AppID with key — lumalinux solo sirve la key, no inyecta)",
+        "# NO-KEY:   depot_id;                                                   (AppID sin key en el .lua — lumalinux inyecta el id pero el hook hace passthrough; espejo del DepotKeySet[id]=\"\" de LumaCore)",
+        "# Todos los depots (content y shared) van aquí: el hook DepotKey v1.0 hookea la KeyValues accessor interna y sirve cualquiera sin corromper (como LumaCore).",
     ]
     for did in sorted(existing):
         e = existing[did]
         if e[0] == "ext":
             _, parent, gid, size, key = e
             lines.append(f"{did};{parent};{gid};{size};{key}")
+        elif e[0] == "leg_no_key":
+            lines.append(f"{did};")
         else:
             _, key = e
             lines.append(f"{did};{key}")
@@ -685,12 +760,13 @@ def main():
     print()
 
     # ── lumalinux keys.txt ────────────────────────────────────────────────
-    # SteaMidra no diferencia content vs shared, así que tampoco lo hacemos:
-    # todos los depots con key van en EXTENDED (parent=app_id), excepto el
-    # propio AppID que es dummy. lumalinux LoadPackage inyecta los depots con
-    # parent==app_id en PackageId=0; BuildDep solo parchea los que Steam ya
-    # tenga en pDepotInfo, el resto los ignora — no causa daño meter shared
-    # ahí también.
+    # TODOS los depots (content y shared) van a keys.txt. El hook DepotKey v1.0
+    # hookea la KeyValues accessor interna (como LumaCore), así que servir la key
+    # de cualquier depot solo responde la query y no corrompe — sin lista
+    # estática. shared_depots se reporta solo a título informativo.
+    shared_depots = parse_shared_depots(lua_text)
+    if shared_depots:
+        print(f"  [i] shared depots: {sorted(shared_depots)} (se sirven igual; el hook v1.0 lo maneja)")
     print(f"== Escribiendo {args.luma_keys} ==")
     n_new, n_upd = write_lumalinux_keys(
         args.luma_keys, depot_keys, manifests, manifest_sizes, app_id)
@@ -708,8 +784,15 @@ def main():
     # hook (p.ej. validación pre-descarga del manifest signature).
     if not args.no_vdf:
         print(f"== Añadiendo keys a {args.steam_root/'config/config.vdf'} ==")
-        n_vdf = update_config_vdf(args.steam_root/"config/config.vdf", depot_keys)
-        print(f"  [+] {n_vdf} keys nuevas en config.vdf")
+        # Filter out the main AppID: Hubcap .luas sometimes include
+        # `addappid(APP_ID, 1, "key")` (Formula Legends does), but Steam's
+        # depots table is for *depot* keys only. Writing APP_ID there made
+        # Steam crash on install. Confirmed by comparing FL (broken, APP_ID
+        # was in depots) vs Mina (working, APP_ID was not).
+        vdf_keys = {d: k for d, k in depot_keys.items() if d != app_id}
+        n_vdf = update_config_vdf(args.steam_root/"config/config.vdf", vdf_keys)
+        print(f"  [+] {n_vdf} keys nuevas en config.vdf  "
+              f"(AppID {app_id} filtrado, no es un depot)")
         print()
 
     # ── .acf error-state reset ────────────────────────────────────────────
