@@ -231,22 +231,24 @@ does (see `sff/ui.py`), in order:
    not the early manifest validation).
 5. **AppToken** (optional, `--token APPID:HEX`) — only needed for games whose
    PICS appinfo Valve doesn't return without a token. Most games don't need it.
-6. **Resets the `.acf` error state**
-   (`appmanifest_<appid>.acf`: `UpdateResult` / `BytesToDownload` / `Bytes*` /
-   `StagingSize` → 0, and clears the Update-Required bit of `StateFlags`).
-   Replicates `sff/lua/writer.py:_patch_acf_error_state` whose own comment
-   reads: *"this is what causes 'NO INTERNET CONNECTION'"*. Without this step
-   Steam frequently shows that error on the first Install attempt after any
-   prior failure, even with the network fully up — it's stale state in the
-   `.acf`, not a real network problem. **If the `.acf` doesn't exist yet,
-   nothing is written**: leaving a stub with `StateFlags=4` makes Steam show
-   "Play" instead of "Install" (because on Linux native there's no DDL to
-   complete the install behind that stub), which is worse than the transient
-   "No internet" message that Steam will show on the first Install attempt.
-   The practical workflow for a brand-new app is therefore: run the script,
-   click Install (Steam creates the `.acf`), if Steam shows "No internet"
-   close Steam, re-run the script — this second pass finds the `.acf` and
-   patches it clean — then reopen Steam and Install again.
+6. **Writes / resets the `.acf`**
+   (`appmanifest_<appid>.acf`). Two cases:
+   - **`.acf` exists** (you've installed before, or this is a re-run after a
+     prior install attempt): patches the error-state fields back to clean
+     (`UpdateResult` / `BytesToDownload` / `Bytes*` / `StagingSize` → 0, and
+     clears the Update-Required bit of `StateFlags`). Replicates
+     `sff/lua/writer.py:_patch_acf_error_state`, whose own comment reads
+     *"this is what causes 'NO INTERNET CONNECTION'"*. Stale state in the
+     `.acf` is what causes that message, not a real network problem.
+   - **`.acf` doesn't exist** (brand-new install): writes a clean stub with
+     `StateFlags=4` and every error/byte counter at 0, deliberately omitting
+     `InstalledDepots` / `MountedDepots`. Mirrors what SFF
+     (`sff/ui.py:1074`) does in its Linux + SLS path. Steam reads the stub,
+     sees `StateFlags=4` but zero installed depots and zero bytes on disk,
+     and correctly shows Install — the stub is there so that
+     `UpdateResult` / `Bytes*` are already 0 when Steam starts downloading,
+     so a transient hiccup mid-download doesn't surface as "No internet" in
+     the UI.
 
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
 file touched are written next to the originals before any change.
