@@ -604,6 +604,40 @@ def _vdf_load_acf(path):
     return parse_block()
 
 
+def _fetch_game_name(app_id, timeout=3.0):
+    """Fetch the canonical game name from the Steam Web API
+    (store.steampowered.com/api/appdetails). Returns the name string on
+    success, None on any failure (network error, timeout, app not found,
+    malformed response, etc.). Used by write_or_patch_acf to populate
+    installdir + name in the stub so Steam shows 'Install' instead of
+    'Update' (matches what SFF does via sff/http_utils.py:get_game_name)."""
+    import urllib.request
+    import urllib.error
+    import json as _json
+    url = f"https://store.steampowered.com/api/appdetails/?appids={app_id}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "steamidra_lite"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        entry = data.get(str(app_id), {})
+        if not entry.get("success"):
+            return None
+        name = entry.get("data", {}).get("name")
+        return name if isinstance(name, str) and name.strip() else None
+    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def _sanitize_installdir(name):
+    """Strip filesystem-unsafe characters from a game name so it can be used as
+    an installdir (steamapps/common/<installdir>/). Removes characters illegal
+    on Windows/macOS/exFAT (\\/:*?\"<>|) plus trailing dots/spaces. Returns
+    None if the result would be empty."""
+    sanitized = re.sub(r'[\\/:*?"<>|]', '', name)
+    sanitized = sanitized.strip().rstrip('.')
+    return sanitized or None
+
+
 def write_or_patch_acf(steam_root, app_id, manifest_gids):
     """Step 6 of the install flow (replicates sff/lua/writer.py:write_acf +
     _patch_acf_error_state). Without this step Steam often shows 'NO INTERNET
@@ -658,20 +692,40 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
     # No .acf yet — write a clean stub. Mirrors sff/lua/writer.py:write_acf
     # called without manifest_override (the Linux + SLS path at
     # sff/ui.py:1074). See docstring for why we omit InstalledDepots.
+    #
+    # Try to fetch the canonical game name + use it as `name` + `installdir`.
+    # If we use str(app_id) instead, Steam sees the installdir as non-canonical
+    # and surfaces an "Update" button instead of "Install". Falling back to
+    # str(app_id) on network failure is safe — the install still works, just
+    # with the "Update" verb.
     acf_path.parent.mkdir(parents=True, exist_ok=True)
+    fetched_name = _fetch_game_name(app_id)
+    installdir = _sanitize_installdir(fetched_name) if fetched_name else None
+    if not installdir:
+        installdir = str(app_id)
     app_state = {
-        "appid":           str(app_id),
-        "Universe":        "1",
+        "appid":     str(app_id),
+        "Universe":  "1",
+    }
+    if fetched_name:
+        app_state["name"] = fetched_name
+    app_state.update({
         "StateFlags":      "4",
-        "installdir":      str(app_id),
+        "installdir":      installdir,
         "LastUpdated":     "0",
         "UpdateResult":    "0",
         "SizeOnDisk":      "0",
         "BytesToDownload": "0",
         "BytesDownloaded": "0",
-    }
+    })
     _vdf_dump_acf(acf_path, {"AppState": app_state})
-    return "created (clean stub, no InstalledDepots — prevents 'No internet' UI)"
+    status = f"created (stub, installdir='{installdir}'"
+    if fetched_name:
+        status += f", name='{fetched_name}'"
+    else:
+        status += ", name fetch failed — falling back to appid (button may say 'Update' instead of 'Install')"
+    status += ")"
+    return status
 
 
 def main():
