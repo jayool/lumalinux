@@ -613,14 +613,22 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
     - If the .acf already exists → patch the error-state fields (UpdateResult,
       Bytes*, etc.) back to 0 and clear the Update-Required bit (StateFlags
       AND 0xFFEF). This matches _patch_acf_error_state verbatim.
-    - If the .acf doesn't exist yet → leave it alone. Steam will create it
-      itself when the user clicks Install. Earlier versions of this function
-      wrote a stub with StateFlags=4 (mirroring SteaMidra Windows write_acf),
-      but on Linux native — without DDL completing the install behind that
-      stub — Steam interpreted StateFlags=4 as 'fully installed' and showed
-      the Play button instead of Install. Don't.
+    - If the .acf doesn't exist yet → write a clean stub mirroring SFF's
+      write_acf when called without manifest_override (the Linux + SLS path
+      in sff/ui.py:1074). The stub sets all error-state fields to 0 and
+      StateFlags=4, but DELIBERATELY OMITS InstalledDepots / MountedDepots —
+      that omission is what an earlier version of this function got wrong.
+      Writing those keys with StateFlags=4 made Steam read the .acf as
+      "fully installed, depots already in place" and surface a Play button
+      instead of Install (the Formula Legends regression). Without them
+      Steam sees StateFlags=4 but zero installed depots and zero bytes on
+      disk → correctly shows Install. The reason the stub helps despite
+      Steam still doing the actual download is that UpdateResult / Bytes*
+      are already 0 from the start, so a transient hiccup during download
+      doesn't surface as "No internet" in the UI.
 
-    manifest_gids: kept for API compatibility; currently unused."""
+    manifest_gids: kept for API compatibility; deliberately unused — see
+    above for why writing them was a bug."""
     acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
     if acf_path.exists():
         try:
@@ -647,14 +655,23 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
             print(f"  [WARN] No pude patchar {acf_path}: {e}")
             return "error"
 
-    # No .acf yet — DON'T create one. SteaMidra Windows write_acf with
-    # StateFlags=4 + manifest_override works there because SteamTools / DDL
-    # then completes the install. On Linux native without DDL, leaving a stub
-    # .acf with StateFlags=4 makes Steam think the game is fully installed and
-    # surface a "Play" button instead of "Install" — which is what just
-    # happened with Formula Legends. The right behaviour is to let Steam
-    # create the .acf itself when the user clicks Install.
-    return "skipped (no .acf to patch — Steam will create it on Install)"
+    # No .acf yet — write a clean stub. Mirrors sff/lua/writer.py:write_acf
+    # called without manifest_override (the Linux + SLS path at
+    # sff/ui.py:1074). See docstring for why we omit InstalledDepots.
+    acf_path.parent.mkdir(parents=True, exist_ok=True)
+    app_state = {
+        "appid":           str(app_id),
+        "Universe":        "1",
+        "StateFlags":      "4",
+        "installdir":      str(app_id),
+        "LastUpdated":     "0",
+        "UpdateResult":    "0",
+        "SizeOnDisk":      "0",
+        "BytesToDownload": "0",
+        "BytesDownloaded": "0",
+    }
+    _vdf_dump_acf(acf_path, {"AppState": app_state})
+    return "created (clean stub, no InstalledDepots — prevents 'No internet' UI)"
 
 
 def main():
