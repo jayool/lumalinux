@@ -49,6 +49,12 @@ inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
         static_cast<uint8_t*>(pInfo) + kOffAppIdVec);
 }
 
+// Thread-safety: this hook intentionally has no internal locking. It relies
+// on Steam loading PackageId=0 from a single PICS worker thread, which is
+// the observed behaviour in all builds we have run against. If Valve ever
+// parallelises PICS package loads, the read-modify-write of
+// vec->{m_pMemory, m_nAllocationCount, m_Size} below will race and a
+// hook-local mutex must be added around the grow + append block.
 bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
     bool result = g_origFn ? g_origFn(pInfo, sha1, cn, p4) : false;
     if (!pInfo) return result;

@@ -11,6 +11,14 @@
 #include <string>
 #include <vector>
 
+// Lock ordering (outer → inner): KeyStore::Mtx > Log::g_logMutex.
+// Several functions below call Log::Info / Log::Warn while holding
+// KeyStore::Mtx (specifically inside LoadFromFile). That is acceptable
+// because Log::* never calls back into KeyStore — keep it that way.
+// If you ever need to log from inside KeyStore while a different module
+// also needs to log from inside its own lock, document the ordering there
+// too so the global lock graph stays acyclic.
+
 namespace {
 
 // Function-local statics avoid the static-initialization-order fiasco that

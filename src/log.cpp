@@ -66,10 +66,21 @@ void WriteLine(const char* level, const char* fmt, va_list ap) {
 namespace Log {
 
 void Init() {
-    if (g_logFile) return;
-    std::string path = ResolveLogPath();
-    g_logFile = std::fopen(path.c_str(), "a");
-    if (g_logFile) {
+    // Concurrent calls are possible: the LD_AUDIT preinit path, the LD_PRELOAD
+    // constructor, and the polling worker can all reach Init() within
+    // microseconds of each other. The bare null check in earlier versions
+    // raced — two threads could both observe g_logFile==nullptr and both
+    // fopen, leaking one FD. Take g_logMutex to serialise the open, but
+    // release it before calling Info() (which re-acquires it via WriteLine).
+    FILE* opened = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        if (g_logFile) return;
+        std::string path = ResolveLogPath();
+        opened = std::fopen(path.c_str(), "a");
+        g_logFile = opened;
+    }
+    if (opened) {
         Info("=== lumalinux loaded (pid=%d) ===", getpid());
     }
 }
