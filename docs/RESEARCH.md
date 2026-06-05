@@ -306,14 +306,13 @@ literal LumaCore o asumir que nuestra divergencia es deliberada.
 | Fuente | `.lua` con `lua_State` real | `keys.txt` (formato propio) |
 | Estructura | `unordered_map<DepotId, hex_string>` (**plano**) | `map<DepotId, {parent_app_id, gid, size, key}>` (rico) |
 | `parent_app_id` | **NO EXISTE** — todos los depots son globales | Sí — invención lumalinux; usado por `GetDepotsForApp` |
-| `manifest_size` | **Siempre 0** — comentario verbatim: *"size is always forced to 0 to prevent incorrect size from breaking Steam"* (`LuaLoader.cpp:172`) | Usa el size real (del 3-arg `setManifestid` o del binary parse) |
+| `manifest_size` | **Siempre 0** — comentario verbatim: *"size is always forced to 0 to prevent incorrect size from breaking Steam"* (`LuaLoader.cpp:172`) | Sí se almacena (del 3-arg `setManifestid` o del binary parse), pero **no se usa** efectivamente — BuildDep hook lo ignora deliberadamente. Campo dormant. |
 | `GetAllDepotIds()` | Lista todos los depots del DepotKeySet | Igual |
 | `GetDepotsForApp(app_id)` | **NO EXISTE** | Filtra `parent_app_id==app_id && gid!=0` |
 
-**Riesgo conocido**: el manifest_size `0` que LumaCore fuerza no es decorativo
-— el comentario inline dice expresamente que un size incorrecto rompe Steam.
-Nosotros usamos el size real porque parece más correcto, pero LumaCore tiene
-más millage y avisa de esto.
+Sin divergencia operativa real: aunque guardamos `manifest_size`, no lo
+proyectamos a Steam. El campo podría eliminarse en una futura limpieza
+(seguimos parseándolo del .lua para compatibilidad con el formato Hubcap).
 
 ### 11.2 LoadPackage hook (`PackagePatch::LoadPackage`)
 
@@ -323,36 +322,44 @@ más millage y avisa de esto.
 | Qué inyecta | `GetAllDepotIds()` (todos) | Igual |
 | Filtra duplicados | NO | SÍ (`oldSize` loop) |
 | Sanity check del vector | NO | SÍ (rechaza si `oldSize > 4096` o entries `> 50M`) |
-| **Cómo crece `AppIdVec`** | `oCUtlMemoryGrow(&pInfo->AppIdVec, numToAdd)` — resuelve y llama la función real de Steam | **Append in-place sólo si `m_nAllocationCount >= total`; si no, SKIP** con `Log::Warn` |
+| **Cómo crece `AppIdVec`** | `oCUtlMemoryGrow(&pInfo->AppIdVec, numToAdd)` — resuelve y llama la función real de Steam | `std::realloc(vec->m_pMemory, ...)` directo. Política mirror Source SDK `CUtlMemory::Grow`: duplica capacity si es posible, snap a tamaño pedido si no, mínimo 32 entries en primera asignación |
 
-Comentario verbatim de lumalinux (`load_package_hook.cpp:121`):
-```
-// We deliberately do NOT manual-realloc when capacity is short:
-// swapping m_pMemory crashed the appinfo-cache rebuild thread in
-// earlier builds (null deref in libvstdlib_s.so), and we don't have a
-// verified pattern for Steam's own CUtlMemoryGrow on Linux i386 yet.
-```
+**Por qué realloc es seguro en Linux i386 hoy** (verbatim del comentario en
+`load_package_hook.cpp:122`):
 
-**Implicación práctica**: con muchos juegos configurados (Mina + Formula Legends
-+ otros), eventualmente excedemos la capacity inicial del `AppIdVec` del free
-package (la última traza vimos `capacity 202` con `oldSize 192`). Cuando eso
-pasa lumalinux salta la inyección y Steam no ve los depots → flow roto.
-LumaCore en Windows resuelve esto via `CUtlMemoryGrow`; en Linux i386 no
-tenemos la pattern.
+> Steam Linux i386 uses raw libc realloc for CUtlMemory (verified by
+> disassembling the only 5 callers of `realloc@plt` in steamclient.so — the
+> leaf helper at +0x5c79d30 is `realloc(ptr, count * elem_size)` with no
+> tier0 allocator wrapper, confirming that `m_pMemory` was malloc-allocated
+> and is safe to realloc from outside. This is the Linux equivalent of
+> LumaCore's `oCUtlMemoryGrow` on Windows.
+
+Histórico: una versión anterior (≤v0.7) usaba `m_pMemory` swap manual y
+crashaba el hilo de appinfo-cache rebuild (null deref en `libvstdlib_s.so`).
+El crash desapareció cuando se verificó que Steam usa libc realloc en
+lugar de su allocator interno tier0, alineando nuestro `std::realloc` con
+lo que Steam mismo hace. Ya no hay límite efectivo de capacity.
 
 ### 11.3 DepotKey hook (`DepotKeys::LoadDepotDecryptionKey`)
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Función hookeada | `LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)` — KeyValues-path-based | `(this_, app_id, depot_id, out_key)` — directo, más alto nivel |
-| Cómo identifica el depot | Parsea `KeyName` (`.../<DepotId>\DecryptionKey`) | Toma `depot_id` directo del arg |
-| Validación de buffer | `if (KeySize >= key.size()) memcpy(...)` | **`memcpy(out_key, ..., 32)` SIN validar tamaño** |
-| Return value en éxito | `static_cast<int32>(key.size())` = 32 | `kResultOK` |
+| Función hookeada | `LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)` — KeyValues-path-based | Igual signature |
+| Cómo identifica el depot | Parsea `KeyName` (`.../<DepotId>\DecryptionKey`) | Igual |
+| Validación de buffer | `if (KeySize >= key.size()) memcpy(...)` | `if (keySize >= 32 && key != nullptr) memcpy(...)` |
+| Return value en éxito | `static_cast<int32>(key.size())` = 32 | `static_cast<int32_t>(32)` |
 | Passthrough en miss | `oLoadDepotDecryptionKey(...)` | `g_origFn(...)` |
 
-**Riesgo conocido**: sin la validación de `KeySize >= 32`, lumalinux puede
-escribir más allá del buffer que Steam provee — buffer overrun latente. No ha
-disparado en los juegos que hemos probado, pero está ahí.
+Sin divergencias materiales con LumaCore. Hook al KeyValues accessor con
+validación de buffer y passthrough correcto en miss.
+
+Histórico: ≤v0.8 lumalinux hookeaba el dispatcher externo
+`(this_, app_id, depot_id, out_key)` **sin validar el tamaño del buffer**,
+porque el `out_key` se asumía un raw 32-byte slot. Ese contrato resultó
+falso (la cache lo trataba como estructura de 128 bytes con metadata),
+causando heap corruption en Formula Legends (ver §12). v0.8+ migró al
+KeyValues accessor de LumaCore con `KeySize` validado, eliminando el
+overrun latente.
 
 ### 11.4 BuildDep hook (`ManifestBind::BuildDepotDependency`)
 
@@ -361,22 +368,27 @@ disparado en los juegos que hemos probado, pero está ahí.
 | Función hookeada | `BuildDepotDependency(this, AppId, ..., pDepotInfo, pSharedDepotInfo, ...)` | Igual signature |
 | Source de overrides | `LuaLoader::GetManifestOverrides()` (plano) | `KeyStore::GetDepotsForApp(AppId)` (filtra `parent_app_id==AppId`) |
 | Match en patch | DepotId direct | Igual |
-| Qué vectores parchea | **SOLO `pDepotInfo`** | **AMBOS** `pDepotInfo` Y `pSharedDepotInfo` |
-| Patch what | `gid` + `size` (0 → keep original) | Igual |
-| Contador `patched` | Cuenta cualquier match | **Solo si cambia algo** (`if (gid != newgid || size != newsize) patched++`) |
+| Qué vectores parchea | **SOLO `pDepotInfo`** | **SOLO `pDepotInfo`** (mismo que LumaCore) |
+| Patch what | `gid` + `size` (0 → keep original) | **Solo `gid`** — `ManifestSize` se mantiene a lo que Steam tenía |
+| Contador `patched` | Cuenta cualquier match | **Solo si cambia algo** (`if (gid != newgid) patched++`) |
+| Guard en `result==false` | Sí — no toca el vector | Sí (mirror) |
 
-**Bug latente en el WARN**: nuestro `BuildDep: app X has N KeyStore depots but
-NONE matched` aparece cuando los depots SÍ matchean pero `gid`/`size` ya
-estaban correctos (Steam tenía buen appinfo) y no hubo nada que cambiar. El
-mensaje es engañoso — el patch del hook no falló, simplemente no había nada
-que parchear.
+Sin divergencias operativas con LumaCore. Tanto vectores como campos
+patcheados están alineados.
 
-**Diferencia más fuerte**: parchear `pSharedDepotInfo` (que LumaCore
-explícitamente NO hace). Steam ya tiene esos shared con sus gids legítimos del
-appinfo de su app padre (228980 para VC redists); reescribírselos con los
-gids/sizes de nuestro override puede dejarlos en estado inconsistente. Es
-sospecha plausible de causa del crash de Formula Legends (donde 228989/228990
-están en pSharedDepotInfo).
+Histórico: ≤v0.5 lumalinux parcheaba **AMBOS** `pDepotInfo` y
+`pSharedDepotInfo`, lo que rompía la coherencia del appinfo del app padre
+del shared depot (VC 2022 Redist 228989 bajo app 228980) y causaba el crash
+de Formula Legends (heap corruption → SIGSEGV en
+`libc malloc_usable_size`). v0.6 limitó el patch a `pDepotInfo`. Además
+≤v0.7 sobrescribía `ManifestSize` con nuestro size del KeyStore (en línea
+con la divergencia teórica con LumaCore); v0.8 dejó de tocarlo,
+replicando el comportamiento real de LumaCore.
+
+**Nota sobre el WARN engañoso histórico**: el mensaje
+`BuildDep: app X has N KeyStore depots but NONE matched` que aparecía cuando
+los gids ya estaban correctos fue reescrito a `Log::Debug` con texto
+neutral en v0.8.1.
 
 ### 11.5 GMRC hook (`ManifestBind::FetchSteamRun`)
 
@@ -386,24 +398,37 @@ están en pSharedDepotInfo).
 | Endpoint HTTP | `https://manifest.steam.run/api/manifest/{gid}` | `http://gmrc.wudrm.com/manifest/{gid}` |
 | Estado del endpoint | **DEAD** (ya no responde) | **Vivo** (mismo que SteaMidra) |
 | HTTPS / HTTP | HTTPS via WinHttp | HTTP plano via raw socket |
-| Gating | Siempre que sea un manifest que conozca | `KeyStore::HasManifestGid(gid)` — solo manifests del .lua del usuario |
+| Gating | Siempre que sea un manifest que conozca | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — el OR permite cubrir el caso shader pre-cache donde Steam pide un manifest que no estaba en el .lua original |
 | Return en éxito | (LumaCore tiene una capa async para llenar el cache; lo escribe via PacketRouter) | Síncrono — `*out_code = code; return 1` |
 
-Aquí lumalinux está mejor: usa el endpoint vivo y el gating evita interferir
-en descargas legítimas.
+Aquí lumalinux está mejor en lo funcional (endpoint vivo, cubre shader
+pre-cache) pero peor en resiliencia (un único host HTTP plano, sin cache
+persistente, sin endpoint alternativo — ver Issue #2).
+
+Histórico: ≤v0.8.0 el gating era solo `HasManifestGid(gid)`. Eso dejaba
+caer al original (que el CDN deniega) los manifests del shader pre-cache,
+porque su gid viene de PICS appinfo y nunca está pre-registrado en
+`keys.txt`. Steam interpretaba el "Access Denied" como "No connection" en
+la UI durante los primeros minutos de cada install nuevo (solo visible con
+`.acf` de `StateFlags=1`; con `StateFlags=4` Steam saltaba el shader
+pre-cache entero). v0.8.1 amplió el gating con `|| HasDepot(depot_id)`.
 
 ### 11.6 Resumen de sospechosos para crashes futuros
 
-Si algo cruje con lumalinux y los datos *parecen* correctos, el orden de
-sospecha basado en estas divergencias es:
+Las divergencias históricas con LumaCore que motivaban este resumen han
+sido todas resueltas en v0.8.1 (ver subsecciones anteriores). El orden de
+sospecha actual, ya sin paralelos con LumaCore como anclas, es:
 
-1. **`AppIdVec` overflow** en LoadPackage cuando configuras varios juegos —
-   no tenemos `CUtlMemoryGrow`, saltamos la inyección.
-2. **Parche de `pSharedDepotInfo`** en BuildDep — LumaCore lo evita por algo;
-   la teoría más probable es que rompe la coherencia del appinfo del app padre.
-3. **`manifest_size != 0`** en KeyStore — LumaCore lo fuerza a 0 con
-   advertencia explícita en el comentario; nosotros usamos el size real.
-4. **DepotKey hook sin validar `KeySize`** — buffer overrun latente.
+1. **Patrones de Patterns desactualizados** tras un update de Steam — un
+   solo byte change en el prologue de cualquier función hookeada
+   desinstala el hook entero sin alarma clara.
+2. **`gmrc.wudrm.com` caído / DNS bloqueado** — sin fallback offline
+   ni endpoint alternativo (Issue #2). Síntoma: instalaciones nuevas que
+   fallan en bucle con "Access Denied" → "No connection" en la UI.
+3. **Race en `Log::Init`** — solo realista si LD_AUDIT preinit, el ctor
+   LD_PRELOAD y el worker thread coinciden al microsegundo (Issue #5).
+4. **Updates de SteamOS sobreescriben** `/usr/bin/steam` y la línea
+   `LD_PRELOAD` se pierde — actualmente no hay re-aplicado automático.
 
 
 ## 12. El crash del DepotKey hook y su solución (Formula Legends)

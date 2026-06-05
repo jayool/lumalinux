@@ -62,7 +62,7 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
     uint32_t depot = DepotIdFromKeyName(keyName);
     if (depot != 0) {
         if (auto k = KeyStore::Lookup(depot)) {
-            static_assert(kDepotKeyBytes == 32, "depot keys are 32-byte AES");
+            static_assert(kDepotKeyBytes == 32, "depot keys are 32 bytes (AES-256)");
             if (keySize >= kDepotKeyBytes && key != nullptr) {
                 std::memcpy(key, k->data(), kDepotKeyBytes);
                 Log::Info("LoadDepotKey: SERVED local key for depot %u "
