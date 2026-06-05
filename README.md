@@ -132,6 +132,22 @@ Log: `~/.cache/lumalinux/lumalinux.log`. Env vars (set before launching):
 - `LUMA_NO_LOADPKG` / `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an individual hook.
 - `LUMA_LOADPKG_IDX=N` — pick a different LoadPackage candidate if the default isn't right.
 
+The `LoadPackage` pattern can match more than one site in `steamclient.so`. The
+log lists every match before installing the hook:
+
+```
+Patterns: LoadPackage candidate[0] at 0xd3815780 (RVA 0x14b780)
+Patterns: LoadPackage candidate[1] at 0xd3f23ff0 (RVA 0x859ff0)
+Patterns: LoadPackage candidate[2] at 0xd4da4650 (RVA 0x16da650)
+Patterns: LoadPackage selected candidate[0] = 0xd3815780 (RVA 0x14b780)
+```
+
+By default the first match is selected. If the log shows `LoadPackage hook:
+INSTALLED` but never `LoadPackage: PackageId=0 hit` after Steam logs in
+(meaning the hook is wired up but never actually fires), the pattern matched
+the wrong function — set `LUMA_LOADPKG_IDX=1` (or `=2`, etc.) to force a
+different candidate, restart Steam, and re-check the log.
+
 In Game Mode the toast may not render (gamescope replaces the desktop), but
 the log file is still written.
 
