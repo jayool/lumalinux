@@ -710,7 +710,7 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
     if fetched_name:
         app_state["name"] = fetched_name
     app_state.update({
-        "StateFlags":      "4",
+        "StateFlags":      "1",
         "installdir":      installdir,
         "LastUpdated":     "0",
         "UpdateResult":    "0",
