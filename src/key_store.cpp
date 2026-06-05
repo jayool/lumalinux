@@ -184,6 +184,12 @@ bool HasManifestGid(uint64_t manifest_gid) {
     return false;
 }
 
+bool HasDepot(uint32_t depot_id) {
+    if (depot_id == 0) return false;
+    std::lock_guard<std::mutex> lock(Mtx());
+    return Keys().find(depot_id) != Keys().end();
+}
+
 size_t Size() {
     std::lock_guard<std::mutex> lock(Mtx());
     return Keys().size();

@@ -73,6 +73,14 @@ std::vector<uint32_t> GetAllDepotIds();
 // actually manage (leaving genuinely-owned content to Steam's normal path).
 bool HasManifestGid(uint64_t manifest_gid);
 
+// True if `depot_id` is present in the KeyStore (regardless of which specific
+// manifest_gid the caller is asking about). Used by the GMRC hook to cover
+// the case where Steam asks for a manifest of one of our depots whose gid was
+// not pre-seeded by steamidra_lite — typically the app/shader depot during
+// shader pre-cache, where Steam supplies a manifest_gid taken from PICS
+// appinfo rather than from the Hubcap .lua.
+bool HasDepot(uint32_t depot_id);
+
 // Total count of keys loaded.
 size_t Size();
 

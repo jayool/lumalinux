@@ -26,9 +26,19 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     Log::Debug("GMRC: GetManifestRequestCode app=%u depot=%u manifest=%llu out=%p",
                app_id, depot_id, (unsigned long long)gid, (void*)out_code);
 
-    // Only intervene for manifests of our forced depots; everything else goes
-    // to Steam's normal (owned) path.
-    if (out_code && KeyStore::HasManifestGid(gid)) {
+    // Intervene for manifests of our forced depots. Two ways a depot qualifies
+    // as "ours":
+    //   (a) its manifest_gid is pre-registered in keys.txt (Extended format) —
+    //       the common case for content depots seeded by steamidra_lite.
+    //   (b) its depot_id is in the KeyStore but the specific manifest_gid was
+    //       not pre-registered. Happens for the app/shader depot when Steam
+    //       requests its own manifest (e.g. shader pre-cache: depot==appid)
+    //       using a manifest_gid that came from PICS appinfo, not from the
+    //       Hubcap .lua. Without (b) the hook falls through and the CDN
+    //       denies the download with Access Denied, which Steam surfaces as
+    //       "No connection" in the UI.
+    // Everything else still goes to Steam's normal (owned) path.
+    if (out_code && (KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id))) {
         auto code = Gmrc::GetCode(gid);
         if (code) {
             *out_code = *code;
