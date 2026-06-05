@@ -32,88 +32,34 @@ already handles, and SLSsteam does not touch any function lumalinux hooks.
 
 ## Quick start
 
-**Prerequisites**: SLSsteam already installed. lumalinux needs SLSsteam's
-ownership layer; without it the install flow can't even start.
-
-### 1. Build (or grab a pre-built `.so`)
-
-Building requires a multilib toolchain and cmake:
-
-```sh
-./tools/fetch_libmem.sh
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j
-```
-
-Output: `build/liblumalinux.so` (ELF 32-bit i386).
-
-CI builds the same artefact on every push to `main` and attaches it to the
-workflow run — grab it from `.github/workflows/build.yml` runs if you don't
-want to compile locally.
-
-### 2. Deploy
-
-```sh
-./install.sh
-```
-
-Copies the `.so` to `~/.local/share/lumalinux/`, creates an empty
-`~/.config/lumalinux/keys.txt`, and prints the `LD_PRELOAD` line to add to
-your Steam launcher.
-
-### 3. Wire it into Steam
-
-On SteamOS, `/usr/bin/steam` is on a read-only partition:
-
-```sh
-sudo steamos-readonly disable
-sudo nano /usr/bin/steam
-```
-
-Add the line `install.sh` printed (it's an `export LD_PRELOAD="..."`
-referencing your home dir), **just before the final `exec` line**. With
-SLSsteam already in place, the file should look like:
+**Prerequisite**: a `deck` user with a sudo password set. If you've never used sudo:
 
 ```bash
-export LD_AUDIT="/home/deck/.local/share/SLSsteam/library-inject.so:/home/deck/.local/share/SLSsteam/SLSsteam.so"
-export LD_PRELOAD="/home/deck/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
-exec /usr/lib/steam/steam -steamdeck "$@"
+passwd
 ```
 
-Re-enable read-only:
+### 1. SLSsteam + ACCELA
 
-```sh
-sudo steamos-readonly enable
+```bash
+curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash
 ```
 
-> ⚠️ Do **NOT** put lumalinux in `LD_AUDIT` — it's 32-bit and the audit
-> interface in a separate linker namespace corrupts the heap (Steam crashes
-> on startup with `realloc(): invalid pointer`).
->
-> ⚠️ SteamOS updates and re-runs of SLSsteam's `setup.sh` **overwrite
-> `/usr/bin/steam`** — you'll have to re-apply this step. See
-> [`docs/maintenance.md`](docs/maintenance.md).
+Installs SLSsteam and ACCELA. Will ask for your sudo password mid-flow to patch `/usr/bin/steam`.
 
-If you also run **CloudRedirect**, see
-[`docs/cloudredirect.md`](docs/cloudredirect.md) for the combined
-`LD_PRELOAD` line that includes both `.so` files.
+### 2. lumalinux
 
-### 4. Restart Steam and verify
-
-A desktop toast should appear: `lumalinux: v0.8.1 loaded — 4/4 hooks active`.
-
-In Game Mode the toast may not render (gamescope replaces the desktop), but
-the log file is still written. Confirm from the log:
-
-```sh
-grep -E "v0\.8|hook: INSTALLED|NOTIFY" ~/.cache/lumalinux/lumalinux.log
+```bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
 ```
 
-Expect `LoadPackage`, `DepotKey`, `DepotDependency`, `GMRC` all `INSTALLED`.
+Downloads `liblumalinux.so`, deploys it, and adds the `LD_PRELOAD` line to `/usr/bin/steam`.
 
-If the toast says `N/4 hooks — XXX FAILED`, a byte pattern stopped matching
-(usually a Steam update) — see [`docs/maintenance.md`](docs/maintenance.md).
+Restart Steam.
+
+### Optional
+
+- **CloudRedirect** (cloud saves) — https://github.com/Selectively11/CloudRedirect
+- **LumaDeck** (QAM plugin) — https://github.com/jayool/LumaDeck
 
 ## Usage
 
