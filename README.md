@@ -241,14 +241,17 @@ does (see `sff/ui.py`), in order:
      *"this is what causes 'NO INTERNET CONNECTION'"*. Stale state in the
      `.acf` is what causes that message, not a real network problem.
    - **`.acf` doesn't exist** (brand-new install): writes a clean stub with
-     `StateFlags=4` and every error/byte counter at 0, deliberately omitting
-     `InstalledDepots` / `MountedDepots`. Mirrors what SFF
-     (`sff/ui.py:1074`) does in its Linux + SLS path. Steam reads the stub,
-     sees `StateFlags=4` but zero installed depots and zero bytes on disk,
-     and correctly shows Install — the stub is there so that
+     `StateFlags=1` (Uninstalled) and every error/byte counter at 0,
+     deliberately omitting `InstalledDepots` / `MountedDepots`. Steam reads
+     the stub, sees an owned-but-uninstalled app, and shows Install — the
+     Linux equivalent of what LumaCore lets Steam write itself on Windows
+     when the IPC ownership ticket succeeds. The stub is also there so that
      `UpdateResult` / `Bytes*` are already 0 when Steam starts downloading,
      so a transient hiccup mid-download doesn't surface as "No internet" in
-     the UI.
+     the UI. Note: this depends on the gmrc shader-cache fix (commit
+     `b4c4968`) being in place, otherwise Steam's shader pre-cache phase
+     produces a transient "No connection" placeholder when the `.acf` is
+     Uninstalled.
 
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
 file touched are written next to the originals before any change.
