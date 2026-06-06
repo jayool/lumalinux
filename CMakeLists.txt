@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.8.1)
+project(lumalinux LANGUAGES C CXX VERSION 0.9.0)
+
+# Generate version.hpp from version.hpp.in so source code references a single
+# version macro (LUMALINUX_VERSION_STRING) and bumps happen in one place
+# (the project() call above).
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/version.hpp.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/version.hpp
+    @ONLY
+)
 
 # Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
 set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")
@@ -28,7 +37,11 @@ add_library(lumalinux SHARED
     src/hooks/gmrc_hook.cpp
 )
 
-target_include_directories(lumalinux PRIVATE src/ include/)
+target_include_directories(lumalinux PRIVATE
+    src/
+    include/
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/
+)
 target_link_libraries(lumalinux PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/liblibmem.a
     ${CMAKE_DL_LIBS}
