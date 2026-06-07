@@ -91,6 +91,8 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 - `LUMA_NO_NOTIFY` — silence the startup toast.
 - `LUMA_NO_LOADPKG` / `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an individual hook.
 - `LUMA_LOADPKG_IDX=N` — pick a different LoadPackage candidate (see below).
+- `LUMA_GMRC_HOST=mirror.example.com` — override the default `gmrc.wudrm.com` host for fetching manifest request codes. Useful if wudrm becomes unreachable and a community mirror appears. Successful codes are also persisted to `~/.cache/lumalinux/gmrc_cache.txt` so previously-installed games keep working during outages.
+- `LUMA_PROCESS_ANY=1` — disable the `/proc/self/comm` allowlist (`steam` / `steamwebhelper`) and load lumalinux in every process. For unusual setups (custom gamescope-session, debug).
 
 ### "Hook INSTALLED but never fires"
 
