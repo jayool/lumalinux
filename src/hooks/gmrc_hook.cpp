@@ -62,17 +62,23 @@ bool Install() {
     uintptr_t target = Patterns::FindGmrcFunction();
     if (!target) {
         Log::Error("GMRC hook: GetManifestRequestCode function not found");
+        Log::Warn("Hook install: name=GMRC method=pattern outcome=pattern_miss");
         return false;
     }
     void* tramp = nullptr;
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("GMRC hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
+        Log::Warn("Hook install: name=GMRC method=pattern target=0x%lx outcome=hook_install_failed",
+                  (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<GmrcFn>(tramp);
     Log::Info("GMRC hook: INSTALLED (target=0x%lx, trampoline=%p)",
               (unsigned long)target, (void*)g_origFn);
+    uintptr_t base = Patterns::FindSteamclientBase();
+    Log::Info("Hook install: name=GMRC method=pattern target=0x%lx rva=0x%lx outcome=installed",
+              (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 

@@ -172,6 +172,7 @@ bool Install() {
     uintptr_t target = Patterns::FindBuildDepotDependencyFunction();
     if (!target) {
         Log::Error("DepotDependency hook: cannot install — target not found");
+        Log::Warn("Hook install: name=BuildDep method=pattern outcome=pattern_miss");
         return false;
     }
 
@@ -179,12 +180,17 @@ bool Install() {
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("DepotDependency hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
+        Log::Warn("Hook install: name=BuildDep method=pattern target=0x%lx outcome=hook_install_failed",
+                  (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<BuildDepotDependencyFn>(tramp);
 
     Log::Info("DepotDependency hook: INSTALLED (target=0x%lx, trampoline=%p)",
               (unsigned long)target, (void*)g_origFn);
+    uintptr_t base = Patterns::FindSteamclientBase();
+    Log::Info("Hook install: name=BuildDep method=pattern target=0x%lx rva=0x%lx outcome=installed",
+              (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 

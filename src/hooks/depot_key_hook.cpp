@@ -87,11 +87,17 @@ namespace Hooks::DepotKey {
 
 bool Install() {
     uintptr_t target = Patterns::FindDepotKeyFunction();
-    if (!target) { Log::Error("DepotKey hook: target not found"); return false; }
+    if (!target) {
+        Log::Error("DepotKey hook: target not found");
+        Log::Warn("Hook install: name=DepotKey method=pattern outcome=pattern_miss");
+        return false;
+    }
     void* tramp = nullptr;
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("DepotKey hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
+        Log::Warn("Hook install: name=DepotKey method=pattern target=0x%lx outcome=hook_install_failed",
+                  (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<LoadDepotKeyFn>(tramp);
@@ -99,6 +105,9 @@ bool Install() {
     Log::Info("DepotKey hook: INSTALLED (KeyValues accessor, target=0x%lx, "
               "trampoline=%p, %zu keys loaded)",
               (unsigned long)target, (void*)g_origFn, KeyStore::Size());
+    uintptr_t base = Patterns::FindSteamclientBase();
+    Log::Info("Hook install: name=DepotKey method=pattern target=0x%lx rva=0x%lx outcome=installed",
+              (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 
