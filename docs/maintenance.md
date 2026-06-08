@@ -1,15 +1,15 @@
-# Maintenance: updating after a Steam or SteamOS update
+# Maintenance: updating after a Steam or SLSsteam update
 
 Two distinct breakage cases. The symptoms tell them apart.
 
 ## A) Steam client update → a hook's byte pattern stops matching
 
-**Symptom**: the startup toast says `N/4 hooks — <HOOK> FAILED`, and the log
-(`~/.cache/lumalinux/lumalinux.log`) contains `pattern NOT FOUND` for the
-failing hook.
+**Symptom**: the startup toast says `N/4 hooks — <HOOK> FAILED`, and the
+log (`~/.cache/lumalinux/lumalinux.log`) contains `pattern NOT FOUND`
+for the failing hook.
 
-**Cause**: Valve updated `steamclient.so` and the bytes lumalinux expects at
-the start of the affected function changed. The hook can't install.
+**Cause**: Valve updated `steamclient.so` and the bytes lumalinux expects
+at the start of the affected function changed. The hook can't install.
 
 **Fix**:
 
@@ -34,24 +34,32 @@ the start of the affected function changed. The hook can't install.
    re-derive — see [`RESEARCH.md`](RESEARCH.md) §8.1.
 
 3. **Paste** the printed patterns into `src/patterns.hpp`, rebuild
-   (`./tools/fetch_libmem.sh && cmake + make` if needed), and redeploy with
-   `./install.sh`.
+   (`./tools/fetch_libmem.sh && cmake + make` if needed), and redeploy
+   with `./install.sh`.
 
 Most updates only move the anchored hooks, which the script fixes
 automatically — usually copy-paste-rebuild, not a full RE session.
 
-## B) SteamOS update → launcher script reset
+## B) SLSsteam update → launcher script regenerated
 
-**Symptom**: Steam starts with no toast at all. lumalinux is not loaded —
-no banner in `~/.cache/lumalinux/lumalinux.log` from that session.
+**Symptom**: Steam starts with no toast at all. lumalinux is not loaded
+— no banner in `~/.cache/lumalinux/lumalinux.log` from that session.
 
-**Cause**: SteamOS updates overwrite `/usr/bin/steam`, dropping any
-`LD_PRELOAD` / `LD_AUDIT` lines you added during install.
+**Cause**: the Headcrab Updater (the SLSsteam updater shipped with
+enter-the-wired) rewrites `~/.local/share/Steam/steam.sh` whenever it
+runs, replacing it with a fresh copy from upstream `h3adcr-b-modul3s`.
+The block lumalinux's installer added goes with it.
 
-**Fix**: re-apply step 3 of the [Quick start](../README.md#3-wire-it-into-steam).
-The deployed `.so` and `keys.txt` survive — only the launcher line needs
-re-adding.
+**Fix**: re-run the lumalinux installer.
 
-> This happens on every SteamOS update. Until
-> [issue #8](https://github.com/jayool/lumalinux/issues/8)
-> (`install.sh --patch-launcher`) is implemented, the workaround is manual.
+```bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+```
+
+The deployed `.so` and `keys.txt` survive — only the launcher block
+needs re-adding.
+
+> This happens on every Headcrab Updater run. Until upstream Headcrab
+> grows a hook point for third-party `LD_PRELOAD` additions (or until
+> LumaDeck's "Install / Reinstall Dependencies" action wraps both
+> Headcrab and lumalinux's installer in sequence), the re-run is manual.

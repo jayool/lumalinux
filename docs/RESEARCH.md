@@ -137,10 +137,16 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
 - lumalinux supports both entry styles (`la_objopen`/`la_preinit` + a
   `__attribute__((constructor))` fallback that polls `/proc/self/maps`), but
   **LD_PRELOAD is the supported, working path**.
-- On SteamOS the launcher is `/usr/bin/steam` (it sets SLSsteam's `LD_AUDIT`).
-  Add the lumalinux `LD_PRELOAD` export there, before the final `exec`. The
-  stock `~/.local/share/Steam/steam.sh` is Valve's runtime script and has no
-  injection point — don't edit that.
+- The injection point is **`~/.local/share/Steam/steam.sh`** — the
+  user-local launcher wrapper that Headcrab installs and maintains. It
+  defines `INJECT_SLS=LD_AUDIT=…` (and `INJECT_CR=LD_PRELOAD=…` if
+  CloudRedirect is enabled) and exports them inside `GameLauncher()`
+  before sourcing the vanilla Valve `client.sh`. `install.sh` inserts the
+  lumalinux `LD_PRELOAD` export right before that `source` line, with the
+  `${LD_PRELOAD:+:}${LD_PRELOAD:-}` preserve pattern so CR's `LD_PRELOAD`
+  survives. **`/usr/bin/steam` is not touched** — Headcrab doesn't edit
+  it, and our installer doesn't either; the system file stays vanilla and
+  survives `pacman -Syu steam`.
 
 ## 6. Dead-ends & lessons (so we don't repeat them)
 
@@ -283,11 +289,13 @@ module — but those get pruned (§6), so it's only a belt-and-suspenders helper
   2379782 (81 MB) wasn't downloaded; likely the other-OS depot Steam doesn't need
   on the Deck (Proton). If a game needs multiple depots and some don't mount,
   investigate why Steam isn't requesting their manifest (OS filter / branch).
-- `install.sh` could auto-patch `/usr/bin/steam` (currently manual, since the
-  launcher path varies and it's a system file reset by SteamOS updates).
-- **SteamOS updates reset `/usr/bin/steam`** → the LD_PRELOAD line must be
-  re-applied after each update. A systemd unit or a `~/.steam` hook could
-  re-apply it.
+- **Headcrab Updater regenerates `~/.local/share/Steam/steam.sh`** on
+  every run and the lumalinux block goes with it. Workaround today is
+  manually re-running `install.sh` after Headcrab updates. Better fixes
+  would be (a) upstream Headcrab learning to read a sidecar
+  `~/.config/lumalinux/inject.env` and emit the export itself, or (b)
+  LumaDeck wrapping Headcrab + lumalinux installs together so the user
+  hits one button.
 - `RelocateChainedJmp` (lmhook.cpp) is dormant infra for hooking a function
   SLSsteam already detoured; no current hook needs it.
 - Consider prefetching all keystore gids' codes at startup (background) instead
@@ -427,8 +435,9 @@ sospecha actual, ya sin paralelos con LumaCore como anclas, es:
    fallan en bucle con "Access Denied" → "No connection" en la UI.
 3. **Race en `Log::Init`** — solo realista si LD_AUDIT preinit, el ctor
    LD_PRELOAD y el worker thread coinciden al microsegundo (Issue #5).
-4. **Updates de SteamOS sobreescriben** `/usr/bin/steam` y la línea
-   `LD_PRELOAD` se pierde — actualmente no hay re-aplicado automático.
+4. **El Headcrab Updater regenera** `~/.local/share/Steam/steam.sh` y
+   el bloque de lumalinux se pierde — actualmente no hay re-aplicado
+   automático, hay que volver a correr `install.sh`.
 
 
 ## 12. El crash del DepotKey hook y su solución (Formula Legends)

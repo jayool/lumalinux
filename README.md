@@ -174,11 +174,17 @@ different candidate, restart Steam, and re-check the log.
 A byte pattern stopped matching. Almost always a Steam client update — see
 [`docs/maintenance.md`](docs/maintenance.md) for the re-derivation flow.
 
-### After a SteamOS update, Steam loads with no toast at all
+### After a SLSsteam update, Steam loads with no toast at all
 
-SteamOS overwrote `/usr/bin/steam` during the update and dropped your
-`LD_PRELOAD`. Re-apply step 3 above. The deployed `.so` and `keys.txt`
-survive — only the launcher line needs re-adding.
+The Headcrab Updater regenerated `~/.local/share/Steam/steam.sh` and the
+lumalinux block went with it. Re-run the lumalinux installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+```
+
+The deployed `.so` and `keys.txt` survive — only the launcher block needs
+re-adding.
 
 ## Configuring a game (advanced)
 
