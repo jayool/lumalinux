@@ -30,36 +30,95 @@ Division of labour with SLSsteam:
 The two are deliberately orthogonal: lumalinux does not touch what SLSsteam
 already handles, and SLSsteam does not touch any function lumalinux hooks.
 
-## Quick start
+## Installation
 
-**Prerequisite**: a `deck` user with a sudo password set. If you've never used sudo:
+Two supported paths.
 
-```bash
-passwd
-```
+### Recommended (gamemode, with LumaDeck)
 
-### 1. SLSsteam + ACCELA
+Set up in desktop mode, then switch to gamemode.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash
-```
+1. **ACCELA + SLSsteam** via enter-the-wired:
 
-Installs SLSsteam and ACCELA. Will ask for your sudo password mid-flow to patch `/usr/bin/steam`.
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash
+   ```
 
-### 2. lumalinux
+   Installs ACCELA and SLSsteam. Creates `~/.config/SLSsteam/config.yaml`
+   with `DisableCloud: yes` by default.
+
+2. **(Optional) CloudRedirect** — for cloud-save sync via third-party providers:
+
+   Edit `~/.config/SLSsteam/config.yaml` and change the `DisableCloud` line
+   from `yes` to `no`. Then run:
+
+   ```bash
+   curl -fsSL https://headcrab.pages.dev | bash
+   ```
+
+   Open the CloudRedirect app once to sign into your cloud provider.
+
+3. **lumalinux**:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+   ```
+
+   Detects CloudRedirect if present and prepends `liblumalinux.so` to the
+   existing `LD_PRELOAD` so both load.
+
+4. **(Optional) Decky Loader + LumaDeck** — for the gamemode UI:
+   - Decky Loader: <https://decky.xyz/>
+   - LumaDeck: download from <https://github.com/jayool/LumaDeck> and install
+     through Decky as a custom plugin.
+
+5. **.NET 9 runtime** — required by ACCELA for some features:
+
+   ```bash
+   curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0 --runtime dotnet
+   ```
+
+### Minimal (desktop, manual depot ZIPs)
+
+For users who'd rather drop pre-made depot ZIPs instead of using the
+LumaDeck UI.
+
+1. **ACCELA + SLSsteam** (same as above):
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash
+   ```
+
+2. **lumalinux**:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+   ```
+
+3. **Add games** with `steamidra_lite` for each depot ZIP:
+
+   ```bash
+   python3 tools/steamidra_lite.py <appid>.zip
+   ```
+
+   Restart Steam — the game shows up unlocked.
+
+### After a Headcrab/SLSsteam update
+
+Headcrab regenerates `~/.local/share/Steam/steam.sh` whenever its updater
+runs. That erases lumalinux's patch. Re-run the lumalinux installer to
+reapply:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
 ```
 
-Downloads `liblumalinux.so`, deploys it, and adds the `LD_PRELOAD` line to `/usr/bin/steam`.
+### Tested platforms
 
-Restart Steam.
-
-### Optional
-
-- **CloudRedirect** (cloud saves) — https://github.com/Selectively11/CloudRedirect
-- **LumaDeck** (QAM plugin) — https://github.com/jayool/LumaDeck
+- **Recommended path**: SteamOS gamemode (Steam Deck)
+- **Minimal path**: SteamOS desktop
+- Other Arch-based distros (Bazzite, CachyOS, etc.) should work but are
+  untested
 
 ## Usage
 
