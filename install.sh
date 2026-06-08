@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# lumalinux installer — fetches the .so from the latest GitHub release,
-# deploys it under $HOME/.local/share/lumalinux, and patches /usr/bin/steam
-# to load it via LD_PRELOAD. Idempotent. Reversible with --uninstall.
+# lumalinux installer — downloads the .so from the latest GitHub release,
+# deploys it under $HOME/.local/share/lumalinux, and patches Headcrab's
+# user-local Steam launcher (~/.local/share/Steam/steam.sh) to load it via
+# LD_PRELOAD. No root needed.
 #
-# Designed for SteamOS / Steam Deck. Assumes /usr/bin/steam exists and
-# already contains an LD_AUDIT line from SLSsteam (install SLSsteam first
-# via enter-the-wired).
+# Prerequisites: SLSsteam installed via enter-the-wired AND Steam launched
+# once after that so Headcrab can bootstrap its steam.sh wrapper.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
@@ -20,10 +20,18 @@ SO_URL="https://github.com/${REPO}/releases/latest/download/${SO_NAME}"
 
 INSTALL_DIR="${HOME}/.local/share/lumalinux"
 KEYS_DIR="${HOME}/.config/lumalinux"
-LAUNCHER="/usr/bin/steam"
+STEAM_SH="${HOME}/.local/share/Steam/steam.sh"
+SLS_SO="${HOME}/.local/share/SLSsteam/SLSsteam.so"
+CR_SO="${HOME}/.local/share/CloudRedirect/cloud_redirect.so"
 
 MARKER_BEGIN="# >>> lumalinux launcher patch >>> (managed by install.sh - do not edit)"
 MARKER_END="# <<< lumalinux launcher patch <<<"
+
+# Anchor: where to insert the block inside Headcrab's GameLauncher(). The
+# `source $STEAM_CLIENT "$@"` line is where steam.sh delegates to the vanilla
+# Valve launcher; we insert right before it so any prior `export $INJECT_*`
+# (SLSsteam, CloudRedirect) has already run.
+INSERT_ANCHOR='source $STEAM_CLIENT'
 
 # ── helpers ───────────────────────────────────────────────────────────────
 c_info='\e[0;36m'; c_ok='\e[0;32m'; c_warn='\e[0;33m'; c_err='\e[0;31m'; c_rst='\e[0m'
@@ -33,53 +41,48 @@ warn()  { printf "${c_warn}[!]${c_rst} %s\n" "$*" >&2; }
 die()   { printf "${c_err}[X]${c_rst} %s\n" "$*" >&2; exit 1; }
 
 TMP_SO=""
-NEW_LAUNCHER=""
-READONLY_WAS_DISABLED=0
+NEW_STEAM_SH=""
 
 cleanup() {
     [[ -n "$TMP_SO" && -f "$TMP_SO" ]] && rm -f "$TMP_SO" || true
-    [[ -n "$NEW_LAUNCHER" && -f "$NEW_LAUNCHER" ]] && rm -f "$NEW_LAUNCHER" || true
-    if (( READONLY_WAS_DISABLED )) && command -v steamos-readonly &>/dev/null; then
-        sudo steamos-readonly enable 2>/dev/null || true
-    fi
+    [[ -n "$NEW_STEAM_SH" && -f "$NEW_STEAM_SH" ]] && rm -f "$NEW_STEAM_SH" || true
 }
 trap cleanup EXIT
 
-readonly_disable() {
-    if command -v steamos-readonly &>/dev/null; then
-        sudo steamos-readonly disable
-        READONLY_WAS_DISABLED=1
-    fi
-}
-readonly_enable() {
-    if (( READONLY_WAS_DISABLED )) && command -v steamos-readonly &>/dev/null; then
-        sudo steamos-readonly enable
-        READONLY_WAS_DISABLED=0
-    fi
-}
-
 # ── pre-flight ────────────────────────────────────────────────────────────
-[[ -f "$LAUNCHER" ]] || die "$LAUNCHER does not exist. Is Steam installed?"
-
-if ! grep -q "LD_AUDIT.*SLSsteam" "$LAUNCHER"; then
-    die "SLSsteam is not patched into $LAUNCHER. Install it first:
+[[ -f "$SLS_SO" ]] || die "SLSsteam is not installed (no $SLS_SO).
+Install it first:
     curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash"
+
+[[ -f "$STEAM_SH" ]] || die "$STEAM_SH does not exist.
+Run Steam once after installing SLSsteam so Headcrab can bootstrap its
+launcher wrapper, then retry."
+
+# Headcrab steam.sh always defines INJECT_SLS near the top. Vanilla Valve
+# steam.sh does not. This catches the case where the user has a steam.sh but
+# Headcrab never patched it (e.g. they ran enter-the-wired with the install
+# failing midway).
+if ! grep -q '^[[:space:]]*INJECT_SLS=' "$STEAM_SH"; then
+    die "$STEAM_SH is not the Headcrab-patched launcher (no INJECT_SLS).
+Reinstall SLSsteam via enter-the-wired and retry."
 fi
 
 # ── uninstall ─────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
     info "Uninstalling lumalinux..."
 
-    if grep -qF "$MARKER_BEGIN" "$LAUNCHER" 2>/dev/null; then
-        readonly_disable
-        BACKUP="${LAUNCHER}.lumalinux.bak.$(date +%Y%m%d%H%M%S)"
-        sudo cp "$LAUNCHER" "$BACKUP"
-        info "Backed up $LAUNCHER -> $BACKUP"
-        sudo sed -i "/^# >>> lumalinux launcher patch >>>/,/^# <<< lumalinux launcher patch <<</d" "$LAUNCHER"
-        readonly_enable
-        ok "Removed lumalinux managed block from $LAUNCHER"
+    if grep -qF "$MARKER_BEGIN" "$STEAM_SH" 2>/dev/null; then
+        BACKUP="${STEAM_SH}.lumalinux.bak.$(date +%Y%m%d%H%M%S)"
+        cp "$STEAM_SH" "$BACKUP"
+        info "Backed up $STEAM_SH -> $BACKUP"
+
+        chmod u+w "$STEAM_SH"
+        sed -i "/^[[:space:]]*# >>> lumalinux launcher patch >>>/,/^[[:space:]]*# <<< lumalinux launcher patch <<</d" "$STEAM_SH"
+        chmod 555 "$STEAM_SH"
+
+        ok "Removed lumalinux managed block from $STEAM_SH"
     else
-        info "$LAUNCHER has no lumalinux managed block - skipping"
+        info "$STEAM_SH has no lumalinux managed block — skipping"
     fi
 
     if [[ -f "${INSTALL_DIR}/${SO_NAME}" ]]; then
@@ -100,7 +103,7 @@ mkdir -p "$INSTALL_DIR" "$KEYS_DIR"
 info "Downloading $SO_NAME from latest release..."
 TMP_SO="$(mktemp)"
 if ! curl -fL --progress-bar -o "$TMP_SO" "$SO_URL"; then
-    die "Failed to download $SO_URL - is a release published yet?"
+    die "Failed to download $SO_URL — is a release published yet?"
 fi
 
 # Verify the download is a 32-bit ELF i386 shared object
@@ -128,60 +131,78 @@ EOF
     ok "Created ${KEYS_DIR}/keys.txt (empty)"
 fi
 
-# ── patch /usr/bin/steam ──────────────────────────────────────────────────
-EXPECTED_LINE='export LD_PRELOAD="$HOME/.local/share/lumalinux/'"${SO_NAME}"'${LD_PRELOAD:+:}${LD_PRELOAD:-}"'
+# ── patch ~/.local/share/Steam/steam.sh ───────────────────────────────────
+# The export line we insert. Single-quoted so $HOME and the ${LD_PRELOAD:...}
+# expansions go in literally — they get expanded by bash inside steam.sh at
+# Steam launch time, not by THIS shell now.
+#
+# The ${LD_PRELOAD:+:}${LD_PRELOAD:-} suffix preserves whatever LD_PRELOAD
+# already had (e.g. CloudRedirect's cloud_redirect.so set by Headcrab's
+# INJECT_CR a few lines above). Without it, this export would clobber it.
+EXPORT_LINE='export LD_PRELOAD="$HOME/.local/share/lumalinux/'"${SO_NAME}"'${LD_PRELOAD:+:}${LD_PRELOAD:-}"'
 
-if grep -qF "$MARKER_BEGIN" "$LAUNCHER"; then
-    EXISTING_BLOCK=$(sed -n "/^# >>> lumalinux launcher patch >>>/,/^# <<< lumalinux launcher patch <<</p" "$LAUNCHER")
-    if echo "$EXISTING_BLOCK" | grep -qF "$EXPECTED_LINE"; then
-        ok "$LAUNCHER managed block is already up to date. Nothing to patch."
+# If a managed block already exists and contains exactly this export, no-op.
+if grep -qF "$MARKER_BEGIN" "$STEAM_SH"; then
+    EXISTING_BLOCK=$(sed -n "/^[[:space:]]*# >>> lumalinux launcher patch >>>/,/^[[:space:]]*# <<< lumalinux launcher patch <<</p" "$STEAM_SH")
+    if echo "$EXISTING_BLOCK" | grep -qF "$EXPORT_LINE"; then
+        ok "$STEAM_SH managed block is already up to date. Nothing to patch."
         info "Restart Steam to ensure the .so is loaded."
         exit 0
     fi
-    info "$LAUNCHER has a managed block but contents differ - rewriting."
+    info "$STEAM_SH has a managed block but contents differ — rewriting."
 fi
 
-info "Patching $LAUNCHER (needs sudo)..."
-readonly_disable
+info "Patching $STEAM_SH..."
 
-BACKUP="${LAUNCHER}.lumalinux.bak.$(date +%Y%m%d%H%M%S)"
-sudo cp "$LAUNCHER" "$BACKUP"
-info "Backed up $LAUNCHER -> $BACKUP"
+# Headcrab chmod 555's steam.sh to survive Steam's own self-update. We
+# temporarily restore write permission, patch, then lock it back down.
+chmod u+w "$STEAM_SH"
 
-# If a stale managed block exists, remove it first so we always insert clean
-if grep -qF "$MARKER_BEGIN" "$LAUNCHER"; then
-    sudo sed -i "/^# >>> lumalinux launcher patch >>>/,/^# <<< lumalinux launcher patch <<</d" "$LAUNCHER"
-fi
+BACKUP="${STEAM_SH}.lumalinux.bak.$(date +%Y%m%d%H%M%S)"
+cp "$STEAM_SH" "$BACKUP"
+info "Backed up $STEAM_SH -> $BACKUP"
 
-# Build the block to insert. Single-quoted so $HOME and ${LD_PRELOAD:...}
-# are NOT expanded by THIS shell - they go into /usr/bin/steam literally
-# and get expanded by bash when Steam launches.
+# Remove any stale managed block so we always insert clean.
+sed -i "/^[[:space:]]*# >>> lumalinux launcher patch >>>/,/^[[:space:]]*# <<< lumalinux launcher patch <<</d" "$STEAM_SH"
+
+# Block to insert.
 BLOCK="${MARKER_BEGIN}
-${EXPECTED_LINE}
+${EXPORT_LINE}
 ${MARKER_END}
 "
 
-# Insert the block right before the first 'exec /usr/lib/steam ...' or
-# 'exec steam ...' line. awk does this in one pass; we write to a tmp file
-# then sudo-mv into place.
-NEW_LAUNCHER="$(mktemp)"
-awk -v block="$BLOCK" '
+# Insert the block right before the `source $STEAM_CLIENT` line. Preserve
+# the leading indentation of that line so the new lines visually align with
+# the surrounding `export $INJECT_*` block.
+NEW_STEAM_SH="$(mktemp)"
+awk -v block="$BLOCK" -v anchor="$INSERT_ANCHOR" '
     BEGIN { inserted=0 }
-    /^exec[[:space:]]+(\/usr\/lib\/)?steam/ && !inserted {
-        printf "%s", block
-        inserted=1
+    index($0, anchor) > 0 && !inserted {
+        match($0, /^[[:space:]]*/)
+        indent = substr($0, 1, RLENGTH)
+        n = split(block, lines, "\n")
+        for (i = 1; i <= n; i++) {
+            if (lines[i] != "")
+                printf "%s%s\n", indent, lines[i]
+        }
+        inserted = 1
     }
     { print }
     END {
         if (!inserted) exit 1
     }
-' "$LAUNCHER" > "$NEW_LAUNCHER" || die "Could not find an 'exec .../steam' line in $LAUNCHER. Refusing to patch."
+' "$STEAM_SH" > "$NEW_STEAM_SH" || die "Could not find '$INSERT_ANCHOR' in $STEAM_SH. Refusing to patch."
 
-sudo install -m 0755 "$NEW_LAUNCHER" "$LAUNCHER"
-rm -f "$NEW_LAUNCHER"; NEW_LAUNCHER=""
-readonly_enable
+install -m 0555 "$NEW_STEAM_SH" "$STEAM_SH"
+rm -f "$NEW_STEAM_SH"; NEW_STEAM_SH=""
 
-ok "Patched $LAUNCHER with lumalinux LD_PRELOAD block."
+ok "Patched $STEAM_SH with lumalinux LD_PRELOAD block."
+
+if [[ -f "$CR_SO" ]]; then
+    info "CloudRedirect detected — both will load (lumalinux preserves the existing LD_PRELOAD)."
+fi
+
 ok "Done. Restart Steam to load lumalinux."
 info "On startup, look for a desktop toast: 'lumalinux: vX.Y.Z loaded - 4/4 hooks active'"
-info "If anything goes wrong, restore from backup: sudo cp $BACKUP $LAUNCHER"
+info "Re-run this installer after any Headcrab Updater run (it regenerates steam.sh)."
+info "Backup: $BACKUP"
