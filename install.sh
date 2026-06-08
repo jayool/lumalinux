@@ -105,7 +105,7 @@ fi
 
 # Verify the download is a 32-bit ELF i386 shared object
 if command -v file &>/dev/null; then
-    file "$TMP_SO" | grep -q "ELF 32-bit.*Intel 80386" \
+    file "$TMP_SO" | grep -qE "ELF 32-bit.*Intel (80386|i386)" \
         || die "Downloaded file is not a 32-bit ELF i386 shared object. Aborting."
 else
     warn "'file' command unavailable; skipping sanity check on the download."
