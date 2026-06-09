@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.9.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.10.0)
 
 # Generate version.hpp from version.hpp.in so source code references a single
 # version macro (LUMALINUX_VERSION_STRING) and bumps happen in one place

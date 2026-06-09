@@ -47,8 +47,9 @@ jobs:
       - name: Verify output
         run: |
           file build/liblumalinux.so
-          # Should report "ELF 32-bit LSB shared object, Intel 80386"
-          file build/liblumalinux.so | grep -q "ELF 32-bit.*Intel 80386" || {
+          # `file` >= 5.45 reports "Intel i386"; older versions report "Intel
+          # 80386". Accept both — install.sh does the same.
+          file build/liblumalinux.so | grep -qE "ELF 32-bit.*Intel (80386|i386)" || {
               echo "ERROR: output is not 32-bit ELF"
               exit 1
           }
