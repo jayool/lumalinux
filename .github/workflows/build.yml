@@ -26,7 +26,10 @@ jobs:
             gcc-multilib \
             g++-multilib \
             cmake \
-            ninja-build
+            ninja-build \
+            pkg-config \
+            libcurl4-openssl-dev:i386 \
+            libssl-dev:i386
 
       - name: Fetch libmem (pinned release tarball)
         run: ./tools/fetch_libmem.sh
@@ -35,9 +38,10 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          cmake .. \
-            -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release
+          PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig \
+            cmake .. \
+              -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: |

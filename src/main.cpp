@@ -28,6 +28,10 @@
 #include "hooks/load_package_hook.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "patterns.hpp"
+#include "globals.hpp"
+#include "update.hpp"
+
+#include "libmem/libmem.h"
 
 #include <atomic>
 #include <chrono>
@@ -109,6 +113,24 @@ void InstallHooks() {
             Log::Error("Install: steamclient.so still not visible — aborting");
             return;
         }
+    }
+
+    // Locate steamclient.so via libmem and stash the module info — Updater::
+    // verifySafeModeHash() reads g_modSteamClient.path to hash the file off
+    // disk. Mirrors SLSsteam's globals.cpp / pattern population.
+    if (LM_FindModule("steamclient.so", &g_modSteamClient) == LM_FALSE) {
+        Log::Error("Install: LM_FindModule(steamclient.so) failed — aborting");
+        return;
+    }
+
+    // SafeMode hash gate, SLSsteam-style. Refuse to install any hook unless
+    // the loaded steamclient.so hashes to one of the entries in res/updates.yaml
+    // under our compile-time LUMALINUX_SAFEMODE_VERSION group. Same fail-closed
+    // semantics as SLSsteam: network → cache → false. No override.
+    if (!Updater::init() || !Updater::verifySafeModeHash()) {
+        Log::Notify("SafeMode: steamclient.so hash not in verified list — "
+                    "hooks skipped. See ~/.cache/lumalinux/lumalinux.log");
+        return;
     }
 
     // v0.6.1 — full hook set, loaded via LD_PRELOAD (NOT LD_AUDIT; the audit

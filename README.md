@@ -283,7 +283,14 @@ helper Python tools as an artifact.
 
 - Hook design references **LumaCore** (Windows), reimplemented for Linux.
 - Coexists with **SLSsteam** (ownership / licensing layer); does not fork or
-  modify it.
+  modify it. The SafeMode hash-whitelist update flow (`src/update.cpp`,
+  `src/curl.cpp`, `src/sha256.cpp`, `src/globals.cpp`, `res/version.txt`,
+  `res/updates.yaml`) was ported from SLSsteam (AGPL-3.0) with minimal
+  adaptations — see the AGPL-3.0 header in each of those files. The full
+  AGPL-3.0 text is in [`LICENSE-AGPL`](LICENSE-AGPL); the rest of lumalinux
+  remains under GPL-3.0 ([`LICENSE`](LICENSE)). Per AGPL-3.0 §13 the
+  network-interaction clause applies to the combined binary; in practice
+  inert for lumalinux because it is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
   [`docs/cloudredirect.md`](docs/cloudredirect.md) for the `LD_PRELOAD`
   ordering note.

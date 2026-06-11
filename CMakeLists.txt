@@ -1,9 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
 project(lumalinux LANGUAGES C CXX VERSION 0.10.0)
 
+# SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
+# Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
+# hooks and we shipped new patterns). Within the same VERSION, new compatible
+# steamclient.so hashes can be appended to res/updates.yaml without recompiling.
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/res/version.txt lumalinux_SAFEMODE_VERSION)
+string(STRIP "${lumalinux_SAFEMODE_VERSION}" lumalinux_SAFEMODE_VERSION)
+
 # Generate version.hpp from version.hpp.in so source code references a single
 # version macro (LUMALINUX_VERSION_STRING) and bumps happen in one place
-# (the project() call above).
+# (the project() call above). Also embeds LUMALINUX_SAFEMODE_VERSION read above.
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/version.hpp.in
     ${CMAKE_CURRENT_BINARY_DIR}/generated/version.hpp
@@ -35,16 +42,34 @@ add_library(lumalinux SHARED
     src/hooks/depot_dependency_hook.cpp
     src/hooks/load_package_hook.cpp
     src/hooks/gmrc_hook.cpp
+    src/globals.cpp
+    src/curl.cpp
+    src/sha256.cpp
+    src/update.cpp
 )
+
+# libcurl + OpenSSL via pkg-config. Both must be the 32-bit variants:
+#   apt: libcurl4-openssl-dev:i386 libssl-dev:i386
+#   pacman: lib32-curl lib32-openssl
+# Invoke cmake with PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig on
+# multiarch Debian/Ubuntu so it picks the i386 .pc files, not the amd64 ones.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(CURL REQUIRED libcurl)
+pkg_check_modules(OPENSSL REQUIRED libcrypto)
 
 target_include_directories(lumalinux PRIVATE
     src/
     include/
     ${CMAKE_CURRENT_BINARY_DIR}/generated/
+    ${CURL_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIRS}
 )
 target_link_libraries(lumalinux PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/liblibmem.a
+    ${CMAKE_CURRENT_SOURCE_DIR}/lib/libyaml-cpp.a
     ${CMAKE_DL_LIBS}
+    ${CURL_LIBRARIES}
+    ${OPENSSL_LIBRARIES}
 )
 
 set_target_properties(lumalinux PROPERTIES

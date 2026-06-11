@@ -16,4 +16,11 @@ compile_commands.json
 # pinned to a specific upstream version. Not vendored.
 /lib/liblibmem.a
 /include/libmem/
+
+# yaml-cpp is vendored as a committed blob (SLSsteam parity): the .a file
+# and the headers live in-tree. Override the *.a wildcard above.
+!/lib/libyaml-cpp.a
+
+# Local PoC test harnesses for the SafeMode update flow. Not shipped.
+/test/
 compile_commands.json

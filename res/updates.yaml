@@ -1,0 +1,11 @@
+SafeModeHashes:
+  20260611150000:
+    # Seeded as CANDIDATES from SLSsteam's group 20260528151547 (its current
+    # active group covering the May 28 patterns and the June 10 client update).
+    # SLSsteam validated these against its own hooks, not lumalinux's — they're
+    # plausible but not yet confirmed for lumalinux's 4 hooks. A candidate gets
+    # promoted to verified once a real Deck run reports 4/4 hooks active on it;
+    # otherwise it's removed.
+    - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9 # candidate
+    - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35 # candidate
+    - 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800 # candidate, Steam 2026.06.10
