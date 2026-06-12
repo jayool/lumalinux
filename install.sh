@@ -20,9 +20,17 @@ SO_URL="https://github.com/${REPO}/releases/latest/download/${SO_NAME}"
 
 INSTALL_DIR="${HOME}/.local/share/lumalinux"
 KEYS_DIR="${HOME}/.config/lumalinux"
+TOOLS_DIR="${INSTALL_DIR}/tools"
 STEAM_SH="${HOME}/.local/share/Steam/steam.sh"
 SLS_SO="${HOME}/.local/share/SLSsteam/SLSsteam.so"
 CR_SO="${HOME}/.local/share/CloudRedirect/cloud_redirect.so"
+
+# Runtime tools deployed under $TOOLS_DIR. Manual users + LumaDeck both
+# expect tools/steamidra_lite.py to live there. Dev-only helpers
+# (derive_patterns.py, ghidra_find_gmrc.py, fetch_libmem.sh) are kept out
+# of the install — they're maintainer tools, not user-facing.
+RUNTIME_TOOLS=( steamidra_lite.py vdf_inject_keys.py )
+TOOLS_BASE_URL="https://raw.githubusercontent.com/${REPO}/main/tools"
 
 MARKER_BEGIN="# >>> lumalinux launcher patch >>> (managed by install.sh - do not edit)"
 MARKER_END="# <<< lumalinux launcher patch <<<"
@@ -90,6 +98,11 @@ if [[ "${1:-}" == "--uninstall" ]]; then
         ok "Removed ${INSTALL_DIR}/${SO_NAME}"
     fi
 
+    if [[ -d "$TOOLS_DIR" ]]; then
+        rm -rf "$TOOLS_DIR"
+        ok "Removed $TOOLS_DIR"
+    fi
+
     info "Kept ${KEYS_DIR}/keys.txt (delete it manually if you want)"
     exit 0
 fi
@@ -130,6 +143,23 @@ if [[ ! -f "${KEYS_DIR}/keys.txt" ]]; then
 EOF
     ok "Created ${KEYS_DIR}/keys.txt (empty)"
 fi
+
+# ── deploy runtime tools ──────────────────────────────────────────────────
+# The .so alone is not a complete install — manual users populate keys.txt
+# with tools/steamidra_lite.py (see keys.txt comment above), and LumaDeck
+# invokes it directly for the "Download manifest" flow. Without these the
+# bare install.sh leaves the user (or plugin) with a working LD_PRELOAD but
+# no way to actually feed keys into it.
+info "Deploying runtime tools under $TOOLS_DIR..."
+mkdir -p "$TOOLS_DIR"
+for tool in "${RUNTIME_TOOLS[@]}"; do
+    if curl -fsSL -o "${TOOLS_DIR}/${tool}" "${TOOLS_BASE_URL}/${tool}"; then
+        chmod 0755 "${TOOLS_DIR}/${tool}"
+        ok "Deployed ${TOOLS_DIR}/${tool}"
+    else
+        die "Failed to download ${TOOLS_BASE_URL}/${tool}"
+    fi
+done
 
 # ── patch ~/.local/share/Steam/steam.sh ───────────────────────────────────
 # The export line we insert. Single-quoted so $HOME and the ${LD_PRELOAD:...}
