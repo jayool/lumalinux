@@ -12,79 +12,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: testing-harness
+          ref: main
 
       - name: Install build deps
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y debootstrap curl wget p7zip-full zstd
+          sudo apt-get install -y gcc-multilib libc6-dev:i386 libcurl4-openssl-dev:i386 \
+            libpthread-stubs0-dev:i386 wget p7zip-full
 
-      - name: Download Steam .deb from steampowered.com (network UNBLOCKED here)
+      - name: Pull Arch (SteamOS-like) + extract 32-bit libs
         run: |
           mkdir -p out
-          wget -q https://repo.steampowered.com/steam/archive/stable/steam_latest.deb -O out/steam.deb
-          ls -la out/
-
-      - name: Extract Steam binary tree
-        run: |
-          mkdir -p steam-extract
-          dpkg-deb -x out/steam.deb steam-extract
-          # El runtime bootstrapping de Steam: el .deb instala el launcher,
-          # la primera ejecución descarga el ubuntu12_32. Aquí solo tenemos el launcher.
-          # Para obtener ubuntu12_32 directamente:
-          mkdir -p steam-runtime
-          # Steam bootstrap tarball (lo que el .deb extrae en ~/.local/share/Steam)
-          wget -q https://media.steampowered.com/client/installer/steam.tar.gz -O steam-runtime/bootstrap.tar.gz
-          ls -lh steam-runtime/
-          # Comprimir solo bootstrap.tar.gz como nuestro paquete steam_bootstrap
-          tar czf out/steam_bootstrap.tar.gz -C steam-runtime bootstrap.tar.gz
-
-      - name: Pull Arch Linux container and extract 32-bit libs (similar to SteamOS)
-        run: |
           docker pull archlinux:latest
           docker run --rm -v $PWD/out:/out archlinux:latest bash -c "
-            pacman -Sy --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-libcurl-gnutls lib32-libcurl-compat 2>&1 | tail -5 || true
+            set -e
+            pacman -Sy --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-libcurl-gnutls 2>&1 | tail -5
             mkdir -p /libs32
-            cp -L /usr/lib32/libc.so.6 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libpthread.so* /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libdl.so* /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libgcc_s.so* /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libstdc++.so* /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libcrypto.so.3 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libssl.so.3 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libcurl.so.4 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libm.so.6 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/libresolv.so.2 /libs32/ 2>/dev/null || true
-            cp -L /usr/lib32/ld-linux.so.2 /libs32/ 2>/dev/null || true
+            for f in /usr/lib32/libc.so.6 /usr/lib32/libpthread.so* /usr/lib32/libdl.so* \
+                     /usr/lib32/libgcc_s.so* /usr/lib32/libstdc++.so* /usr/lib32/libcrypto.so.3 \
+                     /usr/lib32/libssl.so.3 /usr/lib32/libcurl.so.4 /usr/lib32/libm.so.6 \
+                     /usr/lib32/libresolv.so.2 /usr/lib32/ld-linux.so.2; do
+              cp -L \$f /libs32/ 2>/dev/null || true
+            done
             ls -la /libs32/
             tar czf /out/archlinux_libs32.tar.gz -C /libs32 .
           "
-          ls -la out/
+          ls -lh out/
 
-      - name: Download all needed .so binaries (SLSsteam + CR + lumalinux) from GitHub releases
+      - name: Download SLSsteam + CR + lumalinux from GitHub releases
         run: |
           mkdir -p sos
           # SLSsteam
           TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" "https://github.com/AceSLS/SLSsteam/releases/latest")
           TAG="${TAG##*/}"
+          echo "SLSsteam tag: $TAG"
           wget -q "https://github.com/AceSLS/SLSsteam/releases/download/$TAG/SLSsteam-Any.7z" -O sos/SLSsteam.7z
           cd sos && 7z x -y SLSsteam.7z >/dev/null && cd ..
-          mv sos/bin/SLSsteam.so sos/
-          mv sos/bin/library-inject.so sos/
+          cp sos/bin/SLSsteam.so sos/SLSsteam.so
+          cp sos/bin/library-inject.so sos/library-inject.so
           # CloudRedirect
           wget -q https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so -O sos/cloud_redirect.so
           # lumalinux
           LL_TAG=$(curl -sSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/jayool/lumalinux/releases/latest" | jq -r .tag_name)
+          echo "lumalinux tag: $LL_TAG"
           wget -q "https://github.com/jayool/lumalinux/releases/download/$LL_TAG/liblumalinux.so" -O sos/liblumalinux.so
-          ls -la sos/*.so
+          ls -lh sos/SLSsteam.so sos/library-inject.so sos/cloud_redirect.so sos/liblumalinux.so
           tar czf out/sos_binaries.tar.gz -C sos SLSsteam.so library-inject.so cloud_redirect.so liblumalinux.so
 
-      - name: Build a minimal "fake steam" test harness binary in 32-bit
+      - name: Build harness binary + fix_atexit.so
         run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y gcc-multilib libc6-dev:i386 libcurl4-openssl-dev:i386 libpthread-stubs0-dev:i386
           mkdir -p harness
           cat > harness/steam.c <<'EOF'
           #include <stdio.h>
@@ -120,7 +98,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload test-deps-v1 out/*.tar.gz out/*.deb --repo jayool/lumalinux --clobber
+          gh release upload test-deps-v1 out/archlinux_libs32.tar.gz out/sos_binaries.tar.gz out/harness.tar.gz \
+            --repo jayool/lumalinux --clobber
 
       - name: Summary
         run: |
