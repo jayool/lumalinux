@@ -97,7 +97,7 @@ jobs:
             for i in $(seq 1 $N); do
               HOME=/tmp/fakehome LD_LIBRARY_PATH="/usr/lib32" \
               LD_AUDIT="$audit" LD_PRELOAD="$preload" \
-                timeout 25 ./steam -nominidumps -nobreakpad > /dev/null 2>&1 || true
+                timeout 25 ./steam -nominidumps -nobreakpad > /dev/null 2>&1
               EX=$?
               if [ $EX -eq 0 ]; then PASS=$((PASS+1));
               elif [ $EX -eq 134 ]; then FAIL=$((FAIL+1)); SIGABRT=$((SIGABRT+1));
@@ -125,4 +125,5 @@ jobs:
         with:
           name: verify-results
           path: /tmp/results.txt
+
 
