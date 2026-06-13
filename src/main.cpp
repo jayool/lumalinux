@@ -30,6 +30,7 @@
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "update.hpp"
+#include "version.hpp"
 
 #include "libmem/libmem.h"
 
@@ -91,7 +92,7 @@ void DoPreinit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (preinit) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux v0.8.1 preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
+    Log::Info("lumalinux " LUMALINUX_VERSION_STRING " preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
@@ -173,9 +174,9 @@ void InstallHooks() {
 
     Log::Info("Install: lumalinux active (%d/%d hooks)", active, expected);
     if (failed.empty()) {
-        Log::Notify("v0.8.1 loaded — %d/%d hooks active", active, expected);
+        Log::Notify(LUMALINUX_VERSION_STRING " loaded — %d/%d hooks active", active, expected);
     } else {
-        Log::Notify("v0.8.1: %d/%d hooks — %s FAILED. Steam update? See "
+        Log::Notify(LUMALINUX_VERSION_STRING ": %d/%d hooks — %s FAILED. Steam update? See "
                     "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
     }
 }
