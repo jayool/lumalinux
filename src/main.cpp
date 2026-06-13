@@ -41,6 +41,7 @@
 #include <link.h>
 #include <string>
 #include <thread>
+#include <unistd.h>
 
 namespace {
 
@@ -246,6 +247,16 @@ void LumalinuxCtor() {
     if (!IsAllowedProcess()) return;
     DoPreinit();
 
+    // Avoid a SIGABRT during exit cleanup when SLSsteam + CloudRedirect are
+    // also loaded. Their per-lib pthread watch threads + OpenSSL/libcurl
+    // teardown race against _dl_fini, crashing the process before the
+    // OOBE finishes (~73% reproduction rate with the full stack). _exit(0)
+    // skips atexit chains and library destructors — Steam has already
+    // persisted state by this point, and the kernel reclaims memory on
+    // process exit. Registered here so it fires FIRST (atexit handlers run
+    // LIFO, lumalinux is the last LD_PRELOAD slot in steam.sh).
+    std::atexit([]() { _exit(0); });
+
     std::thread([] {
         using namespace std::chrono_literals;
         constexpr int kMaxAttempts = 300;  // ~5 min
@@ -277,3 +288,4 @@ void LumalinuxShutdown() {
 }
 
 } // namespace
+
