@@ -22,23 +22,47 @@ jobs:
         run: |
           mkdir -p out
           docker pull archlinux:latest
-          docker run --rm -v $PWD/out:/out archlinux:latest bash -c "
-            set -ex
-            # Habilitar multilib en pacman.conf
-            sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
-            grep -A1 multilib /etc/pacman.conf | head -5
-            pacman -Sy --noconfirm 2>&1 | tail -10
-            pacman -S --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-curl 2>&1 | tail -15
-            mkdir -p /libs32
-            for f in /usr/lib32/libc.so.6 /usr/lib32/libpthread.so* /usr/lib32/libdl.so* \
-                     /usr/lib32/libgcc_s.so* /usr/lib32/libstdc++.so* /usr/lib32/libcrypto.so.3 \
-                     /usr/lib32/libssl.so.3 /usr/lib32/libcurl.so.4 /usr/lib32/libm.so.6 \
-                     /usr/lib32/libresolv.so.2 /usr/lib/ld-linux.so.2 /usr/lib32/ld-linux.so.2; do
-              cp -L \$f /libs32/ 2>/dev/null && echo \"copied \$f\" || echo \"MISSING: \$f\"
-            done
-            ls -la /libs32/
-            tar czf /out/archlinux_libs32.tar.gz -C /libs32 .
-          "
+          # Pass script via file mount so we don't fight bash quoting
+          cat > /tmp/extract.sh <<'SCRIPT'
+          #!/bin/bash
+          set -ex
+          # Append multilib repo (idempotente)
+          if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
+            cat >> /etc/pacman.conf <<EOF
+          
+          [multilib]
+          Include = /etc/pacman.d/mirrorlist
+          EOF
+          fi
+          tail -5 /etc/pacman.conf
+          pacman -Sy --noconfirm 2>&1 | tail -10
+          pacman -S --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-curl 2>&1 | tail -20
+          mkdir -p /libs32
+          MISSING=0
+          for f in /usr/lib32/libc.so.6 /usr/lib32/libpthread.so.0 /usr/lib32/libdl.so.2 \
+                   /usr/lib32/libgcc_s.so.1 /usr/lib32/libstdc++.so.6 /usr/lib32/libcrypto.so.3 \
+                   /usr/lib32/libssl.so.3 /usr/lib32/libcurl.so.4 /usr/lib32/libm.so.6 \
+                   /usr/lib32/libresolv.so.2; do
+            if cp -L "$f" /libs32/ 2>/dev/null; then
+              echo "OK: $f"
+            else
+              echo "MISSING: $f"
+              MISSING=$((MISSING+1))
+            fi
+          done
+          # ld-linux can be in /usr/lib or /lib
+          for ld in /usr/lib/ld-linux.so.2 /lib/ld-linux.so.2 /usr/lib32/ld-linux.so.2; do
+            [ -f "$ld" ] && cp -L "$ld" /libs32/ld-linux.so.2 2>/dev/null && echo "OK ld: $ld" && break
+          done
+          echo "Total libs in /libs32:"
+          ls -la /libs32/
+          du -sh /libs32/
+          tar czf /out/archlinux_libs32.tar.gz -C /libs32 .
+          echo "Tarball size:"
+          ls -la /out/archlinux_libs32.tar.gz
+          SCRIPT
+          chmod +x /tmp/extract.sh
+          docker run --rm -v $PWD/out:/out -v /tmp/extract.sh:/extract.sh archlinux:latest /extract.sh
           ls -lh out/archlinux_libs32.tar.gz
 
       - name: Download SLSsteam + CR + lumalinux
@@ -54,7 +78,6 @@ jobs:
           LL_TAG=$(curl -sSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/jayool/lumalinux/releases/latest" | jq -r .tag_name)
           wget -q "https://github.com/jayool/lumalinux/releases/download/$LL_TAG/liblumalinux.so" -O sos/liblumalinux.so
-          ls -lh sos/SLSsteam.so sos/library-inject.so sos/cloud_redirect.so sos/liblumalinux.so
           mkdir -p out
           tar czf out/sos_binaries.tar.gz -C sos SLSsteam.so library-inject.so cloud_redirect.so liblumalinux.so
 
@@ -97,4 +120,6 @@ jobs:
             --repo jayool/lumalinux --clobber
 
       - name: Summary
-        run: ls -la out/ >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "## Final output sizes" >> $GITHUB_STEP_SUMMARY
+          ls -la out/ >> $GITHUB_STEP_SUMMARY
