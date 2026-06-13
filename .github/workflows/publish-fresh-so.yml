@@ -1,0 +1,27 @@
+name: Publish Fresh So
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  pub:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download liblumalinux.so from latest build run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # ID del build run que compiló el .so con fix
+          gh run download 27462787844 --name lumalinux --repo jayool/lumalinux -D out
+          ls -la out/
+          file out/build/liblumalinux.so
+      - name: Upload to test-deps-v1 release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mv out/build/liblumalinux.so liblumalinux-fresh.so
+          gh release upload test-deps-v1 liblumalinux-fresh.so --repo jayool/lumalinux --clobber
