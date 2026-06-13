@@ -11,59 +11,56 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Install build deps
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib libc6-dev:i386 libcurl4-openssl-dev:i386 \
-            libpthread-stubs0-dev:i386 wget p7zip-full
+          sudo apt-get install -y gcc-multilib libc6-dev:i386 libcurl4-openssl-dev:i386 wget p7zip-full
 
-      - name: Pull Arch (SteamOS-like) + extract 32-bit libs
+      - name: Pull Arch + enable multilib + extract 32-bit libs
         run: |
           mkdir -p out
           docker pull archlinux:latest
           docker run --rm -v $PWD/out:/out archlinux:latest bash -c "
-            set -e
-            pacman -Sy --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-libcurl-gnutls 2>&1 | tail -5
+            set -ex
+            # Habilitar multilib en pacman.conf
+            sed -i '/\[multilib\]/,/Include/s/^#//' /etc/pacman.conf
+            grep -A1 multilib /etc/pacman.conf | head -5
+            pacman -Sy --noconfirm 2>&1 | tail -10
+            pacman -S --noconfirm lib32-glibc lib32-gcc-libs lib32-openssl lib32-curl 2>&1 | tail -15
             mkdir -p /libs32
             for f in /usr/lib32/libc.so.6 /usr/lib32/libpthread.so* /usr/lib32/libdl.so* \
                      /usr/lib32/libgcc_s.so* /usr/lib32/libstdc++.so* /usr/lib32/libcrypto.so.3 \
                      /usr/lib32/libssl.so.3 /usr/lib32/libcurl.so.4 /usr/lib32/libm.so.6 \
-                     /usr/lib32/libresolv.so.2 /usr/lib32/ld-linux.so.2; do
-              cp -L \$f /libs32/ 2>/dev/null || true
+                     /usr/lib32/libresolv.so.2 /usr/lib/ld-linux.so.2 /usr/lib32/ld-linux.so.2; do
+              cp -L \$f /libs32/ 2>/dev/null && echo \"copied \$f\" || echo \"MISSING: \$f\"
             done
             ls -la /libs32/
             tar czf /out/archlinux_libs32.tar.gz -C /libs32 .
           "
-          ls -lh out/
+          ls -lh out/archlinux_libs32.tar.gz
 
-      - name: Download SLSsteam + CR + lumalinux from GitHub releases
+      - name: Download SLSsteam + CR + lumalinux
         run: |
           mkdir -p sos
-          # SLSsteam
           TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" "https://github.com/AceSLS/SLSsteam/releases/latest")
           TAG="${TAG##*/}"
-          echo "SLSsteam tag: $TAG"
           wget -q "https://github.com/AceSLS/SLSsteam/releases/download/$TAG/SLSsteam-Any.7z" -O sos/SLSsteam.7z
-          cd sos && 7z x -y SLSsteam.7z >/dev/null && cd ..
+          (cd sos && 7z x -y SLSsteam.7z >/dev/null)
           cp sos/bin/SLSsteam.so sos/SLSsteam.so
           cp sos/bin/library-inject.so sos/library-inject.so
-          # CloudRedirect
           wget -q https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so -O sos/cloud_redirect.so
-          # lumalinux
           LL_TAG=$(curl -sSL -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
             "https://api.github.com/repos/jayool/lumalinux/releases/latest" | jq -r .tag_name)
-          echo "lumalinux tag: $LL_TAG"
           wget -q "https://github.com/jayool/lumalinux/releases/download/$LL_TAG/liblumalinux.so" -O sos/liblumalinux.so
           ls -lh sos/SLSsteam.so sos/library-inject.so sos/cloud_redirect.so sos/liblumalinux.so
+          mkdir -p out
           tar czf out/sos_binaries.tar.gz -C sos SLSsteam.so library-inject.so cloud_redirect.so liblumalinux.so
 
-      - name: Build harness binary + fix_atexit.so
+      - name: Build harness binaries
         run: |
-          mkdir -p harness
+          mkdir -p harness out
           cat > harness/steam.c <<'EOF'
           #include <stdio.h>
           #include <stdlib.h>
@@ -83,7 +80,6 @@ jobs:
             fprintf(stderr,"[steam] returning\n");return 0;}
           EOF
           gcc -m32 -no-pie -o harness/steam harness/steam.c -lpthread -lcurl
-          file harness/steam
           cat > harness/fix_atexit.c <<'EOF'
           #include <stdlib.h>
           #include <unistd.h>
@@ -91,10 +87,9 @@ jobs:
           __attribute__((constructor)) static void r(void){atexit(e);}
           EOF
           gcc -m32 -shared -fPIC -o harness/fix_atexit.so harness/fix_atexit.c
-          file harness/fix_atexit.so
           tar czf out/harness.tar.gz -C harness steam fix_atexit.so steam.c fix_atexit.c
 
-      - name: Upload to test-deps-v1 release
+      - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -102,6 +97,4 @@ jobs:
             --repo jayool/lumalinux --clobber
 
       - name: Summary
-        run: |
-          echo "## Assets subidos al release test-deps-v1" >> $GITHUB_STEP_SUMMARY
-          ls -la out/ >> $GITHUB_STEP_SUMMARY
+        run: ls -la out/ >> $GITHUB_STEP_SUMMARY
