@@ -38,10 +38,21 @@ for blk in mem.getBlocks():
         break
 
 text_size = text_block.getSize()
-print("[*] Bulk reading .text ({} bytes)...".format(text_size))
-buf = jpype.JArray(jpype.JByte)(text_size)
-text_block.getBytes(text_block.getStart(), buf)
-text = bytes((b & 0xff) for b in buf)
+print("[*] Bulk reading .text ({} bytes) via chunked read...".format(text_size))
+# Use 1MB chunks via Ghidra's getBytes() (returns Java byte array, convert per chunk)
+chunks = []
+CHUNK = 1024 * 1024
+offset = 0
+start_addr = text_block.getStart()
+while offset < text_size:
+    sz = min(CHUNK, text_size - offset)
+    ba = jpype.JArray(jpype.JByte, 1)(sz)
+    mem.getBytes(start_addr.add(offset), ba)
+    chunks.append(bytes((b & 0xff) for b in ba))
+    offset += sz
+    if offset % (CHUNK * 10) == 0:
+        print("   ...{}/{} bytes".format(offset, text_size))
+text = b"".join(chunks)
 text_start = text_block.getStart().getOffset()
 print("[*] Got .text bytes")
 
