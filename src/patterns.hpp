@@ -64,7 +64,7 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 
 
 // =============================================================================
-// v0.10.4 — LoadPackage (PackageId=0 appid injection)
+// v0.10.6 — LoadPackage (rolled back to v0.10.3 wrapper as safety baseline)
 // =============================================================================
 //
 // CPackageInfoCache::LoadPackage(PackageInfo* pInfo, uint8_t sha1[20],
@@ -80,38 +80,29 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 //   v0.10.3 — anchor-string hit landed on a wrapper/getter (stack 0x28). Hook
 //             installed but never fired PackageId==0 because the wrapper is
 //             not the function Steam actually calls during PICS parsing.
-//   v0.10.4 — real LoadPackage re-identified by prologue+behaviour scan against
-//             hash 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
-//             (Steam client 2026.06.10): file offset 0x2510440. Confirmed by
-//             stack size 0x22C, presence of PackageId==0 comparison, 7 writes
-//             to [pInfo+0x38] (AppIdVec.m_pMemory), and call from ReadFromDisk.
-//
-// Linux i386 prologue (v0.10.4):
-//   55                  push ebp
-//   89 E5               mov ebp, esp
-//   57                  push edi
-//   56                  push esi
-//   53                  push ebx
-//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.bx
-//   81 C3 ?? ?? ?? ??   add ebx, <GOT>
-//   81 EC 2C 02 00 00   sub esp, 0x22C
-//   8B 45 08            mov eax, [ebp+0x08]  ; pInfo
-//   8B 7D 0C            mov edi, [ebp+0x0C]  ; sha1
-//   89 85 D4 FD FF FF   mov [ebp-0x22C], eax ; spill pInfo
-//   65 8B 35 14 00 00 00  mov esi, gs:[0x14] ; stack canary
-//   89 75 E4            mov [ebp-0x1C], esi
-//   31 F6               xor esi, esi
-//   85 C0               test eax, eax        ; if (pInfo == NULL) return
+//             Steam OPENS, downloads broken ("0 mounted depots").
+//   v0.10.4 — picked a candidate by prologue+behaviour scan (stack 0x22C, file
+//             0x2510440). Looked right offline. CRASHED Steam at startup:
+//             the function gets called early during PICS init with structs
+//             whose [+0]==0 and [+0x38] is NOT an AppIdVec.m_pMemory — our
+//             hook payload dereferenced garbage and SIGSEGV'd the worker.
+//             Behaviour invariants (PackageId==0 check, writes to [reg+0x38],
+//             stack ≥ 0x100) are NOT specific enough to single out
+//             LoadPackage among unrelated package-shaped functions.
+//   v0.10.6 — ROLLED BACK to the v0.10.3 wrapper pattern as a known-safe
+//             baseline (Steam opens). Discovery of the real LoadPackage is
+//             deferred to the read-only probe system in
+//             src/hooks/load_package_probe.cpp, opt-in via the env var
+//             LUMA_LOADPKG_PROBE=1. Once discovery output identifies the
+//             right function from a live Steam session, a future bump will
+//             re-target this pattern.
 //
 // PackageInfo layout (Linux i386, validated from LumaCore Structs.h):
 //   +0x00  uint32_t                PackageId
 //   +0x38  CUtlVector<AppId_t>     AppIdVec   (m_pMemory@+0x38, m_Size@+0x44)
-//
-// Pattern is 49 bytes, wildcarded only over the 4-byte get_pc_thunk call offset
-// and the 4-byte GOT delta. Verified UNIQUE (1 match) in the 2026.06.10 client.
 inline constexpr const char* kLoadPackagePattern =
-    "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC 2C 02 00 00 "
-    "8B 45 08 8B 7D 0C 89 85 D4 FD FF FF 65 8B 35 14 00 00 00 89 75 E4 31 F6 85 C0";
+    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 83 EC 28 8B 7D 0C 57 89 F3 "
+    "E8 ?? ?? ?? ?? 83 C4 10 85 C0";
 
 
 // =============================================================================

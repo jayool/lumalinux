@@ -26,6 +26,7 @@
 #include "hooks/depot_key_hook.hpp"
 #include "hooks/depot_dependency_hook.hpp"
 #include "hooks/load_package_hook.hpp"
+#include "hooks/load_package_probe.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
@@ -179,6 +180,10 @@ void InstallHooks() {
         Log::Notify(LUMALINUX_VERSION_STRING ": %d/%d hooks — %s FAILED. Steam update? See "
                     "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
     }
+
+    // Opt-in LoadPackage discovery probes — read-only, OFF unless
+    // LUMA_LOADPKG_PROBE=1 is exported. Not counted in the hook tally.
+    Hooks::LoadPackageProbe::Install();
 }
 
 bool IsSteamclient(const char* name) {
