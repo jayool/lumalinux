@@ -88,8 +88,15 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 // PackageInfo layout (Linux i386, validated from struct used by LumaCore):
 //   +0x00  uint32_t       PackageId
 //   +0x30  CUtlVector<AppId_t>  AppIdVec      (16-byte CUtlVector header)
+// v0.10.3: Steam refactored LoadPackage. New pattern matches CPackageInfoCache::LoadPackage
+// in steamclient.so hash 7c4ac73e... (Steam client 2026.06.10+). Verified by anchor strings
+// "PackageID : %u, change number : %u/%u" and "No package info for packageID %u found" via
+// tools/find_pic_xrefs.py headless script. Function is now a smaller wrapper (stack 0x28 vs
+// previous 0x11c) that delegates to an internal helper. PackageInfo struct offsets unchanged
+// (PackageId @ +0x00, AppIdVec @ +0x38).
 inline constexpr const char* kLoadPackagePattern =
-    "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00";
+    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 83 EC 28 8B 7D 0C 57 89 F3 "
+    "E8 ?? ?? ?? ?? 83 C4 10 85 C0";
 
 
 // =============================================================================
@@ -135,3 +142,4 @@ uintptr_t FindGmrcFunction();
 uintptr_t FindSteamclientBase();
 
 } // namespace Patterns
+
