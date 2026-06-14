@@ -64,7 +64,7 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 
 
 // =============================================================================
-// v0.5 — LoadPackage (PackageId=0 appid injection)
+// v0.10.4 — LoadPackage (PackageId=0 appid injection)
 // =============================================================================
 //
 // CPackageInfoCache::LoadPackage(PackageInfo* pInfo, uint8_t sha1[20],
@@ -75,28 +75,43 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 // into pInfo->AppIdVec so Steam later fetches the appinfo for those apps as if
 // they were owned. This is the trick LumaCore uses on Windows.
 //
-// Linux i386 prologue:
+// History:
+//   v0.5    — original LoadPackage (get_pc_thunk.di, stack 0x11C)
+//   v0.10.3 — anchor-string hit landed on a wrapper/getter (stack 0x28). Hook
+//             installed but never fired PackageId==0 because the wrapper is
+//             not the function Steam actually calls during PICS parsing.
+//   v0.10.4 — real LoadPackage re-identified by prologue+behaviour scan against
+//             hash 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
+//             (Steam client 2026.06.10): file offset 0x2510440. Confirmed by
+//             stack size 0x22C, presence of PackageId==0 comparison, 7 writes
+//             to [pInfo+0x38] (AppIdVec.m_pMemory), and call from ReadFromDisk.
+//
+// Linux i386 prologue (v0.10.4):
 //   55                  push ebp
 //   89 E5               mov ebp, esp
 //   57                  push edi
-//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.di
-//   81 C7 ?? ?? ?? ??   add edi, <GOT>
 //   56                  push esi
 //   53                  push ebx
-//   81 EC 1C 01 00 00   sub esp, 0x11C
+//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.bx
+//   81 C3 ?? ?? ?? ??   add ebx, <GOT>
+//   81 EC 2C 02 00 00   sub esp, 0x22C
+//   8B 45 08            mov eax, [ebp+0x08]  ; pInfo
+//   8B 7D 0C            mov edi, [ebp+0x0C]  ; sha1
+//   89 85 D4 FD FF FF   mov [ebp-0x22C], eax ; spill pInfo
+//   65 8B 35 14 00 00 00  mov esi, gs:[0x14] ; stack canary
+//   89 75 E4            mov [ebp-0x1C], esi
+//   31 F6               xor esi, esi
+//   85 C0               test eax, eax        ; if (pInfo == NULL) return
 //
-// PackageInfo layout (Linux i386, validated from struct used by LumaCore):
-//   +0x00  uint32_t       PackageId
-//   +0x30  CUtlVector<AppId_t>  AppIdVec      (16-byte CUtlVector header)
-// v0.10.3: Steam refactored LoadPackage. New pattern matches CPackageInfoCache::LoadPackage
-// in steamclient.so hash 7c4ac73e... (Steam client 2026.06.10+). Verified by anchor strings
-// "PackageID : %u, change number : %u/%u" and "No package info for packageID %u found" via
-// tools/find_pic_xrefs.py headless script. Function is now a smaller wrapper (stack 0x28 vs
-// previous 0x11c) that delegates to an internal helper. PackageInfo struct offsets unchanged
-// (PackageId @ +0x00, AppIdVec @ +0x38).
+// PackageInfo layout (Linux i386, validated from LumaCore Structs.h):
+//   +0x00  uint32_t                PackageId
+//   +0x38  CUtlVector<AppId_t>     AppIdVec   (m_pMemory@+0x38, m_Size@+0x44)
+//
+// Pattern is 49 bytes, wildcarded only over the 4-byte get_pc_thunk call offset
+// and the 4-byte GOT delta. Verified UNIQUE (1 match) in the 2026.06.10 client.
 inline constexpr const char* kLoadPackagePattern =
-    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 83 EC 28 8B 7D 0C 57 89 F3 "
-    "E8 ?? ?? ?? ?? 83 C4 10 85 C0";
+    "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC 2C 02 00 00 "
+    "8B 45 08 8B 7D 0C 89 85 D4 FD FF FF 65 8B 35 14 00 00 00 89 75 E4 31 F6 85 C0";
 
 
 // =============================================================================
