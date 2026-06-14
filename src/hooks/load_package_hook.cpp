@@ -4,6 +4,7 @@
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -60,6 +61,30 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
     if (!pInfo) return result;
 
     uint32_t packageId = PkgId(pInfo);
+
+    // Discovery diagnostic (opt-in, LUMA_LOADPKG_DEBUG=1). Logs EVERY call's
+    // PackageId + AppIdVec triple for the first kDiagCap calls, regardless of
+    // PackageId value. This is what tells us, in one session, whether the
+    // hooked function is the real LoadPackage: a real LoadPackage is called
+    // once per package during PICS parsing and MUST be seen with PackageId==0
+    // (the free-apps package) at least once. LoadPackage is not called in a
+    // tight loop, so logging every call is safe (unlike the v0.10.6 probes,
+    // which hooked tight-loop functions and saturated log I/O).
+    static const bool kDiag = []{
+        const char* e = std::getenv("LUMA_LOADPKG_DEBUG");
+        return e && e[0] && e[0] != '0';
+    }();
+    if (kDiag) {
+        static std::atomic<int> diagCount{0};
+        constexpr int kDiagCap = 400;
+        int n = diagCount.fetch_add(1, std::memory_order_relaxed);
+        if (n < kDiagCap) {
+            CUtlVector<uint32_t>* dv = AppIdVec(pInfo);
+            Log::Info("LoadPackage[DIAG #%d]: PackageId=%u AppIdVec{mem=%p size=%u alloc=%d}",
+                      n, packageId, (void*)dv->m_pMemory, dv->m_Size, dv->m_nAllocationCount);
+        }
+    }
+
     if (packageId != 0) {
         return result;
     }
