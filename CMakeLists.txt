@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.10.2)
+project(lumalinux LANGUAGES C CXX VERSION 0.10.3)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -81,4 +81,5 @@ set_target_properties(lumalinux PROPERTIES
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     set_target_properties(lumalinux PROPERTIES LINK_FLAGS_RELEASE "-s")
 endif()
+
 
