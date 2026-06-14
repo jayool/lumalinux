@@ -64,7 +64,7 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 
 
 // =============================================================================
-// v0.10.6 — LoadPackage (rolled back to v0.10.3 wrapper as safety baseline)
+// v0.5 — LoadPackage (PackageId=0 appid injection)
 // =============================================================================
 //
 // CPackageInfoCache::LoadPackage(PackageInfo* pInfo, uint8_t sha1[20],
@@ -75,34 +75,45 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 // into pInfo->AppIdVec so Steam later fetches the appinfo for those apps as if
 // they were owned. This is the trick LumaCore uses on Windows.
 //
-// History:
-//   v0.5    — original LoadPackage (get_pc_thunk.di, stack 0x11C)
-//   v0.10.3 — anchor-string hit landed on a wrapper/getter (stack 0x28). Hook
-//             installed but never fired PackageId==0 because the wrapper is
-//             not the function Steam actually calls during PICS parsing.
-//             Steam OPENS, downloads broken ("0 mounted depots").
-//   v0.10.4 — picked a candidate by prologue+behaviour scan (stack 0x22C, file
-//             0x2510440). Looked right offline. CRASHED Steam at startup:
-//             the function gets called early during PICS init with structs
-//             whose [+0]==0 and [+0x38] is NOT an AppIdVec.m_pMemory — our
-//             hook payload dereferenced garbage and SIGSEGV'd the worker.
-//             Behaviour invariants (PackageId==0 check, writes to [reg+0x38],
-//             stack ≥ 0x100) are NOT specific enough to single out
-//             LoadPackage among unrelated package-shaped functions.
-//   v0.10.6 — ROLLED BACK to the v0.10.3 wrapper pattern as a known-safe
-//             baseline (Steam opens). Discovery of the real LoadPackage is
-//             deferred to the read-only probe system in
-//             src/hooks/load_package_probe.cpp, opt-in via the env var
-//             LUMA_LOADPKG_PROBE=1. Once discovery output identifies the
-//             right function from a live Steam session, a future bump will
-//             re-target this pattern.
+// Linux i386 prologue:
+//   55                  push ebp
+//   89 E5               mov ebp, esp
+//   57                  push edi
+//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.di
+//   81 C7 ?? ?? ?? ??   add edi, <GOT>
+//   56                  push esi
+//   53                  push ebx
+//   81 EC 1C 01 00 00   sub esp, 0x11C
 //
-// PackageInfo layout (Linux i386, validated from LumaCore Structs.h):
-//   +0x00  uint32_t                PackageId
-//   +0x38  CUtlVector<AppId_t>     AppIdVec   (m_pMemory@+0x38, m_Size@+0x44)
+// PackageInfo layout (Linux i386, validated from LumaCore's Structs.h):
+//   +0x00  uint32_t              PackageId
+//   +0x38  CUtlVector<AppId_t>   AppIdVec  (m_pMemory@+0x38, m_Size@+0x44)
+//
+// IMPORTANT — read before touching this pattern:
+//
+// This pattern matches 3 candidates in the steamclient.so binary; the runtime
+// enumerates them and picks one by index via LUMA_LOADPKG_IDX (default 0). The
+// first match is the real LoadPackage. This has been true across multiple Steam
+// builds — including the 7c4ac73e... (2026.06.10) build that triggered the
+// v0.10.3..v0.10.6 fiasco.
+//
+// In v0.10.3 a previous session interpreted "multi-match" as "pattern broken"
+// and re-derived from the anchor strings "PackageID : %u, change number" and
+// "No package info for packageID %u found" — but those strings live inside
+// CPackageInfoCache::GetPackage(packageId) (a cache lookup), NOT inside
+// LoadPackage. The "re-derivation" hooked that lookup function, the hook ran
+// but never fired with PackageId==0 (because GetPackage isn't on the PICS load
+// path), and downloads silently broke ("0 mounted depots"). v0.10.4 picked yet
+// another candidate by behaviour filter and crashed Steam at startup.
+//
+// Steam did NOT refactor LoadPackage. The function is still at the same RVA
+// (0x14b780 across observed builds) with the same prologue and the same
+// PackageInfo layout. If a future Steam build legitimately moves it, the
+// re-derivation MUST be validated against runtime ground truth (a log line
+// "LoadPackage: PackageId=0 hit — vec mem=… size=…") before any pattern bump
+// is published.
 inline constexpr const char* kLoadPackagePattern =
-    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 83 EC 28 8B 7D 0C 57 89 F3 "
-    "E8 ?? ?? ?? ?? 83 C4 10 85 C0";
+    "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00";
 
 
 // =============================================================================
