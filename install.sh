@@ -233,6 +233,6 @@ if [[ -f "$CR_SO" ]]; then
 fi
 
 ok "Done. Restart Steam to load lumalinux."
-info "On startup, look for a desktop toast: 'lumalinux: vX.Y.Z loaded - 4/4 hooks active'"
+info "On startup, look for a desktop toast: 'lumalinux: vX.Y.Z loaded - 3/3 hooks active'"
 info "Re-run this installer after any Headcrab Updater run (it regenerates steam.sh)."
 info "Backup: $BACKUP"
