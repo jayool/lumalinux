@@ -88,12 +88,34 @@ ScRange GetSteamclientRx() {
     return { lo, hi - lo };
 }
 
-uintptr_t DeriveGotBase() {
-    uintptr_t gmrc = Patterns::FindGmrcFunction();
-    if (!gmrc) return 0;
-    // prologue: E8 <rel32> 05 <imm32>  → GOT = (gmrc+5) + imm32
-    int32_t imm = *reinterpret_cast<int32_t*>(gmrc + 6);
-    return gmrc + 5 + static_cast<uintptr_t>(static_cast<intptr_t>(imm));
+// Derive the GOT base from the GMRC prologue. GMRC is:
+//   E8 <call thunk> ; 05 <imm32 add eax> ; 55 89 e5 57 56 53 81 ec 10 01 00 00
+//   8b 7d 08 8b 4d 20 ...
+// lumalinux's OWN GMRC hook overwrites the leading 5-byte `E8 <call>` with its
+// detour jmp, so Patterns::FindGmrcFunction() (which anchors on E8) stops
+// matching once the hooks are installed — and the finder runs after that. But
+// the `05 add eax,imm32` at GMRC+5 survives (the detour is only 5 bytes). So
+// scan for the surviving prologue tail and compute:
+//   GOT = (runtime addr of the 0x05 byte) + imm32
+// because the get_pc_thunk returns GMRC+5 and `add eax,imm32` makes eax = GOT.
+// Verified to reproduce the exact .got VA on the 7c4ac73e and db0d79c2 builds.
+uintptr_t DeriveGotBase(ScRange rx) {
+    if (!rx.base || rx.size < 23) return 0;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(rx.base);
+    const std::size_t n = rx.size - 23;
+    // bytes after the wildcarded imm32: 55 89 E5 57 56 53 81 EC 10 01 00 00
+    //                                   8B 7D 08 8B 4D 20
+    static const uint8_t tail[] = {
+        0x55, 0x89, 0xE5, 0x57, 0x56, 0x53, 0x81, 0xEC, 0x10, 0x01, 0x00, 0x00,
+        0x8B, 0x7D, 0x08, 0x8B, 0x4D, 0x20
+    };
+    for (std::size_t i = 0; i <= n; ++i) {
+        if (p[i] != 0x05) continue;                          // add eax, imm32
+        if (std::memcmp(p + i + 5, tail, sizeof(tail)) != 0) continue;
+        int32_t imm = *reinterpret_cast<const int32_t*>(p + i + 1);
+        return rx.base + i + static_cast<uintptr_t>(static_cast<intptr_t>(imm));
+    }
+    return 0;
 }
 
 // Scan the r-x span for the cache-access idiom and return its disp32 (X).
@@ -262,7 +284,7 @@ void Run() {
             // Derive GOT + cache offset once we can see steamclient.so. These
             // are stable for the process lifetime, so compute them once.
             if (!cacheGlobal) {
-                got = DeriveGotBase();
+                got = DeriveGotBase(rx);
                 if (got) {
                     disp = FindCacheGlobalDisp(rx);
                     if (disp) {
@@ -275,8 +297,8 @@ void Run() {
                                   "(attempt %d) — class layout changed?", i + 1);
                     }
                 } else {
-                    Log::Debug("PKG0_FINDER: GOT not derivable yet (GMRC not found, attempt %d)",
-                               i + 1);
+                    Log::Debug("PKG0_FINDER: GOT not derived yet (GMRC prologue tail "
+                               "not located, attempt %d)", i + 1);
                 }
             }
 
