@@ -1,8 +1,11 @@
 # lumalinux
 
-A 32-bit shared object that installs four function-level hooks inside
-`steamclient.so` on Steam Deck / Linux, enabling depot resolution, manifest
-fetching, and decryption-key plumbing during the native install flow.
+A 32-bit shared object loaded into `steamclient.so` on Steam Deck / Linux that
+enables depot resolution, manifest fetching, and decryption-key plumbing during
+the native install flow. It runs **three function-level hooks** plus an **active
+package-0 finder** (a worker thread that walks the live package cache instead of
+waiting for a hook event — see [RESEARCH §13](docs/RESEARCH.md)). A fourth,
+diagnostic-only LoadPackage hook is opt-in via `LUMA_LOADPKG_DEBUG=1`.
 Designed to **coexist with SLSsteam without modifying or forking it**.
 
 > ⚠️ **Educational / research use only.** Use it with your own Steam account
@@ -12,20 +15,21 @@ Designed to **coexist with SLSsteam without modifying or forking it**.
 
 ## What it does
 
-The hooks live in `steamclient.so` and target the install pipeline. Each one
-takes one specific responsibility:
+Each piece lives in `steamclient.so` and takes one specific responsibility:
 
-| Hook | Function | Role |
+| Piece | Function / target | Role |
 |---|---|---|
-| **LoadPackage** | `CPackageInfoCache::LoadPackage` | Adds depot ids into `PackageId=0`'s `AppIdVec` so Steam's per-depot license filter keeps the content depots instead of dropping them. |
-| **DepotKey** | `LoadDepotDecryptionKey` | Serves depot AES keys from a local `keys.txt`. |
-| **BuildDep** | `CUserAppManager::BuildDepotDependency` | Patches each surfaced depot's `ManifestGid` to pin the right manifest (patch only — never inject new entries). |
-| **GMRC** | `CContentServerDirectory…BYieldingGetManifestRequestCode` | Fetches the **manifest request code** from `gmrc.wudrm.com` and returns it through the hook. |
+| **package-0 finder** | walks `CPackageInfoCache` directly | Adds depot ids into `PackageId=0`'s `AppIdVec` so Steam's per-depot licence filter keeps the content depots instead of dropping them. Active worker (own thread, runs by default), so it works even when Steam has `PackageId=0` cached and never re-calls `LoadPackage` — see [RESEARCH §13](docs/RESEARCH.md). |
+| **DepotKey** hook | `LoadDepotDecryptionKey` | Serves depot AES keys from a local `keys.txt`. |
+| **BuildDep** hook | `CUserAppManager::BuildDepotDependency` | Patches each surfaced depot's `ManifestGid` to pin the right manifest (patch only — never injects new entries). |
+| **GMRC** hook | `…BYieldingGetManifestRequestCode` | Fetches the **manifest request code** from `gmrc.wudrm.com` and returns it through the hook. |
+| *LoadPackage* hook (opt-in) | `CPackageInfoCache::LoadPackage` | Diagnostic only since v0.13.1. Installed only when `LUMA_LOADPKG_DEBUG=1` is set; logs every `PackageId + AppIdVec` triple. Does not inject — the finder does. |
 
 Division of labour with SLSsteam:
 
-- **SLSsteam** (loaded via `LD_AUDIT`) → ownership / licensing layer.
-- **lumalinux** (loaded via `LD_PRELOAD`) → the four hooks above.
+- **SLSsteam** → ownership / licensing layer. Fakes ownership, supplies PICS
+  access tokens, handles family-share/offline.
+- **lumalinux** → the three install-path hooks plus the package-0 finder above.
 
 The two are deliberately orthogonal: lumalinux does not touch what SLSsteam
 already handles, and SLSsteam does not touch any function lumalinux hooks.
@@ -130,17 +134,13 @@ zip (`.lua` + `.manifest` files you legitimately have). Run with Steam
 python3 tools/steamidra_lite.py <appid>.zip
 ```
 
-That single command does the entire deploy: writes `keys.txt`, adds the AppID
-to SLSsteam's config, extracts manifests into Steam's depotcache, optionally
-injects the decryption keys into `config.vdf`, and writes the `.acf` stub.
+That single command does the full deploy (depotcache manifests, `keys.txt`,
+SLSsteam config entry, `config.vdf` keys, `.acf` stub, the `stplug-in` lua,
+and the ACCELA markers). The detailed step-by-step is in
+[Configuring a game](#configuring-a-game-advanced) below.
 
 If you use **LumaDeck**, the QAM plugin calls this script under the hood when
 you tap "Download Manifest". You don't need to invoke it manually.
-
-For the full breakdown of the six steps `steamidra_lite.py` performs — plus a
-7th ecosystem-interop step (stplug-in `.lua` + ACCELA markers) and the
-post-install `--accela-mark` mode — see the
-[Configuring a game](#configuring-a-game-advanced) section below.
 
 ## Troubleshooting
 
@@ -149,40 +149,57 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 ### Env vars (set before launching Steam)
 
 - `LUMA_NO_NOTIFY` — silence the startup toast.
-- `LUMA_NO_LOADPKG` / `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an individual hook.
-- `LUMA_LOADPKG_IDX=N` — pick a different LoadPackage candidate (see below).
+- `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an
+  individual install-path hook.
 - `LUMA_NO_PKG0_FINDER=1` — disable the package-0 finder. The finder is **on by
   default** (since v0.13.0) and is the **sole** depot injector: it walks the
-  package cache directly instead of waiting for the LoadPackage hook to fire,
-  which is what makes installs work when Steam has `PackageId=0` already cached
-  and never re-calls `LoadPackage`. See [`docs/RESEARCH.md` §13](docs/RESEARCH.md).
+  package cache directly, which is what makes installs work when Steam has
+  `PackageId=0` already cached and never calls `LoadPackage`. See
+  [`docs/RESEARCH.md` §13](docs/RESEARCH.md).
 - `LUMA_PKG0_FINDER=diag` — run the finder in log-only mode (walks + logs, does
   not inject). Default (unset) is inject.
-- `LUMA_LOADPKG_DEBUG=1` — log every LoadPackage hook firing (diagnostic; the
-  hook no longer injects, it's diagnostic-only now).
+- `LUMA_LOADPKG_DEBUG=1` — **install and enable** the diagnostic LoadPackage
+  hook. Off by default since v0.13.1 (the hook no longer injects, so it serves
+  no purpose in normal operation; installing it unconditionally was just an
+  extra detour + a misleading "LoadPackage FAILED" toast when its byte pattern
+  drifted). When on, it logs every `PackageId + AppIdVec` triple — useful for
+  diagnosing the kind of regression that produced §13.
+- `LUMA_LOADPKG_IDX=N` — only relevant with `LUMA_LOADPKG_DEBUG=1`; pick a
+  different `LoadPackage` candidate when the pattern matches multiple sites.
 
-### "Hook INSTALLED but never fires"
+### Install hangs at "0 target depots" / "Fully Installed" with 0 bytes
 
-The `LoadPackage` pattern can match more than one site in `steamclient.so`.
-The log lists every match before installing the hook:
+The depot ids aren't reaching `PackageId=0`. In a healthy run the log shows the
+finder finding and seeding the package after login:
 
 ```
-Patterns: LoadPackage candidate[0] at 0xd3815780 (RVA 0x14b780)
-Patterns: LoadPackage candidate[1] at 0xd3f23ff0 (RVA 0x859ff0)
-Patterns: LoadPackage candidate[2] at 0xd4da4650 (RVA 0x16da650)
-Patterns: LoadPackage selected candidate[0] = 0xd3815780 (RVA 0x14b780)
+PKG0_FINDER: GOT=0x… disp=0x… cache_global=0x…
+PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{…}
+LoadPackage[finder]: APPENDED N depot id(s) to PackageId=0
 ```
 
-By default the first match is selected. If the log shows `LoadPackage hook:
-INSTALLED` but never `LoadPackage: PackageId=0 hit` after Steam logs in
-(meaning the hook is wired up but never actually fires), the pattern matched
-the wrong function — set `LUMA_LOADPKG_IDX=1` (or `=2`, etc.) to force a
-different candidate, restart Steam, and re-check the log.
+If you never see `PKG0_FINDER: HIT`, the finder couldn't locate the package
+cache — usually because a Steam update moved one of the anchors it derives
+addresses from (the GMRC prologue tail or the cache-access idiom; see
+[RESEARCH §13](docs/RESEARCH.md)). Possible warnings to check for:
 
-### "N/4 hooks — XXX FAILED" toast
+- `cache-access idiom not found in r-x — class layout changed?` → the cache's
+  internal class layout (the `0xc58` root-offset anchor) moved.
+- `GOT not derived yet (GMRC prologue tail not located)` → the GMRC prologue
+  tail anchor moved.
 
-A byte pattern stopped matching. Almost always a Steam client update — see
-[`docs/maintenance.md`](docs/maintenance.md) for the re-derivation flow.
+In either case, the package-0 path needs a runtime-derivation update; open an
+issue with that log line.
+
+### "N/3 hooks — XXX FAILED" toast
+
+A byte pattern stopped matching. Almost always a Steam client update.
+
+- **DepotKey / BuildDep / GMRC FAILED** → installs WILL break. Re-derive the
+  patterns; see [`docs/maintenance.md`](docs/maintenance.md).
+- **LoadPackage FAILED** (only visible with `LUMA_LOADPKG_DEBUG=1`) → harmless;
+  the diagnostic hook didn't install but the finder still works and installs
+  succeed. You can ignore it unless you needed the diagnostic.
 
 ### After a SLSsteam update, Steam loads with no toast at all
 
@@ -202,8 +219,9 @@ re-adding.
 > `steamidra_lite.py` for you with the right arguments. This section
 > describes what happens under the hood and how to drive it manually.
 
-`python3 tools/steamidra_lite.py <appid>.zip` does **all six** pieces SteaMidra
-Linux's `process_lua_full` does (see `sff/ui.py`), in order:
+`python3 tools/steamidra_lite.py <appid>.zip` does the **six** pieces SteaMidra
+Linux's `process_lua_full` does (see `sff/ui.py`), plus a **7th
+lumalinux-specific ecosystem-interop step**:
 
 1. **Extracts `.manifest` files** into both `~/.local/share/Steam/depotcache/`
    AND `~/.local/share/Steam/config/depotcache/` (Steam reads either; syncing
@@ -220,8 +238,14 @@ Linux's `process_lua_full` does (see `sff/ui.py`), in order:
      `pSharedDepotInfo`) → LEGACY: `depot;key` (no injection — just serve the
      key when Steam asks). Detected from the `-- SHARED DEPOTS` header in the
      Hubcap `.lua`.
-   - **AppID dummy** → LEGACY: `app_id;000…000`. Placeholder for when Steam
-     queries the app's own "key" during install bootstrap.
+   - **AppID entry**. If the Hubcap `.lua` ships a key for the app id itself
+     (`addappid(APP_ID, 1, "real_key")`), it's written as LEGACY
+     `app_id;<real_key>` and our DepotKey hook serves it. If the `.lua` has no
+     such key (`addappid(APP_ID)` only), the entry is written as **presence-only**
+     `app_id;` (empty key field) — KeyStore loads it with `has_key=false`, so
+     `GetAllDepotIds()` lists the id (the finder injects it into `AppIdVec`) but
+     the DepotKey hook passes through to Steam's original for it. Matches
+     LumaCore's `DepotKeySet[id] = ""` semantics.
 
 4. **Injects the DecryptionKeys into `~/.local/share/Steam/config/config.vdf`**
    under `InstallConfigStore > Software > Valve > Steam > depots`. Optional
@@ -299,6 +323,14 @@ lumalinux is 32-bit and hooks 32-bit `steamclient.so`. Loading it via
 (observed: `realloc(): invalid pointer` on startup). Loading via `LD_PRELOAD`
 keeps it in the normal namespace and works. The library exports `la_objopen`
 / `la_preinit` as a fallback, but **`LD_PRELOAD` is the supported path**.
+
+The injection point is `~/.local/share/Steam/steam.sh`, the user-local
+launcher wrapper that Headcrab installs and maintains as part of the
+SLSsteam setup. `install.sh` inserts the `LD_PRELOAD` export there with a
+preserve pattern so any pre-existing `LD_PRELOAD` (e.g. CloudRedirect's)
+survives. `/usr/bin/steam` is **not** touched, so the system file stays
+vanilla and survives `pacman -Syu steam`. See
+[RESEARCH §5](docs/RESEARCH.md) for the exact anchor and patch format.
 
 ### Related docs
 

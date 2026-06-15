@@ -43,6 +43,7 @@
 #include <link.h>
 #include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 
 namespace {
@@ -93,7 +94,7 @@ void DoPreinit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (preinit) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux " LUMALINUX_VERSION_STRING " preinit (LoadPackage + DepotKey + BuildDep + GMRC inject)");
+    Log::Info("lumalinux " LUMALINUX_VERSION_STRING " preinit (DepotKey + BuildDep + GMRC hooks + package-0 finder)");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
@@ -136,24 +137,35 @@ void InstallHooks() {
         return;
     }
 
-    // v0.6.1 — full hook set, loaded via LD_PRELOAD (NOT LD_AUDIT; the audit
-    // namespace corrupts the heap → realloc abort). SLSsteam gives ownership
-    // but Steam's fresh appinfo for an unowned app does NOT surface its content
-    // depots as download targets ("0 target depots"). LoadPackage injects the
-    // depot ids into PackageId=0 so the per-depot license check passes and the
-    // depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
+    // v0.13.1 — three install-path hooks + the package-0 finder. Loaded via
+    // LD_PRELOAD (NOT LD_AUDIT; the audit namespace corrupts the heap → realloc
+    // abort). SLSsteam gives ownership but Steam's fresh appinfo for an unowned
+    // app does NOT surface its content depots as download targets ("0 target
+    // depots"). The package-0 finder (started below, on its own thread) injects
+    // the depot ids into PackageId=0 so the per-depot license check passes and
+    // the depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
     // keys; GMRC injects the manifest request code. Mirrors LumaCore.
+    //
+    // The legacy LoadPackage hook is OPT-IN as a diagnostic only — set
+    // LUMA_LOADPKG_DEBUG=1 to install it and log every PackageId+AppIdVec
+    // triple. It no longer injects (the finder does), and the v0.13.0
+    // regression analysis (see RESEARCH §13) showed it doesn't fire reliably
+    // anyway when Steam keeps PackageId=0 cached. Installing it unconditionally
+    // means a useless detour and a misleading "LoadPackage FAILED" toast every
+    // time its byte pattern moves on a Steam update, even though installs work.
     //
     // Each hook reports ok / disabled / FAILED. A FAILED hook almost always
     // means its byte pattern stopped matching after a Steam update — that's the
     // early-warning signal surfaced in the startup toast.
     struct HookSpec { const char* name; const char* disableEnv; bool (*install)(); };
-    const HookSpec specs[] = {
-        {"LoadPackage", "LUMA_NO_LOADPKG",  &Hooks::LoadPackage::Install},
+    std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
         {"BuildDep",    "LUMA_NO_BUILDDEP", &Hooks::DepotDependency::Install},
         {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
     };
+    if (const char* dbg = std::getenv("LUMA_LOADPKG_DEBUG"); dbg && dbg[0] && dbg[0] != '0') {
+        specs.push_back({"LoadPackage", "LUMA_NO_LOADPKG", &Hooks::LoadPackage::Install});
+    }
 
     int active = 0, expected = 0;
     std::string failed;
