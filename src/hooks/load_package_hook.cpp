@@ -15,12 +15,13 @@ namespace {
 using LoadPackageFn = bool (*)(void* pInfo, uint8_t* sha1, int32_t cn, void* p4);
 LoadPackageFn g_origFn = nullptr;
 
-// Thread-safety: this hook intentionally has no internal locking. It relies
-// on Steam loading PackageId=0 from a single PICS worker thread, which is
-// the observed behaviour in all builds we have run against. If Valve ever
-// parallelises PICS package loads, the read-modify-write of
-// vec->{m_pMemory, m_nAllocationCount, m_Size} below will race and a
-// hook-local mutex must be added around the grow + append block.
+// This hook NO LONGER injects. The package-0 finder is the sole injector: it
+// covers both the fresh-load case this hook would catch AND the regression case
+// where Steam keeps PackageId=0 cached and never calls LoadPackage (which this
+// hook misses entirely). Keeping the hook out of the inject path means only the
+// finder's single thread ever mutates AppIdVec, so there's no cross-thread race
+// on the vector and no lock is needed. The hook stays installed purely for the
+// LUMA_LOADPKG_DEBUG diagnostic below.
 bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
     bool result = g_origFn ? g_origFn(pInfo, sha1, cn, p4) : false;
     if (!pInfo) return result;
@@ -54,10 +55,13 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         return result;
     }
 
-    // Delegate to the shared injector. The package_zero_finder worker calls
-    // the same function from a different code path — both paths share sanity
-    // checks, dedup logic, and grow policy via this single implementation.
-    Hooks::LoadPackage::InjectDepots(pInfo, "hook");
+    // PackageId=0 seen on a real LoadPackage call. We deliberately do NOT inject
+    // here — the package-0 finder owns injection now (see the note at the top of
+    // this file). Just record the sighting; the finder seeds the depots from its
+    // own thread, covering both this case and the cached-package case the hook
+    // can't see.
+    Log::Debug("LoadPackage[hook]: PackageId=0 seen — injection handled by the "
+               "package-0 finder, not here");
     return result;
 }
 

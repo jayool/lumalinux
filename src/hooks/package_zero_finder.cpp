@@ -39,11 +39,15 @@ constexpr std::size_t kNodeSize        = 0x18;
 
 constexpr int kMaxTreeDepth = 64;
 
-// Worker: poll every kPollSec until found or kMaxIters reached. Generous so
-// the user has time to log in (package 0 only exists once Steam has loaded
-// the licence set) and so steamclient.so has time to map in.
-constexpr int kPollSec   = 2;
-constexpr int kMaxIters  = 150;  // 150 * 2s = 5 min
+// Worker cadence. We poll FOREVER (never give up): PackageId=0 only exists once
+// the user has logged in and Steam has loaded the licence set, and a slow login
+// must NOT break the install — the old 5-min cap did exactly that (log in at
+// minute 6 → the worker had already given up → nothing injected). After the
+// first hit we keep watching at a slower cadence and re-inject if Steam rebuilds
+// the package (re-login, licence refresh); InjectDepots is idempotent, so each
+// re-check is a no-op unless our depots actually went missing.
+constexpr int kPollSec     = 2;   // cadence until PackageId=0 first appears
+constexpr int kReinjectSec = 15;  // slower re-check cadence after the first hit
 
 // =============================================================================
 // Runtime-derived addressing
@@ -263,22 +267,32 @@ void* FindPackage0(uintptr_t cacheGlobal) {
 // Worker
 // =============================================================================
 void Run() {
-    const char* mode = std::getenv("LUMA_PKG0_FINDER");
-    if (!mode || !*mode) return;
-    const bool inject = std::strcmp(mode, "inject") == 0;
-    if (!inject && std::strcmp(mode, "diag") != 0) {
-        Log::Warn("PKG0_FINDER: LUMA_PKG0_FINDER=%s unrecognised — treating as diag", mode);
+    // ON BY DEFAULT — the finder IS the fix for the cached-PackageId=0
+    // regression, so it must run without the user setting anything. Mirrors the
+    // LUMA_NO_* hook gates: LUMA_NO_PKG0_FINDER disables it entirely.
+    if (const char* off = std::getenv("LUMA_NO_PKG0_FINDER"); off && off[0] && off[0] != '0') {
+        Log::Info("PKG0_FINDER: disabled via LUMA_NO_PKG0_FINDER");
+        return;
     }
-    Log::Info("PKG0_FINDER: mode=%s — runtime-deriving cache addr, polling %ds x%d",
-              inject ? "inject" : "diag", kPollSec, kMaxIters);
+    // LUMA_PKG0_FINDER=diag → walk + log without injecting; anything else
+    // (including unset) → inject.
+    const char* mode = std::getenv("LUMA_PKG0_FINDER");
+    const bool inject = !(mode && std::strcmp(mode, "diag") == 0);
+    if (mode && *mode && std::strcmp(mode, "inject") != 0 && std::strcmp(mode, "diag") != 0) {
+        Log::Warn("PKG0_FINDER: LUMA_PKG0_FINDER=%s unrecognised — treating as inject", mode);
+    }
+    Log::Info("PKG0_FINDER: mode=%s (on by default) — runtime-deriving cache addr, "
+              "polling every %ds until found, then re-checking every %ds",
+              inject ? "inject" : "diag", kPollSec, kReinjectSec);
 
     using namespace std::chrono_literals;
 
     uintptr_t got = 0;
     int32_t   disp = 0;
     uintptr_t cacheGlobal = 0;
+    bool      foundOnce = false;
 
-    for (int i = 0; i < kMaxIters; ++i) {
+    for (;;) {
         ScRange rx = GetSteamclientRx();
         if (rx.base) {
             // Derive GOT + cache offset once we can see steamclient.so. These
@@ -294,11 +308,11 @@ void Run() {
                                   (unsigned long)cacheGlobal);
                     } else {
                         Log::Warn("PKG0_FINDER: cache-access idiom not found in r-x "
-                                  "(attempt %d) — class layout changed?", i + 1);
+                                  "— class layout changed?");
                     }
                 } else {
                     Log::Debug("PKG0_FINDER: GOT not derived yet (GMRC prologue tail "
-                               "not located, attempt %d)", i + 1);
+                               "not located)");
                 }
             }
 
@@ -306,29 +320,38 @@ void Run() {
                 ResetReadable();  // refresh /proc/self/maps snapshot each attempt
                 void* pkg = FindPackage0(cacheGlobal);
                 if (pkg) {
-                    auto* vec = Hooks::LoadPackage::AppIdVec(pkg);
-                    Log::Info("PKG0_FINDER: HIT pkg=%p PackageId=%u "
-                              "AppIdVec{mem=%p size=%u alloc=%d} (attempt %d)",
-                              pkg, Hooks::LoadPackage::PkgId(pkg),
-                              static_cast<void*>(vec->m_pMemory),
-                              vec->m_Size, vec->m_nAllocationCount, i + 1);
-                    if (vec->m_pMemory && vec->m_Size > 0) {
-                        uint32_t k = vec->m_Size < 4 ? vec->m_Size : 4;
-                        Log::Info("PKG0_FINDER:   AppIdVec[0..%u) = {%u, %u, %u, %u}", k,
-                                  k > 0 ? vec->m_pMemory[0] : 0,
-                                  k > 1 ? vec->m_pMemory[1] : 0,
-                                  k > 2 ? vec->m_pMemory[2] : 0,
-                                  k > 3 ? vec->m_pMemory[3] : 0);
+                    if (!foundOnce) {
+                        auto* vec = Hooks::LoadPackage::AppIdVec(pkg);
+                        Log::Info("PKG0_FINDER: HIT pkg=%p PackageId=%u "
+                                  "AppIdVec{mem=%p size=%u alloc=%d}",
+                                  pkg, Hooks::LoadPackage::PkgId(pkg),
+                                  static_cast<void*>(vec->m_pMemory),
+                                  vec->m_Size, vec->m_nAllocationCount);
+                        if (vec->m_pMemory && vec->m_Size > 0) {
+                            uint32_t k = vec->m_Size < 4 ? vec->m_Size : 4;
+                            Log::Info("PKG0_FINDER:   AppIdVec[0..%u) = {%u, %u, %u, %u}", k,
+                                      k > 0 ? vec->m_pMemory[0] : 0,
+                                      k > 1 ? vec->m_pMemory[1] : 0,
+                                      k > 2 ? vec->m_pMemory[2] : 0,
+                                      k > 3 ? vec->m_pMemory[3] : 0);
+                        }
+                        foundOnce = true;
                     }
+                    // Re-inject every time we see the package. InjectDepots is
+                    // idempotent (content-based dedup), so this is a no-op unless
+                    // our depots went missing — exactly what we want if Steam
+                    // rebuilt PackageId=0 after a re-login / licence refresh. The
+                    // finder is the SOLE injector (the LoadPackage hook no longer
+                    // injects), so only this one thread mutates AppIdVec — no
+                    // cross-thread race, no lock needed.
                     if (inject) Hooks::LoadPackage::InjectDepots(pkg, "finder");
-                    return;
                 }
             }
         }
-        std::this_thread::sleep_for(std::chrono::seconds(kPollSec));
+        // Never give up: poll fast until the package first appears, then watch
+        // at a slower cadence so a rebuilt PackageId=0 gets re-injected.
+        std::this_thread::sleep_for(std::chrono::seconds(foundOnce ? kReinjectSec : kPollSec));
     }
-    Log::Warn("PKG0_FINDER: PackageId=0 not found after %d s (cache_global=0x%lx)",
-              kPollSec * kMaxIters, (unsigned long)cacheGlobal);
 }
 
 } // namespace

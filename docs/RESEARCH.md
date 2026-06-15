@@ -591,7 +591,8 @@ puede estar ya construida es frágil. Lo robusto es ir a **buscar** la estructur
 
 ### 13.4 La solución — buscador activo de la caché
 
-`PackageZeroFinder` (hilo detached, arranca con `LUMA_PKG0_FINDER=inject`)
+`PackageZeroFinder` (hilo detached, **ON por defecto** desde v0.13.0; se apaga
+con `LUMA_NO_PKG0_FINDER`, y `LUMA_PKG0_FINDER=diag` lo deja en modo solo-log)
 **recorre la caché de paquetes directamente** en vez de esperar a que el hook
 dispare. La caché `CPackageInfoCache` es un árbol binario de búsqueda indexado
 (offsets de clase estables, verificados en los builds `7c4ac73e` y `db0d79c2`):
@@ -602,11 +603,24 @@ cache + 0xc6c  T*      base del array de nodos
 nodo (0x18 bytes):  +0x00 left  +0x04 right  +0x10 packageId  +0x14 PackageInfo*
 ```
 
-El worker hace poll cada 2 s (×150 = 5 min, porque el paquete 0 solo existe tras
-el login) hasta encontrar el nodo con `packageId==0`, y entonces inyecta los
-depots en su `AppIdVec` reutilizando `Hooks::LoadPackage::InjectDepots` (misma
-lógica de append-in-place del §11.2). El hook LoadPackage clásico se mantiene
-como segunda vía por si el evento sí ocurre; el finder cubre el caso en que no.
+El worker busca el nodo con `packageId==0` y, al encontrarlo, inyecta los depots
+en su `AppIdVec` reutilizando `Hooks::LoadPackage::InjectDepots` (misma lógica de
+append-in-place del §11.2).
+
+**El finder es el ÚNICO inyector** (v0.13.0): el hook LoadPackage clásico **ya no
+inyecta** — se queda solo para el diagnóstico `LUMA_LOADPKG_DEBUG`. Razón: el
+hook es justo la pieza poco fiable que el finder reemplaza (no dispara cuando el
+paquete 0 está cacheado), así que mantenerlo como co-inyector no aporta cobertura
+y abriría una **carrera de dos hilos** sobre el mismo `AppIdVec` (el dedup evita
+duplicados pero NO la escritura concurrente del realloc). Con un solo inyector
+(el hilo del finder) no hay carrera y no hace falta mutex.
+
+**Cadencia (v0.13.0):** poll cada 2 s **sin tope** hasta que aparezca el paquete
+0 (solo existe tras el login — un login lento no debe romper la instalación; el
+viejo tope de 5 min sí la rompía). Tras el primer hit sigue vigilando cada 15 s y
+**re-inyecta** si Steam reconstruye el paquete (re-login / refresh de licencias);
+`InjectDepots` es idempotente, así que cada re-check es un no-op salvo que los
+depots se hayan perdido.
 
 ### 13.5 Las dos direcciones que se derivan en runtime
 

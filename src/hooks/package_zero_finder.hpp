@@ -3,21 +3,21 @@
 namespace Hooks::PackageZeroFinder {
 
 // Walks Steam's internal package cache to locate the PackageInfo* for
-// PackageId == 0, then either logs what it found ("diag" mode) or invokes
-// the shared Hooks::LoadPackage::InjectDepots() to seed our depots into
-// AppIdVec ("inject" mode).
+// PackageId == 0 and seeds our depots into its AppIdVec via the shared
+// Hooks::LoadPackage::InjectDepots(). This is the SOLE injection path — the
+// LoadPackage hook no longer injects.
 //
-// Gated by env var LUMA_PKG0_FINDER:
-//   unset / empty   → does nothing (default; finder is fully opt-in)
-//   "diag"          → read-only walk + log the PackageInfo it finds
-//   "inject"        → walk + log + call InjectDepots()
+// ON BY DEFAULT. Gated by env vars:
+//   (unset) / "inject"   → walk + log + inject (default)
+//   "diag"               → read-only walk + log, no injection
+//   LUMA_NO_PKG0_FINDER  → disable the finder entirely
 //
-// Rationale: lumalinux's LoadPackage hook installs ~1.2 s after
-// steamclient.so maps in. In recent steamclient builds, ReadFromDisk →
-// LoadPackage(PackageId=0) runs DURING that gap, so the hook never sees the
-// load. This worker complements the hook by finding package 0 in the cache
-// that ReadFromDisk already populated and injecting there directly — no hook
-// timing required.
+// Rationale: the LoadPackage hook is passive — it only fires when Steam CALLS
+// LoadPackage. When Steam keeps PackageId=0 cached from a previous session it
+// never re-calls LoadPackage, so the hook never injects and the install breaks.
+// This worker doesn't wait for the call: it finds package 0 in the cache
+// directly and injects there. It polls forever (a slow login must not break the
+// install) and re-injects if Steam rebuilds the package after a re-login.
 //
 // Build-robust addressing: the cache pointer lives at GOTbase + X. X shifts
 // across Steam builds (GOT layout), so the worker derives everything at

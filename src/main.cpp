@@ -181,11 +181,10 @@ void InstallHooks() {
                     "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
     }
 
-    // Package-0 finder: covers the case where the LoadPackage hook installs
-    // after steamclient.so's ReadFromDisk already loaded PackageId=0 (the
-    // hook's own timing gap). Walks the cache that ReadFromDisk populated and
-    // injects directly. Opt-in via LUMA_PKG0_FINDER; no-op when unset.
-    // Started after hooks so both injection paths (hook + finder) are live.
+    // Package-0 finder: the SOLE depot injector. The LoadPackage hook is passive
+    // and misses the case where Steam keeps PackageId=0 cached and never calls
+    // LoadPackage, so the finder walks the cache directly and injects there. ON
+    // BY DEFAULT (disable with LUMA_NO_PKG0_FINDER); the hook no longer injects.
     Hooks::PackageZeroFinder::Start();
 }
 
