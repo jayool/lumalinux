@@ -346,6 +346,27 @@ module — but those get pruned (§6), so it's only a belt-and-suspenders helper
   SLSsteam already detoured; no current hook needs it.
 - Consider prefetching all keystore gids' codes at startup (background) instead
   of lazily in the hook, if the first-manifest stall is noticeable.
+- **Async finder ↔ Steam read race on `CPackageInfoCache`** (theoretical, no
+  observed crash). The package-0 finder (§13) reads `CPackageInfoCache` and the
+  `PackageInfo*` it returns from its own thread, while Steam can mutate them
+  from its threads. Already protected against the easy modes: every dereference
+  goes through a `/proc/self/maps` readability check (so a freed-and-unmapped
+  address yields `nullptr` + a log line, not SIGSEGV), and `InjectDepots`
+  sanity-checks `AppIdVec` (rejects clearly bogus entries like `0` or
+  `> 50M`). NOT protected against a "freed-and-still-mapped" use-after-free:
+  Steam destroys `PackageId=0` (re-login / licence refresh) → finder grabs
+  the stale `PackageInfo*` in the gap → realloc on dangling `m_pMemory` =
+  heap corruption. In practice the tree is built once at login and stays
+  stable; rebuilds are rare and the window is microseconds. Mitigation
+  options if it ever surfaces, cheapest first:
+  (a) drop the post-hit re-inject loop entirely — only the first-hit window
+      exists, no slow watch at all;
+  (b) double-read — read the `PackageInfo*` twice with ~10 ms between, abort
+      and retry if it changed; tightens the window without true atomicity;
+  (c) atomic CAS on `m_pMemory` via `__atomic_compare_exchange_n` — true
+      guarantee, but bets that Steam keeps using libc realloc for
+      `CUtlMemory` (§11.2). Leave alone until there's a real repro;
+  speculative concurrency fixes tend to introduce more bugs than they fix.
 
 ## 11. lumalinux vs LumaCore — verified divergences
 
