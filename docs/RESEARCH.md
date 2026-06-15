@@ -7,7 +7,13 @@ repeating the whole journey.
 Target binary during this research:
 `~/.local/share/Steam/linux32/steamclient.so`, **ELF 32-bit i386**, ~48 MB,
 BuildID `f92deb5ee064a2cf28977bd86a6ed43f420cfcba` (SteamOS, ~May 2026).
-All RVAs/patterns below are for that build — **re-derive on Steam updates**.
+All RVAs/patterns in §4 and §7 are for that build — **re-derive on Steam
+updates** (§8.1 covers semi-automatic re-derivation).
+
+The package-0 injection path (§13) is the exception: it does NOT depend on
+per-build RVAs at all — the finder derives `GOTbase` and the cache-global
+offset at runtime from stable anchors, and has been verified on the
+post-May-2026 builds `7c4ac73e` and `db0d79c2` without code changes.
 
 ---
 
@@ -24,7 +30,7 @@ SLSsteam** (no fork, no patch of SLSsteam).
 | Ownership spoof (app shows as owned, license checks pass) | **SLSsteam** (`CUser::CheckAppOwnership`, `GetSubscribedApps`, cached tickets) |
 | PICS access token (so Steam can query appinfo for unowned apps) | **SLSsteam** (`Apps::sendPICSInfoRequest`, eMsg 8903) |
 | Family-share / offline bits | **SLSsteam** |
-| Surface the content depots into the download plan | **lumalinux** LoadPackage |
+| Surface the content depots into the download plan | **lumalinux** package-0 finder (see §13). The LoadPackage hook stays installed but is diagnostic-only since v0.13.0. |
 | Pin each depot to the right manifest (gid/size) | **lumalinux** BuildDep |
 | Provide the depot AES decryption keys | **lumalinux** DepotKey |
 | Provide the **manifest request code** (CDN download authorization) | **lumalinux** GMRC |
@@ -41,12 +47,17 @@ Clicking Install kicks off, roughly:
    the install proceeds.
 2. **PICS appinfo** — Steam fetches the app's product info (depot list, manifest
    ids). Needs the access token SLSsteam injects.
-3. **`CPackageInfoCache::LoadPackage(PackageInfo*, sha1, cn, p4)`** — when
-   `PackageId == 0` (the implicit "free apps everyone owns" package), Steam's
-   per-depot license filter consults this package. → **LoadPackage hook**:
-   inject our depot ids into `pInfo->AppIdVec` so the content depots pass the
-   filter instead of being dropped (→ "0 target depots" → instant "Fully
-   Installed"/Play).
+3. **`PackageId == 0`** — the implicit "free apps everyone owns" package, which
+   Steam's per-depot license filter consults. Our depot ids must be in its
+   `AppIdVec` or the content depots are dropped (→ "0 target depots" → instant
+   "Fully Installed"/Play). → **package-0 finder** (since v0.13.0): walks the
+   `CPackageInfoCache` BST directly, locates the `PackageInfo*` for
+   `PackageId == 0`, and appends our depot ids in place. Runs on its own thread
+   and polls forever, so it works whether Steam loads the package fresh or
+   keeps it cached from a previous session (the LoadPackage hook can't see the
+   cached case — see §13). The LoadPackage hook is still installed on
+   `CPackageInfoCache::LoadPackage(PackageInfo*, sha1, cn, p4)` but it no
+   longer injects — diagnostic-only via `LUMA_LOADPKG_DEBUG`.
 4. **`CUserAppManager::BuildDepotDependency(...)`** — builds the depot list for
    the app (`pDepotInfo`, `pSharedDepotInfo`, each a `CUtlVector<DepotEntry>`).
    → **BuildDep hook**: PATCH the `ManifestGid`/`ManifestSize` of our depots to
@@ -96,11 +107,20 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   (`CUtlVector<AppId_t>`) at **+0x38**.
 - Pattern: `kLoadPackagePattern` (matches ~2 candidates; we use index 0,
   overridable with `LUMA_LOADPKG_IDX`).
-- Hook: when `PackageId==0`, append our **depot ids** (`KeyStore::GetAllDepotIds`,
-  the equivalent of LumaCore's `GetAllDepotIds`) to `AppIdVec`. **Append in place**
-  only (capacity is generous; `alloc=202 size=192` observed) — never realloc
-  (see §6). Sanity check: the existing `AppIdVec` entries are real low app ids
-  (observed `{5,7,8,90,...}`) — bail if they look bogus (wrong offset).
+- **Since v0.13.0 this hook is diagnostic-only.** It no longer injects depot
+  ids — the package-0 finder owns injection now (see §13 for the why). The
+  hook stays installed purely for `LUMA_LOADPKG_DEBUG`, which logs every
+  `PackageId + AppIdVec` triple it sees and is what told us, in v0.10.8, that
+  Steam was keeping `PackageId=0` cached and never re-calling LoadPackage.
+- The actual injection — done by the finder — uses `KeyStore::GetAllDepotIds`
+  (equivalent to LumaCore's `GetAllDepotIds`), with a Source-SDK-style grow
+  policy via `std::realloc` (Linux Steam uses raw libc realloc for
+  `CUtlMemory`; see §11.2 for the verification). Sanity check before any write:
+  the existing `AppIdVec` entries are real low app ids (observed
+  `{5,7,8,90,...}`) — bail if they look bogus (offset wrong on this build).
+- A multi-match on the pattern only affects the diagnostic site, not
+  injection: if a Steam update breaks `kLoadPackagePattern`, install still
+  works because the finder doesn't depend on it (see §11.6).
 
 ### GMRC — `…BYieldingGetManifestRequestCode` (the key find)
 - Ghidra name `FUN_012d3bd0`, **file vaddr 0x12c3bd0** (Ghidra image base 0x10000
@@ -162,10 +182,15 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   app id (2379780) into PackageId=0 → depots still dropped ("0 target"). The
   per-depot license filter checks the depot ids; inject those (228989, 2379781,
   2379782) and they survive. (This matches LumaCore's `GetAllDepotIds`.)
-- **LoadPackage realloc of `AppIdVec` crashes** the appinfo-cache rebuild thread
-  (null deref in `libvstdlib_s.so`). The free package has spare capacity →
-  append in place; never swap `m_pMemory`. (LumaCore calls Steam's
-  `CUtlMemoryGrow`; we avoid growth entirely.)
+- **Manual `m_pMemory` swap on `AppIdVec` crashed** the appinfo-cache rebuild
+  thread (null deref in `libvstdlib_s.so`) in ≤v0.7. Cause: a hand-rolled
+  malloc-and-swap that didn't match Steam's allocator contract. Resolved in
+  v0.8 once we disassembled the only 5 `realloc@plt` callers in
+  `steamclient.so` and verified that Linux Steam's `CUtlMemory` uses **raw libc
+  `realloc`** with no tier0 wrapper — so calling `std::realloc(m_pMemory, …)`
+  from outside is safe and is now what we do (see §11.2). The "append in place
+  only" claim from the early notes is obsolete; the finder grows the vector
+  with realloc when needed.
 - **`InitFromPacket` is templated per message type.** `CProtoBufMsgBase<T>::
   InitFromPacket` has one instantiation per protobuf message; hooking the one
   SLSsteam uses (for 858 etc.) does **not** see the GMRC service-method response
@@ -182,6 +207,17 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
 - **858 eresult flip is redundant.** Flipping the ownership-ticket eresult in a
   packet hook is unnecessary (SLSsteam handles ownership) and risks loops. The
   "Access Denied" ownership-ticket line is non-fatal.
+- **A missing shader-depot key cancels the whole install** even when every
+  content depot is perfectly served. The shader pre-cache depot's id is
+  typically the app id itself (e.g. `1942280` for Brotato, `2379780` for
+  Balatro). If `keys.txt` has no key for it (`<appid>;` with empty key field),
+  Steam asks for it, our DepotKey hook falls through to the original, Valve
+  denies it, and Steam **cancels the entire app** with
+  `Missing decryption key`. The Brotato/Balatro contrast confirmed this:
+  Brotato shipped a real key for `1942280` and installed end-to-end; Balatro's
+  zip had `2379780;` (no key) and aborted. → before blaming the hooks for a
+  `Missing decryption key`, check that `keys.txt` has a key for EVERY depot
+  Steam asks for, including the shader-cache depot at the app id (see §13.7).
 
 ## 7. The GMRC endpoint
 
@@ -311,39 +347,44 @@ module — but those get pruned (§6), so it's only a belt-and-suspenders helper
 - Consider prefetching all keystore gids' codes at startup (background) instead
   of lazily in the hook, if the first-manifest stall is noticeable.
 
-## 11. lumalinux vs LumaCore — divergencias verificadas
+## 11. lumalinux vs LumaCore — verified divergences
 
-Comparación side-by-side de las piezas equivalentes, leyendo el código de
-ambos. Útil como mapa cuando algo no funciona y hay que decidir si replicar
-literal LumaCore o asumir que nuestra divergencia es deliberada.
+Side-by-side comparison of the equivalent pieces, derived from reading both
+codebases. Useful as a map when something breaks and we need to decide
+whether to mirror LumaCore literally or assume our divergence is deliberate.
 
 ### 11.1 KeyStore vs `LuaLoader::DepotKeySet`
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Fuente | `.lua` con `lua_State` real | `keys.txt` (formato propio) |
-| Estructura | `unordered_map<DepotId, hex_string>` (**plano**) | `map<DepotId, {parent_app_id, gid, size, key}>` (rico) |
-| `parent_app_id` | **NO EXISTE** — todos los depots son globales | Sí — invención lumalinux; usado por `GetDepotsForApp` |
-| `manifest_size` | **Siempre 0** — comentario verbatim: *"size is always forced to 0 to prevent incorrect size from breaking Steam"* (`LuaLoader.cpp:172`) | Sí se almacena (del 3-arg `setManifestid` o del binary parse), pero **no se usa** efectivamente — BuildDep hook lo ignora deliberadamente. Campo dormant. |
-| `GetAllDepotIds()` | Lista todos los depots del DepotKeySet | Igual |
-| `GetDepotsForApp(app_id)` | **NO EXISTE** | Filtra `parent_app_id==app_id && gid!=0` |
+| Source | `.lua` parsed with a real `lua_State` | `keys.txt` (custom format) |
+| Structure | `unordered_map<DepotId, hex_string>` (**flat**) | `map<DepotId, {parent_app_id, gid, size, key}>` (rich) |
+| `parent_app_id` | **DOES NOT EXIST** — all depots are global | Yes — a lumalinux invention; used by `GetDepotsForApp` |
+| `manifest_size` | **Always 0** — verbatim comment: *"size is always forced to 0 to prevent incorrect size from breaking Steam"* (`LuaLoader.cpp:172`) | Stored (from the 3-arg `setManifestid` or the binary parse) but **not actually used** — the BuildDep hook deliberately ignores it. Dormant field. |
+| `GetAllDepotIds()` | Lists every depot in the DepotKeySet | Same |
+| `GetDepotsForApp(app_id)` | **DOES NOT EXIST** | Filters `parent_app_id==app_id && gid!=0` |
 
-Sin divergencia operativa real: aunque guardamos `manifest_size`, no lo
-proyectamos a Steam. El campo podría eliminarse en una futura limpieza
-(seguimos parseándolo del .lua para compatibilidad con el formato Hubcap).
+No real operational divergence: we store `manifest_size` but never project it
+to Steam. The field could be removed in a future cleanup (we keep parsing it
+out of the `.lua` for compatibility with the Hubcap format).
 
-### 11.2 LoadPackage hook (`PackagePatch::LoadPackage`)
+### 11.2 Package-0 injection (`PackagePatch::LoadPackage` equivalent)
+
+Note: in lumalinux the LoadPackage **hook** is diagnostic-only since v0.13.0;
+the actual injection is performed by the **package-0 finder** (§13), on its
+own thread, calling the shared `Hooks::LoadPackage::InjectDepots`. The table
+below compares that shared injector with LumaCore's `PackagePatch::LoadPackage`.
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Trigger | `pInfo->PackageId == 0` | Igual |
-| Qué inyecta | `GetAllDepotIds()` (todos) | Igual |
-| Filtra duplicados | NO | SÍ (`oldSize` loop) |
-| Sanity check del vector | NO | SÍ (rechaza si `oldSize > 4096` o entries `> 50M`) |
-| **Cómo crece `AppIdVec`** | `oCUtlMemoryGrow(&pInfo->AppIdVec, numToAdd)` — resuelve y llama la función real de Steam | `std::realloc(vec->m_pMemory, ...)` directo. Política mirror Source SDK `CUtlMemory::Grow`: duplica capacity si es posible, snap a tamaño pedido si no, mínimo 32 entries en primera asignación |
+| Trigger | `pInfo->PackageId == 0` (from inside the hook) | `PackageId == 0` (from the finder walking `CPackageInfoCache` — works even if Steam never calls `LoadPackage`, see §13) |
+| What gets injected | `GetAllDepotIds()` (all of them) | Same |
+| Duplicate filter | NO | YES (content-based dedup loop over `oldSize`) — makes re-injection idempotent |
+| Vector sanity check | NO | YES (skips if `oldSize > 4096` or any sampled entry looks bogus, e.g. `0` or `> 50M`) |
+| **How `AppIdVec` grows** | `oCUtlMemoryGrow(&pInfo->AppIdVec, numToAdd)` — resolves and calls Steam's own grow function | Direct `std::realloc(vec->m_pMemory, …)`. Policy mirrors Source SDK `CUtlMemory::Grow`: double capacity if possible, snap to requested size otherwise, minimum 32 entries on the first allocation. |
 
-**Por qué realloc es seguro en Linux i386 hoy** (verbatim del comentario en
-`load_package_hook.cpp:122`):
+**Why realloc is safe on Linux i386 today** (verbatim from the comment in
+`load_package_hook.cpp`):
 
 > Steam Linux i386 uses raw libc realloc for CUtlMemory (verified by
 > disassembling the only 5 callers of `realloc@plt` in steamclient.so — the
@@ -352,346 +393,361 @@ proyectamos a Steam. El campo podría eliminarse en una futura limpieza
 > and is safe to realloc from outside. This is the Linux equivalent of
 > LumaCore's `oCUtlMemoryGrow` on Windows.
 
-Histórico: una versión anterior (≤v0.7) usaba `m_pMemory` swap manual y
-crashaba el hilo de appinfo-cache rebuild (null deref en `libvstdlib_s.so`).
-El crash desapareció cuando se verificó que Steam usa libc realloc en
-lugar de su allocator interno tier0, alineando nuestro `std::realloc` con
-lo que Steam mismo hace. Ya no hay límite efectivo de capacity.
+History: an earlier version (≤v0.7) used a manual `m_pMemory` swap and
+crashed the appinfo-cache rebuild thread (null deref in `libvstdlib_s.so`).
+The crash went away once we verified that Steam itself uses libc `realloc`
+rather than its tier0 internal allocator, so our `std::realloc` matches what
+Steam does. There is no effective capacity ceiling any more.
 
 ### 11.3 DepotKey hook (`DepotKeys::LoadDepotDecryptionKey`)
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Función hookeada | `LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)` — KeyValues-path-based | Igual signature |
-| Cómo identifica el depot | Parsea `KeyName` (`.../<DepotId>\DecryptionKey`) | Igual |
-| Validación de buffer | `if (KeySize >= key.size()) memcpy(...)` | `if (keySize >= 32 && key != nullptr) memcpy(...)` |
-| Return value en éxito | `static_cast<int32>(key.size())` = 32 | `static_cast<int32_t>(32)` |
-| Passthrough en miss | `oLoadDepotDecryptionKey(...)` | `g_origFn(...)` |
+| Hooked function | `LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)` — KeyValues-path-based | Same signature |
+| How the depot is identified | Parses `KeyName` (`.../<DepotId>\DecryptionKey`) | Same |
+| Buffer validation | `if (KeySize >= key.size()) memcpy(...)` | `if (keySize >= 32 && key != nullptr) memcpy(...)` |
+| Return value on success | `static_cast<int32>(key.size())` = 32 | `static_cast<int32_t>(32)` |
+| Passthrough on miss | `oLoadDepotDecryptionKey(...)` | `g_origFn(...)` |
 
-Sin divergencias materiales con LumaCore. Hook al KeyValues accessor con
-validación de buffer y passthrough correcto en miss.
+No material divergence from LumaCore. Hook hits the KeyValues accessor with
+buffer-size validation and a correct passthrough on miss.
 
-Histórico: ≤v0.8 lumalinux hookeaba el dispatcher externo
-`(this_, app_id, depot_id, out_key)` **sin validar el tamaño del buffer**,
-porque el `out_key` se asumía un raw 32-byte slot. Ese contrato resultó
-falso (la cache lo trataba como estructura de 128 bytes con metadata),
-causando heap corruption en Formula Legends (ver §12). v0.8+ migró al
-KeyValues accessor de LumaCore con `KeySize` validado, eliminando el
-overrun latente.
+History: ≤v0.8 lumalinux hooked the outer dispatcher
+`(this_, app_id, depot_id, out_key)` **without validating the buffer size**,
+because `out_key` was assumed to be a raw 32-byte slot. That contract turned
+out to be false (the cache treated it as a 128-byte struct with metadata),
+causing heap corruption on Formula Legends (see §12). v0.8+ migrated to
+LumaCore's KeyValues accessor with `KeySize` validated, eliminating the
+latent overrun.
 
 ### 11.4 BuildDep hook (`ManifestBind::BuildDepotDependency`)
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Función hookeada | `BuildDepotDependency(this, AppId, ..., pDepotInfo, pSharedDepotInfo, ...)` | Igual signature |
-| Source de overrides | `LuaLoader::GetManifestOverrides()` (plano) | `KeyStore::GetDepotsForApp(AppId)` (filtra `parent_app_id==AppId`) |
-| Match en patch | DepotId direct | Igual |
-| Qué vectores parchea | **SOLO `pDepotInfo`** | **SOLO `pDepotInfo`** (mismo que LumaCore) |
-| Patch what | `gid` + `size` (0 → keep original) | **Solo `gid`** — `ManifestSize` se mantiene a lo que Steam tenía |
-| Contador `patched` | Cuenta cualquier match | **Solo si cambia algo** (`if (gid != newgid) patched++`) |
-| Guard en `result==false` | Sí — no toca el vector | Sí (mirror) |
+| Hooked function | `BuildDepotDependency(this, AppId, ..., pDepotInfo, pSharedDepotInfo, ...)` | Same signature |
+| Source of overrides | `LuaLoader::GetManifestOverrides()` (flat) | `KeyStore::GetDepotsForApp(AppId)` (filters `parent_app_id==AppId`) |
+| Match on patch | Direct DepotId | Same |
+| Which vectors are patched | **Only `pDepotInfo`** | **Only `pDepotInfo`** (mirrors LumaCore) |
+| What is patched | `gid` + `size` (0 → keep original) | **Only `gid`** — `ManifestSize` is left as Steam had it |
+| `patched` counter | Counts any match | **Only counts actual changes** (`if (gid != newgid) patched++`) |
+| Guard on `result==false` | Yes — leaves the vector alone | Same (mirror) |
 
-Sin divergencias operativas con LumaCore. Tanto vectores como campos
-patcheados están alineados.
+No operational divergence from LumaCore. Both the vectors patched and the
+fields touched line up.
 
-Histórico: ≤v0.5 lumalinux parcheaba **AMBOS** `pDepotInfo` y
-`pSharedDepotInfo`, lo que rompía la coherencia del appinfo del app padre
-del shared depot (VC 2022 Redist 228989 bajo app 228980) y causaba el crash
-de Formula Legends (heap corruption → SIGSEGV en
-`libc malloc_usable_size`). v0.6 limitó el patch a `pDepotInfo`. Además
-≤v0.7 sobrescribía `ManifestSize` con nuestro size del KeyStore (en línea
-con la divergencia teórica con LumaCore); v0.8 dejó de tocarlo,
-replicando el comportamiento real de LumaCore.
+History: ≤v0.5 lumalinux patched **both** `pDepotInfo` and `pSharedDepotInfo`,
+which broke the parent app's appinfo coherence for the shared depot (VC 2022
+Redist 228989 under app 228980) and caused the Formula Legends crash (heap
+corruption → SIGSEGV in `libc malloc_usable_size`). v0.6 restricted the
+patch to `pDepotInfo`. Additionally, ≤v0.7 overwrote `ManifestSize` with our
+KeyStore size (matching the theoretical divergence with LumaCore); v0.8
+stopped touching it, mirroring what LumaCore actually does.
 
-**Nota sobre el WARN engañoso histórico**: el mensaje
-`BuildDep: app X has N KeyStore depots but NONE matched` que aparecía cuando
-los gids ya estaban correctos fue reescrito a `Log::Debug` con texto
-neutral en v0.8.1.
+**Note on a historically misleading WARN**: the message
+`BuildDep: app X has N KeyStore depots but NONE matched` that fired when the
+gids were already correct was downgraded to `Log::Debug` with neutral text in
+v0.8.1.
 
 ### 11.5 GMRC hook (`ManifestBind::FetchSteamRun`)
 
 | | LumaCore | lumalinux |
 |---|---|---|
-| Función hookeada | `GetManifestRequestCode` | Igual |
-| Endpoint HTTP | `https://manifest.steam.run/api/manifest/{gid}` | `http://gmrc.wudrm.com/manifest/{gid}` |
-| Estado del endpoint | **DEAD** (ya no responde) | **Vivo** (mismo que SteaMidra) |
-| HTTPS / HTTP | HTTPS via WinHttp | HTTP plano via raw socket |
-| Gating | Siempre que sea un manifest que conozca | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — el OR permite cubrir el caso shader pre-cache donde Steam pide un manifest que no estaba en el .lua original |
-| Return en éxito | (LumaCore tiene una capa async para llenar el cache; lo escribe via PacketRouter) | Síncrono — `*out_code = code; return 1` |
+| Hooked function | `GetManifestRequestCode` | Same |
+| HTTP endpoint | `https://manifest.steam.run/api/manifest/{gid}` | `http://gmrc.wudrm.com/manifest/{gid}` |
+| Endpoint status | **DEAD** (no longer responds) | **Live** (same one SteaMidra uses) |
+| HTTPS / HTTP | HTTPS via WinHttp | Plain HTTP via raw socket |
+| Gating | Whenever it knows the manifest | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — the OR covers the shader pre-cache case where Steam asks for a manifest that wasn't in the original `.lua` |
+| Return on success | (LumaCore has an async layer that fills the cache; it writes back via PacketRouter) | Synchronous — `*out_code = code; return 1` |
 
-Aquí lumalinux está mejor en lo funcional (endpoint vivo, cubre shader
-pre-cache) pero peor en resiliencia (un único host HTTP plano, sin cache
-persistente, sin endpoint alternativo — ver Issue #2).
+lumalinux is functionally better here (live endpoint, covers shader
+pre-cache) but worse on resilience (a single plain-HTTP host, no persistent
+cache, no fallback endpoint — see Issue #2).
 
-Histórico: ≤v0.8.0 el gating era solo `HasManifestGid(gid)`. Eso dejaba
-caer al original (que el CDN deniega) los manifests del shader pre-cache,
-porque su gid viene de PICS appinfo y nunca está pre-registrado en
-`keys.txt`. Steam interpretaba el "Access Denied" como "No connection" en
-la UI durante los primeros minutos de cada install nuevo (solo visible con
-`.acf` de `StateFlags=1`; con `StateFlags=4` Steam saltaba el shader
-pre-cache entero). v0.8.1 amplió el gating con `|| HasDepot(depot_id)`.
+History: ≤v0.8.0 the gating was just `HasManifestGid(gid)`. That dropped the
+shader-pre-cache manifests through to the original (which the CDN denies)
+because their gid comes from PICS appinfo and is never pre-registered in
+`keys.txt`. Steam interpreted the "Access Denied" as "No connection" in the
+UI for the first few minutes of every new install (only visible with an
+`.acf` of `StateFlags=1`; with `StateFlags=4` Steam skipped the shader
+pre-cache entirely). v0.8.1 widened the gating with `|| HasDepot(depot_id)`.
 
-### 11.6 Resumen de sospechosos para crashes futuros
+### 11.6 Suspect list for future crashes / regressions
 
-Las divergencias históricas con LumaCore que motivaban este resumen han
-sido todas resueltas en v0.8.1 (ver subsecciones anteriores). El orden de
-sospecha actual, ya sin paralelos con LumaCore como anclas, es:
+The historical divergences with LumaCore that motivated this section have all
+been resolved by v0.8.1 (see the subsections above). The current order of
+suspicion, no longer using LumaCore parallels as anchors, is:
 
-1. **Patrones de Patterns desactualizados** tras un update de Steam — un
-   solo byte change en el prologue de cualquier función hookeada
-   desinstala el hook entero sin alarma clara.
-2. **`gmrc.wudrm.com` caído / DNS bloqueado** — sin fallback offline
-   ni endpoint alternativo (Issue #2). Síntoma: instalaciones nuevas que
-   fallan en bucle con "Access Denied" → "No connection" en la UI.
-3. **Race en `Log::Init`** — solo realista si LD_AUDIT preinit, el ctor
-   LD_PRELOAD y el worker thread coinciden al microsegundo (Issue #5).
-4. **El Headcrab Updater regenera** `~/.local/share/Steam/steam.sh` y
-   el bloque de lumalinux se pierde — actualmente no hay re-aplicado
-   automático, hay que volver a correr `install.sh`.
+1. **Stale Patterns after a Steam update** — a single byte change in any
+   hooked function's prologue silently uninstalls that hook. This matters
+   most for **DepotKey, BuildDep and GMRC**: those are pattern-anchored
+   inline hooks, and if they break, install breaks. **LoadPackage is much
+   less critical now**: since v0.13.0 it's diagnostic-only, and depot
+   injection runs through the package-0 finder, which derives its addresses
+   at runtime and doesn't depend on `kLoadPackagePattern` (so even a broken
+   LoadPackage pattern still leaves installs working — only the
+   `LUMA_LOADPKG_DEBUG` diagnostic stops firing).
+2. **`gmrc.wudrm.com` down / DNS-blocked** — no offline fallback, no
+   alternative endpoint (Issue #2). Symptom: new installs failing in a loop
+   with "Access Denied" → "No connection" in the UI.
+3. **Race in `Log::Init`** — only realistic if the LD_AUDIT preinit, the
+   LD_PRELOAD ctor and a worker thread coincide within microseconds
+   (Issue #5).
+4. **The Headcrab Updater regenerates** `~/.local/share/Steam/steam.sh` and
+   the lumalinux block goes with it — there is no automatic re-apply today,
+   so `install.sh` has to be re-run.
 
 
-## 12. El crash del DepotKey hook y su solución (Formula Legends)
+## 12. The DepotKey hook crash and its fix (Formula Legends)
 
-Investigación completa, reproducida en un Steam Linux real (codespace Ubuntu
-24.04, Xvfb+noVNC, SLSsteam + lumalinux), no hipótesis.
+Full investigation, reproduced on real Steam Linux (codespace Ubuntu 24.04,
+Xvfb+noVNC, SLSsteam + lumalinux). Not hypothesis.
 
-### 12.1 Síntoma
+### 12.1 Symptom
 
-Al pulsar Install en un juego con shared depots (Formula Legends, app 3194360,
-con redists 228989/228990 del app 228980), Steam crasheaba con
-`free(): invalid pointer` → abort. El crash era **heap corruption**, no un
-segfault en nuestros hooks: ocurría en código de Steam DESPUÉS de que el hook
-DepotKey devolvía.
+Pressing Install on a game with shared depots (Formula Legends, app 3194360,
+with redists 228989/228990 from app 228980), Steam crashed with
+`free(): invalid pointer` → abort. The crash was **heap corruption**, not a
+segfault in our hooks: it happened inside Steam code AFTER the DepotKey hook
+had returned.
 
-### 12.2 Aislamiento (qué hook, qué depots)
+### 12.2 Isolation (which hook, which depots)
 
-Desactivando hooks por env-var (`LUMA_NO_GMRC`, `LUMA_NO_DEPOTKEY`):
-- Sin lumalinux → no crash (pero "content still encrypted": el flujo nativo
-  necesita el hook para servir la key del depot de contenido).
-- Con DepotKey desactivado → no crash, descarga, pero `Missing decryption key`
-  para 3194361 → el hook DepotKey **es necesario**.
-- El crash correlacionaba con **servir las keys de 228989/228990** (los redists
-  que Steam YA POSEE vía la licencia de 228980). Servir la key del depot de
-  contenido (3194361, no-owned) NO crasheaba.
+Disabling hooks via env vars (`LUMA_NO_GMRC`, `LUMA_NO_DEPOTKEY`):
+- No lumalinux → no crash (but "content still encrypted": the native flow
+  needs the hook to serve the content depot's key).
+- DepotKey off → no crash, download proceeds, but `Missing decryption key`
+  for 3194361 → the DepotKey hook **is required**.
+- The crash correlated with **serving the keys for 228989/228990** (the
+  redists Steam ALREADY OWNS via the 228980 licence). Serving the content
+  depot key (3194361, unowned) did NOT crash.
 
-### 12.3 Causa raíz
+### 12.3 Root cause
 
-lumalinux ≤v0.8 hookeaba el **dispatcher externo** de depot keys
-(`(this, app_id, depot_id, out_key)`) y lo **cortocircuitaba** (servía y
-devolvía OK sin dejar correr la maquinaria de Steam). Para un depot que Steam
-posee, eso deja su estado interno inconsistente (la ruta owned esperaba pasar
-por su cache/refcount) → corrupción de heap.
+lumalinux ≤v0.8 hooked the **outer depot-key dispatcher**
+(`(this, app_id, depot_id, out_key)`) and **short-circuited** it (served and
+returned OK without letting Steam's own machinery run). For a depot Steam
+owns, that leaves Steam's internal state inconsistent (the owned path
+expected to flow through its cache/refcount) → heap corruption.
 
-Confirmado además que el `out_key` de esa función NO es un buffer de 32 bytes
-crudo: la función de cache lo inicializa como estructura de 128 bytes
-(`KeySize=128`). Nuestro `memcpy` de 32 cabía (no era overflow), así que el
-crash era de **estado**, no de buffer.
+Also confirmed: that function's `out_key` is NOT a raw 32-byte buffer. The
+cache function initialises it as a 128-byte struct (`KeySize=128`). Our
+32-byte `memcpy` fit (no overflow), so the crash was about **state**, not
+about the buffer.
 
-### 12.4 Por qué la detección dinámica de ownership NO funciona en Linux
+### 12.4 Why dynamic ownership detection does NOT work on Linux
 
-Intentamos replicar el `MarkOwned` de LumaCore (servir solo lo no-owned):
-- **`CheckAppOwnership`**: SLSsteam lo spoofea → un app no-owned parece owned.
-  Señal inservible.
-- **Llamar al dispatcher original primero** (option-C): el original devuelve OK
-  para 3194361 porque su key está en `config.vdf` → indistinguible de owned. Y
-  para los que sí fallan, el **RPC denegado deja estado que crashea** al servir.
-- **Llamar solo a la función de cache interna** (cache-first): detecta ownership
-  bien (la cache refleja licencias reales, no `config.vdf`), pero su ruta de
-  *miss* tiene un **efecto secundario interno** que crashea igual — verificado
-  sondeando incluso con un buffer scratch (el `out_key` real quedaba intacto y
-  aun así petaba). Conclusión: **no se puede llamar a ninguna función depot-key
-  de Steam alrededor de servir sin envenenar el estado.**
+We tried to replicate LumaCore's `MarkOwned` (serve only the unowned ones):
+- **`CheckAppOwnership`**: SLSsteam spoofs it → an unowned app looks owned.
+  Useless signal.
+- **Call the original dispatcher first** (option-C): the original returns OK
+  for 3194361 because its key is in `config.vdf` → indistinguishable from
+  owned. And for the ones that do fail, the **denied RPC leaves state that
+  crashes** when we serve.
+- **Call only the inner cache function** (cache-first): ownership detection
+  works (the cache reflects real licences, not `config.vdf`), but its *miss*
+  path has an **internal side effect** that crashes anyway — verified by
+  probing even with a scratch buffer (the real `out_key` stayed intact and
+  it still blew up). Conclusion: **you cannot call ANY depot-key function of
+  Steam around serving without poisoning state.**
 
-### 12.5 La solución (paridad con LumaCore)
+### 12.5 The fix (parity with LumaCore)
 
-LumaCore no hookea el dispatcher: hookea la **KeyValues accessor interna**
-`LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)`, que el dispatcher
-invoca (vía virtual call) para leer la key del store con el KeyName
-`"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
+LumaCore does not hook the dispatcher: it hooks the **inner KeyValues
+accessor** `LoadDepotDecryptionKey(pObject, foo, KeyName, Key, KeySize)`,
+which the dispatcher invokes (via virtual call) to read the key out of the
+store with KeyName `"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
 
-Hookeando AHÍ solo **respondemos la query**: la cache de Steam recibe un "hit"
-limpio y el dispatcher continúa por su ruta normal (owned o no) — sin
-cortocircuito, sin corrupción. Funciona para owned y no-owned por igual, **sin
-lista estática de shared depots**.
+Hooking THERE just **answers the query**: Steam's cache gets a clean "hit"
+and the dispatcher continues down its normal path (owned or not) — no
+short-circuit, no corruption. Works for owned and unowned alike, **with no
+static shared-depot list**.
 
-Resolución de la función en Linux i386 (no estaba en patterns):
-1. Localizar la cache fn (su propio patrón).
-2. Seguir su virtual call: `this=*(global)+0xd60; vtable=*this; fn=*(vtable+0x18)`
-   leyendo `/proc/PID/mem` del Steam vivo (root). Da la accessor interna.
-3. Volcar su prólogo, derivar el patrón único (`kDepotKeyFnPattern`, v1.0).
+Resolving the function on Linux i386 (it wasn't in patterns):
+1. Locate the cache fn (its own pattern).
+2. Follow its virtual call: `this=*(global)+0xd60; vtable=*this;
+   fn=*(vtable+0x18)`, reading `/proc/PID/mem` of the live Steam (root).
+   That gives the inner accessor.
+3. Dump its prologue, derive the unique pattern (`kDepotKeyFnPattern`, v1.0).
 
-Firma (cdecl i386, 5 args en pila): `pObject, foo, KeyName, Key, KeySize`.
-El hook parsea el depot del KeyName, valida `KeySize >= 32`, hace
-`memcpy(Key, ourkey, 32)` y `return 32`; passthrough si el KeyName no es de
-depot o no tenemos la key.
+Signature (cdecl i386, 5 stack args): `pObject, foo, KeyName, Key, KeySize`.
+The hook parses the depot out of the KeyName, validates `KeySize >= 32`,
+does `memcpy(Key, ourkey, 32)` and `return 32`; passes through if the
+KeyName isn't a depot key or we don't have one.
 
-### 12.6 Verificación end-to-end
+### 12.6 End-to-end verification
 
-Con el hook v1.0: FL sirve 228989, 228990 y 3194361 (`KeySize=128`) **sin un
-solo crash dump**, descarga y descifra los 13 GB (`ASC.exe` + contenido en
-disco), `appmanifest_3194360.acf` con `StateFlags=4` y `InstalledDepots`
-poblado. Install nativo completo.
+With the v1.0 hook: FL serves 228989, 228990 and 3194361 (`KeySize=128`)
+**without a single crash dump**, downloads and decrypts the 13 GB
+(`ASC.exe` + content on disk), `appmanifest_3194360.acf` with
+`StateFlags=4` and `InstalledDepots` populated. Full native install.
 
-Residuo benigno: tras completar, Steam encola una auto-actualización que da
-`Missing decryption key` / `UpdateResult=8` sin cambiar `StateFlags` de 4 — es
-el residuo que `_patch_acf_error_state` (SteaMidra) limpia; no bloquea Play.
+Benign residue: after completion, Steam queues an auto-update that returns
+`Missing decryption key` / `UpdateResult=8` without flipping `StateFlags`
+away from 4 — the same residue `_patch_acf_error_state` (SteaMidra) cleans
+up; it doesn't block Play.
 
-### 12.7 Implicación para el inventario §11.3
+### 12.7 Implication for §11.3
 
-La divergencia §11.3 ("DepotKey hook sin validar KeySize") queda resuelta: el
-hook v1.0 SÍ valida `KeySize` (como LumaCore) porque ahora hookea la variante
-KeyName-based que recibe el tamaño. El crash, sin embargo, no era el buffer
-(cabían los 32 bytes en 128) sino el cortocircuito del dispatcher — resuelto al
-hookear la accessor interna.
+The §11.3 divergence ("DepotKey hook without `KeySize` validation") is
+resolved: the v1.0 hook DOES validate `KeySize` (like LumaCore) because it
+now hooks the KeyName-based variant that receives the size. The crash was
+not about the buffer (32 bytes fit in 128) but about short-circuiting the
+dispatcher — fixed by hooking the inner accessor instead.
 
-## 13. El finder de package-0 — del hook pasivo al buscador activo (v0.10.9–v0.10.11)
+## 13. The package-0 finder — from a passive hook to an active walker
 
-Esta es la historia de cómo el hook LoadPackage dejó de bastar tras una
-actualización de Steam y por qué nació `src/hooks/package_zero_finder.cpp`. Es
-"la nueva función" del ciclo v0.10.x: no parchea un patrón, **busca el objeto en
-runtime**.
+(Origin: v0.10.9 – v0.10.11. Promoted to the sole, default-on injector in
+v0.13.0.)
 
-### 13.1 Síntoma
+This is the story of how the LoadPackage hook stopped being enough after a
+Steam update and why `src/hooks/package_zero_finder.cpp` exists. It is "the
+new piece" of the v0.10.x cycle: it doesn't patch a byte pattern, it
+**searches for the live object at runtime**.
 
-Tras una actualización del cliente, un juego no-owned dejaba de instalarse.
-Los otros tres hooks (DepotKey, BuildDep, GMRC) se instalaban y disparaban
-bien, pero Steam nunca metía los content depots en el plan de descarga: el log
-mostraba `LoadPackage hook: INSTALLED` y **nunca** `LoadPackage: PackageId=0
-hit`. Sin la inyección en `PackageId=0`, el filtro de licencias por-depot de
-Steam descarta los content depots y la app se queda en "Fully Installed" con 0
-bytes.
+### 13.1 Symptom
 
-### 13.2 La pista falsa (rollbacks v0.10.6 / v0.10.7 / v0.10.8)
+After a client update, an unowned game stopped installing. The other three
+hooks (DepotKey, BuildDep, GMRC) installed and fired fine, but Steam never
+put the content depots into the download plan: the log showed
+`LoadPackage hook: INSTALLED` and **never** `LoadPackage: PackageId=0 hit`.
+Without the injection into `PackageId=0`, Steam's per-depot licence filter
+drops the content depots and the app sits at "Fully Installed" with 0 bytes.
 
-La hipótesis inicial fue "Steam refactorizó `CPackageInfoCache::LoadPackage` y
-el patrón ya no matchea la función correcta":
+### 13.2 The false lead (v0.10.6 / v0.10.7 / v0.10.8 rollbacks)
 
-- **v0.10.6** — roll back de LoadPackage al wrapper de v0.10.3 + sondas de
-  descubrimiento.
-- **v0.10.7** — restaurar el patrón de v0.5… y el commit lo dice en el título:
-  *"Steam did NOT refactor it"*. El patrón seguía matcheando la función
-  correcta. La pista era falsa.
-- **v0.10.8** — añadir `LUMA_LOADPKG_DEBUG=1` para loguear cada disparo del
-  hook. Con eso se vio lo importante: el hook **sí** se instalaba en la función
-  buena, pero `LoadPackage` **no se llamaba** para `PackageId=0` en este
-  arranque.
+The initial hypothesis was "Steam refactored
+`CPackageInfoCache::LoadPackage` and the pattern no longer matches the right
+function":
 
-### 13.3 Causa raíz
+- **v0.10.6** — rolled LoadPackage back to the v0.10.3 wrapper + added
+  discovery probes.
+- **v0.10.7** — restored the v0.5 pattern… and the commit title says it all:
+  *"Steam did NOT refactor it"*. The pattern still matched the right
+  function. The lead was false.
+- **v0.10.8** — added `LUMA_LOADPKG_DEBUG=1` to log every hook firing. That
+  surfaced the real issue: the hook **was** installed on the correct
+  function, but `LoadPackage` **wasn't being called** for `PackageId=0` this
+  boot.
 
-El hook LoadPackage es **pasivo**: solo actúa cuando Steam *llama* a
-`CPackageInfoCache::LoadPackage`. Pero `LoadPackage` solo se invoca cuando el
-paquete se **carga** en la caché. Si Steam ya tiene el `PackageId=0` cacheado de
-una sesión previa (caché en disco de licencias), **nunca vuelve a llamar a
-`LoadPackage` para el paquete 0** — así que nuestro append jamás ocurre. No es
-que el hook esté mal puesto; es que el evento que esperaba no sucede en ese
-arranque.
+### 13.3 Root cause
 
-Corolario: depender de un *evento* (la llamada al hook) para una estructura que
-puede estar ya construida es frágil. Lo robusto es ir a **buscar** la estructura.
+The LoadPackage hook is **passive**: it only acts when Steam *calls*
+`CPackageInfoCache::LoadPackage`. And `LoadPackage` is only invoked when the
+package is loaded into the cache. If Steam already has `PackageId=0` cached
+from a previous session (on-disk licence cache), **it never re-calls
+`LoadPackage` for package 0** — so our append never runs. The hook isn't
+misplaced; the event it waits for doesn't happen this boot.
 
-### 13.4 La solución — buscador activo de la caché
+Corollary: relying on an *event* (the hook firing) for a structure that may
+already exist is brittle. The robust thing is to go and **find** the structure.
 
-`PackageZeroFinder` (hilo detached, **ON por defecto** desde v0.13.0; se apaga
-con `LUMA_NO_PKG0_FINDER`, y `LUMA_PKG0_FINDER=diag` lo deja en modo solo-log)
-**recorre la caché de paquetes directamente** en vez de esperar a que el hook
-dispare. La caché `CPackageInfoCache` es un árbol binario de búsqueda indexado
-(offsets de clase estables, verificados en los builds `7c4ac73e` y `db0d79c2`):
+### 13.4 The fix — an active cache walker
+
+`PackageZeroFinder` (detached thread, **on by default** since v0.13.0;
+disable with `LUMA_NO_PKG0_FINDER`, and `LUMA_PKG0_FINDER=diag` leaves it in
+log-only mode) **walks the package cache directly** instead of waiting for
+the hook. `CPackageInfoCache` is an index-based binary search tree with
+stable class-layout offsets (verified on builds `7c4ac73e` and `db0d79c2`):
 
 ```
-cache + 0xc58  int32   índice del nodo raíz (-1 = vacío)
-cache + 0xc6c  T*      base del array de nodos
-nodo (0x18 bytes):  +0x00 left  +0x04 right  +0x10 packageId  +0x14 PackageInfo*
+cache + 0xc58   int32   root node index (-1 = empty)
+cache + 0xc6c   T*      node array base
+node (0x18 B):  +0x00 left  +0x04 right  +0x10 packageId  +0x14 PackageInfo*
 ```
 
-El worker busca el nodo con `packageId==0` y, al encontrarlo, inyecta los depots
-en su `AppIdVec` reutilizando `Hooks::LoadPackage::InjectDepots` (misma lógica de
-append-in-place del §11.2).
+The worker looks for the node with `packageId == 0` and, once found, injects
+the depots into its `AppIdVec` via the shared
+`Hooks::LoadPackage::InjectDepots` (same append-in-place logic detailed in
+§11.2).
 
-**El finder es el ÚNICO inyector** (v0.13.0): el hook LoadPackage clásico **ya no
-inyecta** — se queda solo para el diagnóstico `LUMA_LOADPKG_DEBUG`. Razón: el
-hook es justo la pieza poco fiable que el finder reemplaza (no dispara cuando el
-paquete 0 está cacheado), así que mantenerlo como co-inyector no aporta cobertura
-y abriría una **carrera de dos hilos** sobre el mismo `AppIdVec` (el dedup evita
-duplicados pero NO la escritura concurrente del realloc). Con un solo inyector
-(el hilo del finder) no hay carrera y no hace falta mutex.
+**The finder is the SOLE injector** (v0.13.0). The classic LoadPackage hook
+**no longer injects** — it stays installed only for the
+`LUMA_LOADPKG_DEBUG` diagnostic. Reason: the hook is exactly the unreliable
+piece the finder replaces (it doesn't fire when `PackageId=0` is cached), so
+keeping it as a co-injector adds no coverage and would open a **two-thread
+race** on the same `AppIdVec` (the dedup prevents duplicate ids, but NOT the
+concurrent realloc). With a single injector (the finder thread) there is no
+race and no lock is needed.
 
-**Cadencia (v0.13.0):** poll cada 2 s **sin tope** hasta que aparezca el paquete
-0 (solo existe tras el login — un login lento no debe romper la instalación; el
-viejo tope de 5 min sí la rompía). Tras el primer hit sigue vigilando cada 15 s y
-**re-inyecta** si Steam reconstruye el paquete (re-login / refresh de licencias);
-`InjectDepots` es idempotente, así que cada re-check es un no-op salvo que los
-depots se hayan perdido.
+**Cadence (v0.13.0):** poll every 2 s **with no cap** until `PackageId=0`
+appears (it only exists after login — a slow login must NOT break the
+install; the old 5-min cap broke it). After the first hit, keep watching at
+15 s and **re-inject** if Steam rebuilds the package (re-login / licence
+refresh); `InjectDepots` is idempotent, so each re-check is a no-op unless
+the depots have actually gone missing.
 
-### 13.5 Las dos direcciones que se derivan en runtime
+### 13.5 The two addresses derived at runtime
 
-El puntero global a la caché vive en `GOTbase + X`, y **ambos** valores cambian
-entre builds (`X` fue `0x3a1bc` en `7c4ac73e` y `0x3967c` en `db0d79c2`). Para
-no hornear constantes por-build, el finder deriva los dos en runtime:
+The cache-global pointer lives at `GOTbase + X`, and **both** values change
+across builds (`X` was `0x3a1bc` on `7c4ac73e` and `0x3967c` on `db0d79c2`).
+To avoid per-build constants, the finder derives both at runtime:
 
-1. **`GOTbase` desde la cola del prólogo de GMRC.** El prólogo de GMRC es
-   `E8 <call thunk> ; 05 <add eax,imm32> ; 55 89 E5 57 56 53 …`. El get_pc_thunk
-   devuelve `GMRC+5` y el `add eax,imm32` deja `eax = GOT`. El detalle fino: el
-   **propio hook GMRC de lumalinux sobrescribe los 5 bytes `E8 <call>`** con su
-   `jmp` de detour, así que el finder de GMRC anclado en `E8` ya no matchea una
-   vez instalados los hooks — pero el `05 add eax,imm32` en `GMRC+5` **sobrevive**
-   (el detour son solo 5 bytes). Así que se escanea la cola del prólogo que
-   sobrevive y `GOT = (dirección del byte 0x05) + imm32`
-   (`DeriveGotBase`, reproduce la VA exacta de `.got`).
+1. **`GOTbase` from the tail of the GMRC prologue.** GMRC's prologue is
+   `E8 <call thunk> ; 05 <add eax,imm32> ; 55 89 E5 57 56 53 …`. The
+   get_pc_thunk returns `GMRC+5` and the `add eax,imm32` sets `eax = GOT`.
+   Fine detail: **lumalinux's own GMRC hook overwrites the leading 5 bytes
+   `E8 <call>`** with its detour `jmp`, so the GMRC finder anchored on `E8`
+   no longer matches once the hooks are installed — but the `05 add
+   eax,imm32` at `GMRC+5` **survives** (the detour is only 5 bytes). So we
+   scan for the surviving prologue tail and `GOT = (runtime address of the
+   0x05 byte) + imm32` (`DeriveGotBase`, reproduces the exact `.got` VA).
 
-2. **`X` desde el idiom de acceso a la caché.** Se escanea el `r-x` de
-   steamclient.so buscando `lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+0xc58]`.
-   El `0xc58` final (el offset estable de la raíz del árbol) es el ancla que
-   confirma el match; de ahí se saca `X` del `disp32` del `lea`
-   (`FindCacheGlobalDisp`). `cache_global = GOT + X`.
+2. **`X` from the cache-access idiom.** Scan `steamclient.so`'s `r-x` span
+   for `lea r1, [GOT+X] ; mov r2, [r1] ; mov r3, [r2+0xc58]`. The trailing
+   `0xc58` (the stable tree-root offset) is the anchor that confirms the
+   match; `X` comes out of the `lea`'s `disp32` (`FindCacheGlobalDisp`).
+   `cache_global = GOT + X`.
 
-Es la misma filosofía que `derive_patterns.py` (§8) pero **en runtime**: cero
-offsets por-build, todo se reconstruye a partir de anclas estables (la cola del
-prólogo de GMRC y el offset de clase `0xc58`).
+Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
+per-build offsets, everything reconstructed from stable anchors (the
+hook-surviving GMRC prologue tail and the `0xc58` class-layout offset).
 
-### 13.6 Verificación end-to-end (Brotato, 1942280)
+### 13.6 End-to-end verification (Brotato, 1942280)
 
-Test limpio en el codespace con v0.10.11 y un zip nuevo. La derivación acertó al
-primer intento y el pipeline completo funcionó:
+Clean test on the codespace with v0.10.11 and a fresh zip. The runtime
+derivation hit on the first try and the full pipeline went through:
 
 ```
 PKG0_FINDER: cache-access idiom found 2 time(s), disp=0x3a1bc
 PKG0_FINDER: GOT=0xd4dbea04 disp=0x3a1bc cache_global=0xd4df8bc0
 PKG0_FINDER: HIT pkg=0xd7c59380 PackageId=0 AppIdVec{mem=… size=192 alloc=202}
-PKG0_FINDER:   AppIdVec[0..4) = {5, 7, 8, 90}        ← sanity OK (app ids reales)
+PKG0_FINDER:   AppIdVec[0..4) = {5, 7, 8, 90}        ← sanity OK (real app ids)
 LoadPackage[finder]: APPENDED 8 depot id(s) to PackageId=0 (size 192 -> 200)
   + depot 1942280 1942281 1942282 1942283 2379780 2379781 2379782 2868390
 ```
 
-El resto de la cadena, en orden:
+The rest of the chain, in order:
 
-- **BuildDep** surfacea los content depots (`2868390`, `1942282`) con sus gids.
-- **DepotKey** sirve las claves locales: `SERVED local key for depot 2868390 /
+- **BuildDep** surfaces the content depots (`2868390`, `1942282`) with their
+  gids.
+- **DepotKey** serves the local keys: `SERVED local key for depot 2868390 /
   1942282 / 1942280`.
-- **GMRC** inyecta el request code: `got code … INJECTED for manifest … (depot
-  1942280)`.
-- **content_log.txt** de Steam: descarga chunks de los content depots →
+- **GMRC** injects the request code: `got code … INJECTED for manifest …
+  (depot 1942280)`.
+- Steam's `content_log.txt`: chunks downloaded for the content depots →
   `starting commit … → steamapps/common/Brotato : 6 updated` →
   `finished update, 2 mounted depots : 2868390, 1942282` →
   `state changed : Fully Installed`.
 
-La regresión "post-update-de-Steam" queda **arreglada de verdad**: el finder
-reemplaza al wrapper v0.5/v0.7 que dependía de un evento que ya no ocurría.
+The "post-Steam-update regression" is genuinely fixed: the finder replaces
+the v0.5/v0.7 wrapper that depended on an event that no longer happened.
 
-### 13.7 Brotato sí, Balatro no — y por qué NO era bug de lumalinux
+### 13.7 Brotato yes, Balatro no — and why this was NOT a lumalinux bug
 
-El mismo flujo había fallado antes con Balatro (2379780) con `Missing decryption
-key`. La diferencia no estaba en lumalinux sino en los zips:
+The same flow had previously failed for Balatro (2379780) with
+`Missing decryption key`. The difference wasn't lumalinux — it was the zips:
 
-- **Brotato**: `keys.txt` tenía clave **real** para el depot del shader-cache
-  (`1942280`). El hook hizo `SERVED local key for depot 1942280` → el shader
-  desencripta → el pipeline sigue.
-- **Balatro**: `keys.txt` tenía `2379780;;;` (sin clave) para su depot de
-  shader. Steam pidió esa clave → el hook hace passthrough → el server la deniega
-  → `Missing decryption key` → Steam **cancela toda la app**.
+- **Brotato**: `keys.txt` had a **real** key for the shader-cache depot
+  (`1942280`). The hook returned `SERVED local key for depot 1942280` → the
+  shader decrypted → the pipeline kept going.
+- **Balatro**: `keys.txt` had `2379780;` (no key) for its shader depot.
+  Steam asked for that key → the hook fell through → the server denied it
+  → `Missing decryption key` → Steam **cancelled the whole app**.
 
-O sea: el zip de Balatro venía **incompleto** (le faltaba la clave del depot del
-shader), no era regresión del finder. Lección para el §6: un `Missing decryption
-key` en el depot del shader-cache tumba la instalación entera aunque los content
-depots estén perfectos — antes de culpar a los hooks, verificar que `keys.txt`
-tiene clave para **todos** los depots que Steam vaya a pedir, incluido el del
-shader.
+In other words: Balatro's zip was **incomplete** (missing the shader-depot
+key), not a finder regression. Lesson for §6: a `Missing decryption key` on
+the shader-cache depot kills the whole install even when every content
+depot is fine — before blaming the hooks, verify that `keys.txt` has a key
+for **every** depot Steam will ask for, including the shader-cache one (its
+id is typically the app id itself, e.g. `1942280` for Brotato, `2379780`
+for Balatro).
