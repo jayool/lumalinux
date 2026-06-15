@@ -543,3 +543,141 @@ hook v1.0 SÍ valida `KeySize` (como LumaCore) porque ahora hookea la variante
 KeyName-based que recibe el tamaño. El crash, sin embargo, no era el buffer
 (cabían los 32 bytes en 128) sino el cortocircuito del dispatcher — resuelto al
 hookear la accessor interna.
+
+## 13. El finder de package-0 — del hook pasivo al buscador activo (v0.10.9–v0.10.11)
+
+Esta es la historia de cómo el hook LoadPackage dejó de bastar tras una
+actualización de Steam y por qué nació `src/hooks/package_zero_finder.cpp`. Es
+"la nueva función" del ciclo v0.10.x: no parchea un patrón, **busca el objeto en
+runtime**.
+
+### 13.1 Síntoma
+
+Tras una actualización del cliente, un juego no-owned dejaba de instalarse.
+Los otros tres hooks (DepotKey, BuildDep, GMRC) se instalaban y disparaban
+bien, pero Steam nunca metía los content depots en el plan de descarga: el log
+mostraba `LoadPackage hook: INSTALLED` y **nunca** `LoadPackage: PackageId=0
+hit`. Sin la inyección en `PackageId=0`, el filtro de licencias por-depot de
+Steam descarta los content depots y la app se queda en "Fully Installed" con 0
+bytes.
+
+### 13.2 La pista falsa (rollbacks v0.10.6 / v0.10.7 / v0.10.8)
+
+La hipótesis inicial fue "Steam refactorizó `CPackageInfoCache::LoadPackage` y
+el patrón ya no matchea la función correcta":
+
+- **v0.10.6** — roll back de LoadPackage al wrapper de v0.10.3 + sondas de
+  descubrimiento.
+- **v0.10.7** — restaurar el patrón de v0.5… y el commit lo dice en el título:
+  *"Steam did NOT refactor it"*. El patrón seguía matcheando la función
+  correcta. La pista era falsa.
+- **v0.10.8** — añadir `LUMA_LOADPKG_DEBUG=1` para loguear cada disparo del
+  hook. Con eso se vio lo importante: el hook **sí** se instalaba en la función
+  buena, pero `LoadPackage` **no se llamaba** para `PackageId=0` en este
+  arranque.
+
+### 13.3 Causa raíz
+
+El hook LoadPackage es **pasivo**: solo actúa cuando Steam *llama* a
+`CPackageInfoCache::LoadPackage`. Pero `LoadPackage` solo se invoca cuando el
+paquete se **carga** en la caché. Si Steam ya tiene el `PackageId=0` cacheado de
+una sesión previa (caché en disco de licencias), **nunca vuelve a llamar a
+`LoadPackage` para el paquete 0** — así que nuestro append jamás ocurre. No es
+que el hook esté mal puesto; es que el evento que esperaba no sucede en ese
+arranque.
+
+Corolario: depender de un *evento* (la llamada al hook) para una estructura que
+puede estar ya construida es frágil. Lo robusto es ir a **buscar** la estructura.
+
+### 13.4 La solución — buscador activo de la caché
+
+`PackageZeroFinder` (hilo detached, arranca con `LUMA_PKG0_FINDER=inject`)
+**recorre la caché de paquetes directamente** en vez de esperar a que el hook
+dispare. La caché `CPackageInfoCache` es un árbol binario de búsqueda indexado
+(offsets de clase estables, verificados en los builds `7c4ac73e` y `db0d79c2`):
+
+```
+cache + 0xc58  int32   índice del nodo raíz (-1 = vacío)
+cache + 0xc6c  T*      base del array de nodos
+nodo (0x18 bytes):  +0x00 left  +0x04 right  +0x10 packageId  +0x14 PackageInfo*
+```
+
+El worker hace poll cada 2 s (×150 = 5 min, porque el paquete 0 solo existe tras
+el login) hasta encontrar el nodo con `packageId==0`, y entonces inyecta los
+depots en su `AppIdVec` reutilizando `Hooks::LoadPackage::InjectDepots` (misma
+lógica de append-in-place del §11.2). El hook LoadPackage clásico se mantiene
+como segunda vía por si el evento sí ocurre; el finder cubre el caso en que no.
+
+### 13.5 Las dos direcciones que se derivan en runtime
+
+El puntero global a la caché vive en `GOTbase + X`, y **ambos** valores cambian
+entre builds (`X` fue `0x3a1bc` en `7c4ac73e` y `0x3967c` en `db0d79c2`). Para
+no hornear constantes por-build, el finder deriva los dos en runtime:
+
+1. **`GOTbase` desde la cola del prólogo de GMRC.** El prólogo de GMRC es
+   `E8 <call thunk> ; 05 <add eax,imm32> ; 55 89 E5 57 56 53 …`. El get_pc_thunk
+   devuelve `GMRC+5` y el `add eax,imm32` deja `eax = GOT`. El detalle fino: el
+   **propio hook GMRC de lumalinux sobrescribe los 5 bytes `E8 <call>`** con su
+   `jmp` de detour, así que el finder de GMRC anclado en `E8` ya no matchea una
+   vez instalados los hooks — pero el `05 add eax,imm32` en `GMRC+5` **sobrevive**
+   (el detour son solo 5 bytes). Así que se escanea la cola del prólogo que
+   sobrevive y `GOT = (dirección del byte 0x05) + imm32`
+   (`DeriveGotBase`, reproduce la VA exacta de `.got`).
+
+2. **`X` desde el idiom de acceso a la caché.** Se escanea el `r-x` de
+   steamclient.so buscando `lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+0xc58]`.
+   El `0xc58` final (el offset estable de la raíz del árbol) es el ancla que
+   confirma el match; de ahí se saca `X` del `disp32` del `lea`
+   (`FindCacheGlobalDisp`). `cache_global = GOT + X`.
+
+Es la misma filosofía que `derive_patterns.py` (§8) pero **en runtime**: cero
+offsets por-build, todo se reconstruye a partir de anclas estables (la cola del
+prólogo de GMRC y el offset de clase `0xc58`).
+
+### 13.6 Verificación end-to-end (Brotato, 1942280)
+
+Test limpio en el codespace con v0.10.11 y un zip nuevo. La derivación acertó al
+primer intento y el pipeline completo funcionó:
+
+```
+PKG0_FINDER: cache-access idiom found 2 time(s), disp=0x3a1bc
+PKG0_FINDER: GOT=0xd4dbea04 disp=0x3a1bc cache_global=0xd4df8bc0
+PKG0_FINDER: HIT pkg=0xd7c59380 PackageId=0 AppIdVec{mem=… size=192 alloc=202}
+PKG0_FINDER:   AppIdVec[0..4) = {5, 7, 8, 90}        ← sanity OK (app ids reales)
+LoadPackage[finder]: APPENDED 8 depot id(s) to PackageId=0 (size 192 -> 200)
+  + depot 1942280 1942281 1942282 1942283 2379780 2379781 2379782 2868390
+```
+
+El resto de la cadena, en orden:
+
+- **BuildDep** surfacea los content depots (`2868390`, `1942282`) con sus gids.
+- **DepotKey** sirve las claves locales: `SERVED local key for depot 2868390 /
+  1942282 / 1942280`.
+- **GMRC** inyecta el request code: `got code … INJECTED for manifest … (depot
+  1942280)`.
+- **content_log.txt** de Steam: descarga chunks de los content depots →
+  `starting commit … → steamapps/common/Brotato : 6 updated` →
+  `finished update, 2 mounted depots : 2868390, 1942282` →
+  `state changed : Fully Installed`.
+
+La regresión "post-update-de-Steam" queda **arreglada de verdad**: el finder
+reemplaza al wrapper v0.5/v0.7 que dependía de un evento que ya no ocurría.
+
+### 13.7 Brotato sí, Balatro no — y por qué NO era bug de lumalinux
+
+El mismo flujo había fallado antes con Balatro (2379780) con `Missing decryption
+key`. La diferencia no estaba en lumalinux sino en los zips:
+
+- **Brotato**: `keys.txt` tenía clave **real** para el depot del shader-cache
+  (`1942280`). El hook hizo `SERVED local key for depot 1942280` → el shader
+  desencripta → el pipeline sigue.
+- **Balatro**: `keys.txt` tenía `2379780;;;` (sin clave) para su depot de
+  shader. Steam pidió esa clave → el hook hace passthrough → el server la deniega
+  → `Missing decryption key` → Steam **cancela toda la app**.
+
+O sea: el zip de Balatro venía **incompleto** (le faltaba la clave del depot del
+shader), no era regresión del finder. Lección para el §6: un `Missing decryption
+key` en el depot del shader-cache tumba la instalación entera aunque los content
+depots estén perfectos — antes de culpar a los hooks, verificar que `keys.txt`
+tiene clave para **todos** los depots que Steam vaya a pedir, incluido el del
+shader.

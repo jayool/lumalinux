@@ -151,6 +151,12 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 - `LUMA_NO_NOTIFY` — silence the startup toast.
 - `LUMA_NO_LOADPKG` / `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an individual hook.
 - `LUMA_LOADPKG_IDX=N` — pick a different LoadPackage candidate (see below).
+- `LUMA_PKG0_FINDER=inject` — run the active package-0 finder (walks the package
+  cache directly instead of waiting for the LoadPackage hook to fire; `=diag`
+  logs the walk without injecting). This is what makes installs work when Steam
+  has `PackageId=0` already cached and never re-calls `LoadPackage` — see
+  [`docs/RESEARCH.md` §13](docs/RESEARCH.md).
+- `LUMA_LOADPKG_DEBUG=1` — log every LoadPackage hook firing (diagnostic).
 
 ### "Hook INSTALLED but never fires"
 
