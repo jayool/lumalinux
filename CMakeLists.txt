@@ -1,9 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 <<<<<<< HEAD
+<<<<<<< HEAD
 project(lumalinux LANGUAGES C CXX VERSION 0.11.0)
 =======
 project(lumalinux LANGUAGES C CXX VERSION 0.11.0)
 >>>>>>> 44be370 (v0.10.9: package-0 finder — inject by walking the cache, not just the hook)
+=======
+project(lumalinux LANGUAGES C CXX VERSION 0.11.0)
+>>>>>>> 07f8f32 (v0.10.10: package-0 finder derives cache address at runtime (build-robust))
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
