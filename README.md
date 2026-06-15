@@ -137,9 +137,10 @@ injects the decryption keys into `config.vdf`, and writes the `.acf` stub.
 If you use **LumaDeck**, the QAM plugin calls this script under the hood when
 you tap "Download Manifest". You don't need to invoke it manually.
 
-For the full breakdown of the six steps `steamidra_lite.py` performs — and
-why each one is needed — see the [Configuring a game](#configuring-a-game-advanced)
-section below.
+For the full breakdown of the six steps `steamidra_lite.py` performs — plus a
+7th ecosystem-interop step (stplug-in `.lua` + ACCELA markers) and the
+post-install `--accela-mark` mode — see the
+[Configuring a game](#configuring-a-game-advanced) section below.
 
 ## Troubleshooting
 
@@ -242,6 +243,37 @@ Linux's `process_lua_full` does (see `sff/ui.py`), in order:
      `b4c4968`) being in place, otherwise Steam's shader pre-cache phase
      produces a transient "No connection" placeholder when the `.acf` is
      Uninstalled.
+
+Beyond those six, the script also performs a **7th, lumalinux-specific step**
+(*not* part of SteaMidra's `process_lua_full`). It's best-effort — each piece
+is logged and never aborts the run:
+
+7. **Ecosystem interop.**
+   - Copies the parsed `.lua` to
+     `~/.local/share/Steam/config/stplug-in/<appid>.lua` so SteaMidra-style
+     scanners and LumaDeck's library list find the game.
+   - Drops an in-game `.DepotDownloader/` marker inside the game's
+     `steamapps/common/<installdir>/` and a `~/.local/share/ACCELA/depots/<appid>.depot`
+     update tracker, so the standalone **ACCELA / ASSella** desktop app treats
+     the game as one of its own (its scanner only needs the marker folder to
+     exist next to real game content + a matching `.acf`).
+
+   The in-game marker is timing-sensitive: when you first run the script the
+   game isn't downloaded yet, so `steamapps/common/<installdir>/` is empty and
+   ACCELA won't list it until Steam has pulled the files. For a guaranteed
+   post-download marking, re-run in **mark-only** mode once the game is
+   installed:
+
+   ```sh
+   python3 tools/steamidra_lite.py --accela-mark <appid>
+   ```
+
+   `--accela-mark` installs nothing. It reads the real `installdir` from
+   `appmanifest_<appid>.acf` (the folder Steam actually used) and recovers the
+   depot/manifest from the stplug-in `.lua`, then (re)creates the
+   `.DepotDownloader` marker + `.depot` tracker in the right place. Idempotent.
+   LumaDeck calls this automatically on library refresh; you only need it by
+   hand in the manual (desktop) flow.
 
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Backups (`.bak`) of every
 file touched are written next to the originals before any change.

@@ -279,6 +279,16 @@ For a game you have a `.lua` + `.manifest` set for (e.g. ManifestHub zip):
   and size come from the `.lua` (`setManifestid`) and the `.manifest` binary
   (`cb_disk_original`, protobuf metadata magic `0x1F4812BE`, field 5).
 - Adds the app + depot ids to SLSsteam's `config.yaml` `AdditionalApps`.
+- **Ecosystem interop** (best-effort, beyond SteaMidra's flow): copies the
+  `.lua` to `config/stplug-in/<appid>.lua`, and writes ACCELA-compatible
+  markers — an in-game `.DepotDownloader/` dir in
+  `steamapps/common/<installdir>/` plus a `~/.local/share/ACCELA/depots/<appid>.depot`
+  tracker. ACCELA's scanner (`game_manager.py:_get_accela_marker_path`) only
+  checks the marker folder *exists* next to real content — it doesn't parse
+  anything. Because the game isn't downloaded at deploy time, the marker is
+  finalised post-install by the **`--accela-mark <appid>`** mode, which reads
+  the real `installdir` from the `.acf` and re-creates the marker + tracker in
+  place (LumaDeck triggers this on library refresh).
 
 `tools/vdf_inject_keys.py` writes keys into `config.vdf` without the `vdf` python
 module — but those get pruned (§6), so it's only a belt-and-suspenders helper.
