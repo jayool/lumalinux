@@ -12,43 +12,8 @@
 
 namespace {
 
-// CUtlVector<T> header (Source SDK, 16 bytes on i386):
-//   T* m_pMemory;            int m_nAllocationCount;
-//   int m_nGrowSize;         uint32_t m_Size;
-template<typename T>
-struct CUtlVector {
-    T*       m_pMemory;
-    int      m_nAllocationCount;
-    int      m_nGrowSize;
-    uint32_t m_Size;
-};
-static_assert(sizeof(CUtlVector<uint32_t>) == 16, "CUtlVector header must be 16 bytes");
-
-// PackageInfo (Linux i386, derived from LumaCore's Structs.h with i386 sizes):
-//   +0x00  uint32_t  PackageId
-//   +0x04  int32_t   ChangeNumber
-//   +0x08  uint64_t  PICS_token        (4-byte aligned on i386 SysV)
-//   +0x10  int32_t   BillingType       (enum class : int)
-//   +0x14  int32_t   LicenseType
-//   +0x18  int32_t   Status
-//   +0x1C  uint8_t   SHA_1_Hash[20]
-//   +0x30  void*     pPackageInfoNodeBegin
-//   +0x34  void*     pExtendNodeBegin
-//   +0x38  CUtlVector<uint32_t>  AppIdVec     (16 bytes)
-//   +0x48  CUtlVector<uint32_t>  DepotIdVec   (16 bytes)
-constexpr size_t kOffPackageId = 0x00;
-constexpr size_t kOffAppIdVec  = 0x38;
-
 using LoadPackageFn = bool (*)(void* pInfo, uint8_t* sha1, int32_t cn, void* p4);
 LoadPackageFn g_origFn = nullptr;
-
-inline uint32_t PkgId(void* pInfo) {
-    return *reinterpret_cast<uint32_t*>(static_cast<uint8_t*>(pInfo) + kOffPackageId);
-}
-inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
-    return reinterpret_cast<CUtlVector<uint32_t>*>(
-        static_cast<uint8_t*>(pInfo) + kOffAppIdVec);
-}
 
 // Thread-safety: this hook intentionally has no internal locking. It relies
 // on Steam loading PackageId=0 from a single PICS worker thread, which is
@@ -60,7 +25,7 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
     bool result = g_origFn ? g_origFn(pInfo, sha1, cn, p4) : false;
     if (!pInfo) return result;
 
-    uint32_t packageId = PkgId(pInfo);
+    uint32_t packageId = Hooks::LoadPackage::PkgId(pInfo);
 
     // Discovery diagnostic (opt-in, LUMA_LOADPKG_DEBUG=1). Logs EVERY call's
     // PackageId + AppIdVec triple for the first kDiagCap calls, regardless of
@@ -79,7 +44,7 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         constexpr int kDiagCap = 400;
         int n = diagCount.fetch_add(1, std::memory_order_relaxed);
         if (n < kDiagCap) {
-            CUtlVector<uint32_t>* dv = AppIdVec(pInfo);
+            auto* dv = Hooks::LoadPackage::AppIdVec(pInfo);
             Log::Info("LoadPackage[DIAG #%d]: PackageId=%u AppIdVec{mem=%p size=%u alloc=%d}",
                       n, packageId, (void*)dv->m_pMemory, dv->m_Size, dv->m_nAllocationCount);
         }
@@ -89,24 +54,35 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         return result;
     }
 
-    // LumaCore injects GetAllDepotIds() (the DEPOT ids) here, NOT the parent
-    // app id. Steam's per-depot license filter in BuildDepotDependency checks
-    // each depot id against PackageId=0; listing the depot ids here is what
-    // keeps them in pDepotInfo instead of being dropped.
+    // Delegate to the shared injector. The package_zero_finder worker calls
+    // the same function from a different code path — both paths share sanity
+    // checks, dedup logic, and grow policy via this single implementation.
+    Hooks::LoadPackage::InjectDepots(pInfo, "hook");
+    return result;
+}
+
+} // namespace
+
+namespace Hooks::LoadPackage {
+
+bool InjectDepots(void* pInfo, const char* source) {
+    if (!pInfo) return false;
+
     auto depotIds = KeyStore::GetAllDepotIds();
-    if (depotIds.empty()) return result;
+    if (depotIds.empty()) return false;
 
     CUtlVector<uint32_t>* vec = AppIdVec(pInfo);
     uint32_t oldSize = vec->m_Size;
     if (oldSize > 4096) {
-        Log::Warn("LoadPackage: PackageId=0 AppIdVec->m_Size=%u looks implausible "
-                  "(offset wrong?) — skipping injection", oldSize);
-        return result;
+        Log::Warn("LoadPackage[%s]: PackageId=0 AppIdVec->m_Size=%u looks "
+                  "implausible (offset wrong?) — skipping injection",
+                  source, oldSize);
+        return false;
     }
 
-    Log::Debug("LoadPackage: PackageId=0 hit — vec mem=%p size=%u alloc=%d grow=%d",
-               (void*)vec->m_pMemory, vec->m_Size, vec->m_nAllocationCount,
-               vec->m_nGrowSize);
+    Log::Debug("LoadPackage[%s]: PackageId=0 hit — vec mem=%p size=%u alloc=%d grow=%d",
+               source, (void*)vec->m_pMemory, vec->m_Size,
+               vec->m_nAllocationCount, vec->m_nGrowSize);
 
     // Sanity: verify the offset we deduced for AppIdVec (+0x38) is sane.
     // The free package on real accounts contains real AppIds — small positive
@@ -118,21 +94,25 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         for (uint32_t i = 0; i < sampleN; ++i) {
             uint32_t a = vec->m_pMemory[i];
             if (a == 0 || a > 50'000'000) {
-                Log::Warn("LoadPackage: SANITY FAIL — AppIdVec[%u]=%u looks bogus "
+                Log::Warn("LoadPackage[%s]: SANITY FAIL — AppIdVec[%u]=%u looks bogus "
                           "(offset 0x38 may be wrong on this build). Skipping injection.",
-                          i, a);
-                return result;
+                          source, i, a);
+                return false;
             }
         }
-        Log::Debug("LoadPackage: sanity OK — vec[0..%u]={%u,%u,%u,%u,...}",
-                   sampleN,
+        Log::Debug("LoadPackage[%s]: sanity OK — vec[0..%u]={%u,%u,%u,%u,...}",
+                   source, sampleN,
                    vec->m_pMemory[0],
                    sampleN > 1 ? vec->m_pMemory[1] : 0,
                    sampleN > 2 ? vec->m_pMemory[2] : 0,
                    sampleN > 3 ? vec->m_pMemory[3] : 0);
     }
 
-    // Filter out depot ids already present.
+    // Content-based idempotency: filter out depot ids already present. This
+    // makes the function safe to call multiple times (e.g. both from the
+    // LoadPackage hook and from the package-0 finder) without doubling
+    // entries. No external flag needed — the state of the vector itself is
+    // the source of truth.
     std::vector<uint32_t> toAdd;
     toAdd.reserve(depotIds.size());
     for (uint32_t depotId : depotIds) {
@@ -143,9 +123,9 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         if (!already) toAdd.push_back(depotId);
     }
     if (toAdd.empty()) {
-        Log::Debug("LoadPackage: all %zu depot ids already in PackageId=0",
-                   depotIds.size());
-        return result;
+        Log::Debug("LoadPackage[%s]: all %zu depot ids already in PackageId=0",
+                   source, depotIds.size());
+        return false;
     }
 
     uint32_t total = oldSize + static_cast<uint32_t>(toAdd.size());
@@ -171,39 +151,37 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
         void* new_mem = std::realloc(vec->m_pMemory,
                                       static_cast<size_t>(new_alloc) * sizeof(uint32_t));
         if (!new_mem) {
-            Log::Warn("LoadPackage: realloc failed for %d entries — skipping injection",
-                      new_alloc);
-            return result;
+            Log::Warn("LoadPackage[%s]: realloc failed for %d entries — skipping injection",
+                      source, new_alloc);
+            return false;
         }
-        Log::Info("LoadPackage: grew AppIdVec capacity %d -> %d via realloc "
+        Log::Info("LoadPackage[%s]: grew AppIdVec capacity %d -> %d via realloc "
                   "(m_pMemory %p -> %p)",
-                  vec->m_nAllocationCount, new_alloc, (void*)vec->m_pMemory, new_mem);
+                  source, vec->m_nAllocationCount, new_alloc,
+                  (void*)vec->m_pMemory, new_mem);
         vec->m_pMemory = static_cast<uint32_t*>(new_mem);
         vec->m_nAllocationCount = new_alloc;
     }
 
     // Unreachable safeguard — kept so static analysis sees a path that returns.
     if (!vec->m_pMemory) {
-        Log::Error("LoadPackage: vec->m_pMemory is null after grow attempt");
-        return result;
+        Log::Error("LoadPackage[%s]: vec->m_pMemory is null after grow attempt",
+                   source);
+        return false;
     }
 
     for (size_t i = 0; i < toAdd.size(); ++i) {
         vec->m_pMemory[oldSize + i] = toAdd[i];
     }
     vec->m_Size = total;
-    Log::Info("LoadPackage: APPENDED %zu depot id(s) to PackageId=0 "
+    Log::Info("LoadPackage[%s]: APPENDED %zu depot id(s) to PackageId=0 "
               "(size %u -> %u, capacity now %d)",
-              toAdd.size(), oldSize, total, vec->m_nAllocationCount);
+              source, toAdd.size(), oldSize, total, vec->m_nAllocationCount);
     for (uint32_t a : toAdd) {
-        Log::Info("LoadPackage:   + depot %u", a);
+        Log::Info("LoadPackage[%s]:   + depot %u", source, a);
     }
-    return result;
+    return true;
 }
-
-} // namespace
-
-namespace Hooks::LoadPackage {
 
 bool Install() {
     uintptr_t target = Patterns::FindLoadPackageFunction();

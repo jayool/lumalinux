@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstdint>
+#include <cstddef>
+
 namespace Hooks::LoadPackage {
 
 // Hook CPackageInfoCache::LoadPackage. When the package being loaded has
@@ -14,5 +17,69 @@ namespace Hooks::LoadPackage {
 // entries (let alone inject new ones).
 bool Install();
 void Uninstall();
+
+// =============================================================================
+// PackageInfo layout (Linux i386, derived from LumaCore's Structs.h).
+// =============================================================================
+// Exposed in the header so package_zero_finder.cpp can read the same layout
+// without duplicating offsets. Single source of truth.
+//
+// PackageInfo (Linux i386):
+//   +0x00  uint32_t  PackageId
+//   +0x04  int32_t   ChangeNumber
+//   +0x08  uint64_t  PICS_token        (4-byte aligned on i386 SysV)
+//   +0x10  int32_t   BillingType       (enum class : int)
+//   +0x14  int32_t   LicenseType
+//   +0x18  int32_t   Status
+//   +0x1C  uint8_t   SHA_1_Hash[20]
+//   +0x30  void*     pPackageInfoNodeBegin
+//   +0x34  void*     pExtendNodeBegin
+//   +0x38  CUtlVector<uint32_t>  AppIdVec     (16 bytes)
+//   +0x48  CUtlVector<uint32_t>  DepotIdVec   (16 bytes)
+
+// CUtlVector<T> header (Source SDK, 16 bytes on i386):
+//   T* m_pMemory;            int m_nAllocationCount;
+//   int m_nGrowSize;         uint32_t m_Size;
+template<typename T>
+struct CUtlVector {
+    T*       m_pMemory;
+    int      m_nAllocationCount;
+    int      m_nGrowSize;
+    uint32_t m_Size;
+};
+static_assert(sizeof(CUtlVector<uint32_t>) == 16, "CUtlVector header must be 16 bytes");
+
+constexpr std::size_t kOffPackageId = 0x00;
+constexpr std::size_t kOffAppIdVec  = 0x38;
+
+inline uint32_t PkgId(void* pInfo) {
+    return *reinterpret_cast<uint32_t*>(
+        static_cast<uint8_t*>(pInfo) + kOffPackageId);
+}
+inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
+    return reinterpret_cast<CUtlVector<uint32_t>*>(
+        static_cast<uint8_t*>(pInfo) + kOffAppIdVec);
+}
+
+// =============================================================================
+// Reusable depot injection
+// =============================================================================
+// Performs the actual KeyStore depot → AppIdVec injection, with the same
+// sanity checks the LoadPackage hook has always had (size cap, AppId range
+// validation, idempotent dedup, realloc-with-doubling growth).
+//
+// `source` is a short label for the log line — distinguishes injections done
+// from the hook itself ("hook") from those done by the package-0 finder
+// worker ("finder") so we can tell them apart in postmortem.
+//
+// Returns true if any depot was actually added; false if there was nothing to
+// add, sanity checks failed, or realloc failed. NEVER writes anything on a
+// false return.
+//
+// Content-based idempotency: it filters out depot ids already present in
+// AppIdVec, so calling it twice (e.g. hook + finder both fire) never doubles
+// entries — the vector's own contents are the source of truth, no external
+// flag needed.
+bool InjectDepots(void* pInfo, const char* source);
 
 } // namespace Hooks::LoadPackage

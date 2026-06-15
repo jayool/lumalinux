@@ -1,5 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
+<<<<<<< HEAD
 project(lumalinux LANGUAGES C CXX VERSION 0.11.0)
+=======
+project(lumalinux LANGUAGES C CXX VERSION 0.11.0)
+>>>>>>> 44be370 (v0.10.9: package-0 finder — inject by walking the cache, not just the hook)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -41,6 +45,7 @@ add_library(lumalinux SHARED
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp
     src/hooks/load_package_hook.cpp
+    src/hooks/package_zero_finder.cpp
     src/hooks/gmrc_hook.cpp
     src/globals.cpp
     src/curl.cpp

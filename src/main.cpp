@@ -26,6 +26,7 @@
 #include "hooks/depot_key_hook.hpp"
 #include "hooks/depot_dependency_hook.hpp"
 #include "hooks/load_package_hook.hpp"
+#include "hooks/package_zero_finder.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
@@ -179,6 +180,13 @@ void InstallHooks() {
         Log::Notify(LUMALINUX_VERSION_STRING ": %d/%d hooks — %s FAILED. Steam update? See "
                     "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
     }
+
+    // Package-0 finder: covers the case where the LoadPackage hook installs
+    // after steamclient.so's ReadFromDisk already loaded PackageId=0 (the
+    // hook's own timing gap). Walks the cache that ReadFromDisk populated and
+    // injects directly. Opt-in via LUMA_PKG0_FINDER; no-op when unset.
+    // Started after hooks so both injection paths (hook + finder) are live.
+    Hooks::PackageZeroFinder::Start();
 }
 
 bool IsSteamclient(const char* name) {
