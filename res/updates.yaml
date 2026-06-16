@@ -1,10 +1,17 @@
 SafeModeHashes:
   20260611150000:
-    # Verified compatible with lumalinux's 4 hooks (LoadPackage + DepotKey +
-    # BuildDep + GMRC) against Steam clients in this hash group. The 3rd hash
-    # corresponds to the Steam 2026.06.10 client update and was confirmed via
-    # the verify-fix workflow's matrix run against the real ubuntu12_32 binary
-    # from a LumaDeck user reporting `hooks active` notify after install.
+    # Steam clients verified compatible with the current lumalinux pattern set
+    # (DepotKey + BuildDep + GMRC hooks since v0.13.1; LoadPackage is opt-in)
+    # AND the package-0 finder runtime anchors (§13.5).
+    #
+    # Verified via verify-fix workflow against the real ubuntu12_32 binary
+    # from a LumaDeck user reporting `hooks active` notify after install:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
     - 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
+    # Verified via tools/derive_patterns.py: all install-path patterns UNIQUE,
+    # finder anchors PRESENT (cache idiom disp32=0x3969c — a new value, the
+    # runtime derivation handles it without code changes; GMRC prologue tail
+    # unique). End-to-end Brotato install reported by the user on this
+    # binary (Arch Codespaces test environment).
+    - 5bb5a063248addb74d1990d69c805aceacd1ab394c9a189c53830efe43771126
