@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.13.3)
+project(lumalinux LANGUAGES C CXX VERSION 0.13.4)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -46,6 +46,7 @@ add_library(lumalinux SHARED
     src/globals.cpp
     src/curl.cpp
     src/sha256.cpp
+    src/status.cpp
     src/update.cpp
 )
 

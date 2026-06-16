@@ -30,6 +30,7 @@
 #include "hooks/gmrc_hook.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
+#include "status.hpp"
 #include "update.hpp"
 #include "version.hpp"
 
@@ -172,16 +173,19 @@ void InstallHooks() {
     for (const auto& s : specs) {
         if (std::getenv(s.disableEnv)) {
             Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
+            Status::RecordHook(s.name, Status::DISABLED);
             continue;
         }
         ++expected;
         if (s.install()) {
             ++active;
+            Status::RecordHook(s.name, Status::INSTALLED);
         } else {
             Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
                        "updated — see docs/RESEARCH.md to re-derive patterns)", s.name);
             if (!failed.empty()) failed += ", ";
             failed += s.name;
+            Status::RecordHook(s.name, Status::FAILED);
         }
     }
 
@@ -197,7 +201,16 @@ void InstallHooks() {
     // and misses the case where Steam keeps PackageId=0 cached and never calls
     // LoadPackage, so the finder walks the cache directly and injects there. ON
     // BY DEFAULT (disable with LUMA_NO_PKG0_FINDER); the hook no longer injects.
-    Hooks::PackageZeroFinder::Start();
+    if (std::getenv("LUMA_NO_PKG0_FINDER")) {
+        Status::RecordHook("PackageZeroFinder", Status::DISABLED);
+    } else {
+        Hooks::PackageZeroFinder::Start();
+        Status::RecordHook("PackageZeroFinder", Status::INSTALLED);
+    }
+
+    // Snapshot for external consumers (LumaDeck reads $XDG_RUNTIME_DIR/lumalinux/
+    // status.json to render the Settings health badge). Best-effort.
+    Status::Write();
 }
 
 bool IsSteamclient(const char* name) {
