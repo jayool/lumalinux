@@ -334,6 +334,10 @@ vanilla and survives `pacman -Syu steam`. See
 
 ### Related docs
 
+- [`docs/method.md`](docs/method.md) — **the method**: how an unowned-game
+  install actually works end to end (the six gates, where the bytes come from,
+  the phase-by-phase native flow, and a side-by-side of lumalinux vs
+  LumaCore/SteaMidra vs SteamTools/OpenSteamTool)
 - [`docs/RESEARCH.md`](docs/RESEARCH.md) — every hook's signature, RE
   workflow, GMRC endpoint notes, dead-ends, the full LumaCore parity table
 - [`docs/cloudredirect.md`](docs/cloudredirect.md) — running side by side

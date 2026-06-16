@@ -39,6 +39,11 @@ SLSsteam gets you ownership + appinfo. lumalinux gets you the actual bytes.
 
 ## 3. The Steam content-install flow (and where each hook sits)
 
+(For the high-level, cross-tool version of this — the "six gates", the two
+download models, and a side-by-side with LumaCore/SteaMidra and
+SteamTools/OpenSteamTool — see [`method.md`](method.md). This section is the
+lumalinux-specific, function-level detail.)
+
 Clicking Install kicks off, roughly:
 
 1. **Ownership ticket** (eMsg 858, `CMsgClientGetAppOwnershipTicketResponse`).
@@ -481,7 +486,18 @@ v0.8.1.
 
 ### 11.5 GMRC hook (`ManifestBind::FetchSteamRun`)
 
-| | LumaCore | lumalinux |
+> **Correction (verified 2026-06 against the SFF LumaCore source).** The
+> "LumaCore" column below describes an *older or assumed* LumaCore. The current
+> LumaCore.dll in `Midrags/SFF` has **no `GetManifestRequestCode` hook at all** —
+> `ManifestBind.cpp` only implements `BuildDepotDependency`, and the only GMRC
+> reference anywhere is the protobuf message in `proto/steam_messages.proto`. On
+> Windows the request code is fetched by the **SteaMidra Python layer**
+> (`sff/http_utils.py:get_gmrc`) to *pre-download manifests into depotcache*, not
+> supplied to the Steam client at runtime. So the runtime GMRC hook is **unique
+> to lumalinux's native-client-download path**; LumaCore doesn't need it because
+> SteaMidra pre-seeds the manifests. See [`method.md`](method.md) §5.
+
+| | LumaCore (older/assumed) | lumalinux |
 |---|---|---|
 | Hooked function | `GetManifestRequestCode` | Same |
 | HTTP endpoint | `https://manifest.steam.run/api/manifest/{gid}` | `http://gmrc.wudrm.com/manifest/{gid}` |
