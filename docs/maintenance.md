@@ -93,7 +93,17 @@ If `verify-fix` shows `outcome=pattern_miss` on one of the install-path hooks
    - **BuildDep** anchors on the string `"BuildDepotDependency"` → auto.
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
-   - **DepotKey** has no anchor string (see A.3).
+   - **DepotKey** tries an *indirect* anchor: the dispatcher refs
+     `"Software\Valve\Steam\Depots\"`, the script then follows the
+     `CALL [reg+0x18]` to reach the inner accessor (RESEARCH §12.5). When the
+     vcall walk resolves (best-effort — depends on Ghidra's analysis on the
+     new build), the pattern is auto-derived; otherwise it falls back to
+     validating the current pattern and points you at A.3.
+   - **LoadPackage** (since v0.13.1) is diagnostic-only; the script flags it
+     as such, and a `pattern_miss` here does NOT block installs (the package-0
+     finder injects).
+   - **Package-0 finder anchors** (§13.5) — the script also verifies them as
+     part of this run; see C if either says NOT FOUND.
 
 3. Paste the printed `UNIQUE` patterns into `src/patterns.hpp`.
 
@@ -192,7 +202,26 @@ GMRC prologue tail (`55 89 E5 …` register choreography differs), the
 runtime derivation fails and the finder never seeds package 0. **No hook
 pattern is broken**, but installs are still dead.
 
-**Fix** (manual; pattern tools don't cover this yet):
+**Diagnose** (since v0.13.1, automated by `derive_patterns.py`):
+
+Run the same Ghidra postScript used for hook patterns (§A.2). It now verifies
+the two finder anchors and prints PRESENT / NOT FOUND. The expected output on
+a healthy binary is:
+
+```
+---- package-0 finder anchors (§13.5) ----
+  [a] cache-access idiom (anchored on tree-root offset 0xc58):
+      PRESENT @ <addr>   disp32=0x<X>  (cache_global = GOT + disp32)
+      OK — finder's cache locator will work on this binary.
+  [b] GMRC prologue tail (survives the hook detour):
+      PRESENT @ <addr>   (unique)
+      OK — finder's GOT derivation will work on this binary.
+```
+
+If `[a]` says NOT FOUND → `0xc58` moved (root offset of `CPackageInfoCache`).
+If `[b]` says NOT FOUND → the GMRC prologue tail changed.
+
+**Fix** (manual code edits, no patterns.hpp involved):
 
 1. Diff `CPackageInfoCache` in the new binary against the old one to find
    the new root-offset (very likely still around `0xc5n` / `0xc6n`).

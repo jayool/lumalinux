@@ -283,23 +283,33 @@ analyzeHeadless <proj> <name> -process steamclient.so \
 
 It works two ways per hook, because **not every function has a usable anchor**:
 
-| Hook | Anchor string | How the tool handles it |
+| Piece | Anchor | How the tool handles it |
 |---|---|---|
-| **BuildDep** | `"BuildDepotDependency"` | finds the string → the referencing function → re-extracts a fresh prologue pattern (PIC `call` rel32 + the GOT `add reg,imm32` auto-wildcarded). **Fully auto.** |
-| **GMRC** | `"ContentServerDirectory.GetManifestRequestCode#1"` | same — **fully auto**, prints e.g. `E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 …`. |
-| **DepotKey** | *none* (leaf-ish, logs nothing) | re-validates the **current** pattern against the new binary; if it still matches **uniquely**, "keep it", else flags for manual re-derivation. |
-| **LoadPackage** | *none* | same validation, but a **multi-match is expected** (the runtime enumerates candidates and picks one via `LUMA_LOADPKG_IDX`, default 0) so the tool just lists the candidate sites. |
+| **BuildDep** | string `"BuildDepotDependency"` | string → referencing function → fresh prologue pattern (PIC `call` rel32 + GOT `add reg,imm32` auto-wildcarded). **Fully auto.** |
+| **GMRC** | string `"ContentServerDirectory.GetManifestRequestCode#1"` | same. **Fully auto**, e.g. `E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 …`. |
+| **DepotKey** | indirect: dispatcher refs `"Software\Valve\Steam\Depots\"`, then virtual call (§12.5) | tries to follow the dispatcher's `CALL [reg+0x18]` to reach the inner accessor and emit a fresh pattern. If that vcall walk fails (Ghidra didn't resolve it on this build), falls back to validating the current pattern. |
+| **LoadPackage** | *none* — and **diagnostic-only since v0.13.1** | validates current pattern. A miss does NOT break installs (the package-0 finder injects); only `LUMA_LOADPKG_DEBUG=1` is affected. The script output flags this explicitly so a maintainer doesn't waste time on it. |
+| **package-0 finder** anchors (§13.5) | none — **runtime-derived**, not in `patterns.hpp` | verifies the two anchors are still present: (a) the cache-access idiom `8D ?? disp32 8B ?? 8B ?? 58 0C 00 00`, anchored on the `0xc58` tree-root offset; prints `disp32` (= the X used at runtime). (b) The GMRC prologue tail `55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20`. If either says NOT FOUND → the fix is in `src/hooks/package_zero_finder.cpp`, not in `patterns.hpp`. |
 
-So the two string-anchored hooks (BuildDep, GMRC) — the ones most likely to move
-across builds — are auto-derived; the two anchorless ones are auto-*validated* and
-flagged if they ever stop matching, at which point you re-derive them by hand in
-the Ghidra GUI (locate the function per §4, copy ~28 prologue bytes, wildcard the
-get_pc_thunk `call` rel32 and the following `add reg,imm32`).
+What you get end-to-end: the **string-anchored** hooks (BuildDep, GMRC) and
+DepotKey-via-vcall are auto-derived. LoadPackage is treated as best-effort
+diagnostic. The **finder anchors** are auto-validated against any new binary so
+a Steam update that moves the runtime-derivation contract surfaces immediately
+(without it, you'd only notice when installs silently fail). For the rare cases
+the tool can't resolve (e.g. DepotKey if the vcall walk fails on a future
+build), the output is explicit about WHICH piece needs manual work and where
+in the source tree the fix lives.
 
 **The wildcarding gotcha** (worth knowing if you extend the tool): the
 get_pc_thunk-relative `add` has two encodings — `0x05` (`add eax,imm32`, 5 bytes)
 and `0x81 /0` (`add r/m32,imm32`, 6 bytes). Both must have their imm32 masked;
 GMRC uses the short `0x05` form, BuildDep/LoadPackage the `0x81` form.
+
+**Jython quirk noticed during the v0.13.1 verification pass**: `Memory.findBytes`
+with full-byte wildcards in short patterns returned zero hits even when the
+bytes existed. The finder-anchor check sidesteps this by searching for the
+unambiguous trailing literal first and verifying the surrounding bytes via
+`mem.getByte()`. Keep that in mind if you ever add another anchor verification.
 
 Paste the printed `UNIQUE` patterns into `src/patterns.hpp`, rebuild, redeploy.
 (`tools/ghidra_find_gmrc.py` is the original GMRC-only finder kept for reference.)
