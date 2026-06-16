@@ -4,8 +4,10 @@
 #include <cstdarg>
 #include <ctime>
 #include <mutex>
+#include <atomic>
 #include <string>
 #include <cstdlib>
+#include <strings.h>   // strcasecmp
 #include <unistd.h>
 #include <pwd.h>
 
@@ -13,6 +15,40 @@ namespace {
 
 FILE* g_logFile = nullptr;
 std::mutex g_logMutex;
+
+// Severity ordering: lower = more important. A line is written only if its
+// severity <= the active threshold (g_logLevel). Default is INFO, so the noisy
+// per-call DEBUG traces (e.g. BuildDepotDependency on every depot query) are
+// suppressed unless the user opts in with LUMA_LOG_LEVEL=debug.
+enum Severity { SEV_ERROR = 0, SEV_WARN = 1, SEV_INFO = 2, SEV_DEBUG = 3 };
+std::atomic<int> g_logLevel{SEV_INFO};
+
+const char* LevelName(int sev) {
+    switch (sev) {
+        case SEV_ERROR: return "error";
+        case SEV_WARN:  return "warn";
+        case SEV_DEBUG: return "debug";
+        default:        return "info";
+    }
+}
+
+// LUMA_LOG_LEVEL: error|warn|info|debug (case-insensitive) or 0..3.
+// Unset / unrecognised → INFO.
+int ParseLogLevel() {
+    const char* e = std::getenv("LUMA_LOG_LEVEL");
+    if (!e || !*e) return SEV_INFO;
+    if (e[0] >= '0' && e[0] <= '9') {
+        int n = std::atoi(e);
+        if (n < SEV_ERROR) n = SEV_ERROR;
+        if (n > SEV_DEBUG) n = SEV_DEBUG;
+        return n;
+    }
+    if (strcasecmp(e, "error") == 0)                              return SEV_ERROR;
+    if (strcasecmp(e, "warn") == 0 || strcasecmp(e, "warning") == 0) return SEV_WARN;
+    if (strcasecmp(e, "info") == 0)                              return SEV_INFO;
+    if (strcasecmp(e, "debug") == 0)                             return SEV_DEBUG;
+    return SEV_INFO;
+}
 
 std::string ResolveLogPath() {
     // Prefer XDG_CACHE_HOME, fall back to $HOME/.cache, then /tmp
@@ -43,8 +79,10 @@ std::string ResolveLogPath() {
     return dir + "/lumalinux.log";
 }
 
-void WriteLine(const char* level, const char* fmt, va_list ap) {
+void WriteLine(int severity, const char* level, const char* fmt, va_list ap) {
     if (!g_logFile) return;
+    // Level filter — cheap, lock-free, evaluated before taking the mutex.
+    if (severity > g_logLevel.load(std::memory_order_relaxed)) return;
 
     std::lock_guard<std::mutex> lock(g_logMutex);
 
@@ -67,10 +105,12 @@ namespace Log {
 
 void Init() {
     if (g_logFile) return;
+    g_logLevel.store(ParseLogLevel(), std::memory_order_relaxed);
     std::string path = ResolveLogPath();
     g_logFile = std::fopen(path.c_str(), "a");
     if (g_logFile) {
-        Info("=== lumalinux loaded (pid=%d) ===", getpid());
+        Info("=== lumalinux loaded (pid=%d, log level=%s) ===",
+             getpid(), LevelName(g_logLevel.load(std::memory_order_relaxed)));
     }
 }
 
@@ -82,10 +122,10 @@ void Shutdown() {
     }
 }
 
-void Info(const char* fmt, ...)  { va_list ap; va_start(ap, fmt); WriteLine("INFO",  fmt, ap); va_end(ap); }
-void Warn(const char* fmt, ...)  { va_list ap; va_start(ap, fmt); WriteLine("WARN",  fmt, ap); va_end(ap); }
-void Error(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine("ERROR", fmt, ap); va_end(ap); }
-void Debug(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine("DEBUG", fmt, ap); va_end(ap); }
+void Info(const char* fmt, ...)  { va_list ap; va_start(ap, fmt); WriteLine(SEV_INFO,  "INFO",  fmt, ap); va_end(ap); }
+void Warn(const char* fmt, ...)  { va_list ap; va_start(ap, fmt); WriteLine(SEV_WARN,  "WARN",  fmt, ap); va_end(ap); }
+void Error(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine(SEV_ERROR, "ERROR", fmt, ap); va_end(ap); }
+void Debug(const char* fmt, ...) { va_list ap; va_start(ap, fmt); WriteLine(SEV_DEBUG, "DEBUG", fmt, ap); va_end(ap); }
 
 void Notify(const char* fmt, ...) {
     char msg[512];
@@ -93,7 +133,7 @@ void Notify(const char* fmt, ...) {
     std::vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
 
-    // Always log it.
+    // Always log it (at INFO so it survives the default level).
     Info("NOTIFY: %s", msg);
 
     if (std::getenv("LUMA_NO_NOTIFY")) return;

@@ -149,6 +149,10 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 ### Env vars (set before launching Steam)
 
 - `LUMA_NO_NOTIFY` — silence the startup toast.
+- `LUMA_LOG_LEVEL` — log verbosity: `error` / `warn` / `info` / `debug` (or
+  `0`–`3`). Default `info`. The per-call `[DEBUG]` traces (e.g. BuildDep on
+  every depot query) are suppressed by default; set `LUMA_LOG_LEVEL=debug` when
+  actively debugging.
 - `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an
   individual install-path hook.
 - `LUMA_NO_PKG0_FINDER=1` — disable the package-0 finder. The finder is **on by
