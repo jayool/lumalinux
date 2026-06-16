@@ -183,7 +183,85 @@ today.
 
 ---
 
-## 6. The one-line summary
+## 6. Game lifecycle: install, update, and manifest pinning
+
+Once a game is installed, its life is governed by the **manifest GID pin** in the
+BuildDep hook. `steamidra_lite` writes each depot's pinned GID into `keys.txt`
+(`depot;parent;gid;size;key`), and BuildDep patches Steam's download plan to that
+GID. The effect: Steam stays on the exact version you have keys + a manifest for,
+and **does not auto-update** to a newer one.
+
+### Why pin — and what would happen without it
+
+The pin is **not** what enables the download; it's what **prevents an
+auto-update**. If BuildDep did *not* pin, a typical update would download on its
+own:
+
+1. Steam queries PICS → gets the **new** manifest GID.
+2. The **GMRC** hook fetches the request code for that new GID (the GMRC service
+   has it — it derives codes from accounts that own the game, which are on the
+   latest version).
+3. Steam downloads the new manifest + the changed chunks from the CDN.
+4. The depot AES key is **per-depot and stable across versions**, so the existing
+   key decrypts the new chunks.
+
+So an unpinned game would, in the common case, just update itself. The pin is a
+**deliberate safety choice**, because an update can break the install in two ways
+the pin guards against:
+
+1. The update **adds a new depot** whose key you don't have → `Missing decryption
+   key` on that depot (cancels the whole app — cf. the Balatro case, §13.7 in
+   RESEARCH).
+2. Valve **rotates the depot key** (rare) → your old key stops decrypting.
+
+The pin trades "auto-updates" for "always decryptable": you stay on a version
+whose keyset you fully hold. It's **per depot** — a depot written with `gid=0` in
+`keys.txt` is not pinned and would follow PICS, so pinning is effectively opt-in
+per depot via whether `steamidra_lite` has a GID for it.
+
+### Updating to a new version
+
+To actually move to a newer version you need the **new Hubcap zip** for it:
+
+- Re-run `steamidra_lite` with the new zip (LumaDeck's **"Re-download Manifest"**
+  button does exactly this). It rewrites `keys.txt` with the **new** GID (plus
+  any new depots/keys the update added), pre-seeds the new manifest into
+  `depotcache`, and re-stubs the `.acf`.
+- BuildDep then pins the **new** version → Steam downloads the delta.
+
+Without the new zip, lumalinux keeps you pinned on the version you have — which
+is the **safe default, not a failure**. "You need the new zip" is the safe answer,
+not a hard technical limit: a *simple* update (same depots, same key) would
+download even unpinned; the new zip guarantees you have everything a *complex*
+update might add (new depots/keys).
+
+### How an available update is detected
+
+`steamidra_lite` writes `~/.local/share/ACCELA/depots/<appid>.depot` recording
+the manifest GID you currently hold. ACCELA's / LumaDeck's update check compares
+that against the current public GID from SteamCMD; if they differ it surfaces an
+**"Update available"** badge. That's the cue to grab the new Hubcap zip.
+
+### Where GMRC stays load-bearing
+
+Even with manifests pre-seeded (§5), the runtime GMRC hook still matters for any
+manifest Steam requests that you did **not** pre-seed:
+
+- **Shader pre-cache** — a per-GPU depot (id == app id) that Steam generates;
+  its manifest is never in the Hubcap zip, so if Steam runs the shader pre-cache
+  it must request the code → GMRC supplies it. (The shader cache is an
+  optimisation; the game installs and plays without it, but a denied request can
+  surface as a transient "No connection" — RESEARCH §11.5.)
+- **Updates** — the new manifest isn't cached, so GMRC fetches its code at
+  runtime (until you re-seed via a new zip).
+
+This was observed directly: Brotato fired GMRC for its shader depot (1942280);
+Tilt It! Golf, whose content manifests were all pre-seeded and which ran no
+shader pre-cache, never fired GMRC and still installed end to end.
+
+---
+
+## 7. The one-line summary
 
 The content always comes from Steam's CDN, and in the native method the **Steam
 client** downloads it. The tools' job is to clear the six gates so the client
