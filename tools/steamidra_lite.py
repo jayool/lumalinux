@@ -18,7 +18,8 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
        - AppID dummy    → LEGACY    (placeholder 000...0)
      Los shared se detectan del header "-- SHARED DEPOTS" del .lua de Hubcap.
   4. Inyecta las DecryptionKeys en ~/.local/share/Steam/config/config.vdf
-     (POR DEFECTO; --no-vdf para saltar). Requiere 'pip install --user vdf'.
+     (POR DEFECTO; --no-vdf para saltar). Lo hace editando el VDF como texto
+     (sin depender del módulo 'vdf' externo — ver update_config_vdf).
      Cierra Steam ANTES de correr el script (Steam reescribe config.vdf al
      salir).
   5. (opcional, --token APPID:HEX) Añade un AppToken al config.yaml de SLSsteam.
