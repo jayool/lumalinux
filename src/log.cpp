@@ -104,11 +104,22 @@ void WriteLine(int severity, const char* level, const char* fmt, va_list ap) {
 namespace Log {
 
 void Init() {
-    if (g_logFile) return;
-    g_logLevel.store(ParseLogLevel(), std::memory_order_relaxed);
-    std::string path = ResolveLogPath();
-    g_logFile = std::fopen(path.c_str(), "a");
-    if (g_logFile) {
+    // Steam calls into our hooks from multiple threads; two of them can race
+    // into Init() before g_logFile is set. Serialize the check-and-open under
+    // g_logMutex so we open exactly once (a double-open would leak the first
+    // FILE* and could interleave the banner). The banner itself is emitted
+    // OUTSIDE the lock — Info()->WriteLine() re-takes g_logMutex, and our mutex
+    // is non-recursive, so logging while holding it would self-deadlock.
+    bool opened = false;
+    {
+        std::lock_guard<std::mutex> lock(g_logMutex);
+        if (g_logFile) return;
+        g_logLevel.store(ParseLogLevel(), std::memory_order_relaxed);
+        std::string path = ResolveLogPath();
+        g_logFile = std::fopen(path.c_str(), "a");
+        opened = (g_logFile != nullptr);
+    }
+    if (opened) {
         Info("=== lumalinux loaded (pid=%d, log level=%s) ===",
              getpid(), LevelName(g_logLevel.load(std::memory_order_relaxed)));
     }

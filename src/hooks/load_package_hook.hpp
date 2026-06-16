@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstddef>
 
+#include "../steam_types.hpp"   // CUtlVector<T>
+
 namespace Hooks::LoadPackage {
 
 // Hook CPackageInfoCache::LoadPackage. When the package being loaded has
@@ -36,18 +38,8 @@ void Uninstall();
 //   +0x34  void*     pExtendNodeBegin
 //   +0x38  CUtlVector<uint32_t>  AppIdVec     (16 bytes)
 //   +0x48  CUtlVector<uint32_t>  DepotIdVec   (16 bytes)
-
-// CUtlVector<T> header (Source SDK, 16 bytes on i386):
-//   T* m_pMemory;            int m_nAllocationCount;
-//   int m_nGrowSize;         uint32_t m_Size;
-template<typename T>
-struct CUtlVector {
-    T*       m_pMemory;
-    int      m_nAllocationCount;
-    int      m_nGrowSize;
-    uint32_t m_Size;
-};
-static_assert(sizeof(CUtlVector<uint32_t>) == 16, "CUtlVector header must be 16 bytes");
+//
+// CUtlVector<T> lives in steam_types.hpp (shared with the BuildDep hook).
 
 constexpr std::size_t kOffPackageId = 0x00;
 constexpr std::size_t kOffAppIdVec  = 0x38;

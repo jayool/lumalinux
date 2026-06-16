@@ -3,35 +3,13 @@
 #include "../key_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
+#include "../steam_types.hpp"   // CUtlVector<T>, DepotEntry
 
 #include <cstdint>
 #include <cstring>
 #include <unordered_map>
 
 namespace {
-
-// CUtlVector<T> (Source SDK, 16-byte header).
-struct DepotEntry {
-    uint32_t DepotId;
-    uint32_t AppId;
-    uint64_t ManifestGid;
-    uint64_t ManifestSize;
-    uint32_t DlcAppId;
-    uint8_t  LcsRequired;
-    uint8_t  bNotNewTarget;
-    uint8_t  SharedInstall;
-    uint8_t  _pad;
-};
-static_assert(sizeof(DepotEntry) == 0x20, "DepotEntry must be 32 bytes");
-
-template<typename T>
-struct CUtlVector {
-    T*       m_pMemory;
-    int      m_nAllocationCount;
-    int      m_nGrowSize;
-    uint32_t m_Size;
-};
-static_assert(sizeof(CUtlVector<DepotEntry>) == 16, "CUtlVector header must be 16 bytes");
 
 using BuildDepotDependencyFn = bool (*)(
     void*                    this_,
