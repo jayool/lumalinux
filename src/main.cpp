@@ -128,13 +128,22 @@ void InstallHooks() {
         return;
     }
 
-    // SafeMode hash gate, SLSsteam-style. Refuse to install any hook unless
-    // the loaded steamclient.so hashes to one of the entries in res/updates.yaml
-    // under our compile-time LUMALINUX_SAFEMODE_VERSION group. Same fail-closed
-    // semantics as SLSsteam: network → cache → false. No override.
+    // Hash gate, SLSsteam-style. Refuse to install any hook unless the loaded
+    // steamclient.so hashes to one of the entries in res/updates.yaml under our
+    // compile-time LUMALINUX_SAFEMODE_VERSION group. Always fail-closed: there
+    // is no override, no config.yaml — the only way out is to ship a new release
+    // (or add the hash to res/updates.yaml on main; cache refreshes on next boot).
+    //
+    // Write status.json before returning so external UIs (LumaDeck) can tell
+    // "hash blocked" apart from "Steam never started this session". Without
+    // this, a blocked session is invisible.
     if (!Updater::init() || !Updater::verifySafeModeHash()) {
-        Log::Notify("SafeMode: steamclient.so hash not in verified list — "
-                    "hooks skipped. See ~/.cache/lumalinux/lumalinux.log");
+        Log::Notify(LUMALINUX_VERSION_STRING " blocked: steamclient.so hash not "
+                    "in verified list (Steam updated past this lumalinux build). "
+                    "Installed games still work; new downloads disabled until "
+                    "lumalinux is updated. See ~/.cache/lumalinux/lumalinux.log");
+        Status::SetBlocked("hash_unverified");
+        Status::Write();
         return;
     }
 

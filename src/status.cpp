@@ -19,6 +19,7 @@ struct HookRecord {
 
 std::mutex g_mtx;
 std::vector<HookRecord> g_hooks;
+std::string g_blocked;  // empty when not blocked
 
 const char* OutcomeStr(Status::Outcome o) {
     switch (o) {
@@ -72,11 +73,18 @@ void RecordHook(const char* name, Outcome outcome) {
     g_hooks.push_back({name, outcome});
 }
 
+void SetBlocked(const char* reason) {
+    std::lock_guard<std::mutex> lock(g_mtx);
+    g_blocked = reason ? reason : "";
+}
+
 void Write() {
     std::vector<HookRecord> snapshot;
+    std::string blocked;
     {
         std::lock_guard<std::mutex> lock(g_mtx);
         snapshot = g_hooks;
+        blocked  = g_blocked;
     }
 
     std::string path = ResolvePath();
@@ -91,6 +99,13 @@ void Write() {
     std::fprintf(f, "  \"version\": \"%s\",\n", LUMALINUX_VERSION_STRING);
     std::fprintf(f, "  \"pid\": %d,\n", getpid());
     std::fprintf(f, "  \"started_at\": \"%s\",\n", IsoUtcNow().c_str());
+    // "blocked": null when we got past the gate; a short reason ("hash_unverified")
+    // when InstallHooks() refused to hook (no hook ever ran, so hooks={}).
+    if (blocked.empty()) {
+        std::fprintf(f, "  \"blocked\": null,\n");
+    } else {
+        std::fprintf(f, "  \"blocked\": \"%s\",\n", blocked.c_str());
+    }
     std::fprintf(f, "  \"hooks\": {");
     for (size_t i = 0; i < snapshot.size(); ++i) {
         std::fprintf(f, "%s\n    \"%s\": \"%s\"",
@@ -102,7 +117,9 @@ void Write() {
     std::fprintf(f, "}\n");
     std::fclose(f);
 
-    Log::Info("Status: wrote %s (%zu hooks)", path.c_str(), snapshot.size());
+    Log::Info("Status: wrote %s (%zu hooks, blocked=%s)",
+              path.c_str(), snapshot.size(),
+              blocked.empty() ? "no" : blocked.c_str());
 }
 
 } // namespace Status
