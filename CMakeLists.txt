@@ -32,7 +32,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -fvisibility=hidden)
 endif()
 
-add_library(lumalinux SHARED
+set(LUMA_SOURCES
     src/main.cpp
     src/log.cpp
     src/key_store.cpp
@@ -44,20 +44,41 @@ add_library(lumalinux SHARED
     src/hooks/package_zero_finder.cpp
     src/hooks/gmrc_hook.cpp
     src/globals.cpp
-    src/curl.cpp
-    src/sha256.cpp
     src/status.cpp
-    src/update.cpp
 )
+
+# SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so). This
+# is the ONLY part of lumalinux that pulls in libcurl + libcrypto. On a Steam
+# runtime whose pinned libcurl/libcrypto predate the build host's (e.g. a
+# generic Arch container whose Steam runtime ships curl < CURL_OPENSSL_4),
+# linking those system libs makes the whole .so fail to preload into the Steam
+# process (`version 'CURL_OPENSSL_4' not found`), so no hook ever installs.
+# LUMA_NO_UPDATE compiles the gate out: the resulting .so has ZERO curl/openssl
+# dependency and loads anywhere. Intended for hook/finder validation builds —
+# the hooks, package-0 finder and keystore are byte-for-byte unaffected.
+# Production builds leave it OFF (gate stays in).
+option(LUMA_NO_UPDATE "Build without the SafeMode update-check (drops the libcurl/libcrypto dependency)" OFF)
+if(NOT LUMA_NO_UPDATE)
+    list(APPEND LUMA_SOURCES src/curl.cpp src/sha256.cpp src/update.cpp)
+endif()
+
+add_library(lumalinux SHARED ${LUMA_SOURCES})
+
+if(LUMA_NO_UPDATE)
+    target_compile_definitions(lumalinux PRIVATE LUMA_NO_UPDATE)
+endif()
 
 # libcurl + OpenSSL via pkg-config. Both must be the 32-bit variants:
 #   apt: libcurl4-openssl-dev:i386 libssl-dev:i386
 #   pacman: lib32-curl lib32-openssl
 # Invoke cmake with PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig on
 # multiarch Debian/Ubuntu so it picks the i386 .pc files, not the amd64 ones.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(CURL REQUIRED libcurl)
-pkg_check_modules(OPENSSL REQUIRED libcrypto)
+# Skipped entirely under LUMA_NO_UPDATE (no curl/openssl user is compiled in).
+if(NOT LUMA_NO_UPDATE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(CURL REQUIRED libcurl)
+    pkg_check_modules(OPENSSL REQUIRED libcrypto)
+endif()
 
 target_include_directories(lumalinux PRIVATE
     src/

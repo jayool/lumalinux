@@ -31,7 +31,9 @@
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "status.hpp"
+#ifndef LUMA_NO_UPDATE
 #include "update.hpp"
+#endif
 #include "version.hpp"
 
 #include "libmem/libmem.h"
@@ -137,6 +139,7 @@ void InstallHooks() {
     // Write status.json before returning so external UIs (LumaDeck) can tell
     // "hash blocked" apart from "Steam never started this session". Without
     // this, a blocked session is invisible.
+#ifndef LUMA_NO_UPDATE
     if (!Updater::init() || !Updater::verifySafeModeHash()) {
         Log::Notify(LUMALINUX_VERSION_STRING " blocked: steamclient.so hash not "
                     "in verified list (Steam updated past this lumalinux build). "
@@ -146,6 +149,13 @@ void InstallHooks() {
         Status::Write();
         return;
     }
+#else
+    // Built without the SafeMode update-check (no libcurl/libcrypto dependency).
+    // The hash gate is skipped — hooks install unconditionally. Validation /
+    // codespace builds only; NOT for distribution.
+    Log::Warn("Install: SafeMode update-check compiled out (LUMA_NO_UPDATE) — "
+              "installing hooks WITHOUT hash verification");
+#endif
 
     // v0.13.1 — three install-path hooks + the package-0 finder. Loaded via
     // LD_PRELOAD (NOT LD_AUDIT; the audit namespace corrupts the heap → realloc
