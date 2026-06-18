@@ -798,3 +798,70 @@ depot is fine — before blaming the hooks, verify that `keys.txt` has a key
 for **every** depot Steam will ask for, including the shader-cache one (its
 id is typically the app id itself, e.g. `1942280` for Brotato, `2379780`
 for Balatro).
+
+**Update (2026-06): the shader-depot `Missing decryption key` can be transient,
+not always a hard abort.** Re-running the Balatro case with the same incomplete
+zip (`2379780;` no shader key) on the canonical stack (Steam native Arch +
+SLSsteam via Headcrab + lumalinux v0.13.5 release), the first install attempt
+still failed with `Missing decryption key, state 0x40a`, but Steam **re-queued
+it (300 s delay) and the retry succeeded**: it downloaded depot 2379781,
+committed, and reached `StateFlags=4`. The reason it recovers is §11.5 — once the
+`.acf` is `StateFlags=4`, Steam **skips the shader pre-cache entirely**, so the
+missing shader key is never requested again. So the rule is: a missing shader key
+can fail the *first* attempt (during `StateFlags=1`), but Steam's own retry,
+landing on `StateFlags=4`, can still complete the install. A real shader key is
+still the clean fix; the abort just isn't always terminal.
+
+## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
+
+Validated, on the canonical stack (native Arch Steam + SLSsteam via
+enter-the-wired/Headcrab + lumalinux v0.13.5 **release** loaded by the
+`install.sh` `steam.sh` patch — not env-var injection), that a game installed
+**pinned to an old manifest** auto-updates to Valve's current version once the
+pin is removed. Build `7c4ac73e`. This is the concrete proof behind
+[`method.md`](method.md) §6's "Auto-update by unpinning".
+
+### 14.1 The recipe that worked
+
+Per content depot: (1) `keys.txt` gid+size → `0` (key kept); (2) comment
+`--setManifestid` in `config/stplug-in/<appid>.lua` (interop); (3) **delete the
+depot's `depotcache/` + `config/depotcache/` manifests**; (4) restart Steam.
+Step 3 is non-obvious and **required** — a leftover cached old manifest is reused
+and no update happens.
+
+### 14.2 Who does what (from the logs, correlated with `content_log.txt`)
+
+- **SLSsteam** — `Added <appid> to AdditionalApps` + `PlayNotOwnedGames: 1`.
+  That fakes ownership, so Steam treats the app as subscribed and **checks PICS
+  for updates** like any owned game. (It logs nothing per-depot; LogLevel 2.)
+- **lumalinux LoadPackage/finder** — `PKG0_FINDER: HIT PackageId=0` then
+  `all N depot ids already in PackageId=0`. **Confirms the `gid=0` depots stay
+  injected**: `GetAllDepotIds()` doesn't filter on gid, so an unpinned depot is
+  still surfaced and Steam still associates it with the app.
+- **lumalinux BuildDep — passthrough.** Before unpin it logged
+  `BuildDep: PATCH … gid <old> -> <old>`; after unpin it logs
+  `app <appid> … none required patching` and **no PATCH line** for the unpinned
+  depots → Steam keeps Valve's real current gid → schedules the update.
+- **lumalinux DepotKey** — `LoadDepotKey: SERVED local key for depot …` for the
+  new content (same key decrypts the new manifest; depot keys are version-stable).
+- **lumalinux GMRC** — the new manifest is *not* in `depotcache` (nuked), so Steam
+  requests its code at runtime and GMRC supplies it. This is the §11.5 /
+  method.md §6 "GMRC stays load-bearing for updates" path, exercised for real.
+- **Steam native client** — downloads the delta, decrypts, commits:
+  `finished update, 2 mounted depots : 1794681 (7054…), 1794685 (7852…)`.
+
+### 14.3 Notes worth keeping
+
+- **Per-depot detection, not buildid.** Both games kept the *current* `buildid`
+  in the `.acf` (Steam stamps the live buildid at install even under a pinned old
+  manifest); the update still fired because Steam compares the **per-depot
+  manifest GID** against PICS. See method.md §6.
+- **The injection vehicle matters.** This worked because lumalinux was in the
+  live 32-bit client via the `steam.sh` LD_PRELOAD patch (§5). Injecting
+  `LD_PRELOAD` as a bare env var on the `steam` command instead does **not**
+  survive Steam's client re-exec — the lib loads only into the launcher/wrapper
+  processes, the real client never gets the hooks, and the install silently
+  produces a 0-byte "phantom" `.acf`. Use the canonical patch, not env vars.
+- **Multi-depot installs do happen.** Contrary to the single-depot Balatro case
+  in §10, Vampire Survivors mounted **two** content depots (1794681 Windows-
+  content + 1794685 Linux) on a Linux install; both pinned, both auto-updated.

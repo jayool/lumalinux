@@ -28,7 +28,7 @@ opened:
 | 2 | **PICS appinfo** | The app's product info (depot list, manifest ids) | Valve won't return the access token without a licence |
 | 3 | **Depot surfacing** | Are the content depots in a package the user owns? | If not → "0 target depots" → 0-byte "Fully Installed" |
 | 4 | **Manifest pinning** | Which exact version (manifest GID) of each depot to fetch | Must be pinned to the version we have keys for |
-| 5 | **Depot key** | The AES-128 key to decrypt the depot's chunks | Valve won't hand it over for an unowned depot |
+| 5 | **Depot key** | The 32-byte (AES-256) key to decrypt the depot's chunks | Valve won't hand it over for an unowned depot |
 | 6 | **Manifest request code** | A per-manifest token that **authorises the manifest download from the CDN** | Valve **denies** it for unowned content |
 
 Gates 1–5 can be faked **locally** — you only have to convince *your own* Steam.
@@ -235,12 +235,56 @@ not a hard technical limit: a *simple* update (same depots, same key) would
 download even unpinned; the new zip guarantees you have everything a *complex*
 update might add (new depots/keys).
 
+### Auto-update by unpinning (validated 2026-06)
+
+The "would download even unpinned" claim above is **not theoretical** — it was
+validated end-to-end on Linux (Balatro and Vampire Survivors, native client,
+with a visible delta download). This is the Linux equivalent of the SteaMidra
+Windows trick of commenting out the `setManifestid` lines in the stplug-in `.lua`
+(`--setManifestid(...)`) to make the game **auto-update like a legit owner**.
+
+On Linux/lumalinux, `keys.txt` — not the stplug-in `.lua` — is the source of
+truth, so "unpinning" a depot means three concrete steps:
+
+1. **`keys.txt`: set the depot's `manifest_gid` (and size) to `0`**, keeping the
+   key: `depot;parent;0;0;key`. With `gid=0`, `GetDepotsForApp` excludes the
+   depot, so **BuildDep does not patch it** → Steam uses Valve's real current
+   manifest gid (logs `BuildDep: app … none required patching`, never
+   `BuildDep: PATCH`). The depot is still injected into `PackageId=0`
+   (`GetAllDepotIds` returns all depots regardless of gid) and its key is still
+   served (DepotKey hook), so the new content still decrypts.
+2. **Comment `--setManifestid` in `config/stplug-in/<appid>.lua`** — parity with
+   the Windows method; interop only, since lumalinux reads `keys.txt`.
+3. **Nuke the depot's entries in `depotcache/` (and `config/depotcache/`)** —
+   **required**. If the old pinned manifest stays cached, Steam reuses it instead
+   of fetching the current one. (Mirrors the Discord advice to "nuke your
+   depotcache folder".)
+
+Then restart Steam: it detects the installed manifest ≠ Valve's current,
+re-fetches the new manifest (GMRC supplies its request code at runtime — see
+below), downloads the delta, decrypts with the same per-depot key, and updates —
+**automatically, no click**. Verified live: Vampire Survivors went
+`1794681 6531…→7054…` and `1794685 7577…→7852…` on its own after unpinning.
+
+So pinning vs unpinning is a per-depot policy choice in `keys.txt`: a non-zero
+gid pins (exact version, always decryptable); `gid=0` follows Valve (auto-update,
+at the cost of a future update possibly adding a depot/key you don't have).
+
 ### How an available update is detected
 
 `steamidra_lite` writes `~/.local/share/ACCELA/depots/<appid>.depot` recording
 the manifest GID you currently hold. ACCELA's / LumaDeck's update check compares
 that against the current public GID from SteamCMD; if they differ it surfaces an
 **"Update available"** badge. That's the cue to grab the new Hubcap zip.
+
+That badge is a convenience layer. **Steam itself** decides whether to update by
+comparing, **per depot**, the installed manifest GID (in the `.acf`
+`InstalledDepots`) against PICS's current GID — **not** by `buildid` alone.
+Observed directly: both validation games carried Steam's *current* `buildid` in
+the `.acf` (Steam stamps the live buildid at install time even when BuildDep
+pinned an older manifest), yet unpinning still triggered an update because the
+per-depot manifest GID differed. So an "old manifest under the current buildid"
+is enough for Steam to update once the pin is removed.
 
 ### Where GMRC stays load-bearing
 
