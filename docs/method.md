@@ -185,16 +185,21 @@ today.
 
 ## 6. Game lifecycle: install, update, and manifest pinning
 
-Once a game is installed, its life is governed by the **manifest GID pin** in the
-BuildDep hook. `steamidra_lite` writes each depot's pinned GID into `keys.txt`
-(`depot;parent;gid;size;key`), and BuildDep patches Steam's download plan to that
-GID. The effect: Steam stays on the exact version you have keys + a manifest for,
-and **does not auto-update** to a newer one.
+Once a game is installed, its life is governed by the **manifest GID** each depot
+carries in `keys.txt` (`depot;parent;gid;size;key`) and how BuildDep acts on it.
+`steamidra_lite` has two modes:
 
-### Why pin — and what would happen without it
+- **No-pin (default)** — writes `gid=0`. BuildDep does **not** patch, so Steam
+  follows Valve's current manifest and the game **auto-updates** like a legit
+  owner. See "Auto-update by unpinning" below; validated in RESEARCH §14.
+- **`--pin`** — writes the zip's GID. BuildDep patches Steam's download plan to
+  it, so the game **stays frozen** on that exact version (e.g. a modded game that
+  only works on a specific build).
+
+### Why a pin exists — and what auto-update risks
 
 The pin is **not** what enables the download; it's what **prevents an
-auto-update**. If BuildDep did *not* pin, a typical update would download on its
+auto-update**. Without a pin (the default), a typical update downloads on its
 own:
 
 1. Steam queries PICS → gets the **new** manifest GID.
@@ -205,35 +210,36 @@ own:
 4. The depot AES key is **per-depot and stable across versions**, so the existing
    key decrypts the new chunks.
 
-So an unpinned game would, in the common case, just update itself. The pin is a
-**deliberate safety choice**, because an update can break the install in two ways
-the pin guards against:
+So an unpinned game just updates itself — that's the **default**. `--pin` is the
+**opt-in** for the two cases where an auto-update can break:
 
 1. The update **adds a new depot** whose key you don't have → `Missing decryption
-   key` on that depot (cancels the whole app — cf. the Balatro case, §13.7 in
-   RESEARCH).
+   key` on that depot (cf. the Balatro case, §13.7 in RESEARCH — note §13.7's
+   update that this can be transient and self-recover).
 2. Valve **rotates the depot key** (rare) → your old key stops decrypting.
 
-The pin trades "auto-updates" for "always decryptable": you stay on a version
-whose keyset you fully hold. It's **per depot** — a depot written with `gid=0` in
-`keys.txt` is not pinned and would follow PICS, so pinning is effectively opt-in
-per depot via whether `steamidra_lite` has a GID for it.
+Both are uncommon and **non-destructive** — Steam stages updates and only commits
+on success, so the installed version keeps playing — and both recover the same
+way: re-deploy a fresh Hubcap zip (which carries the new depot/key). `--pin` is
+for when you'd rather not risk even that — e.g. a modded install you want frozen
+on a known-good build. It's **per depot**: a depot with `gid=0` follows Valve, a
+depot with a GID is frozen.
 
-### Updating to a new version
+### Moving a `--pin`'d game to a new version
 
-To actually move to a newer version you need the **new Hubcap zip** for it:
+A no-pin game updates itself; nothing to do. To move a **`--pin`'d** game forward
+(or recover a game whose auto-update needs new keys) you need the **new Hubcap
+zip**:
 
-- Re-run `steamidra_lite` with the new zip (LumaDeck's **"Re-download Manifest"**
-  button does exactly this). It rewrites `keys.txt` with the **new** GID (plus
-  any new depots/keys the update added), pre-seeds the new manifest into
+- Re-run `steamidra_lite --pin` with the new zip (LumaDeck's **"Re-download
+  Manifest"** does exactly this). It rewrites `keys.txt` with the **new** GID
+  (plus any new depots/keys the update added), pre-seeds the new manifest into
   `depotcache`, and re-stubs the `.acf`.
 - BuildDep then pins the **new** version → Steam downloads the delta.
 
-Without the new zip, lumalinux keeps you pinned on the version you have — which
-is the **safe default, not a failure**. "You need the new zip" is the safe answer,
-not a hard technical limit: a *simple* update (same depots, same key) would
-download even unpinned; the new zip guarantees you have everything a *complex*
-update might add (new depots/keys).
+To **freeze a running game on its current version** without a zip, LumaDeck's
+"pin to installed manifests" reads the gids from the `.acf` `InstalledDepots` and
+writes them into `keys.txt` (gid set) — the inverse of unpinning.
 
 ### Auto-update by unpinning (validated 2026-06)
 

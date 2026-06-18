@@ -59,14 +59,15 @@ with zipfile.ZipFile(f"{APP}_old.zip", "w", zipfile.ZIP_DEFLATED) as zout:
 (The zip filename is irrelevant — `steamidra_lite` reads the appid from the
 `.lua`, not the filename. Repeat the swap per depot if pinning more than one.)
 
-## Step 2 — deploy + install the old version (Fase A)
+## Step 2 — deploy + install the old version, pinned (Fase A)
 
 Steam must be **closed** first (`steamidra_lite` writes `config.vdf`, which Steam
-rewrites on exit).
+rewrites on exit). We use **`--pin`** so the game installs at the old version and
+**stays** there (the default is no-pin / auto-update).
 
 ```bash
 steam -shutdown 2>/dev/null || ~/.local/share/Steam/steam.sh -shutdown; sleep 8
-python3 tools/steamidra_lite.py ./APP_old.zip
+python3 tools/steamidra_lite.py ./APP_old.zip --pin
 # verify: keys.txt has  DEPOT;APP;GID_OLD;<size>;<key>
 grep "^DEPOT;" ~/.config/lumalinux/keys.txt
 ```
@@ -86,16 +87,24 @@ grep -A3 InstalledDepots ~/.local/share/Steam/steamapps/appmanifest_APP.acf
 
 ## Step 3 — unpin → auto-update (Fase B)
 
+The clean way is to **re-deploy without `--pin`** — the default mode does all
+three unpin steps (gid→0, comment `setManifestid`, prune the old cached
+manifests):
+
 ```bash
 steam -shutdown 2>/dev/null || ~/.local/share/Steam/steam.sh -shutdown; sleep 8
+python3 tools/steamidra_lite.py ./APP_old.zip      # default = no-pin
+```
 
+Or do it by hand (equivalent), which is useful when you don't want to re-run the
+tool:
+
+```bash
 # 1) keys.txt: gid+size -> 0, keep the key
 sed -i -E 's/^(DEPOT;APP;)[0-9]+;[0-9]+;/\10;0;/' ~/.config/lumalinux/keys.txt
-
 # 2) comment the pin in the stplug-in lua (interop / Windows-method parity)
 sed -i -E 's/^([[:space:]]*)setManifestid/\1--setManifestid/' \
     ~/.local/share/Steam/config/stplug-in/APP.lua
-
 # 3) REQUIRED: nuke this depot's cached manifests so Steam refetches the current one
 rm -f ~/.local/share/Steam/depotcache/DEPOT_* \
       ~/.local/share/Steam/config/depotcache/DEPOT_*

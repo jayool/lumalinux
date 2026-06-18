@@ -17,6 +17,10 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
        - Shared depots  → LEGACY    (solo depot;key, NO se inyectan)
        - AppID dummy    → LEGACY    (placeholder 000...0)
      Los shared se detectan del header "-- SHARED DEPOTS" del .lua de Hubcap.
+     POR DEFECTO (no-pin) escribe gid=size=0 en los content depots → BuildDep
+     hace passthrough → el juego se AUTO-ACTUALIZA siguiendo a Valve. Con --pin
+     escribe el gid del zip → congela esa versión (juegos modeados, etc.). Ver
+     docs/method.md §6.
   4. Inyecta las DecryptionKeys en ~/.local/share/Steam/config/config.vdf
      (POR DEFECTO; --no-vdf para saltar). Lo hace editando el VDF como texto
      (sin depender del módulo 'vdf' externo — ver update_config_vdf).
@@ -31,7 +35,8 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
      hay .acf todavía, escribimos uno limpio.
 
 Uso:
-  python3 steamidra_lite.py 2379780.zip
+  python3 steamidra_lite.py 2379780.zip            # no-pin (auto-update, DEFAULT)
+  python3 steamidra_lite.py 2379780.zip --pin      # congela la versión del zip
   python3 steamidra_lite.py 2379780.zip --no-vdf
   python3 steamidra_lite.py 2379780.zip --token 2379780:0x123abc...
 
@@ -312,6 +317,29 @@ def copy_manifests_from_dir(manifests, src_dir, depotcache, config_depotcache):
     return copied, missing
 
 
+def prune_stale_manifests(depotcache, config_depotcache, keep):
+    """Modo NO-PIN: borra de depotcache (+ config/depotcache) los manifests
+    VIEJOS de los content depots de este juego, dejando SOLO el gid que acabamos
+    de seedear (`keep` = {depot_id: gid_del_zip}). Sin esto, un manifest pinneado
+    viejo de una instalación previa puede reusarse y bloquear el auto-update — es
+    el 'nuke your depotcache' del flujo de SteaMidra, pero scoped a este juego
+    (no toca depots de otros juegos)."""
+    removed = []
+    for depot_id, keep_gid in keep.items():
+        for base in (depotcache, config_depotcache):
+            if base is None or not base.exists():
+                continue
+            for f in base.glob(f"{depot_id}_*.manifest"):
+                parsed = parse_manifest_gid_from_name(f.name)
+                if parsed and parsed[1] != int(keep_gid):
+                    try:
+                        f.unlink()
+                        removed.append(f.name)
+                    except OSError:
+                        pass
+    return removed
+
+
 def update_sls_yaml(yaml_path, all_appids, app_tokens=None):
     """Añade appids a AdditionalApps (y opcional tokens a AppTokens). Idempotente, hace .bak."""
     yaml_path.parent.mkdir(parents=True, exist_ok=True)
@@ -359,13 +387,21 @@ def update_sls_yaml(yaml_path, all_appids, app_tokens=None):
     return n_apps, n_tokens
 
 
-def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_id):
+def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_id, pin):
     """Mezcla con lo existente (no rompe entries de otros juegos) y escribe:
 
     - Cada depot con key (distinto del AppID) → EXTENDED:
         depot_id;parent_app_id;manifest_gid;manifest_size;hex_key
       lumalinux LoadPackage inyecta estos en PackageId=0 si parent==app_id;
       BuildDep parchea los que Steam ya tenga en pDepotInfo.
+
+      PIN vs NO-PIN (parámetro `pin`):
+        - pin=True  → manifest_gid/size = los del zip → BuildDep fija esa versión
+          (el juego NO se auto-actualiza; queda congelado en el manifest del zip).
+        - pin=False (DEFAULT) → manifest_gid=size=0 → BuildDep hace passthrough →
+          Steam sigue el manifest actual de Valve y se auto-actualiza. La key se
+          escribe igual (es por depot y estable entre versiones; descifra cualquier
+          versión). Ver docs/method.md §6.
 
     - El AppID principal → entry LEGACY con key (la del .lua si la trae, o
       000...000 como dummy). Steam pregunta por la 'key del AppID' durante
@@ -415,8 +451,10 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
             # queried as a depot key during download.
             app_id_key_from_lua = key
             continue
-        gid = manifests.get(did, 0)
-        size = manifest_sizes.get(did, 0)
+        # NO-PIN (default): gid/size = 0 → BuildDep passthrough → auto-update.
+        # PIN: usa el gid/size del zip → BuildDep congela esa versión.
+        gid = manifests.get(did, 0) if pin else 0
+        size = manifest_sizes.get(did, 0) if pin else 0
         new_entry = ("ext", app_id, gid, size, key)
         if did not in existing:
             existing[did] = new_entry
@@ -748,12 +786,27 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
 # Each step is best-effort: it logs what it did and never aborts the run.
 
 
-def install_lua_to_stplugin(steam_root, app_id, lua_contents):
+# Comments out every `setManifestid(...)` line in a .lua (prefixing `--`).
+# In NO-PIN mode we write the stplug-in copy unpinned for parity with the
+# Windows/LumaCore method (where commenting setManifestid is what enables
+# auto-update). On Linux lumalinux reads keys.txt, not this .lua, so this is
+# interop/cosmetic — but we keep the stplug-in copy consistent with keys.txt.
+_SETMANIFESTID_LINE_RE = re.compile(r"^([ \t]*)setManifestid", re.MULTILINE)
+
+
+def comment_setmanifestid(lua_contents):
+    return _SETMANIFESTID_LINE_RE.sub(r"\1--setManifestid", lua_contents)
+
+
+def install_lua_to_stplugin(steam_root, app_id, lua_contents, pin):
     """Copy the parsed .lua into <steam>/config/stplug-in/<appid>.lua. SLSsteam
     accepts both AdditionalApps (config.yaml) and the legacy .lua path; we
     already write AdditionalApps, so this is interop only — it lights up
     has_lua_for_app() in DeckTools / LumaDeck and makes SteaMidra-style
     manifest updaters find the game.
+
+    When pin=False (default) the `setManifestid` lines are commented out in the
+    written copy, mirroring the Windows/LumaCore auto-update convention.
 
     If the destination already exists, save a .lua.bak next to it before
     overwriting (the existing .lua may be an older version of the same game,
@@ -763,8 +816,9 @@ def install_lua_to_stplugin(steam_root, app_id, lua_contents):
     dest = stplug / f"{app_id}.lua"
     if dest.exists():
         shutil.copy2(dest, dest.with_suffix(".lua.bak"))
+    out = lua_contents if pin else comment_setmanifestid(lua_contents)
     with open(dest, "w", encoding="utf-8") as f:
-        f.write(lua_contents)
+        f.write(out)
     return dest
 
 
@@ -996,6 +1050,12 @@ def main():
                     help="NO escribir las DecryptionKeys en Steam config.vdf. "
                          "Por defecto SÍ se escriben (SteaMidra Linux también lo hace; "
                          "el hook DepotKey de lumalinux es backup runtime).")
+    ap.add_argument("--pin", action="store_true",
+                    help="PINEAR el juego al manifest del zip (gid del setManifestid). "
+                         "Por DEFECTO NO se pinea (gid=0): el juego sigue a Valve y se "
+                         "auto-actualiza vía el cliente nativo. Usa --pin para congelarlo "
+                         "en la versión del zip (p.ej. juegos modeados a una versión concreta). "
+                         "Ver docs/method.md §6.")
     ap.add_argument("--token", action="append", default=[], metavar="APPID:HEX",
                     help="añadir un AppToken al config.yaml de SLSsteam. Puedes pasarlo varias veces.")
     ap.add_argument("--accela-mark", type=int, default=None, metavar="APPID",
@@ -1099,14 +1159,31 @@ def main():
     shared_depots = parse_shared_depots(lua_text)
     if shared_depots:
         print(f"  [i] shared depots: {sorted(shared_depots)} (se sirven igual; el hook v1.0 lo maneja)")
-    print(f"== Escribiendo {args.luma_keys} ==")
+
+    mode = "PIN (congela la versión del zip)" if args.pin else "NO-PIN (auto-update; sigue a Valve)"
+    print(f"== Escribiendo {args.luma_keys}  [modo: {mode}] ==")
+
+    # NO-PIN: borrar manifests viejos de los content depots de este juego para
+    # que Steam no reuse un manifest pinneado previo y pueda seguir el de Valve.
+    if not args.pin:
+        content_keep = {d: manifests[d] for d in depot_keys
+                        if d != app_id and d not in shared_depots and manifests.get(d)}
+        removed = prune_stale_manifests(depotcache, config_depotcache, content_keep)
+        if removed:
+            print(f"  [+] depotcache: borrados {len(removed)} manifest(s) viejos de este juego "
+                  f"(se conserva el del zip)")
+
     n_new, n_upd = write_lumalinux_keys(
-        args.luma_keys, depot_keys, manifests, manifest_sizes, app_id)
+        args.luma_keys, depot_keys, manifests, manifest_sizes, app_id, args.pin)
     print(f"  [+] {n_new} keys nuevas, {n_upd} actualizadas")
-    patchable = [d for d in depot_keys if d != app_id and manifests.get(d, 0) != 0]
-    print(f"  [*] depots con gid≠0 que BuildDep parcheará si Steam los pide: {patchable}")
-    if not patchable:
-        print(f"  [!] AVISO: ningún content depot con gid≠0. BuildDep no parcheará nada.")
+    if args.pin:
+        patchable = [d for d in depot_keys if d != app_id and manifests.get(d, 0) != 0]
+        print(f"  [*] depots con gid≠0 que BuildDep fijará: {patchable}")
+        if not patchable:
+            print(f"  [!] AVISO: ningún content depot con gid≠0. BuildDep no fijará nada.")
+    else:
+        print(f"  [*] gid=0 en todos los content depots → BuildDep passthrough → "
+              f"Steam sigue el manifest actual de Valve (auto-update)")
     print()
 
     # ── config.vdf — siempre por defecto (--no-vdf para skipear) ──────────
@@ -1147,7 +1224,7 @@ def main():
     # its own log line so the user can see what landed.
     print(f"== Copiando .lua a stplug-in (interop SteaMidra / DeckTools) ==")
     try:
-        lua_dest = install_lua_to_stplugin(args.steam_root, app_id, lua_text)
+        lua_dest = install_lua_to_stplugin(args.steam_root, app_id, lua_text, args.pin)
         print(f"  [+] {lua_dest}")
     except Exception as exc:
         print(f"  [!] no pude escribir el .lua a stplug-in: {exc}")
