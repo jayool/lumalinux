@@ -48,6 +48,12 @@ Uso:
   # stplug-in). No instala nada. Pensado para invocarlo tras terminar el Install.
   python3 steamidra_lite.py --accela-mark 2379780
 
+  # modos sin-zip de pin/unpin para un juego YA desplegado (para LumaDeck).
+  # Cortan al principio (no abren zip, solo editan keys.txt / leen el .acf):
+  python3 steamidra_lite.py --pin-installed 2379780   # congela la versión instalada
+  python3 steamidra_lite.py --unpin 2379780           # vuelve a auto-update
+  python3 steamidra_lite.py --pin-status 2379780      # imprime {appid,pinned,depots}
+
 NO escribe el .acf — Steam lo escribe solo cuando pulses Install.
 """
 
@@ -1030,6 +1036,207 @@ def run_accela_mark(args):
     print("== Hecho (accela-mark) ==")
 
 
+# ── Modos sin-zip: pin/unpin de un juego YA desplegado (para LumaDeck) ─────────
+#
+# Cortan al principio de main() (como --accela-mark): NO abren zip, NO extraen,
+# NO tocan config.vdf. Solo editan keys.txt (y leen el .acf para --pin-installed).
+
+_KEYS_HEADER = [
+    "# lumalinux keys.txt — managed by steamidra_lite.py",
+    "# EXTENDED: depot_id;parent_app_id;manifest_gid;manifest_size;hex_key   (content depots — lumalinux inyecta en pDepotInfo)",
+    "# LEGACY:   depot_id;hex_key                                            (AppID with key — lumalinux solo sirve la key, no inyecta)",
+    "# NO-KEY:   depot_id;                                                   (AppID sin key en el .lua — lumalinux inyecta el id pero el hook hace passthrough; espejo del DepotKeySet[id]=\"\" de LumaCore)",
+    "# Todos los depots (content y shared) van aquí: el hook DepotKey v1.0 hookea la KeyValues accessor interna y sirve cualquiera sin corromper (como LumaCore).",
+]
+
+
+def _load_keys_file(keys_path):
+    """Parsea keys.txt → {depot_id: entry}. entry es una de:
+       ("ext", parent, gid, size, key) | ("leg", key) | ("leg_no_key",).
+    Mismo formato que el parser inline de write_lumalinux_keys."""
+    existing = {}
+    if keys_path.exists():
+        for line in keys_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(";")
+            try:
+                if len(parts) == 5:
+                    existing[int(parts[0])] = ("ext", int(parts[1]), int(parts[2]),
+                                               int(parts[3]), parts[4])
+                elif len(parts) == 2:
+                    did = int(parts[0])
+                    existing[did] = ("leg_no_key",) if parts[1] == "" else ("leg", parts[1])
+            except ValueError:
+                continue
+    return existing
+
+
+def _write_keys_file(keys_path, existing):
+    """Escribe keys.txt desde el dict de _load_keys_file (hace .bak primero)."""
+    keys_path.parent.mkdir(parents=True, exist_ok=True)
+    if keys_path.exists():
+        shutil.copy2(keys_path, keys_path.with_suffix(".txt.bak"))
+    lines = list(_KEYS_HEADER)
+    for did in sorted(existing):
+        e = existing[did]
+        if e[0] == "ext":
+            _, parent, gid, size, key = e
+            lines.append(f"{did};{parent};{gid};{size};{key}")
+        elif e[0] == "leg_no_key":
+            lines.append(f"{did};")
+        else:
+            _, key = e
+            lines.append(f"{did};{key}")
+    keys_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def read_installed_depots(steam_root, app_id):
+    """Lee appmanifest_<appid>.acf → InstalledDepots → {depot_id: (gid, size)}.
+    {} si no hay .acf o no hay InstalledDepots (juego no instalado)."""
+    acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
+    if not acf_path.exists():
+        return {}
+    try:
+        data = _vdf_load_acf(acf_path)
+    except Exception:
+        return {}
+    installed = data.get("AppState", {}).get("InstalledDepots", {})
+    out = {}
+    if isinstance(installed, dict):
+        for did, info in installed.items():
+            if not isinstance(info, dict):
+                continue
+            try:
+                gid = int(info.get("manifest", 0))
+                did_i = int(did)
+            except (ValueError, TypeError):
+                continue
+            try:
+                size = int(info.get("size", 0))
+            except (ValueError, TypeError):
+                size = 0
+            out[did_i] = (gid, size)
+    return out
+
+
+_COMMENTED_SETMANIFESTID_RE = re.compile(r"^([ \t]*)--setManifestid", re.MULTILINE)
+
+
+def uncomment_setmanifestid(lua_contents):
+    return _COMMENTED_SETMANIFESTID_RE.sub(r"\1setManifestid", lua_contents)
+
+
+def _toggle_stplugin_pin(steam_root, app_id, pin):
+    """Comenta (no-pin) o descomenta (pin) los setManifestid del .lua de stplug-in.
+    Interop/cosmético en Linux (lumalinux lee keys.txt), pero mantiene el stplug-in
+    coherente con el estado de pin. Best-effort: si no existe el .lua, no-op."""
+    lua_path = steam_root / "config" / "stplug-in" / f"{app_id}.lua"
+    if not lua_path.exists():
+        return None
+    txt = lua_path.read_text(encoding="utf-8", errors="ignore")
+    new = uncomment_setmanifestid(txt) if pin else comment_setmanifestid(txt)
+    if new != txt:
+        shutil.copy2(lua_path, lua_path.with_suffix(".lua.bak"))
+        lua_path.write_text(new, encoding="utf-8")
+    return lua_path
+
+
+def purge_depot_manifests(depotcache, config_depotcache, depot_ids):
+    """Borra TODOS los manifests de los depots dados (ambos depotcache). Para
+    --unpin: así Steam re-pide el manifest ACTUAL a Valve en el próximo arranque."""
+    removed = []
+    for did in depot_ids:
+        for base in (depotcache, config_depotcache):
+            if base is None or not base.exists():
+                continue
+            for f in base.glob(f"{did}_*.manifest"):
+                try:
+                    f.unlink()
+                    removed.append(f.name)
+                except OSError:
+                    pass
+    return removed
+
+
+def run_pin_installed(args):
+    """--pin-installed APPID: congela el juego en la versión INSTALADA. Lee los
+    gids de appmanifest_<APPID>.acf:InstalledDepots y los escribe en keys.txt para
+    los content depots de este app (parent==APPID). No necesita zip."""
+    app_id = int(args.pin_installed)
+    print(f"== Pin a la versión instalada: appid {app_id} ==")
+    installed = read_installed_depots(args.steam_root, app_id)
+    if not installed:
+        sys.exit(f"ERROR: sin InstalledDepots en appmanifest_{app_id}.acf "
+                 f"(¿el juego está instalado?). Sin versión instalada no hay nada que pinear.")
+    existing = _load_keys_file(args.luma_keys)
+    pinned = []
+    for did, entry in list(existing.items()):
+        if entry[0] != "ext":
+            continue
+        _, parent, gid, size, key = entry
+        if parent == app_id and did in installed:
+            new_gid, new_size = installed[did]
+            existing[did] = ("ext", parent, new_gid, new_size, key)
+            pinned.append((did, new_gid))
+    if not pinned:
+        sys.exit(f"ERROR: ningún content depot de {app_id} en keys.txt coincide con "
+                 f"InstalledDepots {sorted(installed)}. ¿Se desplegó con steamidra_lite?")
+    _write_keys_file(args.luma_keys, existing)
+    _toggle_stplugin_pin(args.steam_root, app_id, pin=True)
+    for did, gid in pinned:
+        print(f"  [+] {did} → gid {gid} (congelado)")
+    print("== Pinneado. Reinicia Steam; el juego se queda en esta versión. ==")
+
+
+def run_unpin(args):
+    """--unpin APPID: vuelve el juego a auto-update. Pone a 0 los gids de los
+    content depots PINNEADOS de este app en keys.txt, comenta setManifestid, y
+    prunea su depotcache para que Steam re-pida el manifest actual a Valve."""
+    app_id = int(args.unpin)
+    print(f"== Unpin (auto-update): appid {app_id} ==")
+    existing = _load_keys_file(args.luma_keys)
+    touched, changed = [], False
+    for did, entry in list(existing.items()):
+        if entry[0] != "ext":
+            continue
+        _, parent, gid, size, key = entry
+        if parent == app_id and (gid != 0 or size != 0):
+            existing[did] = ("ext", parent, 0, 0, key)
+            touched.append(did)
+            changed = True
+    if not any(e[0] == "ext" and e[1] == app_id for e in existing.values()):
+        sys.exit(f"ERROR: ningún content depot de {app_id} en keys.txt. ¿appid correcto?")
+    if changed:
+        _write_keys_file(args.luma_keys, existing)
+    _toggle_stplugin_pin(args.steam_root, app_id, pin=False)
+    depotcache = args.steam_root / "depotcache"
+    config_depotcache = args.steam_root / "config" / "depotcache"
+    removed = purge_depot_manifests(depotcache, config_depotcache, touched)
+    if touched:
+        print(f"  [+] {len(touched)} depot(s) → gid 0 (auto-update): {sorted(touched)}")
+    else:
+        print("  [i] ya estaba en auto-update (gids a 0); nada que cambiar.")
+    if removed:
+        print(f"  [+] depotcache: borrados {len(removed)} manifest(s) de esos depots")
+    print("== Despinneado. Reinicia Steam; volverá a seguir a Valve (auto-update). ==")
+
+
+def run_pin_status(args):
+    """--pin-status APPID: imprime JSON {appid, pinned, depots}. pinned=True si
+    algún content depot de este app tiene gid≠0 en keys.txt."""
+    app_id = int(args.pin_status)
+    existing = _load_keys_file(args.luma_keys)
+    depots = {}
+    for did, entry in existing.items():
+        if entry[0] == "ext" and entry[1] == app_id:
+            depots[did] = entry[2]  # gid
+    pinned = any(g != 0 for g in depots.values()) if depots else False
+    print(json.dumps({"appid": app_id, "pinned": pinned,
+                      "depots": {str(d): str(g) for d, g in sorted(depots.items())}}))
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Replica el deploy de SteaMidra (Linux) sin instalarlo.",
@@ -1064,10 +1271,28 @@ def main():
                          "installdir real de appmanifest_<APPID>.acf y los depots del .lua de "
                          "stplug-in. Idempotente — pensado para que LumaDeck lo invoque cuando "
                          "Steam termine de instalar el juego.")
+    ap.add_argument("--pin-installed", type=int, default=None, metavar="APPID",
+                    help="(modo sin-zip) Congela el juego en la versión INSTALADA: lee los gids "
+                         "de appmanifest_<APPID>.acf:InstalledDepots y los escribe en keys.txt. "
+                         "Para el toggle 'Pin' de LumaDeck. Ver docs/method.md §6.")
+    ap.add_argument("--unpin", type=int, default=None, metavar="APPID",
+                    help="(modo sin-zip) Vuelve el juego a auto-update: gids→0 en keys.txt + "
+                         "comenta setManifestid + prunea su depotcache.")
+    ap.add_argument("--pin-status", type=int, default=None, metavar="APPID",
+                    help="(modo sin-zip) Imprime JSON {appid,pinned,depots} (para LumaDeck).")
     args = ap.parse_args()
 
     if args.accela_mark is not None:
         run_accela_mark(args)
+        return
+    if args.pin_installed is not None:
+        run_pin_installed(args)
+        return
+    if args.unpin is not None:
+        run_unpin(args)
+        return
+    if args.pin_status is not None:
+        run_pin_status(args)
         return
 
     if args.input is None:

@@ -239,7 +239,17 @@ zip**:
 
 To **freeze a running game on its current version** without a zip, LumaDeck's
 "pin to installed manifests" reads the gids from the `.acf` `InstalledDepots` and
-writes them into `keys.txt` (gid set) — the inverse of unpinning.
+writes them into `keys.txt` (gid set) — the inverse of unpinning. This is
+implemented by `steamidra_lite`'s zip-less modes, which LumaDeck shells out to:
+
+- `--pin-installed APPID` — read `appmanifest_<APPID>.acf` `InstalledDepots` →
+  write those gids into the app's content-depot lines in `keys.txt` (freeze).
+- `--unpin APPID` — set those gids to 0, comment `setManifestid`, purge the
+  app's depotcache (back to auto-update).
+- `--pin-status APPID` — print `{appid, pinned, depots}` (so the UI toggle knows
+  which state to show).
+
+These short-circuit early (like `--accela-mark`): no zip, no full deploy.
 
 ### Auto-update by unpinning (validated 2026-06)
 
