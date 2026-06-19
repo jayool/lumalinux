@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.13.5)
+project(lumalinux LANGUAGES C CXX VERSION 0.13.6)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -54,10 +54,19 @@ set(LUMA_SOURCES
 # linking those system libs makes the whole .so fail to preload into the Steam
 # process (`version 'CURL_OPENSSL_4' not found`), so no hook ever installs.
 # LUMA_NO_UPDATE compiles the gate out: the resulting .so has ZERO curl/openssl
-# dependency and loads anywhere. Intended for hook/finder validation builds —
-# the hooks, package-0 finder and keystore are byte-for-byte unaffected.
-# Production builds leave it OFF (gate stays in).
-option(LUMA_NO_UPDATE "Build without the SafeMode update-check (drops the libcurl/libcrypto dependency)" OFF)
+# dependency and loads anywhere. The hooks, package-0 finder and keystore are
+# byte-for-byte unaffected.
+#
+# Default ON since 0.13.6: leaving the libcurl link in broke EVERY game launch
+# under the Steam Linux Runtime. steam.sh's LD_PRELOAD of liblumalinux.so is
+# inherited by the 32-bit game `reaper`; when the runtime's pinned libcurl
+# dropped the CURL_OPENSSL_4 symbol version (SteamOS 3.8's Arch base bump), the
+# reaper failed to start (`version 'CURL_OPENSSL_4' not found`) → exit 1 → games
+# bounced back to the library. Dropping the gate trades lumalinux's
+# self-disable-on-unknown-steamclient safety for not bricking game launches; the
+# hooks already no-op gracefully on a pattern miss, so the safety loss is minor.
+# Set -DLUMA_NO_UPDATE=OFF to compile the update-check back in.
+option(LUMA_NO_UPDATE "Build without the SafeMode update-check (drops the libcurl/libcrypto dependency)" ON)
 if(NOT LUMA_NO_UPDATE)
     list(APPEND LUMA_SOURCES src/curl.cpp src/sha256.cpp src/update.cpp)
 endif()
