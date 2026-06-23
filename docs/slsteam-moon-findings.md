@@ -238,13 +238,65 @@ territory; lumalinux stays at gates 3–6.
 
 ---
 
+# Block B, function 3 — depot surfacing (gate 3, package-0)
+
+Both put the app's depot ids into **package 0** (the implicit "free apps everyone
+owns" package) so the depots survive Steam's per-depot **licence filter** —
+without it Steam reports "0 target depots" and marks the app installed with 0 B.
+
+## How each does it
+
+- **moon — a `LoadPackage` HOOK** (`feats/packagepatch.cpp`). When Steam loads
+  `PackageId 0` (once, very early at boot) it appends the AdditionalApps to
+  `pInfo->AppIdVec`. Because that hook can fire before moon's config is ready, it
+  also has a manual `injectIntoPackage0`. And it found that **injecting on a cold
+  cache hangs the client** (Steam re-requests PICS forever, "Loading user data"),
+  which it fixes with a one-shot **licence reconcile** (`reconcileLicensesOnce`
+  broadcasts `LicensesUpdated_t` on the local `CUser`).
+- **lumalinux — an active FINDER** (`src/hooks/package_zero_finder.cpp`). It does
+  **not** rely on the `LoadPackage` hook (diagnostic-only since v0.13.0); a worker
+  thread **walks the `CPackageInfoCache` BST and polls forever**, locates
+  `PackageId 0`, and injects. Reason: the hook **misses package 0 when it is
+  already cached** (loaded before the hook, kept from a previous session, or a
+  slow login — the old 5-minute cap broke exactly that). It re-injects
+  idempotently if Steam rebuilds the package.
+
+## Verdict — lumalinux is ahead here
+
+| | moon | lumalinux |
+|---|---|---|
+| Approach | `LoadPackage` hook | **Active finder (polls the cache BST)** |
+| Timing | Fragile (early/cold/late) → needs a manual re-inject | **Robust** — catches package 0 whenever it appears |
+| Slow login | Can miss the event | Waits for it (polls forever) |
+
+Both discovered the same cold-cache / late-load problem and solved it
+differently: moon patches *around* the hook (manual re-inject + reconcile);
+lumalinux drops the hook and polls. lumalinux's approach is cleaner and
+timing-robust. **Nothing to port for the mechanism itself.**
+
+## The one thing worth recording — moon's licence reconcile
+
+lumalinux does **not** do a licence reconcile (verified — no `LicensesUpdated_t`
+broadcast anywhere). lumalinux most likely doesn't need it: its finder injects
+**after login** (warm-ish cache), whereas moon's hook injects **early/cold** and
+therefore hits the re-request hang.
+
+But it's a documented fix worth knowing: if lumalinux ever hits "injected into
+package 0, then Steam re-requests PICS forever", the fix is to **broadcast a
+`LicensesUpdated_t` once on the local `CUser`** after the first injection. It is
+reasonably portable (a one-shot callback broadcast, **not** a message-dispatch
+hook, so no SLSsteam overlap), though it depends on resolving the `CUser` /
+broadcast pattern.
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
   `onStartup`, `recvDepotKey`, `saveKeyToCache`), `src/feats/depotkey.hpp`;
   `src/feats/apps.cpp` (`sendPICSInfoRequest`), `src/feats/pics.cpp`,
   `src/feats/cmclient.cpp`, `src/feats/appinfo_vdf.cpp`,
-  `src/feats/appinfo_provision.cpp`.
+  `src/feats/appinfo_provision.cpp`, `src/feats/packagepatch.cpp`.
 - vanilla SLSsteam (`AceSLS/SLSsteam`): `src/feats/apps.cpp:sendPICSInfoRequest`
   (the 15-line token-attach — the whole of its PICS handling).
 - lumalinux: `src/hooks/depot_key_hook.cpp`, `src/key_store.{hpp,cpp}`,
