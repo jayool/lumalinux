@@ -341,6 +341,65 @@ but lumalinux mostly doesn't need it:
 So gate 4 is mostly **confirmation that lumalinux's design is sound** — function
 layer, surgical patch-only-primary — with nothing meaningful to port.
 
+# Block B, function 5 — manifest request code / GMRC (gate 6)
+
+The **only** of the six gates Valve validates **server-side**. The request code
+can't be forged or derived locally — it has to be fetched from a third-party
+service backed by accounts that actually own the content. This is the
+load-bearing piece (method.md).
+
+## The source of the code is identical
+
+Both fetch from **`gmrc.wudrm.com`** (the same endpoint SteaMidra uses). moon
+additionally falls back to `manifest.steam.run`. On the datum that matters —
+where the validated code comes from — there is **nothing to learn**; lumalinux
+already does the same thing.
+
+## How each does it
+
+- **lumalinux — function hook** (`src/hooks/gmrc_hook.cpp` + `src/gmrc_store.hpp`).
+  Hooks the local `GetManifestRequestCode(this, app, depot, manifest_lo,
+  manifest_hi, branch, out_code)` in steamclient. For a manifest of one of our
+  depots (gid in keys.txt, or depot in KeyStore) it calls `Gmrc::GetCode(gid)`,
+  writes `*out_code`, and returns `1` (success); everything else falls through to
+  Steam's owned path. One clean point **SLSsteam does not touch**.
+- **moon — message/network layer** (`src/feats/manifestcode.cpp`), three hooks:
+  1. `hkBBuildAndAsyncSendFrame` — intercepts the **outgoing WebSocket frame**,
+     spots the `ContentServerDirectory.GetManifestRequestCode#1` service call,
+     records the `jobid`, and kicks off the async fetch.
+  2. `hkRecvPkt` + `hkBRouteMsgToJob` — catches the response by `jobid_target`
+     and **rewrites the packet body in-place** to inject the code and set
+     `eresult = OK` (two variants because newer Steam routes via
+     `CJobMgr::BRouteMsgToJob`).
+  3. `hkCDepotDownloadMgr_BYldRequestDepotManifest` — a fallback that
+     synchronously stages the manifest blob to disk if pre-staging missed.
+
+## Notes
+
+1. **Coexistence, again.** moon's hooks (`BBuildAndAsyncSendFrame`, `RecvPkt`,
+   `BRouteMsgToJob`) are exactly the message/network interception SLSsteam itself
+   uses for its dispatch → **not portable**, would collide. lumalinux's
+   `GetManifestRequestCode` function hook is a distinct, non-overlapping point.
+   Same recurring pattern as DepotKey, PICS and BuildDep.
+2. **moon's `BYldRequestDepotManifest` fallback isn't needed by lumalinux.**
+   steamidra_lite already pre-bakes the manifests into `depotcache` before Steam
+   starts, so there's no runtime blob to stage.
+
+## Portable? One concrete, worthwhile improvement
+
+The **second GMRC endpoint**. Today `gmrc_store.hpp` queries only
+`gmrc.wudrm.com`; if it's down, `GetCode()` returns `nullopt` and the download
+fails with Access Denied. Adding `manifest.steam.run` as a fallback source is
+**100% lumalinux's own code** (no SLSsteam overlap), low effort, and buys real
+resilience for the single most load-bearing gate.
+
+> **Action:** add a fallback GMRC endpoint (`manifest.steam.run`) to
+> `src/gmrc_store.hpp` — try `gmrc.wudrm.com` first, then the fallback, then
+> give up.
+
+Otherwise gate 6 is, like gate 4, **confirmation that lumalinux's design is
+sound**: same validated source, the correct non-overlapping hook layer.
+
 ---
 
 ## References
@@ -350,13 +409,15 @@ layer, surgical patch-only-primary — with nothing meaningful to port.
   `src/feats/apps.cpp` (`sendPICSInfoRequest`), `src/feats/pics.cpp`,
   `src/feats/cmclient.cpp`, `src/feats/appinfo_vdf.cpp`,
   `src/feats/appinfo_provision.cpp`, `src/feats/packagepatch.cpp`,
-  `src/feats/manifestid.cpp`, `src/feats/manifestbind.cpp`.
+  `src/feats/manifestid.cpp`, `src/feats/manifestbind.cpp`,
+  `src/feats/manifestcode.cpp`, `src/utils/ManifestFetch.cpp` (the GMRC fetch —
+  `gmrc.wudrm.com` + `manifest.steam.run` fallback).
 - vanilla SLSsteam (`AceSLS/SLSsteam`): `src/feats/apps.cpp:sendPICSInfoRequest`
   (the 15-line token-attach — the whole of its PICS handling).
 - lumalinux: `src/hooks/depot_key_hook.cpp`, `src/key_store.{hpp,cpp}`,
   `src/hooks/load_package_hook.cpp`, `src/hooks/package_zero_finder.cpp`,
   `src/hooks/depot_dependency_hook.cpp`, `src/hooks/gmrc_hook.cpp`,
-  `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
+  `src/gmrc_store.hpp`, `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
   §2–3, §6.
 - moon source mirror used for this review: branch `tmp/slsteam-moon`
   (delete after use).
