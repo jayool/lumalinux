@@ -25,7 +25,7 @@ opened:
 | # | Gate | What Steam checks | Why it fails when unowned |
 |---|------|-------------------|---------------------------|
 | 1 | **Ownership** | Does the account hold a licence for this app? | You don't → Steam won't even offer Install |
-| 2 | **PICS appinfo** | The app's product info (depot list, manifest ids) | Valve won't return the access token without a licence |
+| 2 | **PICS appinfo** | The app's product info (depot list, manifest ids) | Valve returns stripped/empty product info for an app you hold no licence for |
 | 3 | **Depot surfacing** | Are the content depots in a package the user owns? | If not → "0 target depots" → 0-byte "Fully Installed" |
 | 4 | **Manifest pinning** | Which exact version (manifest GID) of each depot to fetch | Must be pinned to the version we have keys for |
 | 5 | **Depot key** | The 32-byte (AES-256) key to decrypt the depot's chunks | Valve won't hand it over for an unowned depot |
@@ -110,8 +110,13 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 
 **Phase 1 — Steam start (hooks load):**
 7. `steam.sh` exports `LD_AUDIT=…SLSsteam.so` and `LD_PRELOAD=…liblumalinux.so`.
-8. **SLSsteam** clears **gates 1 + 2**: fakes ownership and supplies PICS access
-   tokens → the game appears owned, with an Install button.
+8. **SLSsteam** clears **gates 1 + 2**: its **ownership spoof**
+   (`CheckAppOwnership`) makes the game appear owned (Install button) and lets
+   Steam fetch its appinfo through the normal handshake. (`sendPICSInfoRequest`
+   can *also* attach a PICS access token, but only as a secondary helper for apps
+   Steam is already querying — **not** load-bearing; the LumaDeck flow writes no
+   AppTokens. moon/LumaCore confirm ownership is established purely by package-0 +
+   `CheckAppOwnership`.)
 9. **lumalinux** installs the DepotKey / BuildDep / GMRC hooks and starts the
    **package-0 finder** (see RESEARCH §13).
 
@@ -141,7 +146,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 | Gate / concern | **lumalinux** (Linux) | **LumaCore + SteaMidra** (Windows) | **SteamTools / OpenSteamTool** (Windows) |
 |---|---|---|---|
 | **Injection** | `LD_PRELOAD` in `steam.sh` (added by Headcrab) | `dwmapi.dll` proxy → `LumaCore.dll` → copies `steamclient64.dll` to `bin\lcoverlay.dll` and hooks the copy | `dwmapi.dll`+`xinput1_4.dll`+`OpenSteamTool.dll` proxies; hooks `steamclient64.dll` + `steamui.dll` |
-| **1+2 Ownership / PICS** | **SLSsteam** (separate, `LD_AUDIT`): `CheckAppOwnership`, subscribed apps, PICS tokens | **LumaCore itself**: `PackagePatch::CheckAppOwnership` patch, forged AppTicket/ETicket (`CmdUser`/`IPCBus`, for Denuvo), `SteamCapture::NotifyLicenseChanged` (in-memory licence inject, no restart) | Forged AppTicket/ETicket, ConfigStore ticket reuse, SteamStub vuln |
+| **1+2 Ownership / PICS** | **SLSsteam** (separate, `LD_AUDIT`): `CheckAppOwnership` + subscribed apps (these open the appinfo); optional PICS access-token attach (secondary, LumaDeck writes none) | **LumaCore itself**: `PackagePatch::CheckAppOwnership` patch, forged AppTicket/ETicket (`CmdUser`/`IPCBus`, for Denuvo), `SteamCapture::NotifyLicenseChanged` (in-memory licence inject, no restart) | Forged AppTicket/ETicket, ConfigStore ticket reuse, SteamStub vuln |
 | **3 Depot surfacing** | package-0 **finder** (active cache walk, §13) | `PackagePatch::LoadPackage` (hook, injects appids into Package 0's `AppIdVec`) | KeyValues / manifest patching |
 | **4 Manifest pinning** | **BuildDep** hook (`BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (identical) | manifest patching |
 | **5 Depot key** | **DepotKey** hook from `keys.txt` | `DepotKeys::LoadDepotDecryptionKey` from `.lua` | `addappid(depot,0,"hexkey")` in lua |

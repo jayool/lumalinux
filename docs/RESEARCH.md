@@ -28,7 +28,7 @@ SLSsteam** (no fork, no patch of SLSsteam).
 | Concern | Provided by |
 |---|---|
 | Ownership spoof (app shows as owned, license checks pass) | **SLSsteam** (`CUser::CheckAppOwnership`, `GetSubscribedApps`, cached tickets) |
-| PICS access token (so Steam can query appinfo for unowned apps) | **SLSsteam** (`Apps::sendPICSInfoRequest`, eMsg 8903) |
+| Appinfo for unowned apps (so Steam sees the depot/manifest list) | **SLSsteam** ownership spoof (`CheckAppOwnership`) + lumalinux package-0 inject — these open it. `Apps::sendPICSInfoRequest` (eMsg 8903) can *also* attach an access token, but only as a **secondary** helper for apps Steam already queries; not load-bearing, and LumaDeck writes none |
 | Family-share / offline bits | **SLSsteam** |
 | Surface the content depots into the download plan | **lumalinux** package-0 finder (see §13). The LoadPackage hook stays installed but is diagnostic-only since v0.13.0. |
 | Pin each depot to the right manifest (gid/size) | **lumalinux** BuildDep |
@@ -51,7 +51,16 @@ Clicking Install kicks off, roughly:
    `failed to update ownership ticket (Access Denied)` — this is **non-fatal**;
    the install proceeds.
 2. **PICS appinfo** — Steam fetches the app's product info (depot list, manifest
-   ids). Needs the access token SLSsteam injects.
+   ids). What actually opens this for an unowned app is SLSsteam's **ownership
+   spoof** (`CheckAppOwnership`) plus the **package-0 injection** — Steam then
+   queries the appinfo through its normal handshake. The access token SLSsteam
+   *can* attach (`Apps::sendPICSInfoRequest`) is a **secondary** helper, only for
+   apps Steam is already asking about; it is **not** the load-bearing piece, and
+   the lumalinux/LumaDeck flow writes **no** AppTokens. (Confirmed against
+   moon/LumaCore, whose source states ownership is established *purely* by the
+   package-0 `AppIdVec` injection + `CheckAppOwnership`.) Even if the CM returns a
+   stripped buffer, lumalinux supplies the depots/GIDs/manifests downstream
+   (steps 3–6), so an un-stripped appinfo buffer is not required.
 3. **`PackageId == 0`** — the implicit "free apps everyone owns" package, which
    Steam's per-depot license filter consults. Our depot ids must be in its
    `AppIdVec` or the content depots are dropped (→ "0 target depots" → instant
