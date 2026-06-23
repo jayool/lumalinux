@@ -419,5 +419,5 @@ sound**: same validated source, the correct non-overlapping hook layer.
   `src/hooks/depot_dependency_hook.cpp`, `src/hooks/gmrc_hook.cpp`,
   `src/gmrc_store.hpp`, `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
   §2–3, §6.
-- moon source mirror used for this review: branch `tmp/slsteam-moon`
-  (delete after use).
+- moon source reviewed: [`unplausible/slsteam-moon`](https://codeberg.org/unplausible/slsteam-moon)
+  v2.6 (AGPL-3.0).
