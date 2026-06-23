@@ -58,9 +58,14 @@ Clicking Install kicks off, roughly:
    apps Steam is already asking about; it is **not** the load-bearing piece, and
    the lumalinux/LumaDeck flow writes **no** AppTokens. (Confirmed against
    moon/LumaCore, whose source states ownership is established *purely* by the
-   package-0 `AppIdVec` injection + `CheckAppOwnership`.) Even if the CM returns a
-   stripped buffer, lumalinux supplies the depots/GIDs/manifests downstream
-   (steps 3–6), so an un-stripped appinfo buffer is not required.
+   package-0 `AppIdVec` injection + `CheckAppOwnership`.) The depot **list**
+   itself still has to come from this appinfo: lumalinux **cannot inject depots**
+   (doing so SIGSEGVs Steam — see §6); it only *patches* the GIDs of depots Steam
+   has already surfaced. So an appinfo that **carries the depot list is
+   required** — what is **not** required is the access **token** (the ownership
+   spoof + package-0 is what makes the CM return that appinfo). Everything
+   lumalinux adds (GID pin, key, pre-seeded manifest, request code) is
+   **downstream** of Steam already knowing the depot list.
 3. **`PackageId == 0`** — the implicit "free apps everyone owns" package, which
    Steam's per-depot license filter consults. Our depot ids must be in its
    `AppIdVec` or the content depots are dropped (→ "0 target depots" → instant
