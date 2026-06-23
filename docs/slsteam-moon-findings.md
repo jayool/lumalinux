@@ -290,13 +290,67 @@ broadcast pattern.
 
 ---
 
+# Block B, function 4 — manifest pinning (gate 4)
+
+Both decide **which exact version (manifest GID)** of each depot Steam fetches —
+the one we hold keys/manifests for, not whatever PICS happens to ship.
+
+## How each does it
+
+- **lumalinux — BuildDep** (`src/hooks/depot_dependency_hook.cpp`). Hooks
+  `CUserAppManager::BuildDepotDependency`, then **patches** the `ManifestGid`/size
+  of the keys.txt depots already in `pDepotInfo`. **Patch-only, never inject**
+  (injection crashed in v0.5.4); **only `pDepotInfo`, never `pSharedDepotInfo`**
+  (overwriting shared depots heap-corrupted Formula Legends — RESEARCH §11.4).
+  This is the **download-plan / function layer**.
+- **moon — two pieces.**
+  - **manifestid** (`feats/manifestid.cpp`): ingests `setManifestid(depot, gid)`
+    from the `.lua` and **rewrites the manifests block of the PICS app buffer**
+    inside `PICS::recvProductInfoResponse`. This is the **PICS response / message
+    layer**.
+  - **manifestbind** (`feats/manifestbind.cpp`): a separate resilience fallback —
+    two detours in `CDepotDownloadMgr` (`PrepareDepotDownload` + the leaf path).
+    When the public manifest isn't on disk (GMRC providers down) but the zip's is,
+    it rewrites the gid so Steam uses the on-disk zip build instead of failing.
+
+## Notes
+
+1. **Coexistence, again.** moon pins in the **PICS response** (message layer) →
+   **not portable** to lumalinux (would collide with SLSsteam's message hooks).
+   lumalinux pins in **BuildDep** (its own function-layer point) → no overlap.
+   Same recurring pattern as DepotKey and PICS.
+2. **Shared LumaCore lineage (convergence, not anyone's edge).** lumalinux's
+   BuildDep cites *"LumaCore-style … ManifestBind.cpp:55"* — its pin logic derives
+   from **LumaCore**, the same source moon follows. Both arrived at the same
+   guards (check `result` first, don't touch shared depots, never inject). Neither
+   copied the other; both descend from LumaCore.
+3. **Default matches.** lumalinux no-pin (`gid=0`) follows Valve / auto-updates;
+   moon without `setManifestid` ships `public`. Same philosophy.
+
+## Portable? Only `manifestbind`, and it's low value
+
+`manifestbind` (providers-down → fall back to the on-disk zip manifest) hooks
+`CDepotDownloadMgr` functions distinct from BuildDep, so it **wouldn't overlap** —
+but lumalinux mostly doesn't need it:
+
+- **Pinned**: lumalinux already pins to the zip's GID, which is **pre-seeded**, so
+  no GMRC is needed for that manifest.
+- **No-pin**: lumalinux wants the **latest**, so falling back to the stale zip
+  manifest would *defeat* the auto-update.
+
+So gate 4 is mostly **confirmation that lumalinux's design is sound** — function
+layer, surgical patch-only-primary — with nothing meaningful to port.
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
   `onStartup`, `recvDepotKey`, `saveKeyToCache`), `src/feats/depotkey.hpp`;
   `src/feats/apps.cpp` (`sendPICSInfoRequest`), `src/feats/pics.cpp`,
   `src/feats/cmclient.cpp`, `src/feats/appinfo_vdf.cpp`,
-  `src/feats/appinfo_provision.cpp`, `src/feats/packagepatch.cpp`.
+  `src/feats/appinfo_provision.cpp`, `src/feats/packagepatch.cpp`,
+  `src/feats/manifestid.cpp`, `src/feats/manifestbind.cpp`.
 - vanilla SLSsteam (`AceSLS/SLSsteam`): `src/feats/apps.cpp:sendPICSInfoRequest`
   (the 15-line token-attach — the whole of its PICS handling).
 - lumalinux: `src/hooks/depot_key_hook.cpp`, `src/key_store.{hpp,cpp}`,
