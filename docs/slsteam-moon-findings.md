@@ -178,13 +178,79 @@ while we run alongside vanilla SLSsteam.
 
 ---
 
+# Block B, function 2 — PICS appinfo (gate 2)
+
+*(Findings 1–3 above are about block B's DepotKey. This is a separate function.)*
+
+## What PICS is
+
+Before downloading, Steam asks Valve's CM for an app's **product info** (the
+depot list + manifest ids). That list **is** gate 2: without it Steam doesn't
+know what to download. For an app the account holds no licence for, the CM
+returns a **stripped** buffer — public metadata only, with the
+depots/manifests/branches blocks removed.
+
+## Who clears gate 2 (corrected — see the matching fix in RESEARCH §3.2)
+
+**Not the AppToken.** The **ownership spoof (`CheckAppOwnership`) + the package-0
+injection** is what makes Steam fetch and treat the appinfo as owned. This is the
+LumaCore design, confirmed in moon's `apps.cpp`. The appinfo comes back stripped
+when it does because the ownership spoof is **client-side**: Valve's server still
+strips based on the account's *real* licences (the content log's `failed to
+update ownership ticket (Access Denied)` is that server-side refusal).
+
+The PICS access token (`Apps::sendPICSInfoRequest`) only **un-strips the server
+response** for apps already in the request, and is **optional** — the
+lumalinux/LumaDeck flow writes **none**. moon attaches it only to apps Steam is
+**already** querying, because adding new appids to the outbound request (or
+forcing `meta_data_only=false`) makes the client chase product-info buffers it
+never asked for and hang at *"Loading user data"*.
+
+## The gap, and moon's plan B
+
+lumalinux **cannot fabricate the depot list**: injecting depots into BuildDep
+SIGSEGVs Steam (see §6), so it can only *patch* the GIDs of depots Steam already
+surfaced. It therefore **depends on the appinfo carrying the depot list**. If the
+CM ever returns a stripped buffer despite the spoof (moon's "AdditionalApp that
+isn't in any owned package" case), lumalinux has no depot list and fails.
+
+moon covers this with **anonymous appinfo provisioning**: product info is
+**public to an anonymous CM session** (`feats/cmclient.cpp`), so moon opens its
+own anonymous session, mines the depots/gids, and splices synthetic entries into
+`appinfo.vdf` for the next start (`feats/appinfo_vdf.cpp`, `feats/appinfo_provision.cpp`).
+
+## Portable to lumalinux? The plan B, yes — the hook, no
+
+- **Portable (no SLSsteam overlap):** the anonymous product-info fetch (an
+  independent outbound CM/SteamCMD connection) plus the `appinfo.vdf` splice (an
+  offline file write Steam reads on boot). Neither is a message hook. This would
+  make lumalinux robust to the stripped-appinfo case it currently cannot survive.
+- **Not portable:** moon's hook on the PICS *response* message
+  (`recvProductInfoResponse`) — that rides the message dispatch SLSsteam already
+  hooks; lumalinux must not collide there. It isn't needed anyway: the anonymous
+  fetch replaces it.
+- **Value:** optional robustness only. lumalinux's current flow works for games
+  where the spoof yields a full appinfo (the common case); this earns its keep
+  only for games Valve strips even with ownership.
+
+Everything else about gate 1–2 (the token, the request side) is SLSsteam's
+territory; lumalinux stays at gates 3–6.
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
-  `onStartup`, `recvDepotKey`, `saveKeyToCache`), `src/feats/depotkey.hpp`.
+  `onStartup`, `recvDepotKey`, `saveKeyToCache`), `src/feats/depotkey.hpp`;
+  `src/feats/apps.cpp` (`sendPICSInfoRequest`), `src/feats/pics.cpp`,
+  `src/feats/cmclient.cpp`, `src/feats/appinfo_vdf.cpp`,
+  `src/feats/appinfo_provision.cpp`.
+- vanilla SLSsteam (`AceSLS/SLSsteam`): `src/feats/apps.cpp:sendPICSInfoRequest`
+  (the 15-line token-attach — the whole of its PICS handling).
 - lumalinux: `src/hooks/depot_key_hook.cpp`, `src/key_store.{hpp,cpp}`,
   `src/hooks/load_package_hook.cpp`, `src/hooks/package_zero_finder.cpp`,
   `src/hooks/depot_dependency_hook.cpp`, `src/hooks/gmrc_hook.cpp`,
-  `tools/steamidra_lite.py`.
+  `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
+  §2–3, §6.
 - moon source mirror used for this review: branch `tmp/slsteam-moon`
   (delete after use).
