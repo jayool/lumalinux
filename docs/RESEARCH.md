@@ -860,20 +860,32 @@ re-ran the **Shader update** every ~5 min (`Shader update changed: Running
 Update … → Missing decryption key`) — a recurring background loop, not a
 one-time install transient. The game installs and plays, but the loop spams.
 
-**Fix (gated zero key).** Rather than moon's *global* `DisableShaderCache`
-(config.vdf `ShaderCacheManager` → `DisableShaderCache=1`, which also disables
-the *working* shader pre-cache of keyed games like Brotato/Formula Legends),
-lumalinux serves a **32-byte zero placeholder** for **presence-only** depots
-(`KeyStore::IsPresenceOnly` — `addappid(N)` with no key) in `depot_key_hook`.
-Keyed shader depots take the real-key `Lookup` path and decrypt correctly; only
-keyless ones get the placeholder, so Steam stops aborting with `Missing
-decryption key`. Trade-off being validated on the Deck: if a keyless shader
-depot has real per-GPU content, a zero key decrypts it to garbage and Steam may
-fail a chunk hash instead — but these are 2D titles whose shader depot is likely
-empty for the Deck's GPU, and Proton/DXVK caches shaders on its own regardless,
-so the practical cost is nil. (moon pairs its zero key with `DisableShaderCache`
-for exactly this reason; lumalinux keeps the cache enabled to preserve keyed
-games' shaders.)
+**Attempt 1 — gated zero key (v0.13.7, REVERTED).** lumalinux first served a
+32-byte zero placeholder for presence-only depots (`KeyStore::IsPresenceOnly`)
+in `depot_key_hook`. It *did* stop the post-install `Missing decryption key`
+loop (the placeholder is terminal, Steam doesn't re-queue). **But on a cold
+install it regressed:** the shader depot's **manifest** is itself encrypted with
+the real key, so with the zero key Steam logged `Failed to decrypt cached
+manifest 368340_…` and — because the shader runs as "Shader Priority" —
+**suspended the whole install** (`Invalid content configuration`, app stuck at
+`Update Paused` until a manual "resume"). Deck-confirmed 2026-06-23: CrossCode
+reinstall paused mid-download, only finishing after a manual resume that
+re-planned content-only. Faking the key is therefore wrong: you can't decrypt
+the manifest without the real key, so any fake just moves the failure later and
+makes it block the install. Reverted in v0.13.8.
+
+**Attempt 2 — exclude the keyless shader depot from package-0 (v0.13.8).** The
+presence-only app-id/shader depot is now dropped from the package-0 injection
+(`InjectDepots` filters `IsPresenceOnly`). The hypothesis: with the shader depot
+**unlicensed** (not in package-0), Steam skips the shader pre-cache for it
+entirely, while the CONTENT depots (real keys, still injected) install normally
+— a per-game fix that, unlike moon's *global* `DisableShaderCache`, preserves
+the working shader pre-cache of keyed games (Brotato/Formula Legends). Caveat:
+unproven — if Steam drives the shader pre-cache off the **appinfo** depot list
+rather than the package-0 licence filter, this won't stop it, and the fallback
+is moon's global `DisableShaderCache`. (Making the shader pre-cache actually
+*work* for a keyless game is impossible without the real shader-depot key —
+§13.8 top.)
 
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
