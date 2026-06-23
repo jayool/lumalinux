@@ -71,6 +71,28 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
             }
             Log::Warn("LoadDepotKey: depot %u key too large for buffer "
                       "(KeySize=%u < 32) — passthrough", depot, keySize);
+        } else if (KeyStore::IsPresenceOnly(depot)) {
+            // Presence-only entry (`addappid(N)` with no key) — the app-id /
+            // shader pre-cache depot. With no key, the original loader falls
+            // through to Steam, the CM denies it, and Steam aborts the *shader*
+            // update with "Missing decryption key" — once at install
+            // (StateFlags=1) and then again every ~5 min once Fully Installed
+            // (StateFlags=4): a recurring loop. Serve a 32-byte zero placeholder
+            // so Steam stops aborting. The placeholder only ever lands on
+            // KEYLESS shader/app-id depots; depots that ship a real key take the
+            // Lookup() path above and decrypt correctly, so keyed shader depots
+            // (e.g. Brotato) keep working. See RESEARCH §13.7–13.8.
+            if (keySize >= kDepotKeyBytes && key != nullptr) {
+                std::memset(key, 0, kDepotKeyBytes);
+                Log::Info("LoadDepotKey: SERVED zero placeholder for presence-only "
+                          "depot %u (no key in keys.txt — app-id/shader depot; "
+                          "stops the shader-precache 'Missing decryption key' loop)",
+                          depot);
+                return static_cast<int32_t>(kDepotKeyBytes);
+            }
+            Log::Warn("LoadDepotKey: presence-only depot %u — zero placeholder "
+                      "too large for buffer (KeySize=%u < 32) — passthrough",
+                      depot, keySize);
         }
     }
 

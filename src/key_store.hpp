@@ -81,6 +81,14 @@ bool HasManifestGid(uint64_t manifest_gid);
 // appinfo rather than from the Hubcap .lua.
 bool HasDepot(uint32_t depot_id);
 
+// True if `depot_id` is in the store as a *presence-only* entry — `addappid(N)`
+// in the .lua with no key argument, i.e. the app-id / shader pre-cache depot
+// (has_key == false). The DepotKey hook serves a zero placeholder key for these
+// so Steam's shader pre-cache stops aborting with "Missing decryption key" (and
+// looping). Depots that carry a real key take the Lookup() path instead and
+// decrypt correctly, so keyed shader depots (e.g. Brotato) are unaffected.
+bool IsPresenceOnly(uint32_t depot_id);
+
 // Total count of keys loaded.
 size_t Size();
 
