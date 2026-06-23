@@ -826,6 +826,55 @@ can fail the *first* attempt (during `StateFlags=1`), but Steam's own retry,
 landing on `StateFlags=4`, can still complete the install. A real shader key is
 still the clean fix; the abort just isn't always terminal.
 
+### 13.8 The shader-cache key is real and *keyable* — Hubcap just doesn't always ship it (2026-06-23, Deck)
+
+Inspecting the Hubcap `.zip`s of five games on real hardware settled where the
+shader-cache key comes from. The shader pre-cache depot's id is the **app id**,
+its manifest is **never** in the zip (Steam generates it per-GPU), but the
+**decryption key** for it sometimes *is* in the `.lua` and sometimes isn't:
+
+| Game (app id) | `.lua` main-app line | shader key? | result |
+|---|---|---|---|
+| Brotato (1942280) | `addappid(1942280, 1, "<key>")` | **yes** | shader decrypts → installs clean |
+| Formula Legends | `addappid(<id>, 1, "<key>")` | **yes** | clean |
+| Balatro (2379780) | `addappid(2379780)` | no | `Missing decryption key` |
+| CrossCode (368340) | `addappid(368340)` | no | `Missing decryption key` |
+| Blasphemous (774361) | `addappid(774361)` | no | `Missing decryption key` |
+
+So the shader depot **is keyable**: when the `.lua` carries
+`addappid(<appid>, 1, "<key>")`, the DepotKey hook serves it, GMRC supplies the
+manifest code (§11.5), the shader content decrypts, and the pre-cache completes.
+Whether the key is present is **purely a property of the Hubcap snapshot** —
+Brotato's recent snapshot (May 2026) shipped it; CrossCode's (Sep 2025) and
+Blasphemous's (Oct 2025) did not, and those games no longer receive Hubcap
+updates, so a keyed snapshot will never arrive. The only way to get a real
+shader key for such a game is to **capture it from an account that owns it**
+(depot keys are version-stable — capture once, valid forever; this is moon's
+`recvDepotKey`).
+
+**Correction to the §13.7 "transient" claim.** The 2026-06-23 Deck logs show the
+shader `Missing decryption key` is **not** confined to `StateFlags=1`, and Steam
+does **not** reliably skip the shader pre-cache once `StateFlags=4`. For
+CrossCode and Blasphemous, with the game **Fully Installed** (`state 0xc`), Steam
+re-ran the **Shader update** every ~5 min (`Shader update changed: Running
+Update … → Missing decryption key`) — a recurring background loop, not a
+one-time install transient. The game installs and plays, but the loop spams.
+
+**Fix (gated zero key).** Rather than moon's *global* `DisableShaderCache`
+(config.vdf `ShaderCacheManager` → `DisableShaderCache=1`, which also disables
+the *working* shader pre-cache of keyed games like Brotato/Formula Legends),
+lumalinux serves a **32-byte zero placeholder** for **presence-only** depots
+(`KeyStore::IsPresenceOnly` — `addappid(N)` with no key) in `depot_key_hook`.
+Keyed shader depots take the real-key `Lookup` path and decrypt correctly; only
+keyless ones get the placeholder, so Steam stops aborting with `Missing
+decryption key`. Trade-off being validated on the Deck: if a keyless shader
+depot has real per-GPU content, a zero key decrypts it to garbage and Steam may
+fail a chunk hash instead — but these are 2D titles whose shader depot is likely
+empty for the Deck's GPU, and Proton/DXVK caches shaders on its own regardless,
+so the practical cost is nil. (moon pairs its zero key with `DisableShaderCache`
+for exactly this reason; lumalinux keeps the cache enabled to preserve keyed
+games' shaders.)
+
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
 Validated, on the canonical stack (native Arch Steam + SLSsteam via
