@@ -902,6 +902,79 @@ global (keyed games lose Valve's precompiled shader download too), but for the
 actually *work* for a keyless game remains impossible without the real
 shader-depot key (§13.8 top) — capture from an owner is the only path.
 
+### 13.9 Path B — reverse-engineering the manifest-decrypt path for a per-game skip (2026-06-24)
+
+The global `DisableShaderCache` (§13.8) works but is a blunt instrument. Path B
+was the research goal: make Steam's shader pre-cache skip *cleanly, per game*,
+for a keyless title — by hooking the function that decrypts the cached manifest
+and making the keyless shader depot resolve to "nothing to do" instead of an
+error. This subsection records what the RE found, because the conclusion
+changes the design.
+
+**Target located.** On build `7c4ac73e` (the user's Deck steamclient.so,
+sha256 `7c4ac73e…`), the function that logs
+`Failed to decrypt cached manifest %d_%llu` (string at VA `0xdb0538`) is at
+**VA `0xfa9050`**, in `applicationmanager.cpp` (an in-function assert names
+`pCachedManifest->m_pManifest->BIsFinalized()` at
+`/data/src/clientdll/applicationmanager.cpp`). It is reached by two callers
+(`0xfe0940`, `0xfe0c95`). The string-load instruction is
+`lea eax,[esi-0x20e74cc]` at `0xfa9386`; with the i386-PIC base
+`esi = 0x2e97a04` (`.got`), `0x2e97a04 - 0x20e74cc = 0xdb0538`, confirming the
+xref.
+
+**What the function actually is.** `0xfa9050` is **not** a simple
+decrypt-and-return; it is a **job/coroutine state machine** over a
+`CCachedManifest` entry. It:
+1. looks the entry up (`call 0xfa8b40`) and walks a sorted by-manifest-id list;
+2. branches on the entry state byte `[entry+0xc]` (`0x16` = yield/wait via the
+   job scheduler `0x2a5d060`; `1` = load; anything else = `return NULL`);
+3. builds the path `"%s/depotcache/%d_%llu.manifest"`, reads + **decrypts** it
+   (the decrypt is `call 0x29b5f10`, returns a bool in `al`);
+4. on decrypt **success** sets `[entry+8]=1` and runs validation
+   (`0x24fc030` + CRC); on **failure** logs our string and leaves `[entry+8]=0`;
+5. **returns `[entry+4]` in both success and failure** — failure is *not*
+   signalled by the return value. The only `NULL` return is the
+   "wrong state" path (`0xfa92f0`).
+
+So the verdict (ok vs. failed) is carried in **mutated object state**
+(`[entry+8]`, and downstream `[ecx+0xbd]` read by the caller), not a return
+code. Both callers do `test eax,eax; je …` then immediately read those state
+bytes — i.e. they trust the object, not the return.
+
+**The decrypt callee `0x29b5f10`.** Single arg (`CCachedManifest*` at
+`[ebp+8]`), returns bool in `al`. It checks flags `[arg+0xbc] / 0xbd / 0xbe`,
+then iterates `[arg+0xa8]` entries at `[arg+0xb0]` decrypting each chunk/file
+name. Returning `1` from a hook here would make `0xfa9050` *believe* the
+decrypt worked — but the manifest body is still encrypted garbage, so the
+downstream `BIsFinalized()` assert, the CRC check (`0x24fc030`) and the chunk
+walk would then fail or, worse, drive Steam to request chunks that do not
+exist. **Faking the decrypt return is therefore insufficient.**
+
+**Conclusion — Path B is blocked by manifest-internals fragility, not by not
+finding the function.** A clean per-game skip needs the keyless shader depot to
+resolve to a **valid, finalized, zero-chunk `CManifest`**. There is no
+return-value seam that produces that; you would have to *fabricate* Steam's
+internal `CManifest` object (finalized flag, empty chunk/file vectors, valid
+CRC) and splice it into the `CCachedManifest` wrapper. That layout is
+build-specific (offsets `0xa8/0xb0/0xbc/0xbd/0xbe`, `[entry+8]/0xc`, the
+`m_pManifest` sub-object) and would break on every Steam update — exactly the
+fragility lumalinux's pattern discipline (§8) exists to avoid. It is also a far
+larger and riskier hook than anything currently shipped.
+
+**Recommendation.** Keep the shipped global `DisableShaderCache` (§13.8) as the
+default. Do **not** ship a manifest-fabrication hook. Path B is documented as
+*technically located but deliberately not pursued*: the cost/fragility of
+forging finalized manifest internals outweighs the benefit over the global
+toggle, for the 2D-indie target where the precache is worthless anyway. If a
+future build ever exposes a real per-app shader knob, or if we capture a real
+shader-depot key from an owner (§13.8 top), revisit — those are clean; manifest
+forgery is not.
+
+**Artifacts.** Addresses above are for build `7c4ac73e` only and are recorded
+for provenance, not used at runtime (lumalinux ships no hook on this path). The
+binary was transferred to the `tmp/steamclient-bin` branch for the RE session
+and should be deleted once this note is committed.
+
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
 Validated, on the canonical stack (native Arch Steam + SLSsteam via
