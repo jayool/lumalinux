@@ -81,6 +81,15 @@ bool HasManifestGid(uint64_t manifest_gid);
 // appinfo rather than from the Hubcap .lua.
 bool HasDepot(uint32_t depot_id);
 
+// True if `depot_id` is one of ours AND was registered presence-only (no key
+// in the .lua — has_key=false). This is exactly the keyless shader pre-cache
+// depot of a game added via lumalinux (its id == the app id). The shader-depot
+// hook (Hooks::ShaderDepot) uses this to zero out the shader depot id for such
+// games so Steam takes its native "skip shader pre-cache" path. Returns false
+// for depots that ship a real key (their shaders decrypt and should run) and
+// for depots we don't manage.
+bool IsPresenceOnly(uint32_t depot_id);
+
 // Total count of keys loaded.
 size_t Size();
 

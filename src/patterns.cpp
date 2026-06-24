@@ -144,9 +144,9 @@ uintptr_t FindGmrcFunction() {
     return FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
 }
 
-uintptr_t FindBYldRequestDepotManifestFunction() {
-    return FindInSteamclient(kBYldRequestDepotManifestPattern,
-                             "BYldRequestDepotManifest (manifest probe)");
+uintptr_t FindShaderCacheDepotFunction() {
+    return FindInSteamclient(kShaderCacheDepotPattern,
+                             "GetShaderCacheDepot (per-game shader skip)");
 }
 
 uintptr_t FindLoadPackageFunction() {

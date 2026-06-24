@@ -569,35 +569,35 @@ def update_config_vdf(vdf_path, depot_keys):
     return added
 
 
-def ensure_disable_shader_cache(vdf_path):
-    """Inserta "DisableShaderCache" "1" en el bloque ShaderCacheManager de
-    config.vdf — el MISMO flag que escribe el toggle 'Shader Pre-Caching' de
-    Steam (verificado en Deck) y que usa slsteam-moon.
+def restore_shader_precache(vdf_path):
+    """Deshace el kill global del shader pre-cache de versiones anteriores.
 
-    Por qué: el shader pre-cache de un juego no-poseído pide la key del shader
-    depot (== appid), que no tenemos → Steam falla con 'Missing decryption key'
-    y reintenta en bucle; y si se le falsea la key, falla al descifrar el
-    manifest del shader → 'Invalid content configuration' y bloquea el install.
-    Steam NO expone control por-juego (el bloque ShaderCacheManager.App.<id>
-    solo guarda ShaderCacheSize), así que el único lever es este flag global.
-    Para juegos 2D el coste es nulo (Proton/DXVK cachea shaders por su cuenta).
-    Ver lumalinux RESEARCH §13.8.
+    Hasta v0.13.x este tool escribía "DisableShaderCache" "1" en el bloque
+    ShaderCacheManager de config.vdf para evitar el bucle/cuelgue del shader de
+    los juegos sin key. Era un lever GLOBAL: mataba también el shader pre-cache
+    de los juegos que sí tienen key y de los juegos poseídos de Steam.
 
-    Idempotente. No-op si config.vdf o el bloque ShaderCacheManager no existen
-    (no creamos el bloque: Steam lo escribe en el primer arranque)."""
+    Desde v0.14 (path C) lumalinux salta el shader pre-cache POR JUEGO dentro del
+    cliente (hook ShaderDepot -> GetShaderCacheDepot devuelve 0 para los depots
+    sin key, y Steam toma su propia ruta de skip limpia). Así que ya NO hace
+    falta el flag global, y conviene revertirlo para que los juegos con key (y
+    los de Steam) recuperen su shader pre-cache. Ver lumalinux RESEARCH §13.9.
+
+    Por eso aquí: si una corrida previa dejó "DisableShaderCache" "1", lo bajamos
+    a "0" (no borramos la línea, solo la neutralizamos). Si ya es "0" o no
+    existe, no-op. NO creamos el bloque ni el flag. Idempotente.
+
+    Nota: si fuiste TÚ quien apagó 'Shader Pre-Caching' desde la UI de Steam a
+    propósito, vuelve a apagarlo en Ajustes -> Descargas; este tool solo revierte
+    su propio kill heredado."""
     if not vdf_path.exists():
         return False
     txt = vdf_path.read_text(encoding="utf-8")
-    if '"DisableShaderCache"' in txt:
-        return False  # ya está (toggle de Steam o corrida previa)
-    m = re.search(r'^(\s*)"ShaderCacheManager"\s*\n\s*\{', txt, re.MULTILINE)
-    if not m:
-        return False  # el bloque aún no existe; Steam lo crea al arrancar
-    child_indent = m.group(1) + "\t"
-    insert_at = m.end()  # justo tras la '{' de apertura
+    new = re.sub(r'("DisableShaderCache"\s*")1(")', r'\g<1>0\g<2>', txt)
+    if new == txt:
+        return False  # no estaba en "1" (o no existe) -> nada que revertir
     shutil.copy2(vdf_path, vdf_path.with_suffix(".vdf.bak"))
-    txt = txt[:insert_at] + f'\n{child_indent}"DisableShaderCache"\t\t"1"' + txt[insert_at:]
-    vdf_path.write_text(txt, encoding="utf-8")
+    vdf_path.write_text(new, encoding="utf-8")
     return True
 
 
@@ -1459,14 +1459,14 @@ def main():
         n_vdf = update_config_vdf(args.steam_root/"config/config.vdf", vdf_keys)
         print(f"  [+] {n_vdf} keys nuevas en config.vdf  "
               f"(AppID {app_id} filtrado, no es un depot)")
-        # Disable Steam's shader pre-cache: unowned games' shader depot (== appid)
-        # has no key, so the pre-cache loops forever with "Missing decryption key"
-        # (and bricks the install if the key is faked). No per-game knob exists;
-        # this is the same global flag Steam's own toggle sets. Harmless for the
-        # 2D titles this targets (Proton/DXVK caches shaders anyway). RESEARCH §13.8.
-        if ensure_disable_shader_cache(args.steam_root/"config/config.vdf"):
-            print("  [+] DisableShaderCache=1 en config.vdf (evita el loop del "
-                  "shader pre-cache en juegos sin shader key)")
+        # Path C (v0.14): the keyless shader pre-cache is now skipped PER GAME by
+        # lumalinux's ShaderDepot hook inside the client, so the old GLOBAL
+        # DisableShaderCache kill is no longer needed (and hurt keyed/owned games).
+        # Revert a previously-written one so shaders come back for everything that
+        # can use them; the hook handles the keyless ones. RESEARCH §13.9.
+        if restore_shader_precache(args.steam_root/"config/config.vdf"):
+            print("  [+] DisableShaderCache 1->0 en config.vdf (path C lo gestiona "
+                  "ahora por juego; los juegos con key recuperan su shader pre-cache)")
         print()
 
     # ── .acf error-state reset ────────────────────────────────────────────

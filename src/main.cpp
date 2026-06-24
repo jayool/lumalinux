@@ -28,7 +28,7 @@
 #include "hooks/load_package_hook.hpp"
 #include "hooks/package_zero_finder.hpp"
 #include "hooks/gmrc_hook.hpp"
-#include "hooks/manifest_probe_hook.hpp"
+#include "hooks/shader_depot_hook.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "status.hpp"
@@ -183,6 +183,7 @@ void InstallHooks() {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
         {"BuildDep",    "LUMA_NO_BUILDDEP", &Hooks::DepotDependency::Install},
         {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
+        {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},
     };
     if (const char* dbg = std::getenv("LUMA_LOADPKG_DEBUG"); dbg && dbg[0] && dbg[0] != '0') {
         specs.push_back({"LoadPackage", "LUMA_NO_LOADPKG", &Hooks::LoadPackage::Install});
@@ -215,21 +216,6 @@ void InstallHooks() {
     } else {
         Log::Notify(LUMALINUX_VERSION_STRING ": %d/%d hooks — %s FAILED. Steam update? See "
                     "~/.cache/lumalinux/lumalinux.log", active, expected, failed.c_str());
-    }
-
-    // Diagnostic-only manifest probe (v0.13.10): observe how
-    // BYldRequestDepotManifest behaves for the keyless app-id / shader depot.
-    // Log-only, never changes behaviour. Installed separately from the core
-    // hooks so a pattern-miss here never affects the core hook count or installs.
-    // Disable with LUMA_NO_MANIFEST_PROBE.
-    if (!std::getenv("LUMA_NO_MANIFEST_PROBE")) {
-        if (Hooks::ManifestProbe::Install()) {
-            Status::RecordHook("ManifestProbe", Status::INSTALLED);
-        } else {
-            Status::RecordHook("ManifestProbe", Status::FAILED);
-        }
-    } else {
-        Status::RecordHook("ManifestProbe", Status::DISABLED);
     }
 
     // Package-0 finder: the SOLE depot injector. The LoadPackage hook is passive

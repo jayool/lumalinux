@@ -975,6 +975,77 @@ for provenance, not used at runtime (lumalinux ships no hook on this path). The
 binary was transferred to the `tmp/steamclient-bin` branch for the RE session
 and should be deleted once this note is committed.
 
+**Superseded by §13.10.** Path B (faking the *decrypt*) is the wrong layer.
+Going one level UP — stopping the shader job from being *scheduled* — turns out
+to be both clean and shippable. See §13.10.
+
+### 13.10 Path C — the per-game shader skip that actually shipped (v0.14.0)
+
+Path B asked "how do we make the keyless shader manifest *decrypt*?" — the wrong
+question. The right one is "how do we stop Steam from *trying* for this one
+game?" Continuing the RE up the call stack from §13.9 answered it.
+
+**The seam.** `CGetShaderDepotManifestJob::BYieldingRunClientJob` (VA `0x1725a00`
+on build `7c4ac73e`) decides whether to run the shader pre-cache for an app:
+
+```
+id = GetShaderCacheDepot(appinfo);     // call 0xfd9ca0
+if (id == 0)
+    -> "[ AppID %u ] CGetShaderDepotManifestJob skipping because shader depot
+        ID is invalid."   -> return cleanly (code 0xb). No error, no pause,
+                              no "Invalid content configuration", no 300 s loop.
+else
+    -> "[ AppID %u ] Getting shader depot manifests"  -> download + decrypt
+       (which is what FAILS for a keyless game and triggers §13.8's symptoms).
+```
+
+So Steam **already has a clean per-game skip path** — it just needs the app's
+shader depot id to read as `0`/invalid. We don't fabricate anything (unlike
+path B); we route the keyless games down Steam's own skip.
+
+**`GetShaderCacheDepot` (`0xfd9ca0`).** Single-arg cdecl accessor. Reads the
+shader-manager global (`[GOT+0x2b758] -> +0x44`; returns 0 if absent), then the
+app's PICS appinfo KeyValues `appinfo.game.shadercachedepot`, and returns that
+depot id (`== app id` by convention), or 0 if the app isn't a game / has no
+shader depot. **Its only caller is the shader job above** (verified: a single
+`E8` xref at `0x1725a99`), so changing its result has exactly one effect — the
+job runs or it skips. Nothing else reads it.
+
+**The hook (`src/hooks/shader_depot_hook.cpp`, `Hooks::ShaderDepot`).** Call the
+original; if the returned id is one of *our* keyless games
+(`KeyStore::IsPresenceOnly(id)` — present in `keys.txt` with no key, i.e. the
+app-id/shader depot of a lumalinux-added game), return `0`; otherwise pass the
+real id through. Result:
+
+- keyless game (Balatro/CrossCode/Blasphemous) → id 0 → Steam logs "skipping…"
+  and ends the shader job cleanly. Per game. No loop, no suspend.
+- game that ships a real shader key (Brotato/Formula Legends) → not
+  presence-only → real id passes through → shader pre-cache runs and decrypts.
+- the user's genuinely-owned Steam games → not in `keys.txt` at all → real id
+  passes through → shaders unaffected.
+
+Pattern `kShaderCacheDepotPattern` (prologue `57 56 53 E8…81 C3…8B 83 58 B7 02
+00 8B 40 44 85 C0 75 0D 5B 31 C0`), verified UNIQUE on `7c4ac73e`. Collision
+check: SLSsteam hooks the message dispatch, not shader functions — clean.
+
+**Why this beats the global `DisableShaderCache` (§13.8).** The global flag
+killed Valve's precompiled-shader download for *every* game (keyed and owned)
+too; path C touches only the keyless games that can never use it anyway.
+`steamidra_lite` therefore stops writing the global flag and *reverts* a
+previously-written `DisableShaderCache "1" -> "0"` (`restore_shader_precache`)
+so keyed/owned games get their shaders back and the hook governs the rest. The
+global flag remains a manual fallback if the pattern ever breaks (a pattern miss
+is non-fatal: the hook just doesn't install and behaviour reverts to pre-13.9).
+
+**Failure mode on a Steam update.** If `kShaderCacheDepotPattern` stops matching,
+`ShaderDepot` shows FAILED in the startup toast (it's a counted core hook) and
+keyless games regress to the §13.8 loop until the pattern is re-derived
+(`GetShaderCacheDepot` is anchored by the strings `shadercachedepot` /
+`CGetShaderDepotManifestJob skipping because shader depot ID is invalid`).
+
+This is the first known clean, per-game shader-pre-cache skip for a keyless
+title — using Steam's own skip path, no global toggle, no manifest forgery.
+
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
 Validated, on the canonical stack (native Arch Steam + SLSsteam via

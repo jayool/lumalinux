@@ -78,10 +78,10 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
         // itself encrypted with the real key, so a zero key fails to decrypt it
         // ("Invalid content configuration") and Steam's "Shader Priority"
         // suspends the whole install. The keyless shader pre-cache can never
-        // succeed (we have no key), so it is suppressed out-of-band by
-        // `DisableShaderCache=1` in config.vdf (written by steamidra_lite at
-        // add-game time — the same flag Steam's own "Shader Pre-Caching" toggle
-        // sets). See RESEARCH §13.8.
+        // succeed (we have no key); instead of letting it run and fail, the
+        // ShaderDepot hook (path C, RESEARCH §13.9) makes Steam SKIP the shader
+        // pre-cache for exactly these keyless games — per game, cleanly, using
+        // Steam's own skip path — so no key needs to be faked here.
     }
 
     if (!g_origFn) {

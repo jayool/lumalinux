@@ -148,22 +148,42 @@ inline constexpr const char* kGmrcFunctionPattern =
 
 
 // =============================================================================
-// v0.13.10 (DIAGNOSTIC) — CDepotDownloadMgr::BYldRequestDepotManifest
+// v0.14 — GetShaderCacheDepot (per-game shader pre-cache skip, "path C")
 // =============================================================================
 //
-// Steam calls this to request a depot's manifest during a download/update plan.
-// The "Failed to decrypt cached manifest" the shader pre-cache hits happens
-// DOWNSTREAM of this call. We hook it diagnostically (log-only) to learn how the
-// keyless app-id / shader pre-cache depot behaves at this layer before designing
-// any per-game shader-skip. SLSsteam touches no manifest functions, so this
-// point is collision-free. Pattern reused from slsteam-moon, valid on Steam
-// build 1781041600.
+// CShaderCacheManager::GetShaderCacheDepot(appinfo). Given a game's appinfo it
+// reads the PICS KeyValues `appinfo.game.shadercachedepot` and returns that
+// depot id (0 if the app isn't a game or has no shader depot). Its SOLE caller
+// is CGetShaderDepotManifestJob::BYieldingRunClientJob:
 //
-// SIGNATURE (cdecl, i386):
-//   bool BYldRequestDepotManifest(void* this_, uint32_t appId, uint32_t depotId,
-//                                 uint64_t manifestId, const char* branch, void* arg20)
-inline constexpr const char* kBYldRequestDepotManifestPattern =
-    "55 B9 FD FF FF FF 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 83 EC 7C 8B 45 14 8B 55 18";
+//     id = GetShaderCacheDepot(appinfo);
+//     if (id == 0) -> log "skipping because shader depot ID is invalid",
+//                     return cleanly (no error, no install pause, no retry loop)
+//     else         -> "Getting shader depot manifests" -> download+decrypt
+//                     (which FAILS for a keyless game and triggers the loop /
+//                      "Invalid content configuration" suspend, see RESEARCH 13.8)
+//
+// So returning 0 here for a keyless game makes Steam take its OWN clean skip
+// path, per-game, with no global DisableShaderCache and without breaking games
+// that ship a real shader key (those pass through and their shaders work). See
+// RESEARCH 13.9 for the full disassembly; this is the shipped form of "path C".
+//
+// SIGNATURE (cdecl, i386): returns the shader depot id (== app id by Steam
+// convention), 0 if none.
+//   uint32_t GetShaderCacheDepot(void* appinfo /* or this_ */);
+//
+// Prologue (PIC get_pc_thunk.bx):
+//   57 56 53            push edi; push esi; push ebx
+//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.bx
+//   81 C3 ?? ?? ?? ??   add ebx, <GOT>
+//   8B 83 58 B7 02 00   mov eax, [ebx+0x2b758]   (shader-manager global)
+//   8B 40 44            mov eax, [eax+0x44]
+//   85 C0               test eax, eax
+//   75 0D               jne ...                  (0 if shader mgr absent)
+//   5B / 31 C0          pop ebx / xor eax,eax
+// Verified UNIQUE in build 7c4ac73e.
+inline constexpr const char* kShaderCacheDepotPattern =
+    "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 58 B7 02 00 8B 40 44 85 C0 75 0D 5B 31 C0";
 
 
 // =============================================================================
@@ -174,7 +194,7 @@ uintptr_t FindDepotKeyFunction();
 uintptr_t FindBuildDepotDependencyFunction();
 uintptr_t FindLoadPackageFunction();
 uintptr_t FindGmrcFunction();
-uintptr_t FindBYldRequestDepotManifestFunction();
+uintptr_t FindShaderCacheDepotFunction();
 
 uintptr_t FindSteamclientBase();
 
