@@ -356,6 +356,38 @@ bytes existed. The finder-anchor check sidesteps this by searching for the
 unambiguous trailing literal first and verifying the surrounding bytes via
 `mem.getByte()`. Keep that in mind if you ever add another anchor verification.
 
+**Which immediates to wildcard, and which are load-bearing** (robustness audit,
+2026-06-24, after the ShaderDepot hardening — RESEARCH §13.10). `extract_pattern`
+wildcards exactly the bytes that move between Steam builds *for reasons unrelated
+to the function's identity*:
+
+- the PIC `call` rel32 and the GOT `add reg,imm32` — **always** wildcard;
+- any `mov/lea r32,[picbase+disp32]` global-load disp32 — **wildcard** (these
+  GOT-relative offsets shift on almost every build, the package-0 cache global
+  moved `0x3a1bc→0x3967c`, §13.5). This was the ShaderDepot fragility; auto since
+  v0.14.1. Audited: BuildDep/GMRC/DepotKey load **no** GOT global in their
+  captured prologue, so the rule is a no-op for them (verified — they re-derive
+  byte-identical and still UNIQUE).
+
+But do **NOT** wildcard the **stack-frame size** (`sub esp, imm32`) even though it
+*looks* build-specific. Verified empirically on `7c4ac73e`: wildcarding it leaves
+GMRC unique but makes **BuildDep collide (6 matches) and LoadPackage (6)** — the
+frame size is genuinely part of those functions' byte-identity, and the string
+anchor finds the *function* but the runtime finder still needs a *unique* pattern.
+Frame sizes have survived at least one build transition (`f92deb5e→7c4ac73e`)
+intact, so they're an acceptable, non-removable anchor — not a bug to "fix".
+
+**Robustness ranking of the derivations** (most → least): the string-anchored
+trio (BuildDep, GMRC, ShaderDepot) is the most robust — a stable Steam string →
+the function → an auto-wildcarded prologue. **DepotKey is the least robust**: it
+has no in-function anchor, so the tool walks the dispatcher's `CALL [reg+0x18]`
+(hardcoded vtable slot `0x18`, plus reliance on Ghidra resolving the vtable). If
+Valve reorders virtuals or Ghidra's analysis misses it, the walk fails — but it
+then falls back to *validating* the current pattern, so a maintainer always gets
+a clear signal rather than a wrong answer. LoadPackage is diagnostic-only
+(multi-match by design). All current shipped patterns were re-confirmed UNIQUE
+(DepotKey/BuildDep/GMRC) or expected-multi (LoadPackage) on `7c4ac73e`.
+
 Paste the printed `UNIQUE` patterns into `src/patterns.hpp`, rebuild, redeploy.
 (`tools/ghidra_find_gmrc.py` is the original GMRC-only finder kept for reference.)
 
