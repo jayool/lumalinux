@@ -198,13 +198,6 @@ bool HasDepot(uint32_t depot_id) {
     return Keys().find(depot_id) != Keys().end();
 }
 
-bool IsPresenceOnly(uint32_t depot_id) {
-    if (depot_id == 0) return false;
-    std::lock_guard<std::mutex> lock(Mtx());
-    auto it = Keys().find(depot_id);
-    return it != Keys().end() && !it->second.has_key;
-}
-
 size_t Size() {
     std::lock_guard<std::mutex> lock(Mtx());
     return Keys().size();

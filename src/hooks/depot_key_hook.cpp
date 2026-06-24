@@ -75,12 +75,13 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
         // NOTE: presence-only (keyless) entries — the app-id / shader pre-cache
         // depot — deliberately fall through to Steam's original loader. We do
         // NOT synthesise a placeholder key: the shader depot's MANIFEST is
-        // encrypted with the real key, so a zero key fails to decrypt it
+        // itself encrypted with the real key, so a zero key fails to decrypt it
         // ("Invalid content configuration") and Steam's "Shader Priority"
-        // suspends the whole install. Instead we keep the keyless shader depot
-        // OUT of the package-0 injection (see load_package_hook) so Steam treats
-        // it as unlicensed and skips the shader pre-cache entirely. See
-        // RESEARCH §13.8.
+        // suspends the whole install. The keyless shader pre-cache can never
+        // succeed (we have no key), so it is suppressed out-of-band by
+        // `DisableShaderCache=1` in config.vdf (written by steamidra_lite at
+        // add-game time — the same flag Steam's own "Shader Pre-Caching" toggle
+        // sets). See RESEARCH §13.8.
     }
 
     if (!g_origFn) {

@@ -81,14 +81,6 @@ bool HasManifestGid(uint64_t manifest_gid);
 // appinfo rather than from the Hubcap .lua.
 bool HasDepot(uint32_t depot_id);
 
-// True if `depot_id` is in the store as a *presence-only* entry — `addappid(N)`
-// in the .lua with no key argument, i.e. the app-id / shader pre-cache depot
-// (has_key == false). The package-0 injector (load_package_hook) excludes these
-// so Steam treats the keyless shader depot as unlicensed and skips its (always
-// failing) shader pre-cache, while keyed content depots are still injected.
-// See RESEARCH §13.8.
-bool IsPresenceOnly(uint32_t depot_id);
-
 // Total count of keys loaded.
 size_t Size();
 

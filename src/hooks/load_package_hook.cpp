@@ -4,7 +4,6 @@
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -75,29 +74,6 @@ bool InjectDepots(void* pInfo, const char* source) {
 
     auto depotIds = KeyStore::GetAllDepotIds();
     if (depotIds.empty()) return false;
-
-    // Drop presence-only (keyless) entries — the app-id / shader pre-cache
-    // depot. Surfacing it into package-0 makes Steam treat the shader depot as
-    // licensed and run the shader pre-cache, which can never succeed (we have
-    // no key for it): it loops with "Missing decryption key", and faking a key
-    // only makes Steam fail to decrypt the shader manifest ("Invalid content
-    // configuration") and suspend the install. By keeping it OUT of package-0,
-    // Steam sees the shader depot as unlicensed and skips the pre-cache. The
-    // CONTENT depots (real keys) stay injected, so installs are unaffected.
-    // See RESEARCH §13.8.
-    {
-        const size_t before = depotIds.size();
-        depotIds.erase(std::remove_if(depotIds.begin(), depotIds.end(),
-                           [](uint32_t d) { return KeyStore::IsPresenceOnly(d); }),
-                       depotIds.end());
-        const size_t dropped = before - depotIds.size();
-        if (dropped) {
-            Log::Info("LoadPackage[%s]: excluded %zu presence-only (keyless "
-                      "shader/app-id) depot(s) from package-0 — skips the broken "
-                      "shader pre-cache", source, dropped);
-        }
-        if (depotIds.empty()) return false;
-    }
 
     CUtlVector<uint32_t>* vec = AppIdVec(pInfo);
     uint32_t oldSize = vec->m_Size;

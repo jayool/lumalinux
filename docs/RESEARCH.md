@@ -874,18 +874,33 @@ re-planned content-only. Faking the key is therefore wrong: you can't decrypt
 the manifest without the real key, so any fake just moves the failure later and
 makes it block the install. Reverted in v0.13.8.
 
-**Attempt 2 — exclude the keyless shader depot from package-0 (v0.13.8).** The
-presence-only app-id/shader depot is now dropped from the package-0 injection
-(`InjectDepots` filters `IsPresenceOnly`). The hypothesis: with the shader depot
-**unlicensed** (not in package-0), Steam skips the shader pre-cache for it
-entirely, while the CONTENT depots (real keys, still injected) install normally
-— a per-game fix that, unlike moon's *global* `DisableShaderCache`, preserves
-the working shader pre-cache of keyed games (Brotato/Formula Legends). Caveat:
-unproven — if Steam drives the shader pre-cache off the **appinfo** depot list
-rather than the package-0 licence filter, this won't stop it, and the fallback
-is moon's global `DisableShaderCache`. (Making the shader pre-cache actually
-*work* for a keyless game is impossible without the real shader-depot key —
-§13.8 top.)
+**Attempt 2 — exclude the keyless shader depot from package-0 (v0.13.8, FAILED).**
+Dropped the presence-only app-id/shader depot from the package-0 injection, on
+the hypothesis that an *unlicensed* shader depot would make Steam skip the
+pre-cache. **Deck-disproven 2026-06-24:** the exclusion ran
+(`excluded 2 presence-only depot(s)`) but Steam **still** ran the shader update
+for 368340 (`Missing decryption key`). So the shader pre-cache is driven by the
+**appinfo** depot list, **not** the package-0 licence filter — and lumalinux
+deliberately does not touch appinfo (that's SLSsteam's message layer). Reverted
+in v0.13.9.
+
+**No per-app knob exists.** config.vdf's `ShaderCacheManager.App.<appid>` holds
+only `ShaderCacheSize` (informational), not an enable/disable. Steam exposes
+**no** per-game shader-cache control. The only lever is the global
+`"DisableShaderCache" "1"` in the `ShaderCacheManager` block — which is exactly
+what Steam's own "Shader Pre-Caching" toggle writes (verified on Deck) and what
+moon writes.
+
+**Resolution (v0.13.9).** The `.so` reverts to plain pass-through for keyless
+depots (no placeholder, no package-0 exclusion). The shader pre-cache — which
+can never succeed for a keyless game, and whose failure is cosmetic (the game
+installs and plays; Proton/DXVK caches shaders locally regardless) — is
+suppressed by writing the global `DisableShaderCache=1` into config.vdf at
+add-game time (steamidra_lite), matching the Steam toggle / moon. The cost is
+global (keyed games lose Valve's precompiled shader download too), but for the
+2D indie titles this targets that is negligible. Making the shader pre-cache
+actually *work* for a keyless game remains impossible without the real
+shader-depot key (§13.8 top) — capture from an owner is the only path.
 
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
