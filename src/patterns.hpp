@@ -174,16 +174,23 @@ inline constexpr const char* kGmrcFunctionPattern =
 //
 // Prologue (PIC get_pc_thunk.bx):
 //   57 56 53            push edi; push esi; push ebx
-//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.bx
-//   81 C3 ?? ?? ?? ??   add ebx, <GOT>
-//   8B 83 58 B7 02 00   mov eax, [ebx+0x2b758]   (shader-manager global)
+//   E8 ?? ?? ?? ??      call __i686.get_pc_thunk.bx        (rel32 wildcarded)
+//   81 C3 ?? ?? ?? ??   add ebx, <GOT>                     (GOT imm32 wildcarded)
+//   8B 83 ?? ?? ?? ??   mov eax, [ebx+0x2b758]   (shader-manager global —
+//                       the disp32 is a GOT-relative offset that SHIFTS between
+//                       Steam builds, like the package-0 cache global in §13.5;
+//                       wildcarded so a rebuild that only moves the global does
+//                       NOT break this hook. Verified still unique wildcarded.)
 //   8B 40 44            mov eax, [eax+0x44]
 //   85 C0               test eax, eax
 //   75 0D               jne ...                  (0 if shader mgr absent)
 //   5B / 31 C0          pop ebx / xor eax,eax
-// Verified UNIQUE in build 7c4ac73e.
+// The identity anchors that remain fixed are the 57 56 53 prologue and the
+// distinctive 8B 40 44 85 C0 75 0D 5B 31 C0 tail (read [eax+0x44]; test;
+// early-return 0). Verified UNIQUE in build 7c4ac73e both with and without the
+// global disp32 wildcarded.
 inline constexpr const char* kShaderCacheDepotPattern =
-    "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 58 B7 02 00 8B 40 44 85 C0 75 0D 5B 31 C0";
+    "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0";
 
 
 // =============================================================================

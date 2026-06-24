@@ -175,8 +175,10 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   gets 0 back it logs `skipping because shader depot ID is invalid` and ends the
   shader pre-cache job cleanly (no error, no install pause, no retry loop).
 - Pattern: `kShaderCacheDepotPattern`
-  (`57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 58 B7 02 00 8B 40 44 85 C0 75 0D 5B 31 C0`).
-  Verified **unique** in this build.
+  (`57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0`).
+  Verified **unique** in this build. The `mov eax,[ebx+0x2b758]` disp32 (a
+  GOT-relative offset that shifts per build) is **wildcarded** so a rebuild that
+  only moves that global doesn't break the hook (see §13.10).
 - Hook: call the original; if the returned id is one of OUR keyless games
   (`KeyStore::IsPresenceOnly` — present in `keys.txt` with no key), return 0 so
   Steam skips its shader pre-cache; otherwise pass the real id through (keyed
@@ -1053,9 +1055,16 @@ real id through. Result:
 - the user's genuinely-owned Steam games → not in `keys.txt` at all → real id
   passes through → shaders unaffected.
 
-Pattern `kShaderCacheDepotPattern` (prologue `57 56 53 E8…81 C3…8B 83 58 B7 02
-00 8B 40 44 85 C0 75 0D 5B 31 C0`), verified UNIQUE on `7c4ac73e`. Collision
-check: SLSsteam hooks the message dispatch, not shader functions — clean.
+Pattern `kShaderCacheDepotPattern` (prologue `57 56 53 E8…81 C3…8B 83 ?? ?? ??
+?? 8B 40 44 85 C0 75 0D 5B 31 C0`), verified UNIQUE on `7c4ac73e`. The
+`mov eax,[ebx+0x2b758]` disp32 is **wildcarded** on purpose: it's a GOT-relative
+offset to the shader-manager global, and such offsets shift between Steam
+rebuilds (the package-0 cache global moved `0x3a1bc → 0x3967c` across two builds,
+§13.5). Wildcarding it — verified to stay unique — removes the byte-pattern's
+single most-likely break point on a future update, leaving the identity anchored
+on the `57 56 53` prologue and the distinctive `8B 40 44 85 C0 75 0D 5B 31 C0`
+tail. Collision check: SLSsteam hooks the message dispatch, not shader functions
+— clean.
 
 **Why this beats the global `DisableShaderCache` (§13.8).** The global flag
 killed Valve's precompiled-shader download for *every* game (keyed and owned)
