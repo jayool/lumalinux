@@ -144,6 +144,11 @@ uintptr_t FindGmrcFunction() {
     return FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
 }
 
+uintptr_t FindBYldRequestDepotManifestFunction() {
+    return FindInSteamclient(kBYldRequestDepotManifestPattern,
+                             "BYldRequestDepotManifest (manifest probe)");
+}
+
 uintptr_t FindLoadPackageFunction() {
     // The prologue `55 89 E5 57 ... 81 EC 1C 01 00 00` may match multiple
     // functions. Enumerate all matches; pick by index via LUMA_LOADPKG_IDX

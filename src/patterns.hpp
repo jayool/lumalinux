@@ -148,6 +148,25 @@ inline constexpr const char* kGmrcFunctionPattern =
 
 
 // =============================================================================
+// v0.13.10 (DIAGNOSTIC) — CDepotDownloadMgr::BYldRequestDepotManifest
+// =============================================================================
+//
+// Steam calls this to request a depot's manifest during a download/update plan.
+// The "Failed to decrypt cached manifest" the shader pre-cache hits happens
+// DOWNSTREAM of this call. We hook it diagnostically (log-only) to learn how the
+// keyless app-id / shader pre-cache depot behaves at this layer before designing
+// any per-game shader-skip. SLSsteam touches no manifest functions, so this
+// point is collision-free. Pattern reused from slsteam-moon, valid on Steam
+// build 1781041600.
+//
+// SIGNATURE (cdecl, i386):
+//   bool BYldRequestDepotManifest(void* this_, uint32_t appId, uint32_t depotId,
+//                                 uint64_t manifestId, const char* branch, void* arg20)
+inline constexpr const char* kBYldRequestDepotManifestPattern =
+    "55 B9 FD FF FF FF 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 83 EC 7C 8B 45 14 8B 55 18";
+
+
+// =============================================================================
 // Finders
 // =============================================================================
 
@@ -155,6 +174,7 @@ uintptr_t FindDepotKeyFunction();
 uintptr_t FindBuildDepotDependencyFunction();
 uintptr_t FindLoadPackageFunction();
 uintptr_t FindGmrcFunction();
+uintptr_t FindBYldRequestDepotManifestFunction();
 
 uintptr_t FindSteamclientBase();
 

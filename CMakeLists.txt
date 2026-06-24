@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.13.9)
+project(lumalinux LANGUAGES C CXX VERSION 0.13.10)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -43,6 +43,7 @@ set(LUMA_SOURCES
     src/hooks/load_package_hook.cpp
     src/hooks/package_zero_finder.cpp
     src/hooks/gmrc_hook.cpp
+    src/hooks/manifest_probe_hook.cpp
     src/globals.cpp
     src/status.cpp
 )
