@@ -24,3 +24,6 @@ compile_commands.json
 # Local PoC test harnesses for the SafeMode update flow. Not shipped.
 /test/
 compile_commands.json
+# Python bytecode cache
+__pycache__/
+*.pyc
