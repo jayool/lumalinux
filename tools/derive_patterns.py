@@ -8,10 +8,13 @@
 # package-0 finder depends on (§13).
 #
 # Strategy per piece:
-#   - BuildDep, GMRC: anchored on a stable Steam string ("BuildDepotDependency",
-#     "ContentServerDirectory.GetManifestRequestCode#1"). Find the string,
-#     find the referencing function, emit a fresh prologue pattern (PIC call
-#     rel32 + the GOT `add reg,imm32` are wildcarded).
+#   - BuildDep, GMRC, ShaderDepot: anchored on a stable Steam string
+#     ("BuildDepotDependency", "ContentServerDirectory.GetManifestRequestCode#1",
+#     "shadercachedepot"). Find the string, find the referencing function, emit a
+#     fresh prologue pattern (PIC call rel32, the GOT `add reg,imm32`, and any
+#     `[picbase+disp32]` global-load offset are wildcarded — those offsets shift
+#     per build, RESEARCH §13.10). ShaderDepot is non-critical: a miss only loses
+#     the per-game shader skip, installs still work.
 #   - DepotKey: NO usable in-function anchor. BUT there's an indirect anchor:
 #     the dispatcher (outer LoadDepotDecryptionKey) references the KeyValues
 #     path "Software\Valve\Steam\Depots\". From the dispatcher we can follow a
@@ -58,6 +61,14 @@ ANCHORED_HOOKS = [
      "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 2C 02 00 00 8B 45 08 89 85"),
     ("kGmrcFunctionPattern", "ContentServerDirectory.GetManifestRequestCode#1",
      "E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"),
+    # ShaderDepot (v0.14): GetShaderCacheDepot reads the appinfo KeyValues
+    # "shadercachedepot" and references that string literal directly inside
+    # itself — so it's a clean direct anchor exactly like BuildDep. Its prologue
+    # loads the shader-manager global (mov eax,[picbase+0x2b758]); extract_pattern
+    # now wildcards that per-build disp32 automatically (RESEARCH §13.10). A miss
+    # here does NOT break installs — only the per-game shader skip.
+    ("kShaderCacheDepotPattern", "shadercachedepot",
+     "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0"),
 ]
 
 # DepotKey: indirect-anchored. The dispatcher constructs / refs the KeyValues
@@ -106,11 +117,22 @@ def funcs_referencing(straddrs):
 
 def extract_pattern(entry):
     """Disassemble PROLOGUE_BYTES of the function and build a mask pattern,
-    wildcarding the PIC get_pc_thunk call rel32 and the GOT `add reg,imm32`."""
+    wildcarding the per-build pieces:
+      - the PIC get_pc_thunk `call` rel32,
+      - the GOT `add reg, imm32` that follows it,
+      - and any `mov/lea r32, [picbase + disp32]` global load, where `picbase`
+        is the register the `add` just loaded the GOT into. Those disp32s are
+        GOT-relative offsets to globals that SHIFT between Steam builds (the
+        package-0 cache global moved 0x3a1bc->0x3967c across builds, §13.5; the
+        shader-manager global is the same story, RESEARCH §13.10). Hardcoding
+        one makes a pattern miss on the next update for a reason unrelated to
+        the function's identity, so we wildcard it. The uniqueness check below
+        catches the rare case where this over-generalises."""
     toks = []
     addr = entry
     total = 0
     prev_was_call = False
+    picbase_reg = None   # x86 reg number holding the GOT base after the `add`
     while total < PROLOGUE_BYTES:
         ins = listing.getInstructionAt(addr)
         if ins is None:
@@ -125,11 +147,24 @@ def extract_pattern(entry):
         elif mn == "ADD" and prev_was_call:
             # the GOT-relative `add reg, imm32` right after get_pc_thunk —
             # wildcard the imm32. Two encodings: 0x05 (add eax,imm32 = 5 bytes)
-            # and 0x81 /0 (add r/m32,imm32 = 6 bytes).
+            # and 0x81 /0 (add r/m32,imm32 = 6 bytes). Record which register now
+            # holds the GOT base so we can spot global loads off it below.
             if n == 5 and (raw[0] & 0xFF) == 0x05:
                 for i in range(1, 5):
                     wild[i] = True
+                picbase_reg = 0          # eax
             elif n == 6 and (raw[0] & 0xFF) == 0x81:
+                for i in range(2, 6):
+                    wild[i] = True
+                picbase_reg = (raw[1] & 0x07)   # rm field of ModR/M = dest reg
+        elif mn in ("MOV", "LEA") and picbase_reg is not None and n == 6:
+            # mov/lea r32, [picbase + disp32]: opcode 8B (mov r,r/m) or 8D (lea),
+            # ModR/M mod=10 (disp32) and rm == picbase_reg (rm=100 would be SIB —
+            # skip). The trailing 4 bytes are the GOT-relative disp32 → wildcard.
+            op = raw[0] & 0xFF
+            modrm = raw[1] & 0xFF
+            if op in (0x8B, 0x8D) and (modrm >> 6) == 2 \
+               and (modrm & 0x07) == picbase_reg and (modrm & 0x07) != 4:
                 for i in range(2, 6):
                     wild[i] = True
         for i in range(n):

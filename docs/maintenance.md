@@ -103,16 +103,13 @@ If `verify-fix` shows `outcome=pattern_miss` on one of the install-path hooks
    - **LoadPackage** (since v0.13.1) is diagnostic-only; the script flags it
      as such, and a `pattern_miss` here does NOT block installs (the package-0
      finder injects).
-   - **ShaderDepot** (since v0.14) is **not yet wired into
-     `derive_patterns.py`** — re-derive it by hand if it misses. It's
-     string-anchored and easy: in Ghidra, find the function referencing
-     `"CGetShaderDepotManifestJob skipping because shader depot ID is invalid"`,
-     follow the `GetShaderCacheDepot` call it makes just before that skip, and
-     take that callee's prologue (`57 56 53 E8…81 C3…` + the
-     `8B 83 <off> 8B 40 44 85 C0` tail, wildcarding the PIC `call`/`add` and the
-     `<off>`). A miss does NOT block installs — only the per-game shader skip
-     (RESEARCH §13.10); the global `DisableShaderCache` is a manual stop-gap.
-     *(TODO: teach `derive_patterns.py` to auto-derive this one too.)*
+   - **ShaderDepot** (since v0.14) anchors on the string `"shadercachedepot"`,
+     which `GetShaderCacheDepot` references directly — so it's **auto-derived**
+     by the script like BuildDep/GMRC (since v0.14.1). `extract_pattern`
+     wildcards the `mov eax,[picbase+0x2b758]` global offset for you (it shifts
+     per build, RESEARCH §13.10). A `pattern_miss` here does NOT block installs —
+     only the per-game shader skip is lost; the global `DisableShaderCache` is a
+     manual stop-gap until you paste the fresh pattern.
    - **Package-0 finder anchors** (§13.5) — the script also verifies them as
      part of this run; see C if either says NOT FOUND.
 
