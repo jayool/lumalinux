@@ -34,6 +34,7 @@ SLSsteam** (no fork, no patch of SLSsteam).
 | Pin each depot to the right manifest (gid/size) | **lumalinux** BuildDep |
 | Provide the depot AES decryption keys | **lumalinux** DepotKey |
 | Provide the **manifest request code** (CDN download authorization) | **lumalinux** GMRC |
+| Skip the shader pre-cache for keyless games (per game, not global) | **lumalinux** ShaderDepot (§13.10) |
 
 SLSsteam gets you ownership + appinfo. lumalinux gets you the actual bytes.
 
@@ -165,6 +166,24 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
 - Uses `get_pc_thunk.ax` (PIC, eax-based). `FixPicThunk` handles any register
   generically, so the trampoline works for the fallback path.
 
+### ShaderDepot — `GetShaderCacheDepot` (per-game shader skip, v0.14)
+- `uint32_t GetShaderCacheDepot(void* appinfo)` — cdecl, 1 stack arg. Reads the
+  game's PICS appinfo KeyValues `appinfo.game.shadercachedepot` and returns that
+  depot id (== app id by convention), or 0 if the app isn't a game / has no
+  shader depot. File vaddr **0xfd9ca0** on build `7c4ac73e`.
+- **Sole caller** is `CGetShaderDepotManifestJob::BYieldingRunClientJob`: when it
+  gets 0 back it logs `skipping because shader depot ID is invalid` and ends the
+  shader pre-cache job cleanly (no error, no install pause, no retry loop).
+- Pattern: `kShaderCacheDepotPattern`
+  (`57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 58 B7 02 00 8B 40 44 85 C0 75 0D 5B 31 C0`).
+  Verified **unique** in this build.
+- Hook: call the original; if the returned id is one of OUR keyless games
+  (`KeyStore::IsPresenceOnly` — present in `keys.txt` with no key), return 0 so
+  Steam skips its shader pre-cache; otherwise pass the real id through (keyed
+  games and the user's owned games keep their shaders). This is the per-game
+  shader skip — see §13.10 (verified on Deck) for the full story and why it
+  replaced the global `DisableShaderCache`.
+
 ## 5. Loading: LD_PRELOAD, not LD_AUDIT (important)
 
 - lumalinux is a **32-bit** lib hooking the 32-bit `steamclient.so`.
@@ -237,6 +256,10 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   zip had `2379780;` (no key) and aborted. → before blaming the hooks for a
   `Missing decryption key`, check that `keys.txt` has a key for EVERY depot
   Steam asks for, including the shader-cache depot at the app id (see §13.7).
+  **Resolved since v0.14.0:** a keyless shader depot no longer cancels/loops —
+  the ShaderDepot hook makes Steam skip that game's shader pre-cache cleanly
+  (§13.10). This note stays as the historical diagnosis and still applies to a
+  keyless *content* depot (only the shader depot is skippable).
 
 ## 7. The GMRC endpoint
 
@@ -546,7 +569,12 @@ suspicion, no longer using LumaCore parallels as anchors, is:
    injection runs through the package-0 finder, which derives its addresses
    at runtime and doesn't depend on `kLoadPackagePattern` (so even a broken
    LoadPackage pattern still leaves installs working — only the
-   `LUMA_LOADPKG_DEBUG` diagnostic stops firing).
+   `LUMA_LOADPKG_DEBUG` diagnostic stops firing). **ShaderDepot (§13.10) is
+   also non-critical**: a `kShaderCacheDepotPattern` miss only stops the
+   per-game shader skip — installs still work, and keyless games merely
+   regress to the §13.8 shader loop (the global `DisableShaderCache` remains a
+   manual fallback). It does show FAILED in the startup toast, so a miss is
+   visible.
 2. **`gmrc.wudrm.com` down / DNS-blocked** — no offline fallback, no
    alternative endpoint (Issue #2). Symptom: new installs failing in a loop
    with "Access Denied" → "No connection" in the UI.
@@ -884,23 +912,26 @@ for 368340 (`Missing decryption key`). So the shader pre-cache is driven by the
 deliberately does not touch appinfo (that's SLSsteam's message layer). Reverted
 in v0.13.9.
 
-**No per-app knob exists.** config.vdf's `ShaderCacheManager.App.<appid>` holds
-only `ShaderCacheSize` (informational), not an enable/disable. Steam exposes
-**no** per-game shader-cache control. The only lever is the global
-`"DisableShaderCache" "1"` in the `ShaderCacheManager` block — which is exactly
-what Steam's own "Shader Pre-Caching" toggle writes (verified on Deck) and what
-moon writes.
+**No per-app *config* knob exists.** config.vdf's `ShaderCacheManager.App.<appid>`
+holds only `ShaderCacheSize` (informational), not an enable/disable. Steam
+exposes **no** per-game shader-cache control *via config*. The only config lever
+is the global `"DisableShaderCache" "1"` in the `ShaderCacheManager` block —
+which is exactly what Steam's own "Shader Pre-Caching" toggle writes (verified on
+Deck) and what moon writes. (A per-game skip *is* possible — just not through
+config: it needs a function hook inside the client. That's §13.10.)
 
-**Resolution (v0.13.9).** The `.so` reverts to plain pass-through for keyless
-depots (no placeholder, no package-0 exclusion). The shader pre-cache — which
-can never succeed for a keyless game, and whose failure is cosmetic (the game
-installs and plays; Proton/DXVK caches shaders locally regardless) — is
-suppressed by writing the global `DisableShaderCache=1` into config.vdf at
-add-game time (steamidra_lite), matching the Steam toggle / moon. The cost is
-global (keyed games lose Valve's precompiled shader download too), but for the
-2D indie titles this targets that is negligible. Making the shader pre-cache
-actually *work* for a keyless game remains impossible without the real
-shader-depot key (§13.8 top) — capture from an owner is the only path.
+**Resolution (v0.13.9 — interim, superseded by v0.14.0/§13.10).** v0.13.9
+reverted the `.so` to plain pass-through for keyless depots (no placeholder, no
+package-0 exclusion) and suppressed the doomed shader pre-cache by writing the
+**global** `DisableShaderCache=1` into config.vdf at add-game time
+(steamidra_lite), matching the Steam toggle / moon. That worked but was blunt:
+keyed and owned games lost Valve's precompiled-shader download too. **v0.14.0
+replaced it with a per-game skip** (the ShaderDepot hook, §13.10) and
+steamidra_lite now *reverts* a previously-written `DisableShaderCache` instead of
+writing one. Note the framing in this subsection — "making the shader pre-cache
+*work* for a keyless game is impossible without the real key" — is still true,
+but it was the wrong goal: §13.10 doesn't make it work, it makes Steam **skip it
+cleanly**, which is all a keyless game ever needed.
 
 ### 13.9 Path B — reverse-engineering the manifest-decrypt path for a per-game skip (2026-06-24)
 
@@ -961,23 +992,21 @@ build-specific (offsets `0xa8/0xb0/0xbc/0xbd/0xbe`, `[entry+8]/0xc`, the
 fragility lumalinux's pattern discipline (§8) exists to avoid. It is also a far
 larger and riskier hook than anything currently shipped.
 
-**Recommendation.** Keep the shipped global `DisableShaderCache` (§13.8) as the
-default. Do **not** ship a manifest-fabrication hook. Path B is documented as
-*technically located but deliberately not pursued*: the cost/fragility of
-forging finalized manifest internals outweighs the benefit over the global
-toggle, for the 2D-indie target where the precache is worthless anyway. If a
-future build ever exposes a real per-app shader knob, or if we capture a real
-shader-depot key from an owner (§13.8 top), revisit — those are clean; manifest
-forgery is not.
+**Recommendation (at the time).** Do **not** ship a manifest-fabrication hook —
+forging finalized manifest internals is too fragile. Path B is *located but
+deliberately not pursued*. **What actually shipped instead** is path C (§13.10):
+one level up the call stack there is a clean, single-value seam
+(`GetShaderCacheDepot`) that routes keyless games down Steam's *own* skip path —
+no fabrication, and it superseded both path B and the global toggle. (If a future
+build ever exposes a real per-app shader knob, or we capture a real shader-depot
+key from an owner per §13.8 top, those are cleaner still; manifest forgery never
+was.)
 
-**Artifacts.** Addresses above are for build `7c4ac73e` only and are recorded
-for provenance, not used at runtime (lumalinux ships no hook on this path). The
-binary was transferred to the `tmp/steamclient-bin` branch for the RE session
-and should be deleted once this note is committed.
-
-**Superseded by §13.10.** Path B (faking the *decrypt*) is the wrong layer.
-Going one level UP — stopping the shader job from being *scheduled* — turns out
-to be both clean and shippable. See §13.10.
+**Artifacts.** Addresses in this subsection are for build `7c4ac73e` only and are
+recorded for provenance — lumalinux ships **no** hook on the path-B (decrypt)
+seam; the shipped shader hook is path C's `GetShaderCacheDepot` (§13.10). The
+steamclient.so binary was transferred to a throwaway `tmp/steamclient-bin` branch
+for the RE session and has since been deleted.
 
 ### 13.10 Path C — the per-game shader skip that actually shipped (v0.14.0)
 
@@ -1035,7 +1064,8 @@ too; path C touches only the keyless games that can never use it anyway.
 previously-written `DisableShaderCache "1" -> "0"` (`restore_shader_precache`)
 so keyed/owned games get their shaders back and the hook governs the rest. The
 global flag remains a manual fallback if the pattern ever breaks (a pattern miss
-is non-fatal: the hook just doesn't install and behaviour reverts to pre-13.9).
+is non-fatal: the hook just doesn't install and keyless games fall back to the
+§13.8 shader loop — installs are unaffected either way).
 
 **Failure mode on a Steam update.** If `kShaderCacheDepotPattern` stops matching,
 `ShaderDepot` shows FAILED in the startup toast (it's a counted core hook) and
@@ -1043,8 +1073,34 @@ keyless games regress to the §13.8 loop until the pattern is re-derived
 (`GetShaderCacheDepot` is anchored by the strings `shadercachedepot` /
 `CGetShaderDepotManifestJob skipping because shader depot ID is invalid`).
 
+**End-to-end verification (2026-06-24, Deck, v0.14.0 release).** Both directions
+confirmed on real hardware, not by reasoning:
+
+*Keyless games skip cleanly.* Startup logged `4/4 hooks active` and
+`ShaderDepot hook: INSTALLED … rva=0x1a5ca0`. For CrossCode (368340) and
+Blasphemous (774361) the hook fired
+`ShaderDepot: shader depot id <id> is keyless … returning 0`. The decisive
+check is the absence afterwards: the last shader entry in `content_log.txt` for
+368340 was `… 09:20:27 … scheduler finished: removed from schedule (result
+Missing decryption key, state 0x41a)` — that's the OLD failure, *before* the
+hook loaded at 10:45. From 10:48 (first `returning 0`) to 10:57 (`date`) there
+were **zero** new shader lines for 368340: a live loop would have re-fired at
+~10:48, ~10:53, … The loop is gone, and the game launches and plays.
+
+*Keyed games keep their shaders.* For Brotato (1942280 — its `.lua` ships a
+shader key) the hook **never** fired (1942280 never appears in a `returning 0`
+line; it isn't presence-only). DepotKey served its key
+(`SERVED local key for depot 1942280 (KeySize=128)`), GMRC injected the codes,
+and `content_log.txt` shows the shader pre-cache running for real:
+`Shader update changed: Running Update,Preallocating,Downloading,Committing` →
+`starting commit … shadercache/1942280/downloads/ → shadercache/1942280/ :
+6 updated` → `Shader update changed: None` → `finished update, 2 mounted depots
+: 2868390, 1942282`. No `Missing decryption key`. So the gate discriminates
+exactly: keyless → skip, keyed → run-and-decrypt.
+
 This is the first known clean, per-game shader-pre-cache skip for a keyless
-title — using Steam's own skip path, no global toggle, no manifest forgery.
+title — using Steam's own skip path, no global toggle, no manifest forgery —
+and it is verified on hardware in both directions.
 
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 

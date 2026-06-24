@@ -316,7 +316,10 @@ manifest Steam requests that you did **not** pre-seed:
   its manifest is never in the Hubcap zip, so if Steam runs the shader pre-cache
   it must request the code → GMRC supplies it. (The shader cache is an
   optimisation; the game installs and plays without it, but a denied request can
-  surface as a transient "No connection" — RESEARCH §11.5.)
+  surface as a transient "No connection" — RESEARCH §11.5.) For a game whose
+  shader depot has **no key** (the Hubcap zip didn't ship one), the pre-cache
+  can never decrypt and used to loop; since v0.14 lumalinux skips it per-game via
+  the ShaderDepot hook (RESEARCH §13.10), while keyed shader depots still run.
 - **Updates** — the new manifest isn't cached, so GMRC fetches its code at
   runtime (until you re-seed via a new zip).
 
