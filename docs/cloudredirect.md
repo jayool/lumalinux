@@ -82,7 +82,7 @@ shadow anything CR also provides, but the two hook disjoint functions in
 After restarting Steam:
 
 - **lumalinux**: `~/.cache/lumalinux/lumalinux.log` ends with
-  `3/3 hooks active` (or `4/4` if you set `LUMA_LOADPKG_DEBUG=1`).
+  `4/4 hooks active` (or `5/5` if you set `LUMA_LOADPKG_DEBUG=1`).
 - **CloudRedirect**: `~/.config/CloudRedirect/cloud_redirect.log` ends
   with `cloud_redirect.so active in process 'steam' (pid=…)`.
 

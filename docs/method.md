@@ -117,7 +117,8 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
    Steam is already querying — **not** load-bearing; the LumaDeck flow writes no
    AppTokens. moon/LumaCore confirm ownership is established purely by package-0 +
    `CheckAppOwnership`.)
-9. **lumalinux** installs the DepotKey / BuildDep / GMRC hooks and starts the
+9. **lumalinux** installs the DepotKey / BuildDep / GMRC hooks (plus the
+   **ShaderDepot** per-game shader-skip hook, §13.10) and starts the
    **package-0 finder** (see RESEARCH §13).
 
 **Phase 2 — you press Install (the runtime chain):**
@@ -153,7 +154,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 | **6 Manifest request code** | **GMRC** hook at runtime (`gmrc.wudrm.com`) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-download manifests — **LumaCore.dll has no runtime GMRC hook** (verified) | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
 | **Who downloads content** | Steam client (Model A) | Steam client; manifests pre-seeded by SteaMidra (Model A) | Steam client (Model A) |
 | **Lua location** | `keys.txt` + `config/stplug-in/<appid>.lua` (interop) | `config/stplug-in/<appid>.lua` | `config/lua/` |
-| **Extras** | — | family-share bypass (`PacketRouter`), achievements (`setStat`), rich-presence, CD-key | achievements/stats spoof |
+| **Extras** | per-game shader-pre-cache skip for keyless games (ShaderDepot hook, §13.10) — keeps keyed/owned games' shaders | family-share bypass (`PacketRouter`), achievements (`setStat`), rich-presence, CD-key | achievements/stats spoof |
 
 ---
 

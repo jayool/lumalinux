@@ -23,6 +23,7 @@ Each piece lives in `steamclient.so` and takes one specific responsibility:
 | **DepotKey** hook | `LoadDepotDecryptionKey` | Serves depot AES keys from a local `keys.txt`. |
 | **BuildDep** hook | `CUserAppManager::BuildDepotDependency` | Patches each surfaced depot's `ManifestGid` to pin the right manifest (patch only — never injects new entries). |
 | **GMRC** hook | `…BYieldingGetManifestRequestCode` | Fetches the **manifest request code** from `gmrc.wudrm.com` and returns it through the hook. |
+| **ShaderDepot** hook | `GetShaderCacheDepot` | Returns `0` for a keyless game's shader depot so Steam **skips that game's shader pre-cache** via its own clean path (no `Missing decryption key` loop, no install pause). Keyed/owned games pass through and keep their shaders. Per-game, since v0.14 — see [RESEARCH §13.10](docs/RESEARCH.md). |
 | *LoadPackage* hook (opt-in) | `CPackageInfoCache::LoadPackage` | Diagnostic only since v0.13.1. Installed only when `LUMA_LOADPKG_DEBUG=1` is set; logs every `PackageId + AppIdVec` triple. Does not inject — the finder does. |
 
 Division of labour with SLSsteam:
@@ -155,6 +156,9 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
   actively debugging.
 - `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC` — disable an
   individual install-path hook.
+- `LUMA_NO_SHADERSKIP` — disable the per-game shader-skip hook (ShaderDepot).
+  Keyless games' shader pre-cache will then loop again as in §13.8; installs are
+  unaffected either way.
 - `LUMA_NO_PKG0_FINDER=1` — disable the package-0 finder. The finder is **on by
   default** (since v0.13.0) and is the **sole** depot injector: it walks the
   package cache directly, which is what makes installs work when Steam has
@@ -195,12 +199,16 @@ addresses from (the GMRC prologue tail or the cache-access idiom; see
 In either case, the package-0 path needs a runtime-derivation update; open an
 issue with that log line.
 
-### "N/3 hooks — XXX FAILED" toast
+### "N/4 hooks — XXX FAILED" toast
 
 A byte pattern stopped matching. Almost always a Steam client update.
 
 - **DepotKey / BuildDep / GMRC FAILED** → installs WILL break. Re-derive the
   patterns; see [`docs/maintenance.md`](docs/maintenance.md).
+- **ShaderDepot FAILED** → installs still work; only the per-game shader-pre-cache
+  skip is lost, so a keyless game's shader pre-cache loops again (the cosmetic
+  `Missing decryption key` of RESEARCH §13.8). Re-derive its pattern when
+  convenient; the global `DisableShaderCache` toggle is a manual stop-gap.
 - **LoadPackage FAILED** (only visible with `LUMA_LOADPKG_DEBUG=1`) → harmless;
   the diagnostic hook didn't install but the finder still works and installs
   succeed. You can ignore it unless you needed the diagnostic.
@@ -249,7 +257,10 @@ lumalinux-specific ecosystem-interop step**:
      `app_id;` (empty key field) — KeyStore loads it with `has_key=false`, so
      `GetAllDepotIds()` lists the id (the finder injects it into `AppIdVec`) but
      the DepotKey hook passes through to Steam's original for it. Matches
-     LumaCore's `DepotKeySet[id] = ""` semantics.
+     LumaCore's `DepotKeySet[id] = ""` semantics. Presence-only is also what the
+     **ShaderDepot** hook keys on: that same keyless app-id/shader depot makes
+     Steam skip the game's shader pre-cache cleanly (per game, §13.10) instead of
+     looping on `Missing decryption key`.
 
 4. **Injects the DecryptionKeys into `~/.local/share/Steam/config/config.vdf`**
    under `InstallConfigStore > Software > Valve > Steam > depots`. Optional
