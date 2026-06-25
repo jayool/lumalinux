@@ -26,10 +26,7 @@ jobs:
             gcc-multilib \
             g++-multilib \
             cmake \
-            ninja-build \
-            pkg-config \
-            libcurl4-openssl-dev:i386 \
-            libssl-dev:i386
+            ninja-build
 
       - name: Fetch libmem (pinned release tarball)
         run: ./tools/fetch_libmem.sh
@@ -38,10 +35,13 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig \
-            cmake .. \
-              -G Ninja \
-              -DCMAKE_BUILD_TYPE=Release
+          # -DLUMA_NO_UPDATE=OFF: ship releases WITH the SafeMode hash gate.
+          # Safe to enable since 0.15.0 (no libcurl/libcrypto link — sha256 is
+          # self-contained and curl is dlopen'd at runtime).
+          cmake .. \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DLUMA_NO_UPDATE=OFF
 
       - name: Build
         run: |

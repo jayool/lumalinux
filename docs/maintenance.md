@@ -48,6 +48,16 @@ How it works (`src/update.cpp`, `res/updates.yaml`, `res/version.txt`):
   binary on user Decks does NOT need to be replaced for a hash bump to reach
   them — they pick it up automatically on next launch.
 
+> **Build note (0.15.0+).** Releases ship with the gate ON — `build.yml` passes
+> `-DLUMA_NO_UPDATE=OFF`. This is only safe because 0.15.0 removed SafeMode's
+> hard link on libcurl/libcrypto: `src/sha256.cpp` is now a self-contained
+> SHA-256, and `src/curl.cpp` `dlopen()`s libcurl lazily at runtime. The result
+> has ZERO curl/openssl `NEEDED` entries, so it can no longer fail to load into
+> the game `reaper` (the `CURL_OPENSSL_4` brick that forced the gate OFF by
+> default in 0.13.6–0.14.x). **Do NOT re-link libcurl/libcrypto** — keep the
+> dlopen/self-hash approach, or the reaper brick comes back. The `LUMA_NO_UPDATE`
+> option still defaults ON for gate-less validation builds (`verify-fix.yml`).
+
 Maintainer fix:
 
 1. Get the new `steamclient.so` (from your Deck or from a user log):

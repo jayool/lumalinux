@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.14.1)
+project(lumalinux LANGUAGES C CXX VERSION 0.15.0)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -48,26 +48,27 @@ set(LUMA_SOURCES
     src/status.cpp
 )
 
-# SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so). This
-# is the ONLY part of lumalinux that pulls in libcurl + libcrypto. On a Steam
-# runtime whose pinned libcurl/libcrypto predate the build host's (e.g. a
-# generic Arch container whose Steam runtime ships curl < CURL_OPENSSL_4),
-# linking those system libs makes the whole .so fail to preload into the Steam
-# process (`version 'CURL_OPENSSL_4' not found`), so no hook ever installs.
-# LUMA_NO_UPDATE compiles the gate out: the resulting .so has ZERO curl/openssl
-# dependency and loads anywhere. The hooks, package-0 finder and keystore are
-# byte-for-byte unaffected.
+# SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so).
 #
-# Default ON since 0.13.6: leaving the libcurl link in broke EVERY game launch
-# under the Steam Linux Runtime. steam.sh's LD_PRELOAD of liblumalinux.so is
-# inherited by the 32-bit game `reaper`; when the runtime's pinned libcurl
-# dropped the CURL_OPENSSL_4 symbol version (SteamOS 3.8's Arch base bump), the
-# reaper failed to start (`version 'CURL_OPENSSL_4' not found`) → exit 1 → games
-# bounced back to the library. Dropping the gate trades lumalinux's
-# self-disable-on-unknown-steamclient safety for not bricking game launches; the
-# hooks already no-op gracefully on a pattern miss, so the safety loss is minor.
-# Set -DLUMA_NO_UPDATE=OFF to compile the update-check back in.
-option(LUMA_NO_UPDATE "Build without the SafeMode update-check (drops the libcurl/libcrypto dependency)" ON)
+# History: SafeMode used to LINK libcurl + libcrypto. steam.sh LD_PRELOADs
+# liblumalinux.so into EVERY child process, including the 32-bit game `reaper`,
+# so the loader resolved curl/openssl's versioned symbols there too; when the
+# Steam Linux Runtime's pinned libcurl dropped the CURL_OPENSSL_4 symbol version
+# (SteamOS 3.8's Arch base bump), the reaper failed to load the .so → games
+# bounced. The emergency fix (0.13.6) was to compile SafeMode out by default
+# (LUMA_NO_UPDATE=ON), which shipped releases WITHOUT the hash gate.
+#
+# 0.15.0 removes the toxic link entirely instead: src/sha256.cpp is now a
+# self-contained SHA-256 (no libcrypto) and src/curl.cpp dlopen()s libcurl
+# lazily at runtime (no NEEDED entry, dlsym binds the default symbol version).
+# A SafeMode build therefore has ZERO curl/openssl link dependency and loads
+# anywhere — the reaper brick can't happen — so releases can ship SafeMode ON
+# again (the release workflow passes -DLUMA_NO_UPDATE=OFF).
+#
+# The option still defaults ON purely as a build convenience for gate-less
+# validation builds (verify-fix.yml, codespace harnesses) that run against an
+# unwhitelisted steamclient.so. Pass -DLUMA_NO_UPDATE=OFF to compile the gate in.
+option(LUMA_NO_UPDATE "Build without the SafeMode update-check (no hash gate)" ON)
 if(NOT LUMA_NO_UPDATE)
     list(APPEND LUMA_SOURCES src/curl.cpp src/sha256.cpp src/update.cpp)
 endif()
@@ -78,31 +79,20 @@ if(LUMA_NO_UPDATE)
     target_compile_definitions(lumalinux PRIVATE LUMA_NO_UPDATE)
 endif()
 
-# libcurl + OpenSSL via pkg-config. Both must be the 32-bit variants:
-#   apt: libcurl4-openssl-dev:i386 libssl-dev:i386
-#   pacman: lib32-curl lib32-openssl
-# Invoke cmake with PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig on
-# multiarch Debian/Ubuntu so it picks the i386 .pc files, not the amd64 ones.
-# Skipped entirely under LUMA_NO_UPDATE (no curl/openssl user is compiled in).
-if(NOT LUMA_NO_UPDATE)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(CURL REQUIRED libcurl)
-    pkg_check_modules(OPENSSL REQUIRED libcrypto)
-endif()
+# SafeMode no longer links libcurl or libcrypto: sha256.cpp is self-contained
+# and curl.cpp dlopen()s libcurl at runtime (see those files). The only extra
+# system dependency is libdl (CMAKE_DL_LIBS) for dlopen/dlsym, already linked
+# below. No pkg-config / -dev packages are needed even for a SafeMode build.
 
 target_include_directories(lumalinux PRIVATE
     src/
     include/
     ${CMAKE_CURRENT_BINARY_DIR}/generated/
-    ${CURL_INCLUDE_DIRS}
-    ${OPENSSL_INCLUDE_DIRS}
 )
 target_link_libraries(lumalinux PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/liblibmem.a
     ${CMAKE_CURRENT_SOURCE_DIR}/lib/libyaml-cpp.a
     ${CMAKE_DL_LIBS}
-    ${CURL_LIBRARIES}
-    ${OPENSSL_LIBRARIES}
 )
 
 set_target_properties(lumalinux PROPERTIES

@@ -3,8 +3,6 @@
 // Imported unchanged.
 #pragma once
 
-#include <curl/curl.h>
-
 #include <cstdint>
 #include <map>
 #include <string>
