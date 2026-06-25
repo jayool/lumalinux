@@ -14,3 +14,9 @@ SafeModeHashes:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
     - 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
+    # build d8f66937a0de65c5b3b323707e6d9f8930ea4f5a (Steam client version
+    # 1782344391, 2026.06). All 5 patterns + the package-0 finder anchors
+    # verified to still resolve unchanged on this build (the ShaderDepot global
+    # offset shifted 0x2b758 -> 0x2c0cc but the wildcard absorbed it); no
+    # pattern change, so the hash is appended to the SAME version group.
+    - f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95
