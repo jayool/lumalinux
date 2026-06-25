@@ -98,7 +98,7 @@ void DoPreinit() {
 
     Log::Init();
     Log::Info("DEBUG: &g_keys (preinit) = %p", KeyStore::DebugKeysAddr());
-    Log::Info("lumalinux " LUMALINUX_VERSION_STRING " preinit (DepotKey + BuildDep + GMRC hooks + package-0 finder)");
+    Log::Info("lumalinux " LUMALINUX_VERSION_STRING " preinit — hooks install once steamclient.so is mapped");
 
     std::string keysPath = KeyStore::DefaultPath();
     KeyStore::LoadFromFile(keysPath);
@@ -191,6 +191,8 @@ void InstallHooks() {
 
     int active = 0, expected = 0;
     std::string failed;
+    std::string installed;   // names of the pieces actually installed, derived
+                             // from the loop so the summary never goes stale
     for (const auto& s : specs) {
         if (std::getenv(s.disableEnv)) {
             Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
@@ -200,6 +202,8 @@ void InstallHooks() {
         ++expected;
         if (s.install()) {
             ++active;
+            if (!installed.empty()) installed += ", ";
+            installed += s.name;
             Status::RecordHook(s.name, Status::INSTALLED);
         } else {
             Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
@@ -227,7 +231,13 @@ void InstallHooks() {
     } else {
         Hooks::PackageZeroFinder::Start();
         Status::RecordHook("PackageZeroFinder", Status::INSTALLED);
+        if (!installed.empty()) installed += ", ";
+        installed += "package-0 finder";
     }
+
+    // Derived from the install table above (+ the finder), so it always reflects
+    // exactly what loaded — never a hand-maintained list that drifts.
+    Log::Info("Install: lumalinux active pieces: %s", installed.empty() ? "none" : installed.c_str());
 
     // Snapshot for external consumers (LumaDeck reads $XDG_RUNTIME_DIR/lumalinux/
     // status.json to render the Settings health badge). Best-effort.
