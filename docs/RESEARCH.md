@@ -1197,3 +1197,77 @@ and no update happens.
 - **Multi-depot installs do happen.** Contrary to the single-depot Balatro case
   in §10, Vampire Survivors mounted **two** content depots (1794681 Windows-
   content + 1794685 Linux) on a Linux install; both pinned, both auto-updated.
+
+## 15. RTTI-based update-resilient resolution (CloudRedirect's technique)
+
+**Context.** CloudRedirect's June-2026 release stopped needing an update per
+Steam client build ("CR no longer requires an update for every Steam client
+update"). Worth copying where it fits, because lumalinux's byte-pattern hooks
+move on every Steam build (§8) and the SafeMode hash gate needs a per-build
+whitelist entry (v0.15).
+
+### 15.1 The technique
+
+CR does NOT scan byte patterns or hardcode RVAs. It resolves the hook target by
+**C++ RTTI**, from anchors that are stable across builds:
+
+1. Find the **RTTI typestring** (the Itanium-mangled class name, e.g.
+   `30CClientUnifiedServiceTransport`) in `.rodata` — never relocated, never
+   renamed.
+2. Find the **`type_info`** struct whose name pointer points at that string.
+3. Find the **vtable**: the Itanium ABI header `[offset_to_top=0, type_info*]`
+   followed by the virtual function pointers.
+4. Hook a **fixed vtable slot index**.
+5. For RPC transports, dispatch inside the hook by the **RPC method-name string**
+   (e.g. `Cloud.ClientFileDownload#1`) — also stable.
+
+None of {class name, slot index, RPC name} is an address, so none moves per
+build. An update is only needed if Valve *reorders virtuals* or *renames* a
+class/RPC. Ref: `src/platform/linux/vtable_hook.cpp` (`FindTransportVtable`).
+
+### 15.2 Applicability to lumalinux's hooks (verified on build f5eb8bd3)
+
+Each hook target checked against the steamclient.so vtables (RTTI resolution
+mimicking CR's `FindTransportVtable`):
+
+| Hook | Target RVA | Virtual? | Update-proof path |
+|---|---|---|---|
+| **DepotKey** | `0x1188300` | **YES — `CConfigStore` vtable slot 6** | RTTI → vtable → slot 6 |
+| **GMRC** | `0x1351890` | no (but it's a named RPC) | transport RTTI + dispatch by `ContentServerDirectory.GetManifestRequestCode#1` |
+| **BuildDep** | `0xfe1bf0` | no | none — stays pattern/string-anchored |
+| **ShaderDepot** | `0x102d9f0` | no | none — stays pattern (non-critical) |
+| LoadPackage | `0xfce960` | no | none (diagnostic-only) |
+
+Evidence:
+- `12CConfigStore` @0xb892e8 → typeinfo @0x2e65f0c → vtable @0x2e65e8c (26 slots);
+  **slot 6 = 0x1188300**, exactly the DepotKey accessor hooked today (matches the
+  `vtable[+0x18]` note in §12 / patterns.hpp — 0x18 = slot 6).
+- `30CClientUnifiedServiceTransport` @0xb7bf20 → vtable @0x2e63cd0 (11 slots); CR
+  hooks slots 5/7/8 (RPC send/dispatch). The GMRC RPC name
+  `ContentServerDirectory.GetManifestRequestCode#1` and its protobuf
+  Request/Response classes are present in the binary.
+
+### 15.3 What this buys, and the cost
+
+- **DepotKey → RTTI vtable (high value, moderate cost).** Reuse the existing
+  detour (§4) but resolve the address from `CConfigStore` slot 6 instead of the
+  byte pattern. Removes one *critical* hook from both the pattern and the hash
+  dependency. ~a 100-line FindVtable helper + a runtime sanity check on the
+  slot's prologue.
+- **GMRC → transport RPC (high value, high cost).** Hook the transport vtable
+  and intercept by RPC name, injecting the response. Requires protobuf handling
+  for `…GetManifestRequestCode_Request/Response` (CR has a whole `protobuf.cpp`).
+  Trades pattern-fragility for protobuf-complexity.
+- **BuildDep, ShaderDepot stay pattern-anchored.** Non-virtual local logic on
+  appinfo/KeyValues, not RPC-dispatched. ShaderDepot is non-critical, so after
+  migrating DepotKey+GMRC the only *critical* pattern-dependent hook left is
+  **BuildDep**.
+
+### 15.4 Caveat — not immunity
+
+Vtable slot indices and RPC names are *much* more stable than byte patterns, not
+immune. Valve reordered the `IClient*::RunIPCFrame` virtuals on 2026-06-24 and
+SLSsteam had to bump (those are vtable-dispatched too). This trades "update every
+build" for "update rarely" — what CR advertises. A migrated hook should still
+validate at runtime (e.g. check the resolved slot's prologue) and fail closed if
+the layout shifted.
