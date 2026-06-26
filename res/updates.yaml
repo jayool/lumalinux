@@ -20,3 +20,9 @@ SafeModeHashes:
     # offset shifted 0x2b758 -> 0x2c0cc but the wildcard absorbed it); no
     # pattern change, so the hash is appended to the SAME version group.
     - f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95
+    # build 1cbb4f594c9fb1d0246cd4e392a7cf2cab1bd8b8 (2026-06-26 Steam update,
+    # newer than f5eb8bd3). Verified on the loaded ubuntu12_32 binary from a real
+    # Deck (disk hash == lumalinux runtime "hash is" log line). All 5 patterns +
+    # the package-0 finder anchors resolve unchanged — same RVAs as f5eb8bd3,
+    # ShaderDepot global still 0x2c0cc. No pattern change; same version group.
+    - ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4
