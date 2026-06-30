@@ -18,13 +18,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${RUNNER_TEMP:-/tmp}/ghidra-derive"
 mkdir -p "$WORK"
 
-# ── 1) install (and cache within the job) the latest Ghidra PUBLIC release ────
+# ── 1) install (and cache within the job) a PINNED Ghidra PUBLIC release ──────
+# PIN to 11.2.1: it's the last release that bundles Jython, which derive_patterns.py
+# needs. Ghidra 11.3+ dropped Jython for PyGhidra (CPython), and a plain
+# analyzeHeadless there refuses .py scripts with "Ghidra was not started with
+# PyGhidra. Python is not available". Override with GHIDRA_TAG if ever needed.
+GHIDRA_TAG="${GHIDRA_TAG:-Ghidra_11.2.1_build}"
 GHIDRA_DIR="$WORK/ghidra"
 if [ ! -x "$GHIDRA_DIR/support/analyzeHeadless" ]; then
-  echo "Downloading latest Ghidra PUBLIC release..."
+  echo "Downloading Ghidra $GHIDRA_TAG (PUBLIC)..."
   rm -rf "$WORK/dl"; mkdir -p "$WORK/dl"
-  # No tag = latest release; pattern picks the ghidra_<ver>_PUBLIC_<date>.zip asset.
-  gh release download --repo NationalSecurityAgency/ghidra \
+  gh release download "$GHIDRA_TAG" --repo NationalSecurityAgency/ghidra \
      --pattern '*_PUBLIC_*.zip' --dir "$WORK/dl" --clobber
   ZIP="$(ls "$WORK"/dl/*_PUBLIC_*.zip | head -1)"
   if [ -z "${ZIP:-}" ]; then echo "no Ghidra zip downloaded"; exit 1; fi
@@ -36,6 +40,14 @@ if [ ! -x "$GHIDRA_DIR/support/analyzeHeadless" ]; then
   rm -rf "$GHIDRA_DIR"; mv "$INNER" "$GHIDRA_DIR"
 fi
 echo "Ghidra: $GHIDRA_DIR"
+
+# Bump the headless max heap: the default (2G) OOMs mid-analysis on the large
+# steamclient.so. analyzeHeadless reads MAXMEM from this properties file; sed it
+# up (no-op if the layout ever changes) and also export it as a belt-and-suspenders.
+for pf in "$GHIDRA_DIR/support/analyzeHeadless" "$GHIDRA_DIR/support/launch.properties"; do
+  [ -f "$pf" ] && sed -i 's/^MAXMEM=.*/MAXMEM=6G/' "$pf" || true
+done
+export MAXMEM=6G
 
 # ── 2) headless import + analyze + derive (fresh project each run) ─────────────
 PROJ="$WORK/proj"
