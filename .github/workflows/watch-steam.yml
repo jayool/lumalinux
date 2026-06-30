@@ -1,0 +1,209 @@
+name: watch-steam
+
+# Daily monitor: detect a new Steam client, fetch its 32-bit steamclient.so, and
+# check whether lumalinux's hooks still resolve — so a Steam update never catches
+# us by surprise. Two-level gate keeps it cheap: a featherweight version check
+# runs every day; the heavy download + validation only fire when Steam actually
+# updated (cron triggers daily, but real work happens only on a new version).
+#
+# Outcomes (driven by tools/check_patterns.py exit code):
+#   CLEAN (0)            -> open a PR adding the hash to res/updates.yaml (A.1).
+#                          Merging propagates to every Deck on next boot, no
+#                          release (updates.yaml is fetched live at startup).
+#   ShaderDepot (2)      -> same PR + open an issue to re-derive ShaderDepot.
+#   blocking (3)         -> open an issue (a critical hook or finder anchor
+#                          moved: A.2 / C). Do NOT whitelist.
+#
+# The live download path runs on the GitHub runner (open internet); it could not
+# be exercised from the dev sandbox (Valve's CDN is firewalled there), so treat
+# the first manual run as the end-to-end validation of tools/fetch_steamclient.py.
+
+on:
+  schedule:
+    - cron: '17 7 * * *'      # daily 07:17 UTC (off the top of the hour)
+  workflow_dispatch:
+
+permissions:
+  contents: write             # push the PR branch + commit updates.yaml
+  pull-requests: write        # open the hash-bump PR
+  issues: write               # open A.2/C and ShaderDepot issues
+
+concurrency:
+  group: watch-steam
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # ── Level 1: cheap version gate ──────────────────────────────────────
+      - name: Get current Steam client version
+        id: ver
+        run: |
+          V=$(python3 tools/fetch_steamclient.py --version-only)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "$V" > .watch-steam-seen
+          echo "Steam client version: $V"
+
+      - name: Have we already processed this version?
+        id: seen
+        uses: actions/cache/restore@v4
+        with:
+          path: .watch-steam-seen
+          key: steam-client-${{ steps.ver.outputs.version }}
+
+      # ── Level 2: only on a NEW version ───────────────────────────────────
+      - name: Download latest steamclient.so
+        id: dl
+        if: steps.seen.outputs.cache-hit != 'true'
+        run: |
+          OUT=$(python3 tools/fetch_steamclient.py --output steamclient.so)
+          SHA=${OUT#sha256=}
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "steamclient.so SHA-256: $SHA"
+
+      - name: Already whitelisted?
+        id: wl
+        if: steps.seen.outputs.cache-hit != 'true'
+        run: |
+          if grep -qiF "${{ steps.dl.outputs.sha }}" res/updates.yaml; then
+            echo "whitelisted=true" >> "$GITHUB_OUTPUT"
+            echo "Hash already in res/updates.yaml — nothing to do."
+          else
+            echo "whitelisted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate patterns
+        id: check
+        if: steps.seen.outputs.cache-hit != 'true' && steps.wl.outputs.whitelisted == 'false'
+        run: |
+          set +e
+          python3 tools/check_patterns.py steamclient.so --json result.json > report.txt 2>&1
+          code=$?
+          set -e
+          cat report.txt
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+
+      # ── CLEAN (0) or ShaderDepot-moved (2): PR the hash ──────────────────
+      - name: Open hash-bump PR
+        if: steps.check.outputs.exit == '0' || steps.check.outputs.exit == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+          EXIT: ${{ steps.check.outputs.exit }}
+        run: |
+          SHORT=${SHA:0:8}
+          BR="watch-steam/hash-$SHORT"
+          if [ "$(gh pr list --state all --search "$SHORT" --json number --jq 'length')" != "0" ]; then
+            echo "A PR for $SHORT already exists — skipping."; exit 0
+          fi
+          python3 tools/whitelist_hash.py "$SHA" --note "auto-added by watch-steam.yml $(date -u +%Y-%m-%d): patterns verified by CI
+          (Steam client version $VER). Live-install test on a Deck still recommended."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BR"
+          git add res/updates.yaml
+          git commit -m "chore(SafeMode): whitelist steamclient $SHORT (CI: patterns verified)"
+          git push -u origin "$BR"
+          {
+            echo "Automated by \`watch-steam.yml\`. A new Steam client shipped and"
+            echo "**all critical patterns still resolve** against its 32-bit \`steamclient.so\`,"
+            echo "so this is an **A.1 hash bump** — no rebuild, no release. Merging propagates"
+            echo "to every Deck on next boot (\`updates.yaml\` is fetched live at startup)."
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            if [ "$EXIT" = "2" ]; then
+              echo "- ⚠️ **ShaderDepot pattern moved** (non-critical: installs still work, only"
+              echo "  the per-game shader-skip is lost). A separate issue tracks re-deriving it."
+            fi
+            echo
+            echo "A live-install test on a real Deck is still recommended before merge."
+            echo
+            echo '<details><summary>check_patterns.py report</summary>'
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+            echo '</details>'
+          } > pr_body.md
+          gh pr create --base main --head "$BR" \
+            --title "SafeMode: whitelist steamclient $SHORT (auto, patterns verified)" \
+            --body-file pr_body.md
+
+      # ── ShaderDepot moved (2): open a tracking issue too ─────────────────
+      - name: Open ShaderDepot issue
+        if: steps.check.outputs.exit == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          SHORT=${SHA:0:8}
+          TITLE="ShaderDepot pattern moved on Steam client $SHORT"
+          if [ "$(gh issue list --state all --search "$TITLE in:title" --json number --jq 'length')" != "0" ]; then
+            echo "Issue already exists — skipping."; exit 0
+          fi
+          {
+            echo "\`watch-steam.yml\` whitelisted Steam client \`$SHORT\` (version \`$VER\`) because"
+            echo "the critical hooks still resolve, but **\`kShaderCacheDepotPattern\` no longer"
+            echo "matches uniquely**. Non-blocking (installs work; only the per-game shader-skip"
+            echo "is lost), but it should be re-derived."
+            echo
+            echo "**Fix:** run \`derive_patterns.py\` in Ghidra against this build; it auto-derives"
+            echo "ShaderDepot (anchored on the \`shadercachedepot\` string). Paste the fresh pattern"
+            echo "into \`src/patterns.hpp\`, rebuild, release."
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+          } > issue_body.md
+          gh issue create --title "$TITLE" --body-file issue_body.md
+
+      # ── blocking (3): critical hook / finder anchor moved -> issue ───────
+      - name: Open blocking issue
+        if: steps.check.outputs.exit == '3'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          SHORT=${SHA:0:8}
+          TITLE="Steam update broke lumalinux patterns (client $SHORT)"
+          if [ "$(gh issue list --state all --search "$TITLE in:title" --json number --jq 'length')" != "0" ]; then
+            echo "Issue already exists — skipping."; exit 0
+          fi
+          BLOCKING=$(python3 -c "import json;print(', '.join(json.load(open('result.json'))['blocking']))")
+          {
+            echo "\`watch-steam.yml\` detected a new Steam client whose \`steamclient.so\` **breaks"
+            echo "lumalinux hooks** — NOT whitelisted (SafeMode keeps blocking, correctly)."
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo "- Blocking: \`$BLOCKING\`"
+            echo
+            echo "This needs a re-derivation (A.2: a critical pattern moved) or a finder code"
+            echo "fix (C: a package-0 anchor moved). See \`docs/maintenance.md\` §A.2/§A.3/§C."
+            echo "Run \`derive_patterns.py\` in Ghidra against this build to re-derive, then"
+            echo "rebuild + release."
+            echo
+            echo '```'
+            cat report.txt
+            echo '```'
+          } > issue_body.md
+          gh issue create --title "$TITLE" --body-file issue_body.md
+
+      # ── remember this version so tomorrow's run skips it ─────────────────
+      - name: Mark version processed
+        if: steps.seen.outputs.cache-hit != 'true' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: .watch-steam-seen
+          key: steam-client-${{ steps.ver.outputs.version }}
