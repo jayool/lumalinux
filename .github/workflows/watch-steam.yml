@@ -138,9 +138,108 @@ jobs:
             --title "SafeMode: whitelist steamclient $SHORT (auto, patterns verified)" \
             --body-file pr_body.md
 
-      # ── ShaderDepot moved (2): open a tracking issue too ─────────────────
-      - name: Open ShaderDepot issue
+      # ── ShaderDepot moved (2): try AUTO-DERIVATION first ─────────────────
+      # The heavy Ghidra path runs ONLY here, on a real "pattern moved" event —
+      # never on the daily happy path — so the multi-minute analysis cost is
+      # paid only when there's real re-derivation work. We re-derive the moved
+      # ShaderDepot pattern, apply it to patterns.hpp, and re-validate; on
+      # success we open a PR (a SOURCE change that needs a release), otherwise
+      # we fall back to the plain tracking issue below.
+      - name: Set up Java for auto-derive
         if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Auto-derive ShaderDepot
+        id: derive
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "applied=false" >> "$GITHUB_OUTPUT"
+          # Reset to the base commit: the hash-bump step above committed
+          # updates.yaml onto its own branch, so detach back to ${{ github.sha }}
+          # to make sure the patterns.hpp change lands on a clean base. The
+          # untracked steamclient.so download survives the checkout.
+          git checkout -f ${{ github.sha }}
+          set +e
+          bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          dcode=$?
+          set -e
+          if [ "$dcode" -ne 0 ]; then
+            echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+          fi
+          set +e
+          python3 tools/apply_derived_pattern.py --derived derived.json --only kShaderCacheDepotPattern
+          acode=$?
+          set -e
+          if [ "$acode" -ne 0 ]; then
+            echo "could not apply derived ShaderDepot pattern — falling back to issue."; exit 0
+          fi
+          # Re-validate against the live binary: patched header must be CLEAN (0).
+          set +e
+          python3 tools/check_patterns.py steamclient.so --json recheck.json > recheck.txt 2>&1
+          rcode=$?
+          set -e
+          cat recheck.txt
+          if [ "$rcode" -ne 0 ]; then
+            echo "re-validation not CLEAN (exit $rcode) — falling back to issue."; exit 0
+          fi
+          if git diff --quiet -- src/patterns.hpp; then
+            echo "no change produced — falling back to issue."; exit 0
+          fi
+          echo "applied=true" >> "$GITHUB_OUTPUT"
+          echo "ShaderDepot re-derived and re-validated CLEAN."
+
+      - name: Open ShaderDepot re-derive PR
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2' && steps.derive.outputs.applied == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          SHORT=${SHA:0:8}
+          BR="watch-steam/shaderdepot-$SHORT"
+          if [ "$(gh pr list --head "$BR" --state all --json number --jq 'length')" != "0" ]; then
+            echo "A ShaderDepot PR for $SHORT already exists — skipping."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BR"
+          git add src/patterns.hpp
+          git commit -m "fix(ShaderDepot): re-derive kShaderCacheDepotPattern for client $SHORT"
+          git push -u origin "$BR"
+          {
+            echo "Automated by \`watch-steam.yml\`. On Steam client \`$VER\` (\`$SHORT\`) the"
+            echo "**ShaderDepot** pattern stopped matching, so the monitor ran the Ghidra headless"
+            echo "derivation (\`derive_patterns.py\`, anchored on the \`shadercachedepot\` string),"
+            echo "re-derived a UNIQUE pattern, applied it to \`src/patterns.hpp\`, and"
+            echo "\`check_patterns.py\` now reports **CLEAN**."
+            echo
+            echo "Unlike the hash-bump PR, **this changes a compiled pattern**, so it only takes"
+            echo "effect after a **rebuild + release** — merging alone is not enough. ShaderDepot"
+            echo "is non-critical (installs already work; this restores the per-game shader-skip),"
+            echo "so there's no rush, but a live-install test on a Deck is recommended first."
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo
+            echo '<details><summary>re-validation (check_patterns.py after applying)</summary>'
+            echo
+            echo '```'
+            cat recheck.txt
+            echo '```'
+            echo '</details>'
+          } > pr_body_sd.md
+          gh pr create --base main --head "$BR" \
+            --title "fix(ShaderDepot): re-derived pattern for client $SHORT (auto, needs release)" \
+            --body-file pr_body_sd.md
+
+      # ── ShaderDepot moved (2) and auto-derive couldn't fix it: issue ─────
+      - name: Open ShaderDepot issue
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2' && steps.derive.outputs.applied != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
@@ -156,6 +255,10 @@ jobs:
             echo "the critical hooks still resolve, but **\`kShaderCacheDepotPattern\` no longer"
             echo "matches uniquely**. Non-blocking (installs work; only the per-game shader-skip"
             echo "is lost), but it should be re-derived."
+            echo
+            echo "**Auto-derivation was attempted and could not produce a clean pattern**"
+            echo "(Ghidra run failed, the derived pattern wasn't unique, or re-validation"
+            echo "didn't come back CLEAN), so this needs a human."
             echo
             echo "**Fix:** run \`derive_patterns.py\` in Ghidra against this build; it auto-derives"
             echo "ShaderDepot (anchored on the \`shadercachedepot\` string). Paste the fresh pattern"
