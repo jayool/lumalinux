@@ -157,54 +157,86 @@ def manifest_version(man):
     return v
 
 
-def package_files(man):
-    """Every package 'file' referenced anywhere in the manifest. Prefer ones
-    that look 32-bit (ubuntu12 and NOT _64) so we try the likely package first,
-    then fall back to the rest."""
-    files = []
+def _packages_container(man):
+    """The dict whose values are package nodes (each carrying a 'file'). In the
+    real manifest that is the top-level "ubuntu12" wrapper."""
+    for v in man.values():
+        if isinstance(v, dict) and any(
+                isinstance(x, dict) and "file" in x for x in v.values()):
+            return v
+    return man
 
-    def walk(d):
-        if not isinstance(d, dict):
-            return
-        f = d.get("file")
-        if isinstance(f, str) and f:
-            files.append(f)
-        for v in d.values():
-            walk(v)
-    walk(man)
-    # de-dup, preserve order, prefer 32-bit-looking packages
-    seen, ordered = set(), []
-    for f in files:
-        if f not in seen:
-            seen.add(f); ordered.append(f)
-    pref = [f for f in ordered if "64" not in f]
-    rest = [f for f in ordered if "64" in f]
-    return pref + rest
+
+def _package_rank(key):
+    # steamclient.so lives in the 32-bit client binaries package (bins_ubuntu12);
+    # try it (then sibling bins_*_ubuntu12) before the big runtime/webkit blobs
+    # so we download ~40 MB instead of ~600 MB.
+    if key == "bins_ubuntu12":
+        return 0
+    if "bins" in key and "ubuntu12" in key and "steamrt" not in key:
+        return 1
+    if "ubuntu12" in key and "steamrt" not in key:
+        return 2
+    return 3
+
+
+def package_entries(man):
+    """[(key, plain_file, vz_file), ...] for every package, ordered so the one
+    most likely to hold steamclient.so comes first."""
+    cont = _packages_container(man)
+    out = []
+    for key, val in cont.items():
+        if isinstance(val, dict) and isinstance(val.get("file"), str):
+            out.append((key, val["file"], val.get("zipvz")))
+    out.sort(key=lambda e: _package_rank(e[0]))
+    return out
 
 
 def extract_steamclient(man, out_path):
-    """Download packages until we find steamclient.so; extract it to out_path.
-    Returns the zip member name it came from."""
+    """Download packages (the vz-compressed variant Valve actually serves) until
+    we find steamclient.so; extract it to out_path. Returns the member name.
+    Diagnostics go to stderr (captured in the workflow log)."""
     want = "steamclient.so"
-    for f in package_files(man):
-        try:
-            blob = http_get(CDN + f)
-            if blob[:2] == b"VZ":
-                blob = vz_decompress(blob)
-            if blob[:2] != b"PK":            # not a zip -> skip
+    for key, plain, vz in package_entries(man):
+        # Each package lists a plain "file" AND a "zipvz". The CDN serves the
+        # .vz (LZMA) one; the plain path is usually absent -> try vz first.
+        variants = []
+        if vz:
+            variants.append((vz, True))
+        if plain:
+            variants.append((plain, False))
+        for fname, is_vz in variants:
+            try:
+                blob = http_get(CDN + fname)
+            except Exception as e:           # noqa: BLE001
+                print("  (%s: download failed: %s)" % (key, e), file=sys.stderr)
                 continue
-            zf = zipfile.ZipFile(io.BytesIO(blob))
-        except Exception as e:               # noqa: BLE001 — try the next package
-            print("  (skip %s: %s)" % (f, e), file=sys.stderr)
-            continue
-        # prefer the ubuntu12_32 path, else any steamclient.so
-        members = zf.namelist()
-        cand = [m for m in members if m.endswith(want)]
-        cand.sort(key=lambda m: (0 if "ubuntu12_32" in m or "linux32" in m else 1, len(m)))
-        if cand:
-            with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
-                dst.write(src.read())
-            return cand[0]
+            try:
+                if is_vz or blob[:2] == b"VZ":
+                    blob = vz_decompress(blob)
+                if blob[:2] != b"PK":
+                    print("  (%s: not a zip after decompress, head=%r)"
+                          % (key, blob[:4]), file=sys.stderr)
+                    continue
+                zf = zipfile.ZipFile(io.BytesIO(blob))
+            except Exception as e:           # noqa: BLE001
+                print("  (%s: decompress/open failed: %s)" % (key, e), file=sys.stderr)
+                continue
+            members = zf.namelist()
+            # lumalinux hooks the 32-bit binary — exclude the 64-bit one.
+            cand = [m for m in members if m.endswith(want)
+                    and "ubuntu12_64" not in m and "linux64" not in m]
+            if cand:
+                cand.sort(key=lambda m: (0 if ("ubuntu12_32" in m or "linux32" in m)
+                                         else 1, len(m)))
+                print("  (found steamclient.so in package %s: %s)" % (key, cand[0]),
+                      file=sys.stderr)
+                with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
+                    dst.write(src.read())
+                return cand[0]
+            print("  (%s: %d members, no steamclient.so)" % (key, len(members)),
+                  file=sys.stderr)
+            break    # got a valid zip but no match; don't retry the plain variant
     raise RuntimeError("steamclient.so not found in any client package")
 
 
