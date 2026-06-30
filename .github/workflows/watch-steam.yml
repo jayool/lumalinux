@@ -138,9 +138,108 @@ jobs:
             --title "SafeMode: whitelist steamclient $SHORT (auto, patterns verified)" \
             --body-file pr_body.md
 
-      # ── ShaderDepot moved (2): open a tracking issue too ─────────────────
-      - name: Open ShaderDepot issue
+      # ── ShaderDepot moved (2): try AUTO-DERIVATION first ─────────────────
+      # The heavy Ghidra path runs ONLY here, on a real "pattern moved" event —
+      # never on the daily happy path — so the multi-minute analysis cost is
+      # paid only when there's real re-derivation work. We re-derive the moved
+      # ShaderDepot pattern, apply it to patterns.hpp, and re-validate; on
+      # success we open a PR (a SOURCE change that needs a release), otherwise
+      # we fall back to the plain tracking issue below.
+      - name: Set up Java for auto-derive
+        if: steps.check.outcome == 'success' && (steps.check.outputs.exit == '2' || steps.check.outputs.exit == '3')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Auto-derive ShaderDepot
+        id: derive
         if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "applied=false" >> "$GITHUB_OUTPUT"
+          # Reset to the base commit: the hash-bump step above committed
+          # updates.yaml onto its own branch, so detach back to ${{ github.sha }}
+          # to make sure the patterns.hpp change lands on a clean base. The
+          # untracked steamclient.so download survives the checkout.
+          git checkout -f ${{ github.sha }}
+          set +e
+          bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          dcode=$?
+          set -e
+          if [ "$dcode" -ne 0 ]; then
+            echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+          fi
+          set +e
+          python3 tools/apply_derived_pattern.py --derived derived.json --only kShaderCacheDepotPattern
+          acode=$?
+          set -e
+          if [ "$acode" -ne 0 ]; then
+            echo "could not apply derived ShaderDepot pattern — falling back to issue."; exit 0
+          fi
+          # Re-validate against the live binary: patched header must be CLEAN (0).
+          set +e
+          python3 tools/check_patterns.py steamclient.so --json recheck.json > recheck.txt 2>&1
+          rcode=$?
+          set -e
+          cat recheck.txt
+          if [ "$rcode" -ne 0 ]; then
+            echo "re-validation not CLEAN (exit $rcode) — falling back to issue."; exit 0
+          fi
+          if git diff --quiet -- src/patterns.hpp; then
+            echo "no change produced — falling back to issue."; exit 0
+          fi
+          echo "applied=true" >> "$GITHUB_OUTPUT"
+          echo "ShaderDepot re-derived and re-validated CLEAN."
+
+      - name: Open ShaderDepot re-derive PR
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2' && steps.derive.outputs.applied == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          SHORT=${SHA:0:8}
+          BR="watch-steam/shaderdepot-$SHORT"
+          if [ "$(gh pr list --head "$BR" --state all --json number --jq 'length')" != "0" ]; then
+            echo "A ShaderDepot PR for $SHORT already exists — skipping."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BR"
+          git add src/patterns.hpp
+          git commit -m "fix(ShaderDepot): re-derive kShaderCacheDepotPattern for client $SHORT"
+          git push -u origin "$BR"
+          {
+            echo "Automated by \`watch-steam.yml\`. On Steam client \`$VER\` (\`$SHORT\`) the"
+            echo "**ShaderDepot** pattern stopped matching, so the monitor ran the Ghidra headless"
+            echo "derivation (\`derive_patterns.py\`, anchored on the \`shadercachedepot\` string),"
+            echo "re-derived a UNIQUE pattern, applied it to \`src/patterns.hpp\`, and"
+            echo "\`check_patterns.py\` now reports **CLEAN**."
+            echo
+            echo "Unlike the hash-bump PR, **this changes a compiled pattern**, so it only takes"
+            echo "effect after a **rebuild + release** — merging alone is not enough. ShaderDepot"
+            echo "is non-critical (installs already work; this restores the per-game shader-skip),"
+            echo "so there's no rush, but a live-install test on a Deck is recommended first."
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo
+            echo '<details><summary>re-validation (check_patterns.py after applying)</summary>'
+            echo
+            echo '```'
+            cat recheck.txt
+            echo '```'
+            echo '</details>'
+          } > pr_body_sd.md
+          gh pr create --base main --head "$BR" \
+            --title "fix(ShaderDepot): re-derived pattern for client $SHORT (auto, needs release)" \
+            --body-file pr_body_sd.md
+
+      # ── ShaderDepot moved (2) and auto-derive couldn't fix it: issue ─────
+      - name: Open ShaderDepot issue
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2' && steps.derive.outputs.applied != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
@@ -157,6 +256,10 @@ jobs:
             echo "matches uniquely**. Non-blocking (installs work; only the per-game shader-skip"
             echo "is lost), but it should be re-derived."
             echo
+            echo "**Auto-derivation was attempted and could not produce a clean pattern**"
+            echo "(Ghidra run failed, the derived pattern wasn't unique, or re-validation"
+            echo "didn't come back CLEAN), so this needs a human."
+            echo
             echo "**Fix:** run \`derive_patterns.py\` in Ghidra against this build; it auto-derives"
             echo "ShaderDepot (anchored on the \`shadercachedepot\` string). Paste the fresh pattern"
             echo "into \`src/patterns.hpp\`, rebuild, release."
@@ -167,9 +270,107 @@ jobs:
           } > issue_body.md
           gh issue create --title "$TITLE" --body-file issue_body.md
 
-      # ── blocking (3): critical hook / finder anchor moved -> issue ───────
-      - name: Open blocking issue
+      # ── blocking (3): try AUTO-DERIVATION of the moved critical hooks ────
+      # Same Ghidra path as ShaderDepot, but for the string-anchored CRITICAL
+      # hooks (BuildDep / GMRC, and DepotKey if the vcall walk resolves).
+      # blocking_constants.py decides what's auto-derivable: if a finder anchor
+      # moved (a code fix, not a pattern) or an unknown hook is blocking, it
+      # prints nothing and we go straight to the issue. Unlike ShaderDepot this
+      # NEVER whitelists — a broken critical means SafeMode must keep blocking
+      # until the rebuilt .so ships, so the PR is a source fix that needs a
+      # release.
+      - name: Auto-derive blocking criticals
+        id: derive3
         if: steps.check.outcome == 'success' && steps.check.outputs.exit == '3'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "applied=false" >> "$GITHUB_OUTPUT"
+          ONLY=$(python3 tools/blocking_constants.py result.json)
+          echo "auto-derivable blocking constants: '${ONLY:-<none>}'"
+          if [ -z "$ONLY" ]; then
+            echo "nothing auto-derivable (finder anchor or unknown hook) — issue."; exit 0
+          fi
+          echo "only=$ONLY" >> "$GITHUB_OUTPUT"
+          git checkout -f ${{ github.sha }}
+          set +e
+          bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          dcode=$?
+          set -e
+          if [ "$dcode" -ne 0 ]; then
+            echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+          fi
+          set +e
+          python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
+          acode=$?
+          set -e
+          if [ "$acode" -ne 0 ]; then
+            echo "could not apply all blocking criticals — falling back to issue."; exit 0
+          fi
+          set +e
+          python3 tools/check_patterns.py steamclient.so --json recheck.json > recheck.txt 2>&1
+          rc=$?
+          set -e
+          cat recheck.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "re-validation not CLEAN (exit $rc) — falling back to issue."; exit 0
+          fi
+          if git diff --quiet -- src/patterns.hpp; then
+            echo "no change produced — falling back to issue."; exit 0
+          fi
+          echo "applied=true" >> "$GITHUB_OUTPUT"
+          echo "Critical hooks re-derived and re-validated CLEAN."
+
+      - name: Open critical re-derive PR
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '3' && steps.derive3.outputs.applied == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          VER: ${{ steps.ver.outputs.version }}
+          ONLY: ${{ steps.derive3.outputs.only }}
+        run: |
+          SHORT=${SHA:0:8}
+          BR="watch-steam/criticals-$SHORT"
+          if [ "$(gh pr list --head "$BR" --state all --json number --jq 'length')" != "0" ]; then
+            echo "A criticals PR for $SHORT already exists — skipping."; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BR"
+          git add src/patterns.hpp
+          git commit -m "fix(patterns): re-derive blocking critical hooks for client $SHORT"
+          git push -u origin "$BR"
+          {
+            echo "Automated by \`watch-steam.yml\`. Steam client \`$VER\` (\`$SHORT\`) moved a"
+            echo "**CRITICAL** hook (\`$ONLY\`), so the monitor ran the Ghidra headless derivation"
+            echo "(\`derive_patterns.py\`), re-derived UNIQUE pattern(s), applied them to"
+            echo "\`src/patterns.hpp\`, and \`check_patterns.py\` now reports **CLEAN**."
+            echo
+            echo "**This is NOT whitelisted.** A broken critical means SafeMode must keep"
+            echo "blocking this build until a **rebuilt \`.so\` with these patterns ships** —"
+            echo "merging this PR alone is not enough, it needs a **release**. (\`updates.yaml\`"
+            echo "is intentionally untouched; the hash gets whitelisted by a normal release."
+            echo "or the next watch-steam run once the rebuilt client resolves cleanly.)"
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo
+            echo "A live-install test on a real Deck is **strongly** recommended before release."
+            echo
+            echo '<details><summary>re-validation (check_patterns.py after applying)</summary>'
+            echo
+            echo '```'
+            cat recheck.txt
+            echo '```'
+            echo '</details>'
+          } > pr_body_crit.md
+          gh pr create --base main --head "$BR" \
+            --title "fix(patterns): re-derived critical hooks for client $SHORT (auto, needs release)" \
+            --body-file pr_body_crit.md
+
+      # ── blocking (3) and auto-derive couldn't fix it: issue ──────────────
+      - name: Open blocking issue
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '3' && steps.derive3.outputs.applied != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
@@ -188,6 +389,10 @@ jobs:
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
             echo "- Blocking: \`$BLOCKING\`"
+            echo
+            echo "**Auto-derivation was attempted and could not produce a clean fix** — either a"
+            echo "finder anchor moved (a code fix in \`package_zero_finder.cpp\`, not a pattern),"
+            echo "the Ghidra derivation/apply failed, or re-validation didn't come back CLEAN."
             echo
             echo "This needs a re-derivation (A.2: a critical pattern moved) or a finder code"
             echo "fix (C: a package-0 anchor moved). See \`docs/maintenance.md\` §A.2/§A.3/§C."

@@ -44,6 +44,7 @@
 #   analyzeHeadless <proj> <name> -process steamclient.so \
 #       -noanalysis -scriptPath tools -postScript derive_patterns.py
 # (or -import steamclient.so for a fresh project; analysis takes ~5-30 min).
+import json
 from ghidra.util.task import ConsoleTaskMonitor
 
 prog    = currentProgram
@@ -54,6 +55,26 @@ refmgr  = prog.getReferenceManager()
 mon     = ConsoleTaskMonitor()
 
 PROLOGUE_BYTES = 28   # how many bytes of prologue to capture
+
+# Optional machine-readable output for CI auto-derivation (watch-steam.yml).
+# Pass `--json <path>` as a postScript arg and we additionally dump every hook
+# we re-derived to a UNIQUE pattern as {const: {pattern, matches, rva}}. Without
+# the arg the script behaves exactly as before (human-readable stdout only), so
+# manual Ghidra runs are unaffected. tools/apply_derived_pattern.py consumes it.
+_JSON_OUT = None
+try:
+    _args = list(getScriptArgs())
+    if "--json" in _args:
+        _i = _args.index("--json")
+        if _i + 1 < len(_args):
+            _JSON_OUT = _args[_i + 1]
+except Exception:
+    _JSON_OUT = None
+
+# label (the patterns.hpp constant name) -> {"pattern", "matches", "rva"}.
+# Only populated for hooks we re-derived to a single UNIQUE match — anything
+# ambiguous or anchor-less is left out so a human keeps the call.
+DERIVED = {}
 
 # String-anchored hooks: (label, anchor_string, current_pattern_for_validation)
 ANCHORED_HOOKS = [
@@ -314,13 +335,25 @@ for label, anchor, cur in ANCHORED_HOOKS:
     if not fns:
         print("  anchor found but no referencing function resolved (analysis incomplete?).")
         continue
+    cands = []
     for f in fns:
         pat = extract_pattern(f.getEntryPoint())
         n = len(pattern_matches(pat))
+        cands.append((f, pat, n))
         print("  candidate @ %s : %s   (%s)" %
               (f.getEntryPoint(), pat, "UNIQUE" if n == 1 else ("%d matches" % n)))
-    if len(fns) == 1:
+    # Auto-derivation is only trustworthy when there's exactly ONE referencing
+    # function and its fresh prologue matches UNIQUELY. Anything else (multiple
+    # referrers, or a single referrer whose prologue over-generalises) needs a
+    # human, so we don't record it for CI.
+    uniq = [(f, pat) for (f, pat, n) in cands if n == 1]
+    if len(fns) == 1 and len(uniq) == 1:
+        f, pat = uniq[0]
+        DERIVED[label] = {"pattern": pat, "matches": 1,
+                          "rva": "0x%x" % f.getEntryPoint().getOffset()}
         print("  -> use the pattern above for %s" % label)
+    elif len(fns) == 1:
+        print("  -> single candidate but not UNIQUE; needs manual tightening")
     else:
         print("  -> multiple candidates; pick the UNIQUE one whose prologue matches the hook")
 
@@ -333,6 +366,8 @@ if result is not None:
     print("  vcall-derived @ %s : %s   (%s)" % (addr, pat, tag))
     if n == 1:
         print("  -> derived via dispatcher vcall — use the pattern above")
+        DERIVED[DEPOTKEY_LABEL] = {"pattern": pat, "matches": 1,
+                                   "rva": "0x%x" % addr.getOffset()}
     else:
         print("  -> derived but not UNIQUE; double-check or tighten manually")
 else:
@@ -397,6 +432,19 @@ else:
     print("      specific anchor than the current tail bytes.")
     for h in tail[:6]:
         print("      @ %s" % h)
+
+# 5) Machine-readable dump for CI (watch-steam.yml auto-derivation)
+if _JSON_OUT:
+    try:
+        f = open(_JSON_OUT, "w")
+        try:
+            json.dump(DERIVED, f, indent=2, sort_keys=True)
+        finally:
+            f.close()
+        print("\nWrote %d re-derived hook(s) to %s: %s"
+              % (len(DERIVED), _JSON_OUT, ", ".join(sorted(DERIVED)) or "(none)"))
+    except Exception as e:
+        print("\nWARNING: could not write --json %s: %s" % (_JSON_OUT, e))
 
 print("\n================= done. Paste UNIQUE patterns into src/patterns.hpp =================")
 print("Reminders:")
