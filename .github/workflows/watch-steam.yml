@@ -92,7 +92,7 @@ jobs:
 
       # ── CLEAN (0) or ShaderDepot-moved (2): PR the hash ──────────────────
       - name: Open hash-bump PR
-        if: steps.check.outputs.exit == '0' || steps.check.outputs.exit == '2'
+        if: steps.check.outcome == 'success' && (steps.check.outputs.exit == '0' || steps.check.outputs.exit == '2')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
@@ -140,7 +140,7 @@ jobs:
 
       # ── ShaderDepot moved (2): open a tracking issue too ─────────────────
       - name: Open ShaderDepot issue
-        if: steps.check.outputs.exit == '2'
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
@@ -169,7 +169,7 @@ jobs:
 
       # ── blocking (3): critical hook / finder anchor moved -> issue ───────
       - name: Open blocking issue
-        if: steps.check.outputs.exit == '3'
+        if: steps.check.outcome == 'success' && steps.check.outputs.exit == '3'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ steps.dl.outputs.sha }}
