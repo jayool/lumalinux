@@ -127,7 +127,12 @@ uintptr_t FindSteamclientBase() {
         Log::Info("Patterns: steamclient.so r-x mapping at 0x%lx (size 0x%lx)",
                   (unsigned long)r.base, (unsigned long)r.size);
     } else {
-        Log::Error("Patterns: steamclient.so r-x mapping not found in /proc/self/maps");
+        // Expected during early init: the ctor polls this until steamclient.so
+        // is mapped (typically a few attempts), so a "not found" here is normal
+        // noise, not an error. Callers (InstallHooks, the ctor poll loop) log the
+        // real outcome — success, the final "never appeared", or the abort — at
+        // the appropriate level, so keep this at DEBUG.
+        Log::Debug("Patterns: steamclient.so r-x mapping not found yet in /proc/self/maps");
     }
     return r.base;
 }
