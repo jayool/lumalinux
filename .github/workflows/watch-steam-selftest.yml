@@ -1,0 +1,85 @@
+name: watch-steam-selftest
+
+# Manual end-to-end test of the auto-derivation FAILURE path that the daily
+# watch-steam.yml only reaches on a real Steam "ShaderDepot moved" event.
+#
+# Dispatching watch-steam normally is a no-op on a known/whitelisted hash — it
+# never exercises the new Ghidra leg. So here we:
+#   1. fetch the live steamclient.so (same fetcher the cron uses),
+#   2. deliberately corrupt the shipped ShaderDepot pattern so
+#      check_patterns.py reports exit 2 (noncritical moved, criticals fine),
+#   3. run the REAL re-derivation chain — run_ghidra_derive.sh ->
+#      apply_derived_pattern.py -> check_patterns.py — and ASSERT it comes
+#      back CLEAN (exit 0).
+#
+# A green run proves the exit-2 leg works without waiting for Valve to move the
+# function. It does NOT open a PR or touch res/updates.yaml — it only asserts,
+# and the corruption lives only in the runner's checkout.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Download latest steamclient.so
+        run: |
+          OUT=$(python3 tools/fetch_steamclient.py --output steamclient.so)
+          echo "fetched: $OUT"
+          ls -l steamclient.so
+
+      - name: Baseline validate (informational)
+        run: |
+          set +e
+          python3 tools/check_patterns.py steamclient.so
+          echo "baseline exit=$? (0 = current shipped patterns all resolve)"
+
+      - name: Force a ShaderDepot move
+        run: |
+          cat > /tmp/mangle.py <<'PY'
+          import re
+          p = "src/patterns.hpp"
+          t = open(p).read()
+          t, n = re.subn(r'(\bkShaderCacheDepotPattern\s*=\s*")[0-9A-Fa-f? ]+(")', r'\g<1>FF FF FF FF FF FF FF FF FF FF FF FF\g<2>', t, count=1)
+          assert n == 1, "did not mangle kShaderCacheDepotPattern"
+          open(p, "w").write(t)
+          print("mangled kShaderCacheDepotPattern -> bogus bytes (won't match)")
+          PY
+          python3 /tmp/mangle.py
+          set +e
+          python3 tools/check_patterns.py steamclient.so
+          mc=$?
+          set -e
+          echo "after-mangle exit=$mc (expect 2 = ShaderDepot moved, criticals still OK)"
+          test "$mc" -eq 2
+
+      - name: Auto-derive + apply + re-validate (the new code)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          python3 tools/apply_derived_pattern.py --derived derived.json --only kShaderCacheDepotPattern
+          set +e
+          python3 tools/check_patterns.py steamclient.so
+          rc=$?
+          set -e
+          echo "re-validate exit=$rc (expect 0 = CLEAN)"
+          test "$rc" -eq 0
+          echo "── auto-derived ShaderDepot pattern (diff vs the corrupted one) ──"
+          git --no-pager diff -- src/patterns.hpp
+          echo "SELFTEST PASSED: forced exit 2 -> Ghidra re-derived UNIQUE -> CLEAN"
