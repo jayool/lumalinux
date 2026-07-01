@@ -1,21 +1,10 @@
 #pragma once
 
 // Manifest-request-code provider. Fetches the per-manifest "request code" (the
-// token Valve hands out to authorize a manifest download) from gmrc.wudrm.com
-// over a plain-HTTP raw socket (no TLS, no fork) and caches results. The GMRC
-// hook calls GetCode() to fill in the code the Steam server denied for unowned
-// content.
-//
-// History: v0.15.2 tried an opensteamtool → steam.run → wudrm curl cascade, but
-// popen(curl) from inside Steam fails (the child inherits Steam's LD_LIBRARY_PATH
-// and loads Steam's broken libs), and from a clean shell opensteamtool sits
-// behind a Cloudflare JS wall while steam.run 404s for the same GID — so the
-// HTTPS mirrors deliver nothing while forking a curl per attempt for no gain.
-// Reverted to the dependency-free wudrm socket. The real cause of the "No
-// internet connection" popup was Steam probing a CONTENTLESS BASE DEPOT (now
-// dropped in key_store GetAllDepotIds), not the code endpoint — so GMRC stays
-// best-effort: nullopt just falls through to Steam (content comes from the
-// manifests Hubcap seeds into depotcache, which need no request code at all).
+// token Valve hands out to authorize a manifest download) from the community
+// endpoint gmrc.wudrm.com — the same endpoint SteaMidra uses — over plain HTTP
+// (no TLS needed), and caches results. The GMRC hook calls GetCode() to fill in
+// the code the Steam server denied for unowned content.
 
 #include <cstdint>
 #include <cstdio>

@@ -6,9 +6,7 @@
 #include "../steam_types.hpp"   // CUtlVector<T>, DepotEntry
 
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
-#include <string>
 #include <unordered_map>
 
 namespace {
@@ -81,46 +79,6 @@ size_t PatchVector(CUtlVector<DepotEntry>* v, uint32_t AppId,
     return patched;
 }
 
-// Remove the base app depot (DepotId == AppId) from pDepotInfo when it carries
-// no content — i.e. it's not one of our keyed content depots. The appid-numbered
-// depot is, by Steam convention, a licence/DRM placeholder with nothing to
-// download. Steam still plans an install for it (the app is owned via SLSsteam)
-// and asks GMRC for its manifest code; when gmrc.wudrm.com 502s that surfaces as
-// the "No internet connection" popup (e.g. Silksong's depot 1030300) even though
-// the real content installs fine from the Hubcab-seeded manifests. Dropping it
-// from the dependency list Steam plans from — the same list BuildDep already
-// patches — is lumalinux's equivalent of slsteam-moon's size-0 empty-depot drop.
-//
-// "Content depot" is KeyStore::IsContentDepot (parent_app_id != 0), which is
-// true even in the default no-pin mode where content depots carry gid=0; the
-// base placeholder is stored legacy (parent_app_id == 0) so it reads false and
-// is dropped, while a game that genuinely keys its appid-depot as content reads
-// true and is kept. DepotEntry is POD, so removal is a plain shift-down +
-// m_Size-- (CUtlVector::Remove); the buffer (m_nAllocationCount) is untouched so
-// Steam still frees it.
-size_t RemoveContentlessBaseDepot(CUtlVector<DepotEntry>* v, uint32_t AppId) {
-    if (!v || v->m_Size == 0 || !v->m_pMemory) return 0;
-    if (v->m_Size > 256) return 0;
-    size_t removed = 0;
-    for (uint32_t i = 0; i < v->m_Size; /* advance below */) {
-        const DepotEntry& e = v->m_pMemory[i];
-        if (e.DepotId == AppId && !KeyStore::IsContentDepot(e.DepotId)) {
-            Log::Info("BuildDep: DROP base app depot=%u (contentless placeholder, "
-                      "gid=%llu size=%llu) so Steam won't probe its manifest",
-                      e.DepotId, (unsigned long long)e.ManifestGid,
-                      (unsigned long long)e.ManifestSize);
-            for (uint32_t j = i + 1; j < v->m_Size; ++j)
-                v->m_pMemory[j - 1] = v->m_pMemory[j];
-            v->m_Size--;
-            removed++;
-            // don't advance i — the next entry slid into this slot
-        } else {
-            ++i;
-        }
-    }
-    return removed;
-}
-
 bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
             CUtlVector<DepotEntry>* pDepotInfo,
             CUtlVector<DepotEntry>* pSharedDepotInfo,
@@ -143,51 +101,43 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
     // best a no-op and at worst memory corruption. Mirror the guard.
     if (!result) return result;
 
-    // Act only on lumalinux-managed apps. HasDepot(AppId) is true when keys.txt
-    // carries this app's own entry (steamidra_lite always writes it) and, unlike
-    // GetDepotsForApp, doesn't need a gid pin — so this also fires in the default
-    // no-pin mode where content depots carry gid=0. A genuinely-owned game not
-    // managed by us has no keys.txt entry, so we leave its dependency list alone.
-    if (!KeyStore::HasDepot(AppId)) return result;
+    auto depots = KeyStore::GetDepotsForApp(AppId);
+    if (depots.empty()) return result;
 
     LogDepotVector("pDepotInfo(pre-patch)", pDepotInfo);
     LogDepotVector("pSharedDepotInfo(pre-patch)", pSharedDepotInfo);
 
-    // One INFO line listing the planned depot ids, so the log shows plainly
-    // whether the contentless base depot even reached pDepotInfo — diagnosing the
-    // "No connection" popup no longer needs debug-level logging.
-    if (pDepotInfo && pDepotInfo->m_pMemory && pDepotInfo->m_Size <= 256) {
-        std::string ids;
-        char b[16];
-        for (uint32_t i = 0; i < pDepotInfo->m_Size; ++i) {
-            std::snprintf(b, sizeof b, "%u ", pDepotInfo->m_pMemory[i].DepotId);
-            ids += b;
-        }
-        Log::Info("BuildDep: app %u pDepotInfo depots: [ %s]", AppId, ids.c_str());
-    }
+    std::unordered_map<uint32_t, KeyStore::DepotInfo> byDepot;
+    byDepot.reserve(depots.size());
+    for (const auto& d : depots) byDepot.emplace(d.depot_id, d);
 
-    // Drop the contentless base app depot so Steam never plans/probes it (the
-    // "No internet connection" popup). Runs regardless of pin mode — this was the
-    // bug in v0.15.4: the drop sat behind the gid-pin early-return, which is empty
-    // in no-pin mode, so it never ran.
-    size_t dropped = RemoveContentlessBaseDepot(pDepotInfo, AppId);
-    if (dropped > 0)
-        Log::Info("BuildDep: dropped %zu contentless base depot(s) from pDepotInfo "
-                  "for app %u", dropped, AppId);
+    // PATCH ONLY — LumaCore-style. We never inject depots that aren't already
+    // in pDepotInfo. Steam must surface them itself, which it does once
+    // SLSsteam's ownership injection + our LoadPackage are in place. Injection
+    // from here was tested in v0.5.4 and produced a crash on app selection.
+    //
+    // Only pDepotInfo is patched. LumaCore explicitly skips pSharedDepotInfo
+    // (ManifestBind.cpp loops only the primary vector); shared depots belong
+    // to their own parent app (e.g. VC 2022 Redist = 228989 under app 228980)
+    // and Steam already has them with the legitimate gids from that app's
+    // appinfo. Overwriting those broke Formula Legends (heap corruption →
+    // SIGSEGV in libc malloc_usable_size when Steam reached the install step).
+    // See RESEARCH.md §11.4 for the diagnosis.
+    size_t patched = PatchVector(pDepotInfo, AppId, byDepot);
 
-    // GID pinning — no-op in the default no-pin mode (GetDepotsForApp filters
-    // gid!=0). Patch existing entries only when we have pinned gids. Never inject
-    // (v0.5.4 crash), never touch pSharedDepotInfo (Formula Legends heap
-    // corruption — see RESEARCH.md §11.4).
-    auto depots = KeyStore::GetDepotsForApp(AppId);
-    if (!depots.empty()) {
-        std::unordered_map<uint32_t, KeyStore::DepotInfo> byDepot;
-        byDepot.reserve(depots.size());
-        for (const auto& d : depots) byDepot.emplace(d.depot_id, d);
-        size_t patched = PatchVector(pDepotInfo, AppId, byDepot);
-        if (patched > 0)
-            Log::Info("BuildDep: patched %zu depot entr(ies) in pDepotInfo for app %u",
-                      patched, AppId);
+    if (patched > 0) {
+        Log::Info("BuildDep: patched %zu depot entr(ies) in pDepotInfo for app %u",
+                  patched, AppId);
+    } else {
+        // Note: this is normal when Steam's appinfo already has the right
+        // gids (no patch needed), or when our keystore has depots for this
+        // app that aren't surfaced in pDepotInfo (Steam filtered them out by
+        // OS/branch/language — e.g. a Windows-only redist on a Linux native
+        // install).
+        Log::Debug("BuildDep: app %u has %zu KeyStore depots — none required "
+                   "patching in pDepotInfo (Steam already had right gids, or "
+                   "Steam filtered the depots out by OS/branch).",
+                   AppId, depots.size());
     }
     return result;
 }
