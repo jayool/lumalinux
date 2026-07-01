@@ -61,6 +61,14 @@ std::optional<DepotKey> Lookup(uint32_t depot_id);
 // Used by depot_dependency_hook to know what gid/size to patch. Empty if none.
 std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id);
 
+// True if `depot_id` is stored as a CONTENT depot (parent_app_id != 0),
+// regardless of whether a manifest_gid is pinned. The base app depot is stored
+// legacy (parent_app_id == 0), so this is false for it — which is exactly how
+// the BuildDep hook tells a real content depot from the contentless base
+// placeholder even in the default no-pin mode (where content depots carry
+// gid=0 and GetDepotsForApp is empty).
+bool IsContentDepot(uint32_t depot_id);
+
 // Every depot_id present in the store (i.e. every key we have). This is the
 // faithful Linux equivalent of LumaCore's LuaLoader::GetAllDepotIds() — it
 // returns the DEPOT ids (not parent app ids). The LoadPackage hook injects

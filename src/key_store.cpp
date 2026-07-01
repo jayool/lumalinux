@@ -174,6 +174,12 @@ std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id) {
     return result;
 }
 
+bool IsContentDepot(uint32_t depot_id) {
+    std::lock_guard<std::mutex> lock(Mtx());
+    auto it = Keys().find(depot_id);
+    return it != Keys().end() && it->second.parent_app_id != 0;
+}
+
 std::vector<uint32_t> GetAllDepotIds() {
     std::lock_guard<std::mutex> lock(Mtx());
     // The base app depot (depot_id == the app id) carries no content — it's a
