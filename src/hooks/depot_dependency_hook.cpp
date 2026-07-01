@@ -79,6 +79,44 @@ size_t PatchVector(CUtlVector<DepotEntry>* v, uint32_t AppId,
     return patched;
 }
 
+// Remove the base app depot (DepotId == AppId) from pDepotInfo when it carries
+// no content — i.e. it's not one of our keyed content depots. The appid-numbered
+// depot is, by Steam convention, a licence/DRM placeholder with nothing to
+// download. Steam still plans an install for it (the app is owned via SLSsteam)
+// and asks GMRC for its manifest code; when gmrc.wudrm.com 502s that surfaces as
+// the "No internet connection" popup (e.g. Silksong's depot 1030300) even though
+// the real content installs fine from the Hubcap-seeded manifests. Dropping it
+// from the dependency list Steam plans from — the same list BuildDep already
+// patches — is lumalinux's equivalent of slsteam-moon's size-0 empty-depot drop.
+// Loses no content: real content depots have their own id (never == AppId here),
+// and if a game genuinely keys its appid-depot as content it's in byDepot → kept.
+// DepotEntry is POD, so removal is a plain shift-down + m_Size-- (CUtlVector::
+// Remove); the buffer (m_nAllocationCount) is untouched so Steam still frees it.
+size_t RemoveContentlessBaseDepot(
+        CUtlVector<DepotEntry>* v, uint32_t AppId,
+        const std::unordered_map<uint32_t, KeyStore::DepotInfo>& byDepot) {
+    if (!v || v->m_Size == 0 || !v->m_pMemory) return 0;
+    if (v->m_Size > 256) return 0;
+    size_t removed = 0;
+    for (uint32_t i = 0; i < v->m_Size; /* advance below */) {
+        const DepotEntry& e = v->m_pMemory[i];
+        if (e.DepotId == AppId && byDepot.find(e.DepotId) == byDepot.end()) {
+            Log::Info("BuildDep: DROP base app depot=%u (contentless placeholder, "
+                      "gid=%llu size=%llu) so Steam won't probe its manifest",
+                      e.DepotId, (unsigned long long)e.ManifestGid,
+                      (unsigned long long)e.ManifestSize);
+            for (uint32_t j = i + 1; j < v->m_Size; ++j)
+                v->m_pMemory[j - 1] = v->m_pMemory[j];
+            v->m_Size--;
+            removed++;
+            // don't advance i — the next entry slid into this slot
+        } else {
+            ++i;
+        }
+    }
+    return removed;
+}
+
 bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
             CUtlVector<DepotEntry>* pDepotInfo,
             CUtlVector<DepotEntry>* pSharedDepotInfo,
@@ -124,6 +162,14 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
     // SIGSEGV in libc malloc_usable_size when Steam reached the install step).
     // See RESEARCH.md §11.4 for the diagnosis.
     size_t patched = PatchVector(pDepotInfo, AppId, byDepot);
+
+    // Drop the contentless base app depot so Steam never plans/probes it (the
+    // "No internet connection" popup). Done after patching — the base depot is
+    // never in byDepot, so it's never a patch target anyway.
+    size_t dropped = RemoveContentlessBaseDepot(pDepotInfo, AppId, byDepot);
+    if (dropped > 0)
+        Log::Info("BuildDep: dropped %zu contentless base depot(s) from pDepotInfo "
+                  "for app %u", dropped, AppId);
 
     if (patched > 0) {
         Log::Info("BuildDep: patched %zu depot entr(ies) in pDepotInfo for app %u",
