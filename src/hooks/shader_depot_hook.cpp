@@ -45,13 +45,25 @@ uint32_t HookFn(void* appinfo) {
 
     const uint32_t id = g_origFn(appinfo);
 
-    // Only intervene for OUR keyless games: a depot we manage that was
-    // registered presence-only (no shader key in the .lua). Keyed games and the
-    // user's genuinely-owned games are not in the store as presence-only, so
-    // they pass through untouched and their shaders pre-cache normally.
-    if (id != 0 && KeyStore::IsPresenceOnly(id)) {
-        Log::Info("ShaderDepot: shader depot id %u is keyless (no key in keys.txt) "
-                  "-> returning 0 so Steam skips its shader pre-cache cleanly", id);
+    // Skip the shader pre-cache for a base/placeholder depot we manage. The
+    // shader-cache depot id is the app id by Steam convention, and for a
+    // lumalinux-added game that base depot holds no shader content we can serve,
+    // while its manifest is only obtainable via GMRC — which fails when
+    // gmrc.wudrm.com 502s and surfaces as the "No internet connection" popup
+    // (e.g. Silksong's depot 1030300, confirmed on-device: the probe is this
+    // shader job, NOT BuildDepotDependency). Returning 0 routes Steam down its
+    // own clean "shader depot ID invalid -> skip" path.
+    //
+    // Managed base = present in our keystore but NOT a content depot
+    // (parent_app_id == 0). This covers BOTH keyless (presence-only) bases AND
+    // keyed ones: Hubcap gives some bases a real key (addappid(APP,1,key)), so
+    // the old IsPresenceOnly-only check let those through — that was the bug.
+    // Genuinely-owned games aren't in the store, so they pass through and their
+    // shaders pre-cache normally.
+    if (id != 0 && KeyStore::HasDepot(id) && !KeyStore::IsContentDepot(id)) {
+        Log::Info("ShaderDepot: depot %u is a managed base placeholder -> returning "
+                  "0 so Steam skips its shader pre-cache (no content; its manifest "
+                  "code isn't reliably fetchable via GMRC)", id);
         return 0;
     }
     return id;
