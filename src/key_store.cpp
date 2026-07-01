@@ -7,6 +7,7 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -175,9 +176,23 @@ std::vector<DepotInfo> GetDepotsForApp(uint32_t app_id) {
 
 std::vector<uint32_t> GetAllDepotIds() {
     std::lock_guard<std::mutex> lock(Mtx());
+    // The base app depot (depot_id == the app id) carries no content — it's a
+    // licence/DRM placeholder. Injecting it into PackageId=0's AppIdVec makes
+    // Steam plan an install for it and ask GMRC for a manifest code for a depot
+    // with nothing to download; when the code endpoint is down that surfaces as
+    // the "No internet connection" popup (e.g. Silksong's depot 1030300). A
+    // content depot names its owner in parent_app_id, so any depot_id that shows
+    // up as a parent_app_id IS a base app depot — skip those. Mirrors SFF's
+    // skip-base and slsteam-moon's size-0 empty-depot drop; loses no content
+    // (real content depots keep their own id, which is never a parent).
+    std::set<uint32_t> appIds;
+    for (const auto& [_, info] : Keys())
+        if (info.parent_app_id != 0) appIds.insert(info.parent_app_id);
+
     std::vector<uint32_t> result;
     result.reserve(Keys().size());
     for (const auto& [depot_id, _] : Keys()) {
+        if (appIds.count(depot_id)) continue;  // base app depot — contentless
         result.push_back(depot_id);
     }
     return result;
