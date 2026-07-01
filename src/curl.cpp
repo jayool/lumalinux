@@ -26,13 +26,21 @@ namespace
 	// libcurl public ABI constants. These are part of the stable curl ABI and
 	// never change, so hardcoding them lets us drop the libcurl-dev build
 	// dependency too (no <curl/curl.h> needed).
-	//   CURLOPT_WRITEDATA     = CURLOPTTYPE_OBJECTPOINT   + 1   = 10001
-	//   CURLOPT_URL           = CURLOPTTYPE_OBJECTPOINT   + 2   = 10002
-	//   CURLOPT_WRITEFUNCTION = CURLOPTTYPE_FUNCTIONPOINT + 11  = 20011
-	constexpr int kCurloptWritedata     = 10001;
-	constexpr int kCurloptUrl           = 10002;
-	constexpr int kCurloptWritefunction = 20011;
-	constexpr int kCurleOk              = 0;
+	//   CURLOPT_TIMEOUT        = CURLOPTTYPE_LONG        + 13  = 13
+	//   CURLOPT_FOLLOWLOCATION = CURLOPTTYPE_LONG        + 52  = 52
+	//   CURLOPT_CONNECTTIMEOUT = CURLOPTTYPE_LONG        + 78  = 78
+	//   CURLOPT_WRITEDATA      = CURLOPTTYPE_OBJECTPOINT + 1   = 10001
+	//   CURLOPT_URL            = CURLOPTTYPE_OBJECTPOINT + 2   = 10002
+	//   CURLOPT_USERAGENT      = CURLOPTTYPE_OBJECTPOINT + 18  = 10018
+	//   CURLOPT_WRITEFUNCTION  = CURLOPTTYPE_FUNCTIONPOINT + 11 = 20011
+	constexpr int kCurloptTimeout        = 13;
+	constexpr int kCurloptFollowlocation = 52;
+	constexpr int kCurloptConnecttimeout = 78;
+	constexpr int kCurloptWritedata      = 10001;
+	constexpr int kCurloptUrl            = 10002;
+	constexpr int kCurloptUseragent      = 10018;
+	constexpr int kCurloptWritefunction  = 20011;
+	constexpr int kCurleOk               = 0;
 
 	using CurlEasyInit    = void* (*)();
 	using CurlEasySetopt  = int   (*)(void*, int, ...);
@@ -46,7 +54,7 @@ namespace
 	}
 }
 
-int Curl::getString(const char* url, std::string& out)
+int Curl::getString(const char* url, std::string& out, const char* userAgent)
 {
 	// RTLD_LOCAL so curl's symbols don't leak into the Steam process namespace.
 	// The handle is intentionally left open for the process lifetime: SafeMode
@@ -79,6 +87,15 @@ int Curl::getString(const char* url, std::string& out)
 	easySetopt(curl, kCurloptUrl, url);
 	easySetopt(curl, kCurloptWritefunction, writeCallback);
 	easySetopt(curl, kCurloptWritedata, &out);
+	// Follow http->https redirects (opensteamtool/steam.run are HTTPS) and cap
+	// the request so a wedged endpoint can never hang the caller. These options
+	// take a `long`; the value MUST be passed with the right type through the
+	// variadic curl_easy_setopt or the ABI read is garbage.
+	easySetopt(curl, kCurloptFollowlocation, (long)1);
+	easySetopt(curl, kCurloptConnecttimeout, (long)15);
+	easySetopt(curl, kCurloptTimeout,        (long)30);
+	if (userAgent)
+		easySetopt(curl, kCurloptUseragent, userAgent);
 
 	int res = easyPerform(curl);
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.15.7)
+project(lumalinux LANGUAGES C CXX VERSION 0.15.8)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -46,6 +46,7 @@ set(LUMA_SOURCES
     src/hooks/shader_depot_hook.cpp
     src/globals.cpp
     src/status.cpp
+    src/curl.cpp
 )
 
 # SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so).
@@ -68,9 +69,17 @@ set(LUMA_SOURCES
 # The option still defaults ON purely as a build convenience for gate-less
 # validation builds (verify-fix.yml, codespace harnesses) that run against an
 # unwhitelisted steamclient.so. Pass -DLUMA_NO_UPDATE=OFF to compile the gate in.
+# NOTE: src/curl.cpp is compiled UNCONDITIONALLY (in LUMA_SOURCES above), not
+# only for SafeMode. Besides the update-check, the GMRC provider cascade
+# (src/gmrc_store.hpp) now uses Curl::getString for its HTTPS endpoints
+# (manifest.opensteamtool.com, manifest.steam.run) — so it must be present even
+# in LUMA_NO_UPDATE builds. curl.cpp is dlopen-lazy with ZERO link cost (no
+# NEEDED entry), so compiling it always is free and keeps the reaper-safe
+# property intact. Only sha256.cpp/update.cpp (the actual SafeMode gate) stay
+# gated below.
 option(LUMA_NO_UPDATE "Build without the SafeMode update-check (no hash gate)" ON)
 if(NOT LUMA_NO_UPDATE)
-    list(APPEND LUMA_SOURCES src/curl.cpp src/sha256.cpp src/update.cpp)
+    list(APPEND LUMA_SOURCES src/sha256.cpp src/update.cpp)
 endif()
 
 add_library(lumalinux SHARED ${LUMA_SOURCES})
