@@ -89,8 +89,9 @@ Clicking Install kicks off, roughly:
    per-manifest **request code** that authorizes the manifest download from the
    CDN. Valve denies for unowned (`Failed to get manifest request code,
    'Access Denied'` → surfaced to the UI as "No connection"). → **GMRC hook**:
-   fetch the code from `gmrc.wudrm.com` and return it. **This is the
-   load-bearing piece** — without it nothing downloads.
+   fetch the code from the provider cascade (opensteamtool → wudrm → steamrun, §7)
+   and return it. **This is the load-bearing piece** — without it nothing
+   downloads.
 7. Manifest downloads from the CDN (authorized by the code), chunks download by
    SHA, are decrypted with the depot key, committed to
    `steamapps/common/<game>`. Done.
@@ -161,8 +162,9 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   (`E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20`).
   Verified **unique** in this build.
 - Hook: `manifest_gid = manifest_lo | (manifest_hi << 32)`. If the gid is one of
-  our manifests (`KeyStore::HasManifestGid`), fetch the code from gmrc.wudrm.com
-  (`gmrc_store.hpp`), write `*out_code`, return 1. Else fall through to original.
+  our manifests (`KeyStore::HasManifestGid`), fetch the code from the provider
+  cascade (`gmrc_store.hpp`, §7), write `*out_code`, return 1. Else fall through
+  to original.
 - Uses `get_pc_thunk.ax` (PIC, eax-based). `FixPicThunk` handles any register
   generically, so the trampoline works for the fallback path.
 
@@ -263,14 +265,50 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   (§13.10). This note stays as the historical diagnosis and still applies to a
   keyless *content* depot (only the shader depot is skippable).
 
-## 7. The GMRC endpoint
+## 7. The GMRC endpoint(s)
 
-- LumaCore (Windows) fetches the code from `manifest.steam.run` — **dead**.
-- The live endpoint (the one SteaMidra uses) is
-  **`http://gmrc.wudrm.com/manifest/{manifest_gid}`** → returns the request code
-  as a plain-text decimal number, HTTP 200, with header `Referer: http://gmrc.wudrm.com`.
-- It's plain **HTTP** (port 80) → no TLS needed; lumalinux fetches it with a raw
-  socket (`gmrc_store.hpp`).
+The endpoint returns a **request CODE** (a bare uint64 number), **not** the
+manifest file. The code only *authorises* Steam to download the `.manifest` from
+Valve's CDN; the file itself always comes from the CDN (or from `depotcache/` if
+pre-seeded). opensteamtool/wudrm/steamrun are **code sources, not file mirrors** —
+don't confuse "the manifest" (file) with "the manifest request code" (token).
+
+Since **v0.15.8** lumalinux tries a **3-provider cascade** (mirroring
+OpenSteamTool's own `kProviders` table in `ManifestClient.cpp`); first usable
+code wins:
+
+| Order | Provider | URL | Body format |
+|---|---|---|---|
+| 1 | opensteamtool | `https://manifest.opensteamtool.com/{gid}` | plain uint64 |
+| 2 | wudrm | `http://gmrc.wudrm.com/manifest/{gid}` | plain uint64 |
+| 3 | steamrun | `https://manifest.steam.run/api/manifest/{gid}` | JSON `{"content":"<uint64>"}` |
+
+- Transport is now **libcurl** (`Curl::getString`, `dlopen`'d at runtime —
+  `src/curl.cpp`, compiled **unconditionally** since v0.15.8, not only in
+  SafeMode) because opensteamtool/steam.run are **HTTPS**. The pre-v0.15.8
+  raw-socket plain-HTTP path (wudrm only) is gone.
+- **Cloudflare / User-Agent gate — verified on-device 2026-07, and non-obvious:**
+  `manifest.opensteamtool.com` sits behind Cloudflare whose WAF **challenges the
+  default `curl`/libcurl User-Agent** (serves the "Just a moment…" JS
+  interstitial) but **lets any other UA straight through** to the plain code.
+  `curl -A "OpenSteamTool/1.0" …/{gid}` returns the code where a bare `curl` gets
+  the challenge. It is **not** TLS/JA3 or IP-based — a residential Steam Deck
+  gets the same challenge with bare curl, and OpenSteamTool's own WinHTTP client
+  has zero Cloudflare-solving code; it simply opens with UA `OpenSteamTool/1.0`.
+  So `gmrc_store.hpp` sends `User-Agent: OpenSteamTool/1.0`. **⚠ Do not strip
+  that UA** or opensteamtool regresses to always-challenged (a non-numeric HTML
+  body → parser rejects → cascade falls through).
+- Endpoint status observed 2026-07 from the Deck: **wudrm 502** (flaky/down),
+  **steam.run 404** (dead path — the old LumaCore endpoint), **opensteamtool
+  works** (with a non-curl UA). The cascade means one provider being down no
+  longer blocks installs — that single-source fragility (wudrm 502 + wudrm being
+  the *only* provider) was the root cause of the recurring Silksong "No
+  connection" popup on depot 1030300 (the base/shader depot, whose manifest is
+  not in the Hubcap zip, so its code is fetched live).
+- `Curl::getString` returns 0 on transport success **without** checking the HTTP
+  status, so a Cloudflare challenge page / 502 / 404 all arrive as a non-numeric
+  body; each provider's parser (`ParsePlainUint` / `ParseSteamRunJson`) rejects
+  those and the loop tries the next provider.
 - **The code is session/time-dependent**: the same gid returned different codes
   on different days (e.g. gid 3512319404653808464 → 15549905601718457808, then
   3261884576850880630). So fetch fresh; don't hardcode/persist across sessions.
@@ -572,15 +610,18 @@ v0.8.1.
 | | LumaCore (older/assumed) | lumalinux |
 |---|---|---|
 | Hooked function | `GetManifestRequestCode` | Same |
-| HTTP endpoint | `https://manifest.steam.run/api/manifest/{gid}` | `http://gmrc.wudrm.com/manifest/{gid}` |
-| Endpoint status | **DEAD** (no longer responds) | **Live** (same one SteaMidra uses) |
-| HTTPS / HTTP | HTTPS via WinHttp | Plain HTTP via raw socket |
+| HTTP endpoint | `https://manifest.steam.run/api/manifest/{gid}` | **3-provider cascade** (v0.15.8): opensteamtool → wudrm → steamrun |
+| Endpoint status | **DEAD** (no longer responds) | opensteamtool **live** (needs non-curl UA), wudrm flaky (502s), steam.run dead (404) |
+| HTTPS / HTTP | HTTPS via WinHttp | **libcurl** (`dlopen`), HTTPS+HTTP, UA `OpenSteamTool/1.0` (§7) |
 | Gating | Whenever it knows the manifest | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — the OR covers the shader pre-cache case where Steam asks for a manifest that wasn't in the original `.lua` |
 | Return on success | (LumaCore has an async layer that fills the cache; it writes back via PacketRouter) | Synchronous — `*out_code = code; return 1` |
 
-lumalinux is functionally better here (live endpoint, covers shader
-pre-cache) but worse on resilience (a single plain-HTTP host, no persistent
-cache, no fallback endpoint — see Issue #2).
+lumalinux is functionally better here (covers shader pre-cache) and, since
+v0.15.8, no longer worse on resilience: the single-plain-HTTP-host weakness was
+replaced by the 3-provider cascade (§7). It still has no *offline* fallback — if
+all three code providers are down at once, a manifest FILE that isn't already in
+`depotcache/` can't be fetched (the content depots are unaffected: their
+manifests ship in the Hubcap zip and are pre-seeded into `depotcache/`).
 
 History: ≤v0.8.0 the gating was just `HasManifestGid(gid)`. That dropped the
 shader-pre-cache manifests through to the original (which the CDN denies)
@@ -610,9 +651,15 @@ suspicion, no longer using LumaCore parallels as anchors, is:
    regress to the §13.8 shader loop (the global `DisableShaderCache` remains a
    manual fallback). It does show FAILED in the startup toast, so a miss is
    visible.
-2. **`gmrc.wudrm.com` down / DNS-blocked** — no offline fallback, no
-   alternative endpoint (Issue #2). Symptom: new installs failing in a loop
-   with "Access Denied" → "No connection" in the UI.
+2. **All GMRC providers down at once** — since v0.15.8 there are three
+   (opensteamtool → wudrm → steamrun, §7), so a single one being down (e.g.
+   wudrm's frequent 502s) is survivable. Still no *offline* fallback: if all
+   three are unreachable, a manifest FILE not already in `depotcache/` can't be
+   fetched. Symptom: new installs failing in a loop with "Access Denied" → "No
+   connection" in the UI. Only affects depots whose manifest isn't pre-seeded
+   from the zip (typically the base/shader depot). Note the Cloudflare UA gate
+   (§7): if opensteamtool alone starts failing, first suspect a stripped/changed
+   `User-Agent` in `gmrc_store.hpp`, not the endpoint being down.
 3. **Race in `Log::Init`** — only realistic if the LD_AUDIT preinit, the
    LD_PRELOAD ctor and a worker thread coincide within microseconds
    (Issue #5).

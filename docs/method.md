@@ -34,8 +34,12 @@ opened:
 Gates 1–5 can be faked **locally** — you only have to convince *your own* Steam.
 Gate 6 is the hard one: the manifest request code is validated **server-side by
 Valve**, so it cannot be fabricated locally. It has to be obtained from a
-**third-party service** (e.g. `gmrc.wudrm.com`) that derives it from accounts
-that genuinely own the game.
+**third-party service** — lumalinux tries a cascade of the same three
+OpenSteamTool ships (`opensteamtool` → `wudrm` → `steamrun`; see §5 and
+RESEARCH §7). Those services are **not** manifest-file mirrors; they return the
+**code** (a uint64), minted on-demand by a logged-in Steam session behind the
+scenes and cached for the code's short (~5 min) TTL. Valve is always the
+ultimate source.
 
 Note: the request code authorises fetching the **manifest** (the file listing).
 Once you have the manifest, the actual content **chunks** are fetched from the
@@ -130,7 +134,8 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 12. **DepotKey** clears **gate 5**: serves each depot's AES key from `keys.txt`
     when Steam asks.
 13. **GMRC** clears **gate 6**: when Steam asks Valve for a manifest request code
-    and is denied, the hook fetches it from `gmrc.wudrm.com` and returns it.
+    and is denied, the hook fetches it from the provider cascade (§5) and
+    returns it.
     **This is the load-bearing piece** — without it nothing downloads. (It's
     still needed despite the pre-seeded manifests in Phase 0, because Steam
     re-requests codes at runtime for content manifests it re-validates and for
@@ -151,7 +156,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 | **3 Depot surfacing** | package-0 **finder** (active cache walk, §13) | `PackagePatch::LoadPackage` (hook, injects appids into Package 0's `AppIdVec`) | KeyValues / manifest patching |
 | **4 Manifest pinning** | **BuildDep** hook (`BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (identical) | manifest patching |
 | **5 Depot key** | **DepotKey** hook from `keys.txt` | `DepotKeys::LoadDepotDecryptionKey` from `.lua` | `addappid(depot,0,"hexkey")` in lua |
-| **6 Manifest request code** | **GMRC** hook at runtime (`gmrc.wudrm.com`) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-download manifests — **LumaCore.dll has no runtime GMRC hook** (verified) | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
+| **6 Manifest request code** | **GMRC** hook at runtime (3-provider cascade: opensteamtool→wudrm→steamrun, §5) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-download manifests — **LumaCore.dll has no runtime GMRC hook** (verified) | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
 | **Who downloads content** | Steam client (Model A) | Steam client; manifests pre-seeded by SteaMidra (Model A) | Steam client (Model A) |
 | **Lua location** | `keys.txt` + `config/stplug-in/<appid>.lua` (interop) | `config/stplug-in/<appid>.lua` | `config/lua/` |
 | **Extras** | per-game shader-pre-cache skip for keyless games (ShaderDepot hook, §13.10) — keeps keyed/owned games' shaders | family-share bypass (`PacketRouter`), achievements (`setStat`), rich-presence, CD-key | achievements/stats spoof |
@@ -162,10 +167,22 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 
 Every tool has to solve gate 6, and they do it in two distinct ways:
 
-- **Runtime hook (lumalinux, SteamTools/OpenSteamTool):** hook
-  `GetManifestRequestCode`. When the Steam client asks Valve for the code and is
-  denied, fetch it from a GMRC service and return it to the client. The client
-  then fetches the manifest from the CDN itself.
+- **Runtime hook (lumalinux, SteamTools/OpenSteamTool):** intercept the request
+  code and inject a fetched one, so the Steam client then fetches the manifest
+  from the CDN itself. The *interception point* differs:
+  - **lumalinux** hooks the C++ function `…BYieldingGetManifestRequestCode`
+    (pattern-scanned) and, on our depots, returns a code from the provider
+    cascade (opensteamtool → wudrm → steamrun via libcurl; §1, RESEARCH §7). The
+    opensteamtool endpoint needs a **non-`curl` User-Agent** to clear Cloudflare
+    (`gmrc_store.hpp` sends `OpenSteamTool/1.0`; RESEARCH §7).
+  - **OpenSteamTool** does **not** hook that function — it hooks the **network
+    packet layer** (`Hooks_NetPacket.cpp`): it catches the outgoing
+    `ContentServerDirectory.GetManifestRequestCode#1` job (by FNV1a name hash),
+    fires the HTTP fetch async, and rewrites the *incoming* response protobuf
+    (`eresult=OK` + `manifest_request_code`). Same end effect, more
+    update-resilient (stable message name vs a function byte-pattern), more
+    machinery. Its `fetch_manifest_code_ex(...)` Lua hook is an optional
+    user-side override that takes priority over the built-in providers.
 - **Pre-fetch (SteaMidra Python):** fetch the code with `get_gmrc()` *before*
   Steam runs, download the manifest from the CDN with it, and seed it into
   `depotcache/`. Steam then finds the manifest already present and downloads
