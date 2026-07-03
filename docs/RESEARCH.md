@@ -1191,6 +1191,48 @@ This is the first known clean, per-game shader-pre-cache skip for a keyless
 title — using Steam's own skip path, no global toggle, no manifest forgery —
 and it is verified on hardware in both directions.
 
+### 13.11 Code-availability-gated skip for KEYED shaders (v0.16.0)
+
+§13.10 skipped the shader pre-cache only for **keyless** games. Keyed games
+(Silksong, Brotato, Formula Legends — the common case for modern titles: their
+`.lua` ships `addappid(<appid>, 1, "<key>")`) were let through to pre-cache
+normally. That is correct **when a GMRC provider is up**, but it leaves one
+cosmetic wart: the shader/app depot's manifest is **never** in the Hubcap zip
+(§13.8, confirmed across Silksong/Brotato/Formula Legends/Binding-of-Isaac zips —
+none ship a `<appid>_*.manifest`), so the shader job must fetch the manifest
+request code live. If **all** providers are down at that moment, Valve's CDN
+denies the manifest and Steam shows **"No internet connection"** (the Silksong
+symptom: wudrm fully down, no opensteamtool yet — the game installed from its
+content depots but the shader code fetch flashed the popup).
+
+Pre-seeding the shader manifest at add-time was considered and rejected: the
+shader cache is a **moving target** — it is regenerated on GPU/driver/SteamOS/
+client updates, not just game-version bumps (community reports of ~daily churn),
+so a pre-seeded manifest goes stale almost immediately and can't be pinned (its
+gid isn't in the `.lua`). Globally skipping keyed shaders was also rejected: on
+Deck/Proton the shader pre-cache genuinely reduces first-run stutter for
+DX-under-Proton titles, so we do **not** want to discard it (unlike slsteam-moon's
+global `disableShaderCache()`, or the pre-v0.14 `DisableShaderCache` flag).
+
+The shipped fix makes the skip **conditional on code availability**, decided at
+`GetShaderCacheDepot` time (before the job requests the code):
+
+- keyless (presence-only) → skip, as §13.10.
+- not ours (owned games) → pass through, as §13.10.
+- **keyed & ours** → `Gmrc::ProvidersReachable()` probes the provider cascade
+  (throwaway gid, short 3s/5s timeouts, HTML/Cloudflare-challenge body rejected,
+  result cached 15s). Provider up → return the real id (shaders pre-cache
+  normally). **All down → return 0** → Steam takes its clean skip path, never
+  issues the code request, and the popup never appears.
+
+Net: a keyed game **never** flashes "No internet connection". Shaders are lost
+only in the exact case that would have flashed today (all providers down at
+install), and recover on the next install/update when a provider is back up —
+strictly better than the pre-v0.16 behaviour. The residual edge is a race
+(probe sees a provider up, the real fetch then fails); closing it fully would
+require pre-fetching the code for the shader gid read from `appinfo` ("Level 2",
+not shipped — the probe covers the overwhelming majority).
+
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
 Validated, on the canonical stack (native Arch Steam + SLSsteam via

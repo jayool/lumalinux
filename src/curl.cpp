@@ -54,7 +54,8 @@ namespace
 	}
 }
 
-int Curl::getString(const char* url, std::string& out, const char* userAgent)
+int Curl::getString(const char* url, std::string& out, const char* userAgent,
+                    long connectTimeoutSec, long totalTimeoutSec)
 {
 	// RTLD_LOCAL so curl's symbols don't leak into the Steam process namespace.
 	// The handle is intentionally left open for the process lifetime: SafeMode
@@ -92,8 +93,8 @@ int Curl::getString(const char* url, std::string& out, const char* userAgent)
 	// take a `long`; the value MUST be passed with the right type through the
 	// variadic curl_easy_setopt or the ABI read is garbage.
 	easySetopt(curl, kCurloptFollowlocation, (long)1);
-	easySetopt(curl, kCurloptConnecttimeout, (long)15);
-	easySetopt(curl, kCurloptTimeout,        (long)30);
+	easySetopt(curl, kCurloptConnecttimeout, (long)connectTimeoutSec);
+	easySetopt(curl, kCurloptTimeout,        (long)totalTimeoutSec);
 	if (userAgent)
 		easySetopt(curl, kCurloptUseragent, userAgent);
 

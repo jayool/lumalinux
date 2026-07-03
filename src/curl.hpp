@@ -18,5 +18,11 @@ namespace Curl
 	// gets the JS challenge). A total/connect timeout is always applied so a
 	// hung endpoint can never block the calling thread (GMRC runs on Steam's
 	// manifest-request path).
-	int getString(const char* url, std::string& out, const char* userAgent = nullptr);
+	//
+	// connectTimeoutSec / totalTimeoutSec bound the request. The defaults match
+	// the long-standing SafeMode/GMRC values; the ShaderDepot liveness probe
+	// (Gmrc::ProvidersReachable) passes short values so a wedged provider can't
+	// stall the shader pre-cache job for the full 30s.
+	int getString(const char* url, std::string& out, const char* userAgent = nullptr,
+	              long connectTimeoutSec = 15, long totalTimeoutSec = 30);
 }

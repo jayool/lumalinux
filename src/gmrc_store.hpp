@@ -28,6 +28,7 @@
 // through to the next provider. nullopt from GetCode = no code from anyone
 // (download falls through to Steam's server path / the popup).
 
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -138,6 +139,66 @@ inline std::optional<uint64_t> GetCode(uint64_t gid) {
               "(download will fall through to Steam's server path)",
               (unsigned long long)gid);
     return std::nullopt;
+}
+
+// Liveness probe for the ShaderDepot hook (v0.16). Returns true if at least one
+// manifest-code provider is reachable RIGHT NOW.
+//
+// Why it exists: a KEYED game's shader/app depot manifest is never shipped in the
+// Hubcap zip, so at install time the shader pre-cache job asks GMRC for a request
+// code. If no provider answers, Valve's CDN denies the manifest and Steam shows
+// the cosmetic "No internet connection" popup. The ShaderDepot hook calls this
+// FIRST: provider up -> let the job run (shaders pre-cache normally); all down ->
+// skip the shader pre-cache this once, so Steam never issues a request it can't
+// satisfy and the popup never appears. See RESEARCH §13.11.
+//
+// "Reachable" = a provider completes an HTTP GET with a non-HTML body. We hit
+// each provider with a throwaway gid using SHORT timeouts (connect 3s / total 5s)
+// so an all-down probe returns in a few seconds instead of the GMRC default
+// 15s/30s, and short-circuit on the first good answer. A Cloudflare challenge
+// (HTML body, which would not yield a code) is rejected so it doesn't count as
+// "up". The result is cached for 15s because GetShaderCacheDepot can be called
+// more than once per install.
+inline bool ProvidersReachable() {
+    static std::mutex probeMtx;
+    static bool  cachedValid  = false;
+    static bool  cachedResult = false;
+    static std::chrono::steady_clock::time_point cachedAt;
+
+    {
+        std::lock_guard<std::mutex> lk(probeMtx);
+        if (cachedValid &&
+            std::chrono::steady_clock::now() - cachedAt < std::chrono::seconds(15))
+            return cachedResult;
+    }
+
+    bool reachable = false;
+    for (const auto& p : detail::kProviders) {
+        char url[256];
+        std::snprintf(url, sizeof url, p.urlTemplate, 1ULL);  // throwaway gid
+
+        std::string body;
+        int rc = Curl::getString(url, body, detail::kUserAgent,
+                                 /*connect*/ 3, /*total*/ 5);
+        if (rc != 0) continue;  // transport error -> this provider is down
+
+        const char* b = body.c_str();
+        while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') ++b;
+        if (*b == '<') continue;  // HTML (Cloudflare challenge) -> not serving codes
+
+        reachable = true;  // responded with a real (non-HTML) body -> usable
+        break;
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(probeMtx);
+        cachedResult = reachable;
+        cachedAt     = std::chrono::steady_clock::now();
+        cachedValid  = true;
+    }
+    Log::Info("GMRC: provider liveness probe -> %s",
+              reachable ? "reachable" : "ALL DOWN");
+    return reachable;
 }
 
 } // namespace Gmrc

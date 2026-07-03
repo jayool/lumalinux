@@ -11,13 +11,21 @@ namespace Hooks::ShaderDepot {
 // shader job CLEANLY — no error, no "Invalid content configuration", no install
 // pause, no 5-minute retry loop.
 //
-// We call the original and, ONLY for a keyless game added via lumalinux (its
-// app-id/shader depot is presence-only in keys.txt, KeyStore::IsPresenceOnly),
-// return 0 instead — so Steam takes its native skip path for that one game.
-// Games that ship a real shader key, and the user's genuinely-owned games, pass
-// straight through and their shader pre-cache runs normally. This replaces the
-// blunt global DisableShaderCache (RESEARCH §13.8) with a per-game skip. See
-// RESEARCH §13.9 for the disassembly that located this seam.
+// We call the original and decide per game (RESEARCH §13.10, §13.11):
+//   1. Keyless game (presence-only in keys.txt): the shader manifest can never
+//      decrypt without a key -> return 0 so Steam skips cleanly. (v0.14)
+//   2. The user's genuinely-owned games (not in keys.txt): pass straight through;
+//      their shader pre-cache runs down Steam's normal owned path.
+//   3. Keyed lumalinux-managed game (Silksong, Brotato...): its shader manifest is
+//      never in the Hubcap zip, so the job will ask GMRC for a request code. We
+//      probe the code providers (Gmrc::ProvidersReachable) FIRST — if one is up,
+//      let the job run (shaders pre-cache normally); if all are down, return 0 to
+//      skip THIS once, so Steam never issues a request it can't satisfy and the
+//      cosmetic "No internet connection" popup never appears. Shaders pre-cache on
+//      a later install/update when a provider is back up. (v0.16)
+// This replaces the blunt global DisableShaderCache (RESEARCH §13.8) with a
+// per-game, code-availability-gated skip. See RESEARCH §13.9 for the disassembly
+// that located this seam.
 //
 // SLSsteam hooks the message dispatch, not shader functions, so this is
 // collision-free. A pattern miss is non-fatal: the hook simply doesn't install

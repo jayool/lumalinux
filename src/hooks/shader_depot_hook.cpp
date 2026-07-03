@@ -1,6 +1,7 @@
 #include "shader_depot_hook.hpp"
 #include "../patterns.hpp"
 #include "../key_store.hpp"
+#include "../gmrc_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
@@ -44,17 +45,44 @@ uint32_t HookFn(void* appinfo) {
     }
 
     const uint32_t id = g_origFn(appinfo);
+    if (id == 0) return id;
 
-    // Only intervene for OUR keyless games: a depot we manage that was
-    // registered presence-only (no shader key in the .lua). Keyed games and the
-    // user's genuinely-owned games are not in the store as presence-only, so
-    // they pass through untouched and their shaders pre-cache normally.
-    if (id != 0 && KeyStore::IsPresenceOnly(id)) {
-        Log::Info("ShaderDepot: shader depot id %u is keyless (no key in keys.txt) "
+    // (1) OUR keyless games (presence-only in keys.txt): the shader depot's
+    // manifest is encrypted with a key we don't have, so the pre-cache can NEVER
+    // succeed. Skip cleanly — the original v0.14 behaviour.
+    if (KeyStore::IsPresenceOnly(id)) {
+        Log::Info("ShaderDepot: depot %u is keyless (presence-only) "
                   "-> returning 0 so Steam skips its shader pre-cache cleanly", id);
         return 0;
     }
-    return id;
+
+    // (2) Not a lumalinux-managed depot: the user's genuinely-owned games. Never
+    // touch them — their shader pre-cache goes down Steam's normal owned path.
+    if (!KeyStore::HasDepot(id)) return id;
+
+    // (3) A KEYED, lumalinux-managed shader depot — the common case for modern
+    // games (Silksong, Brotato, Formula Legends...). Its manifest is never in the
+    // Hubcap zip, so the shader job is about to ask GMRC for a request code. If NO
+    // code provider is reachable right now, that request would be denied and Steam
+    // would surface the cosmetic "No internet connection" popup. Avoid it: probe
+    // the providers first.
+    //   - a provider is up   -> let the job run; the shader manifest is fetched
+    //                           and shaders pre-cache normally (no popup, no loss).
+    //   - all providers down -> skip the shader pre-cache THIS ONCE (the game
+    //                           still installs from its content depots; shaders
+    //                           pre-cache the next install/update when a provider
+    //                           is back up).
+    // This makes the skip conditional on code availability instead of on the key,
+    // so a keyed game never triggers the "No connection" popup. See RESEARCH §13.11.
+    if (Gmrc::ProvidersReachable()) {
+        Log::Info("ShaderDepot: depot %u keyed, a code provider is reachable "
+                  "-> letting the shader pre-cache run", id);
+        return id;
+    }
+    Log::Warn("ShaderDepot: depot %u keyed but NO code provider is reachable "
+              "-> skipping shader pre-cache to avoid the 'No connection' popup "
+              "(shaders will pre-cache when a provider is back up)", id);
+    return 0;
 }
 
 } // namespace
