@@ -205,6 +205,11 @@ own `AdditionalApps`, which is SLSsteam's layer, not ours.
   **SLScheevo** binary to generate `UserGameStatsSchema_<appid>.bin` +
   user-stats files into Steam's `appcache/stats/`. Offline, local files, no live
   substitution.
+- **SLSsteam complements this (not a competing generator):** `feats/achievements.cpp`
+  forces **offline stat usage** — it suppresses the server `USERSTATS_RESPONSE`
+  (`eresult = ERESULT_NO_CONNECTION`) so the client falls back to the **local** stat
+  store that SLScheevo writes. So the two are a pair: SLScheevo generates the schema +
+  stats files, SLSsteam makes the client read them. Neither is OST's donor-SteamID wire hook.
 
 ### Verdict — parity of outcome; OST's mechanism is not portable and not better for us
 
@@ -325,10 +330,10 @@ overlay `CGameID` for overlay/Steam-Input binding — a possible small refinemen
 
 **Nicety — "purchased" render with a plausible date.** OST sets an unowned app's
 `PurchasedTime` to the **`.lua` file's mtime** (`Hooks_SteamUI.cpp::FillInAppOverview`,
-`g_purchaseTime`) so the library shows a believable purchase date. LumaDeck/`steamidra_lite`
-render the game via the `.acf`; if the "owned since" date ever looks wrong or
-empty in Game Mode, this is the trick (set purchase time from the `.lua`/zip mtime).
-Cosmetic, cheap, optional.
+`g_purchaseTime`) so the library shows a believable purchase date. **Already covered
+by SLSsteam:** the `SubscriptionTimestamps` config option ("Override purchase time
+stamps") does exactly this at the ownership layer — no work to do, just populate it if
+the "owned since" date ever looks wrong in Game Mode. Cosmetic, and already ours.
 
 **Nicety — Lua-scriptable code source.** OST lets a `.lua` define
 `fetch_manifest_code_ex(app,depot,gid)` / `fetch_manifest_code(gid)` to override
@@ -396,6 +401,36 @@ the same conclusion reached for slsteam-moon.
    library date looks wrong.
 
 Everything else: parity, we-lead, or not-portable.
+
+---
+
+## SLSsteam-side audit (added after the fact)
+
+The first draft evaluated lumalinux + LumaDeck from source but leaned on assumptions
+for **SLSsteam**, which under-counted what SLSsteam already does and turned several
+non-gaps into "gaps." Re-checked against SLSsteam's `src/feats/` + `config_default.hpp`:
+
+- **Corrected:** Finding 4 (EncryptedAppTicket — `feats/ticket.cpp` already caches +
+  replays), Finding 5 (Spacewar-480 — the `FakeAppIds` config option, surfaced by
+  LumaDeck), Finding 6 purchase-date (the `SubscriptionTimestamps` option).
+- **Confirmed accurate:** ownership spoof + `PlayNotOwnedGames` + license injection
+  (`feats/apps.cpp`), PICS access-token injection (`AppTokens` → `apps.cpp
+  sendPICSInfoRequest`), DLC unlock/spoof (`feats/dlc.cpp`), family-share
+  (`DisableFamilyShareLock`).
+- **Clarified:** achievements — `feats/achievements.cpp` only forces offline-stat mode;
+  it complements SLScheevo (LumaDeck), it does not generate achievements. Finding 3's
+  "keep ours" stands.
+- **SLSsteam config inventory** (for reference): `DisableFamilyShareLock`, `UseWhitelist`,
+  `AutoFilterList`, `AppIds`, `PlayNotOwnedGames`, `AdditionalApps`, `DlcData`,
+  `AppTokens`, `FakeOffline`, `FakeAppIds`, `IdleStatus`, `GameTitles`,
+  `SubscriptionTimestamps`, `DenuvoGames`, `FakeEmail`, `FakeWalletBalance`,
+  `DisableCloud`, `SafeMode`.
+
+Net after audit: once SLSsteam is counted, the only OST capability we don't have is the
+EncryptedAppTicket **donor-import** (Finding 4) — SLSsteam already serves/replays, so it's
+just a cheap importer whose value hinges on the ~30-min window. The other "gaps" the first
+draft listed were already covered by SLSsteam. The big delta was Finding 1's runtime pattern
+DB, which we explored and rejected.
 
 ---
 
