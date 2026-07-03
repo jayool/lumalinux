@@ -284,32 +284,40 @@ The heavy half (serving over the wire) is already SLSsteam's.
 
 ---
 
-## Finding 5 — online-fix via Spacewar-480 redirect (alternative to LumaDeck's crack download)
+## Finding 5 — Spacewar-480 redirect (already ours via SLSsteam FakeAppIds) + online-fix is a separate thing
 
-### The two mechanisms
+### Correcting an earlier conflation
 
-- **OST (runtime, spawn-env layer):** `Hooks_Misc.cpp::BuildSpawnEnvBlock`
-  redirects the launched game's **primary `CGameID` to AppId 480 (Spacewar)**
-  (`kOnlineFixAppId`) for lobby matchmaking, keeps the **real AppId on the overlay
-  `CGameID`**, re-substitutes the real AppId for Steam Input, and NetPacket rewrites
-  the reported game name. Enabled with `-onlinefix` in launch params. One
-  online-fix game at a time.
-- **LumaDeck (files):** the Fixes tab downloads an **Online Fix** payload (crack
-  DLLs) from the CDN (`FIXES_MAP.md`) and applies it, plus a Proton launch-option
-  recompute.
+An earlier draft treated OST's Spacewar-480 redirect and LumaDeck's "online fix"
+crack as two versions of the same thing. **They are not** — and the 480 redirect
+is **not a gap**: we already have it.
 
-### Verdict — different philosophies; OST's is not cleanly portable, LumaDeck's is fine
+- **OST's Spacewar-480 redirect** (`Hooks_Misc.cpp::BuildSpawnEnvBlock`): changes the
+  launched game's primary `CGameID` to AppId **480 (Spacewar)** so unowned copies can
+  matchmake over Steam's real lobby system, keeps the real AppId on the overlay CGameID /
+  Steam Input, rewrites the reported name, one at a time.
+- **SLSsteam already does exactly this** via the **`FakeAppIds`** config option:
+  *"Change AppIds of games to enable networking features… keeps track of the proper
+  AppIds via game launches, so please do not start multiple FakeAppId enabled games
+  simultaneously."* Same mechanism (AppId spoof for networking), same real-AppId
+  tracking, same one-at-a-time constraint. **LumaDeck already surfaces it** —
+  `backend/slssteam_ops.py::add_fake_app_id(appid, fake_id=480)` (+ remove / check /
+  list), defaulting to **480**. So the 480 redirect is **parity**, at the
+  config/ownership layer — no lumalinux hook, no message layer for us.
+- **LumaDeck's "online fix" is a DIFFERENT feature** (`backend/fixes.py`): it downloads
+  the online-fix.me crack DLLs (`OnlineFix64.dll` + `winmm`/`dxgi`/`steam_api64`) from the
+  luatools CDN and sets `WINEDLLOVERRIDES` so Proton loads them. That's for games needing
+  the crack's **own emulated networking / DRM shim** — the case where the Steam-native
+  FakeAppId spoof isn't enough. **Complementary** to FakeAppIds, not an alternative.
 
-OST's Spacewar-480 redirect is elegant and **file-free**, but it lives in the
-**game-spawn / CGameID** path inside the client and rides NetPacket rewrites — a
-runtime hook layer we'd have to add to lumalinux (and part of it is message-layer,
-SLSsteam-adjacent). LumaDeck's downloaded-crack approach is coarser but already
-works and is decoupled from the client internals. **Keep LumaDeck's**; record
-OST's 480-redirect as a *possible* future runtime alternative if the CDN cracks
-ever become a maintenance burden — but it's a lumalinux-hook project, not a quick
-win. Note also OST's neat detail worth stealing conceptually: **real AppId on the
-overlay CGameID** so the overlay/Steam-Input still bind to the right game while
-matchmaking runs under 480.
+### Verdict — 480 redirect: parity (SLSsteam `FakeAppIds`, exposed by LumaDeck). Online-fix: separate, ours, fine.
+
+Nothing to port. OST's 480 trick is already covered by SLSsteam's `FakeAppIds` (surfaced
+in LumaDeck at default 480); the online-fix crack is an unrelated, complementary capability
+we already have. The prior "not portable, keep LumaDeck's crack" framing was wrong on both
+counts — it conflated the two features and missed that `FakeAppIds` *is* the 480 redirect.
+(One minor OST detail not verified on the SLSsteam side: keeping the real AppId on the
+overlay `CGameID` for overlay/Steam-Input binding — a possible small refinement, not a gap.)
 
 ---
 
