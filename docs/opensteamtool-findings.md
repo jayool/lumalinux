@@ -222,39 +222,65 @@ schema pull, that endpoint exists — but SLScheevo already solves this.)*
 
 ---
 
-## Finding 4 — Denuvo / EncryptedAppTicket replay (a real gap, but SLSsteam-side and heavy)
+## Finding 4 — Denuvo / EncryptedAppTicket: SLSsteam already replays; the only gap is donor-capture
 
 ### The idea
 
 OST supports **Denuvo** titles by replaying **real captured tickets**: a companion
 `tools/extract_tickets` dumps `appticket.bin` + `eticket.bin` from a machine that
 *owns* the game; `setappticket` / `seteticket` load them; `Hooks_IPC_ISteamUser.cpp`
-serves them over IPC (`GetAppOwnershipTicketExtendedData`,
-`RequestEncryptedAppTicket` → a fabricated async `EncryptedAppTicketResponse`),
-and they're planted in Steam's **own registry ticket cache**
-(`SteamCredentialStore.cpp`). Docs note Denuvo's **30-minute** ticket window.
+serves them over IPC (`RequestEncryptedAppTicket` → a fabricated async
+`EncryptedAppTicketResponse`), planted in Steam's registry ticket cache. Denuvo's
+ticket window is **~30 minutes**. slsteam-moon has the same (moon "Block D").
 
-slsteam-moon has the **same** capability (moon-findings "Block D": ticket =
-AppOwnership + EncryptedAppTicket cache/replay). So **two** reference tools do
-Denuvo via encrypted-app-ticket replay; **our stack does not** (no ticket/Denuvo
-code in lumalinux or LumaDeck — confirmed).
+### Correction: our stack already has the serving half (SLSsteam `feats/ticket.cpp`)
 
-### Verdict — genuine gap, but it belongs to SLSsteam, and it's heavy
+An earlier draft said "our stack has no ticket/Denuvo code — confirmed." **That was
+wrong.** SLSsteam's `src/feats/ticket.cpp` already does the EncryptedAppTicket work:
 
-- **Layer:** encrypted-app-ticket serving is an **ownership/ticket** concern —
-  **SLSsteam's** territory (it already forges the AppOwnership ticket), not
-  lumalinux's. Porting it means an SLSsteam feature or a LumaDeck-orchestrated
-  capture flow, not a lumalinux hook.
-- **On Linux the store differs:** OST plants tickets in the **Windows Registry**;
-  the Linux equivalent is Steam's on-disk ticket cache / `config.vdf`, which
-  `steamidra_lite`/LumaDeck already write to — so a capture-and-replay flow *could*
-  live LumaDeck-side, but it requires an **owning machine** to capture from and
-  only lasts Denuvo's 30-minute window.
-- **Value:** Denuvo titles are a minority and the UX (capture from an owner, 30-min
-  window) is poor. Worth **recording as the one true capability gap** OST/moon have
-  over us, but low priority and not a lumalinux change.
+- Hooks **both** `APPOWNERSHIPTICKET_RESPONSE` and `ENCRYPTED_APPTICKET_RESPONSE`.
+- Caches every **successful** (`eresult() == ERESULT_OK`) response to disk at
+  `{config}/cache/encryptedTicket_{appid}.yaml` (a `SavedTicket` = steamId + ticket bytes).
+- On a **denied** encrypted-ticket response, loads the cached entry
+  (`getCachedEncryptedTicket` → `msg->ParseFromString(ticket.ticket)`) and **serves
+  the cached ticket to the game**.
 
-### If ever pursued: LumaDeck feature (capture tool + `setappticket`-equivalent into `config.vdf`/ticket cache) + SLSsteam serving the encrypted-app-ticket — not a lumalinux hook.
+So SLSsteam forges ownership AND replays the encrypted app ticket. What it does
+**not** do is *import*: the cache is only ever populated from a real successful
+server response, so it replays *your own* previously-obtained ticket
+(offline / resilience / a brief server denial) — not a ticket for a game you never had.
+
+### Where the actual gap vs OST is — narrow, and it doesn't need OST's machinery
+
+Only the **capture + import** step. OST captures from an *owner* and injects; SLSsteam
+has no injection path. But SLSsteam's replay just reads a plain YAML file, so closing
+the gap needs **none** of OST's IPC-serving code. It's:
+1. capture a valid `EncryptedAppTicket` from an owning machine,
+2. write it into `{config}/cache/encryptedTicket_{appid}.yaml` in SLSsteam's
+   `SavedTicket` format,
+3. let SLSsteam's existing denied-response fallback serve it.
+
+The heavy half (serving over the wire) is already SLSsteam's.
+
+### Verdict — narrow, cheap, more viable than first assessed; hinges on the ticket-window question
+
+- **Not a lumalinux change** and **not the big lift the prior draft implied** — the
+  serving exists; only a LumaDeck-side importer (write the ticket into SLSsteam's
+  `encryptedTicket_{appid}.yaml` in its `SavedTicket` format) would be new.
+- **The capture-from-owner obstacle is largely solved externally:** in practice people
+  generate these tickets from **purchased** games and **distribute** them, so a user
+  doesn't need their own owning machine — a donor-source ecosystem already exists.
+- **The open question that decides the value is the ~30-min window:** if it only gates
+  Denuvo's **initial activation handshake** (after which Denuvo issues its own
+  longer-lived offline token), a freshly-distributed ticket gets you *past* activation
+  and the game then runs — genuinely useful. If Denuvo re-validates the EncryptedAppTicket
+  continuously, a distributed ticket is stale within ~30 min and it's near-useless.
+  **Confirm this before building** (not verified here).
+- **Net:** SLSsteam already covers serving/replay; the only new work is a cheap importer,
+  and a distribution ecosystem for the tickets exists. Whether it's worth doing comes
+  down to the window-vs-offline-token behaviour — resolve that first.
+
+### If ever pursued: LumaDeck capture tool (dump EncryptedAppTicket from an owner) + a writer into SLSsteam's `{config}/cache/encryptedTicket_{appid}.yaml`. SLSsteam serves it — no lumalinux hook, no OST-style IPC machinery.
 
 ---
 
@@ -328,9 +354,11 @@ already covers the providers), but noted.
 | (shaders) | none | `ShaderDepot` + v0.16 reachability gate | **lumalinux** |
 
 **Net:** OST is a beautifully-engineered *single-binary* tool whose standout is
-its **runtime, hash-keyed pattern/IPC database** (Finding 1) — the one thing we
-should seriously want. Its Denuvo/EncryptedAppTicket path (Finding 4) is our one
-true capability gap, but it's SLSsteam-side and low-priority. On the gates we both
+its **runtime, hash-keyed pattern/IPC database** (Finding 1 — which we explored,
+implemented and then **reverted**; see that section). Its Denuvo/EncryptedAppTicket
+path (Finding 4) is **not** the gap the first draft called it: SLSsteam already
+caches and replays the encrypted app ticket, so only OST's donor-*capture* step is
+missing, and the ~30-min window makes it low-value. On the gates we both
 cover, we are at parity or ahead (GMRC cascade, shaders, package-0 robustness,
 Workshop). Most of OST's remaining cleverness is message/IPC-layer or
 Windows-specific and therefore **not portable** to a coexist-with-SLSsteam preload,
@@ -340,12 +368,22 @@ the same conclusion reached for slsteam-moon.
 
 ## Candidate shortlist (ranked)
 
-1. **Runtime steamclient-hash-keyed pattern DB** (Finding 1) — high value, good
-   fit, reuses `sha256`+`curl`, keep compiled-in as fallback. **Do this.**
+1. ~~**Runtime steamclient-hash-keyed pattern DB** (Finding 1)~~ — **explored,
+   implemented, then REVERTED.** With headcrab's Steam pin, encountering an
+   unsupported Steam is rare and SafeMode already fail-closes it; the self-heal
+   only saved ~1 release/month for pattern-move breaks, at the cost of publishing
+   the byte patterns as fetchable data + a footgun. Kept the **hash** self-heal
+   only (SLSsteam-style). Not worth the pattern half.
 2. **`.lua` runtime ingestion → drop keys.txt generation** (Finding 2 /
-   moon-findings §1) — simplification, bounded, already scoped.
-3. **Denuvo / EncryptedAppTicket capture-and-replay** (Finding 4) — real gap,
-   SLSsteam/LumaDeck-side, heavy, low priority.
+   moon-findings §1) — **rejected**: it moves the parse into the LD_PRELOAD
+   critical path (a `.lua` parse bug then breaks key serving) and needs the `.lua`
+   persisted, while steamidra_lite still owns manifests/AdditionalApps/acf. The
+   `keys.txt` artifact is fine.
+3. **Denuvo EncryptedAppTicket donor-import** (Finding 4) — SLSsteam already
+   caches+replays the ticket; only a cheap importer (write a distributed ticket into
+   SLSsteam's cache yaml) is missing, and a distribution ecosystem for the tickets
+   exists. Viability hinges on whether the ~30-min window gates only Denuvo's initial
+   activation (→ useful) or continuous play (→ near-useless) — confirm first.
 4. Cosmetic: purchase-time from `.lua` mtime (Finding 6) — trivial, only if the
    library date looks wrong.
 
