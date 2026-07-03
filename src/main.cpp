@@ -141,7 +141,14 @@ void InstallHooks() {
     // "hash blocked" apart from "Steam never started this session". Without
     // this, a blocked session is invisible.
 #ifndef LUMA_NO_UPDATE
-    if (!Updater::init() || !Updater::verifySafeModeHash()) {
+    // v0.16: init() also parses the additive Builds/PatternGroups; on success,
+    // applyPatternOverrides() self-heals the byte patterns for this exact
+    // steamclient.so BEFORE the finders run (so a Steam update that only moved
+    // patterns doesn't require a new release). Then the hash gate is enforced
+    // exactly as before. A no-op when nothing is published for this hash.
+    bool safeModeOk = Updater::init();
+    if (safeModeOk) Updater::applyPatternOverrides();
+    if (!safeModeOk || !Updater::verifySafeModeHash()) {
         Log::Notify(LUMALINUX_VERSION_STRING " blocked: steamclient.so hash not "
                     "in verified list (Steam updated past this lumalinux build). "
                     "Installed games still work; new downloads disabled until "

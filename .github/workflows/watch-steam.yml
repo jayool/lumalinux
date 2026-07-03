@@ -104,7 +104,7 @@ jobs:
           if [ "$(gh pr list --state all --search "$SHORT" --json number --jq 'length')" != "0" ]; then
             echo "A PR for $SHORT already exists — skipping."; exit 0
           fi
-          python3 tools/whitelist_hash.py "$SHA" --note "auto-added by watch-steam.yml $(date -u +%Y-%m-%d): patterns verified by CI
+          python3 tools/whitelist_hash.py "$SHA" --steam-version "$VER" --note "auto-added by watch-steam.yml $(date -u +%Y-%m-%d): patterns verified by CI
           (Steam client version $VER). Live-install test on a Deck still recommended."
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
