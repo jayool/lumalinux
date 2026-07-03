@@ -2,15 +2,19 @@
 # -*- coding: utf-8 -*-
 # fetch_steamclient.py — download the CURRENT 32-bit steamclient.so from Valve.
 #
-# Used by .github/workflows/watch-steam.yml to get the latest desktop-client
-# ubuntu12_32/steamclient.so (the exact binary a Steam Deck loads, and the one
-# whose SHA-256 goes into res/updates.yaml) so check_patterns.py can validate
-# it after a Steam update — with NO Steam login, NO steamcmd (steamcmd ships a
-# DIFFERENT build than the desktop client), just Valve's public client CDN.
+# Used by .github/workflows/watch-steam.yml to get the ubuntu12_32/steamclient.so
+# whose SHA-256 goes into res/updates.yaml so check_patterns.py can validate it
+# after a Steam update — with NO Steam login, NO steamcmd (steamcmd ships a
+# DIFFERENT build), just Valve's public client CDN.
 #
-# How the desktop client is distributed (same path SteamDB / the Headcrab
-# downgrader use):
-#   1. GET https://media.steampowered.com/client/steam_client_ubuntu12
+# CHANNEL (important): defaults to the STEAMDECK_STABLE manifest, because that is
+# the client a real Steam Deck loads. The generic steam_client_ubuntu12 (desktop
+# Linux) is a DIFFERENT build with a different hash — validating it silently
+# whitelisted the wrong client for every Deck user. Override with
+# LUMA_STEAM_MANIFEST (see MANIFEST_NAME below).
+#
+# How the client is distributed (same path SteamDB / the Headcrab downgrader use):
+#   1. GET https://media.steampowered.com/client/<MANIFEST_NAME>
 #      -> a text VDF manifest with a top-level "version" and a set of package
 #         entries, each a subkey carrying a "file" (and sha2/size/zipvz).
 #   2. Each package file lives at  https://media.steampowered.com/client/<file>
@@ -34,13 +38,22 @@ import argparse
 import hashlib
 import io
 import lzma
+import os
 import struct
 import sys
 import urllib.request
 import zipfile
 
 CDN = "https://media.steampowered.com/client/"
-MANIFEST_URL = CDN + "steam_client_ubuntu12"
+# A Steam Deck loads the steamdeck_stable channel, NOT the generic desktop-Linux
+# steam_client_ubuntu12 — they are DIFFERENT builds with different steamclient.so
+# hashes (headcrab pins via the steamdeck manifests too). watch-steam exists to
+# validate what real Decks actually run, so default to the steamdeck_stable
+# manifest. Earlier this read steam_client_ubuntu12 and silently validated the
+# wrong client for every Deck user. Override via LUMA_STEAM_MANIFEST for the
+# generic ("steam_client_ubuntu12") or beta ("steam_client_steamdeck_publicbeta_ubuntu12").
+MANIFEST_NAME = os.environ.get("LUMA_STEAM_MANIFEST", "steam_client_steamdeck_stable_ubuntu12")
+MANIFEST_URL = CDN + MANIFEST_NAME
 UA = "Mozilla/5.0 (X11; Linux x86_64) lumalinux-watch-steam/1.0"
 
 
