@@ -28,49 +28,21 @@ SafeModeHashes:
     - ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Builds — ADDITIVE (v0.16). Maps each whitelisted steamclient.so SHA-256 to its
-# Steam build metadata and the pattern group it uses. Ignored by pre-v0.16
-# readers (update.cpp reads only SafeModeHashes above).
-#   • lumalinux runtime: sha256 -> pattern_group  (applyPatternOverrides)
-#   • LumaDeck gate:      steam_version -> supported?  (safe-to-update-Steam)
-# steam_version is the integer from Steam's client manifest (the value
-# headcrab_compat/LumaDeck speak). Backfill it for older hashes as builds recur;
-# pattern_group is what the runtime needs and is known for all.
+# Builds — ADDITIVE metadata. Maps a whitelisted steamclient.so SHA-256 to its
+# Steam build metadata. NOT read by lumalinux's runtime (update.cpp reads only
+# SafeModeHashes above); consumed by LumaDeck's safe-to-update-Steam gate, which
+# looks up steam_version -> "is this Steam build already supported by a released
+# lumalinux?". steam_version is the integer from Steam's client manifest (the
+# value headcrab_compat/LumaDeck speak). Backfill it for older hashes as builds
+# recur; whitelist_hash.py --steam-version fills it in on new bumps.
 # ─────────────────────────────────────────────────────────────────────────────
 Builds:
-  64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9:
-    pattern_group: "20260611150000"
-  27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35:
-    pattern_group: "20260611150000"
   7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800:
     steam_build_id: 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
-    pattern_group: "20260611150000"
   f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95:
     steam_version: 1782344391
     steam_build_id: d8f66937a0de65c5b3b323707e6d9f8930ea4f5a
-    pattern_group: "20260611150000"
     verified: 2026-06-19
   ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4:
     steam_build_id: 1cbb4f594c9fb1d0246cd4e392a7cf2cab1bd8b8
-    pattern_group: "20260611150000"
     verified: 2026-06-26
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PatternGroups — ADDITIVE (v0.16). The fetchable byte-pattern set per group.
-# A group == one pattern set == the SafeMode VERSION that only bumps when
-# patterns.hpp changes. lumalinux loads the group its hash maps to, OVERRIDING
-# the compiled-in defaults; falls back to compiled-in on any miss. Each pattern
-# is a string, or a map { pattern: "...", match_index: N } (LoadPackage only).
-# Values below are the v0.16 compiled-in patterns (patterns.hpp) — publishing
-# them here exercises the override path and lets a future build reuse the group.
-# ─────────────────────────────────────────────────────────────────────────────
-PatternGroups:
-  "20260611150000":
-    schema: 1
-    DepotKey:    "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 24 8B 44 24 44 8B 6C 24 38 8B 7C 24 3C 8B 74 24 40 89 44 24 10 8B 44 24 48 89 44 24 14"
-    BuildDep:    "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 2C 02 00 00 8B 45 08 89 85"
-    Gmrc:        "E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"
-    ShaderDepot: "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0"
-    LoadPackage:
-      pattern: "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00"
-      match_index: 0

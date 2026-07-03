@@ -194,37 +194,6 @@ inline constexpr const char* kShaderCacheDepotPattern =
 
 
 // =============================================================================
-// Runtime pattern overrides (v0.16 — self-heal across Steam updates)
-// =============================================================================
-//
-// The kXxxPattern strings above are the COMPILED-IN defaults. In a release build
-// the SafeMode updater (update.cpp) may fetch a newer pattern set for the running
-// steamclient.so from res/updates.yaml (the `PatternGroups` section, keyed by the
-// build's pattern group — see the schema in that file) and install it via
-// SetPatternOverride() BEFORE the finders run. A finder then scans for the
-// overridden pattern instead of the compiled-in one, so a Steam update that only
-// shifts byte patterns self-heals without a new lumalinux release / reinstall.
-//
-// If nothing overrides a pattern (dev build, offline, hash not published, or the
-// group carries no entry for it) the finder uses the compiled-in default —
-// identical to the pre-v0.16 behaviour. The fetch is an OVERRIDE, never the only
-// source.
-enum class PatternId { DepotKey, BuildDep, LoadPackage, Gmrc, ShaderDepot };
-
-// Active pattern string for `id`: the override if one was set, else the
-// compiled-in kXxxPattern default.
-const std::string& PatternFor(PatternId id);
-
-// LoadPackage matches multiple candidates; index to pick. Returns the override
-// if set (>=0), else -1 meaning "use LUMA_LOADPKG_IDX / default 0".
-int MatchIndexFor(PatternId id);
-
-// Install a runtime override (called by the updater before the finders run).
-// An empty pattern is ignored (keeps the compiled-in default).
-void SetPatternOverride(PatternId id, const std::string& pattern);
-void SetMatchIndexOverride(PatternId id, int idx);
-
-// =============================================================================
 // Finders
 // =============================================================================
 

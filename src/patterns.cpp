@@ -137,56 +137,20 @@ uintptr_t FindSteamclientBase() {
     return r.base;
 }
 
-// ── Runtime-overridable pattern table (v0.16) ────────────────────────────────
-// Indexed by (int)PatternId. Lazily initialised to the compiled-in kXxxPattern
-// defaults; SetPatternOverride() replaces an entry (from res/updates.yaml's
-// PatternGroups) before the finders run. No override set → compiled-in default,
-// i.e. identical to pre-v0.16 behaviour.
-namespace {
-struct PatternSlot {
-    std::string pattern;
-    int         matchIndex = -1;   // -1 = unset (finder uses env / default 0)
-};
-PatternSlot& Slot(PatternId id) {
-    static PatternSlot slots[5] = {
-        { kDepotKeyFnPattern,           -1 },
-        { kBuildDepotDependencyPattern, -1 },
-        { kLoadPackagePattern,          -1 },
-        { kGmrcFunctionPattern,         -1 },
-        { kShaderCacheDepotPattern,     -1 },
-    };
-    return slots[static_cast<int>(id)];
-}
-} // namespace
-
-const std::string& PatternFor(PatternId id) { return Slot(id).pattern; }
-int MatchIndexFor(PatternId id)             { return Slot(id).matchIndex; }
-
-void SetPatternOverride(PatternId id, const std::string& pattern) {
-    if (pattern.empty()) return;                 // keep the compiled-in default
-    Slot(id).pattern = pattern;
-    Log::Info("Patterns: runtime override installed for pattern id %d "
-              "(from res/updates.yaml PatternGroups)", static_cast<int>(id));
-}
-void SetMatchIndexOverride(PatternId id, int idx) { Slot(id).matchIndex = idx; }
-
 uintptr_t FindDepotKeyFunction() {
-    return FindInSteamclient(PatternFor(PatternId::DepotKey).c_str(),
-                             "depot key KeyValues accessor");
+    return FindInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 
 uintptr_t FindBuildDepotDependencyFunction() {
-    return FindInSteamclient(PatternFor(PatternId::BuildDep).c_str(),
-                             "BuildDepotDependency");
+    return FindInSteamclient(kBuildDepotDependencyPattern, "BuildDepotDependency");
 }
 
 uintptr_t FindGmrcFunction() {
-    return FindInSteamclient(PatternFor(PatternId::Gmrc).c_str(),
-                             "GMRC getter (GetManifestRequestCode)");
+    return FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
 }
 
 uintptr_t FindShaderCacheDepotFunction() {
-    return FindInSteamclient(PatternFor(PatternId::ShaderDepot).c_str(),
+    return FindInSteamclient(kShaderCacheDepotPattern,
                              "GetShaderCacheDepot (per-game shader skip)");
 }
 
@@ -198,7 +162,7 @@ uintptr_t FindLoadPackageFunction() {
     ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
     if (!r.base) return 0;
 
-    auto parsed = ParsePattern(PatternFor(PatternId::LoadPackage).c_str());
+    auto parsed = ParsePattern(kLoadPackagePattern);
     if (parsed.bytes.empty()) return 0;
 
     std::vector<uintptr_t> hits;
@@ -223,18 +187,13 @@ uintptr_t FindLoadPackageFunction() {
     }
 
     size_t idx = 0;
-    // A runtime override (res/updates.yaml PatternGroups: LoadPackage.match_index)
-    // wins; else the LUMA_LOADPKG_IDX env; else 0.
-    int overrideIdx = MatchIndexFor(PatternId::LoadPackage);
-    if (overrideIdx >= 0) {
-        idx = static_cast<size_t>(overrideIdx);
-    } else if (const char* env = std::getenv("LUMA_LOADPKG_IDX")) {
+    if (const char* env = std::getenv("LUMA_LOADPKG_IDX")) {
         idx = static_cast<size_t>(std::strtoul(env, nullptr, 10));
-    }
-    if (idx >= hits.size()) {
-        Log::Warn("Patterns: LoadPackage index %zu out of range (%zu) — using 0",
-                  idx, hits.size());
-        idx = 0;
+        if (idx >= hits.size()) {
+            Log::Warn("Patterns: LUMA_LOADPKG_IDX=%zu out of range (%zu) — using 0",
+                      idx, hits.size());
+            idx = 0;
+        }
     }
 
     Log::Info("Patterns: LoadPackage selected candidate[%zu] = 0x%lx (RVA 0x%lx)",

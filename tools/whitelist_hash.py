@@ -7,18 +7,13 @@
 # version group (the value in res/version.txt) so the deployed .so accepts it on
 # next boot — no rebuild, no release.
 #
-# Writes TWO sections (both keyed to the SAME current group), text-based to keep
-# the file's comments/formatting intact:
+# Writes TWO sections, text-based to keep the file's comments/formatting intact:
 #   • SafeModeHashes — the flat hash whitelist read by src/update.cpp (field
 #     binaries). Shape frozen: {group: [scalar_sha256, ...]}.
-#   • Builds (v0.16, additive) — {sha256: {steam_version?, steam_build_id?,
-#     pattern_group}} for LumaDeck's safe-to-update gate + lumalinux's runtime
-#     pattern override. Skipped silently if the file has no `Builds:` section
-#     (pre-v0.16 file) so this stays backward-safe.
-#
-# NOT written here: PatternGroups. A plain hash bump reuses the CURRENT group's
-# patterns (they didn't change), so no PatternGroups edit is needed. A pattern
-# CHANGE creates a NEW group and is handled by the pattern-derivation path.
+#   • Builds (additive metadata) — {sha256: {steam_version?, steam_build_id?}}
+#     for LumaDeck's safe-to-update gate (steam_version -> supported?). NOT read
+#     by lumalinux's runtime. Skipped silently if the file has no `Builds:`
+#     section so this stays backward-safe.
 #
 # Idempotent per section: re-running never duplicates an entry.
 #
@@ -71,22 +66,24 @@ def _insert_into_safemode(lines, group, sha, note):
     return True, "added to SafeModeHashes[%s]" % group
 
 
-def _insert_into_builds(lines, sha, group, steam_version, build_id):
-    """Insert a Builds entry for <sha> (first child of `Builds:`). Returns msg.
+def _insert_into_builds(lines, sha, steam_version, build_id):
+    """Insert a Builds metadata entry for <sha> (first child of `Builds:`).
 
-    No-op (returns a note) when there's no `Builds:` section — keeps the tool
-    safe against a pre-v0.16 updates.yaml.
+    Returns a note and does nothing when there's no `Builds:` section (keeps the
+    tool safe against an older updates.yaml) or when there's no metadata to
+    record (a bare `sha:` entry would carry nothing the LumaDeck gate can use).
     """
     bi = _find_top_key(lines, "Builds")
     if bi is None:
-        return "no Builds section — skipped (pre-v0.16 file)"
+        return "no Builds section — skipped"
+    if not steam_version and not build_id:
+        return "no steam_version/build_id — Builds entry skipped"
 
     block = ["  %s:" % sha]
     if steam_version:
         block.append("    steam_version: %s" % steam_version)
     if build_id:
         block.append("    steam_build_id: %s" % build_id)
-    block.append('    pattern_group: "%s"' % group)
 
     lines[bi + 1:bi + 1] = block          # insert as first entry under Builds:
     return "added to Builds"
@@ -127,7 +124,7 @@ def main():
     if any(l.strip() == sha + ":" for l in lines):
         print("Builds: entry already present.")
     else:
-        did.append(_insert_into_builds(lines, sha, group,
+        did.append(_insert_into_builds(lines, sha,
                                        args.steam_version, args.build_id))
 
     if not did:
