@@ -26,8 +26,6 @@ SafeModeHashes:
     # the package-0 finder anchors resolve unchanged — same RVAs as f5eb8bd3,
     # ShaderDepot global still 0x2c0cc. No pattern change; same version group.
     - ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4
-    # steamdeck_stable_ubuntu12 build (headcrab pin 1782861641). Added from a real Deck's loaded steamclient.so hash after watch-steam missed it (cron read the generic ubuntu12 channel, not steamdeck_stable). Pattern re-validation pending the fetch_steamclient.py channel fix.
-    - fa20a21df061aad7a5d4f1e793385fcf593dcb677d0bb74f4d29ce62f2bd858e
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Builds — ADDITIVE metadata. Maps a whitelisted steamclient.so SHA-256 to its
@@ -39,8 +37,6 @@ SafeModeHashes:
 # recur; whitelist_hash.py --steam-version fills it in on new bumps.
 # ─────────────────────────────────────────────────────────────────────────────
 Builds:
-  fa20a21df061aad7a5d4f1e793385fcf593dcb677d0bb74f4d29ce62f2bd858e:
-    steam_version: 1782861641
   7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800:
     steam_build_id: 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
   f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95:
