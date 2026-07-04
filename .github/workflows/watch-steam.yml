@@ -56,7 +56,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .watch-steam-seen
-          key: steam-client-${{ steps.ver.outputs.version }}
+          # v2 prefix: bumping it invalidates every pre-existing entry (the old
+          # `steam-client-<ver>` keys become unreachable). Bumped when the
+          # save-semantics below changed AND to bust a poisoned entry — a version
+          # cached while its hash was only transiently whitelisted.
+          key: steam-client-v2-${{ steps.ver.outputs.version }}
 
       # ── Level 2: only on a NEW version ───────────────────────────────────
       - name: Download latest steamclient.so
@@ -405,10 +409,17 @@ jobs:
           } > issue_body.md
           gh issue create --title "$TITLE" --body-file issue_body.md
 
-      # ── remember this version so tomorrow's run skips it ─────────────────
+      # ── remember this version so tomorrow's run skips it — ONLY once it is
+      # genuinely resolved (its hash is whitelisted in res/updates.yaml on main).
+      # A version that came back BROKEN (issue opened) or CLEAN-but-PR-not-yet-
+      # merged is deliberately NOT cached, so the daily run keeps re-checking it
+      # until the hash actually lands in updates.yaml. Without this, a version
+      # processed in a not-yet-fixed state would be marked "done" and never
+      # re-validated — even after the fix ships. The dup-PR/issue guards above
+      # already prevent spam from the repeated re-checks.
       - name: Mark version processed
-        if: steps.seen.outputs.cache-hit != 'true' && success()
+        if: steps.seen.outputs.cache-hit != 'true' && success() && steps.wl.outputs.whitelisted == 'true'
         uses: actions/cache/save@v4
         with:
           path: .watch-steam-seen
-          key: steam-client-${{ steps.ver.outputs.version }}
+          key: steam-client-v2-${{ steps.ver.outputs.version }}
