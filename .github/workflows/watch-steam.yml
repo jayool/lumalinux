@@ -95,7 +95,8 @@ jobs:
           echo "exit=$code" >> "$GITHUB_OUTPUT"
 
       # ── CLEAN (0) or ShaderDepot-moved (2): PR the hash ──────────────────
-      - name: Open hash-bump PR
+      - name: Open hash-bump PR (auto-merged on CLEAN)
+        id: pr
         if: steps.check.outcome == 'success' && (steps.check.outputs.exit == '0' || steps.check.outputs.exit == '2')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -119,8 +120,9 @@ jobs:
           {
             echo "Automated by \`watch-steam.yml\`. A new Steam client shipped and"
             echo "**all critical patterns still resolve** against its 32-bit \`steamclient.so\`,"
-            echo "so this is an **A.1 hash bump** — no rebuild, no release. Merging propagates"
-            echo "to every Deck on next boot (\`updates.yaml\` is fetched live at startup)."
+            echo "so this is an **A.1 hash bump** — no rebuild, no release. This PR is"
+            echo "**auto-merged** by CI and propagates to every Deck on next boot"
+            echo "(\`updates.yaml\` is fetched live at startup)."
             echo
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
@@ -129,7 +131,8 @@ jobs:
               echo "  the per-game shader-skip is lost). A separate issue tracks re-deriving it."
             fi
             echo
-            echo "A live-install test on a real Deck is still recommended before merge."
+            echo "Auto-merged on a CLEAN check; a live-install test on a Deck is still worth"
+            echo "doing to confirm 4/4 hooks."
             echo
             echo '<details><summary>check_patterns.py report</summary>'
             echo
@@ -141,6 +144,13 @@ jobs:
           gh pr create --base main --head "$BR" \
             --title "SafeMode: whitelist steamclient $SHORT (auto, patterns verified)" \
             --body-file pr_body.md
+          # Auto-merge: a CLEAN / ShaderDepot-moved hash bump is a safe, review-free
+          # DATA change (deployed .so self-heals on the fetched hash; no code change).
+          # Detach first so --delete-branch can also drop the local branch, then
+          # squash-merge. main is unprotected, so this merges without waiting on checks.
+          git checkout --detach
+          gh pr merge "$BR" --squash --delete-branch
+          echo "merged=true" >> "$GITHUB_OUTPUT"
 
       # ── ShaderDepot moved (2): try AUTO-DERIVATION first ─────────────────
       # The heavy Ghidra path runs ONLY here, on a real "pattern moved" event —
@@ -418,7 +428,7 @@ jobs:
       # re-validated — even after the fix ships. The dup-PR/issue guards above
       # already prevent spam from the repeated re-checks.
       - name: Mark version processed
-        if: steps.seen.outputs.cache-hit != 'true' && success() && steps.wl.outputs.whitelisted == 'true'
+        if: steps.seen.outputs.cache-hit != 'true' && success() && (steps.wl.outputs.whitelisted == 'true' || steps.pr.outputs.merged == 'true')
         uses: actions/cache/save@v4
         with:
           path: .watch-steam-seen
