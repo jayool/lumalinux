@@ -7,13 +7,12 @@
 # version group (the value in res/version.txt) so the deployed .so accepts it on
 # next boot — no rebuild, no release.
 #
-# Writes TWO sections, text-based to keep the file's comments/formatting intact:
-#   • SafeModeHashes — the flat hash whitelist read by src/update.cpp (field
-#     binaries). Shape frozen: {group: [scalar_sha256, ...]}.
-#   • Builds (additive metadata) — {sha256: {steam_version?, steam_build_id?}}
-#     for LumaDeck's safe-to-update gate (steam_version -> supported?). NOT read
-#     by lumalinux's runtime. Skipped silently if the file has no `Builds:`
-#     section so this stays backward-safe.
+# Appends the hash to SafeModeHashes (the flat list src/update.cpp reads) under
+# the current version group, preceded by a `# steam_version: <n>` COMMENT when
+# --steam-version is given. lumalinux ignores that comment; LumaDeck's
+# safe-to-update gate text-scans this file for `steam_version: <pin>` to answer
+# "is this build supported?", so the metadata lives next to its hash — one
+# section, no separate Builds sidecar. Text-based to preserve comments/formatting.
 #
 # Idempotent per section: re-running never duplicates an entry.
 #
@@ -25,16 +24,10 @@ import argparse
 import sys
 
 
-def _find_top_key(lines, key):
-    """Index of a top-level `key:` line (indent 0), or None."""
-    for i, l in enumerate(lines):
-        if l.rstrip() == key + ":" and not l.startswith((" ", "\t")):
-            return i
-    return None
-
-
-def _insert_into_safemode(lines, group, sha, note):
-    """Append `  - <sha>` under SafeModeHashes[<group>]. Returns (ok, msg)."""
+def _insert_into_safemode(lines, group, sha, steam_version, build_id, note):
+    """Append `  - <sha>` under SafeModeHashes[<group>], preceded by a
+    `# steam_version: <n>` comment (read by LumaDeck's text-scan gate; ignored by
+    lumalinux). Returns (ok, msg)."""
     # locate the group key line: "  <group>:" (2-space indent, trailing colon)
     gi = None
     for i, l in enumerate(lines):
@@ -58,35 +51,20 @@ def _insert_into_safemode(lines, group, sha, note):
 
     item_indent = " " * (key_indent + 2)
     ins = []
+    if steam_version:
+        meta = "# steam_version: %s" % steam_version
+        if build_id:
+            meta += "   (build %s)" % build_id
+        ins.append("%s%s" % (item_indent, meta))
+    elif build_id:
+        ins.append("%s# build %s" % (item_indent, build_id))
     if note:
         for nl in note.splitlines():
             ins.append("%s# %s" % (item_indent, nl))
     ins.append("%s- %s" % (item_indent, sha))
     lines[last_item + 1:last_item + 1] = ins
-    return True, "added to SafeModeHashes[%s]" % group
-
-
-def _insert_into_builds(lines, sha, steam_version, build_id):
-    """Insert a Builds metadata entry for <sha> (first child of `Builds:`).
-
-    Returns a note and does nothing when there's no `Builds:` section (keeps the
-    tool safe against an older updates.yaml) or when there's no metadata to
-    record (a bare `sha:` entry would carry nothing the LumaDeck gate can use).
-    """
-    bi = _find_top_key(lines, "Builds")
-    if bi is None:
-        return "no Builds section — skipped"
-    if not steam_version and not build_id:
-        return "no steam_version/build_id — Builds entry skipped"
-
-    block = ["  %s:" % sha]
-    if steam_version:
-        block.append("    steam_version: %s" % steam_version)
-    if build_id:
-        block.append("    steam_build_id: %s" % build_id)
-
-    lines[bi + 1:bi + 1] = block          # insert as first entry under Builds:
-    return "added to Builds"
+    tail = " with steam_version %s" % steam_version if steam_version else ""
+    return True, "added to SafeModeHashes[%s]%s" % (group, tail)
 
 
 def main():
@@ -114,18 +92,12 @@ def main():
     if any(l.strip() == "- " + sha for l in lines):
         print("SafeModeHashes: hash already present.")
     else:
-        ok, msg = _insert_into_safemode(lines, group, sha, args.note)
+        ok, msg = _insert_into_safemode(lines, group, sha,
+                                        args.steam_version, args.build_id, args.note)
         if not ok:
             print("ERROR: %s in %s" % (msg, args.updates), file=sys.stderr)
             return 1
         did.append(msg)
-
-    # Builds — skip if a "<sha>:" key already present.
-    if any(l.strip() == sha + ":" for l in lines):
-        print("Builds: entry already present.")
-    else:
-        did.append(_insert_into_builds(lines, sha,
-                                       args.steam_version, args.build_id))
 
     if not did:
         print("nothing to do (hash fully present).")

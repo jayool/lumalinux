@@ -1,53 +1,29 @@
+# res/updates.yaml — runtime-fetched config shared by lumalinux + LumaDeck.
+#
+# SafeModeHashes is the single source of truth and the ONLY thing lumalinux's
+# runtime reads (src/update.cpp): the flat list of steamclient.so SHA-256s it is
+# allowed to hook, grouped by pattern-set version. The group id (a timestamp)
+# bumps ONLY when src/patterns.hpp changes; within a group, new compatible hashes
+# are just appended — no rebuild, no release, deployed binaries accept them on
+# next boot.
+#
+# The `# steam_version:` comment on a hash is NOT read by lumalinux. It is read by
+# LumaDeck's safe-to-update-Steam gate, which does a dependency-free TEXT SCAN of
+# this file for `steam_version: <pin>` to answer "is this Steam build supported?".
+# So that metadata lives as a comment next to its hash — one section, no sidecar.
+# Added by whitelist_hash.py --steam-version; harmless to omit (the gate just
+# returns "unknown" for that build).
+#
+# Hashes are the ubuntu12_32 / steamdeck_stable_ubuntu12 binary actually LOADED at
+# runtime (NOT linux32). watch-steam.yml validates + appends them automatically.
 SafeModeHashes:
   20260611150000:
-    # Steam clients verified compatible with the current lumalinux pattern set
-    # (DepotKey + BuildDep + GMRC hooks since v0.13.1; LoadPackage is opt-in)
-    # AND the package-0 finder runtime anchors (§13.5).
-    #
-    # Hashes are for the steamclient.so that gets actually loaded at runtime —
-    # which is the ubuntu12_32 binary, NOT linux32 (that one exists on disk too
-    # but is a different runtime variant Steam keeps around for legacy
-    # compatibility and never loads on a working SLSsteam/lumalinux setup).
-    #
-    # Verified via verify-fix workflow against the real ubuntu12_32 binary
-    # from a LumaDeck user reporting `hooks active` notify after install:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
     - 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
-    # build d8f66937a0de65c5b3b323707e6d9f8930ea4f5a (Steam client version
-    # 1782344391, 2026.06). All 5 patterns + the package-0 finder anchors
-    # verified to still resolve unchanged on this build (the ShaderDepot global
-    # offset shifted 0x2b758 -> 0x2c0cc but the wildcard absorbed it); no
-    # pattern change, so the hash is appended to the SAME version group.
+    # steam_version: 1782344391   (build d8f66937a0de65c5b3b323707e6d9f8930ea4f5a, 2026-06-19)
     - f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95
-    # build 1cbb4f594c9fb1d0246cd4e392a7cf2cab1bd8b8 (2026-06-26 Steam update,
-    # newer than f5eb8bd3). Verified on the loaded ubuntu12_32 binary from a real
-    # Deck (disk hash == lumalinux runtime "hash is" log line). All 5 patterns +
-    # the package-0 finder anchors resolve unchanged — same RVAs as f5eb8bd3,
-    # ShaderDepot global still 0x2c0cc. No pattern change; same version group.
+    # build 1cbb4f594c9fb1d0246cd4e392a7cf2cab1bd8b8 (2026-06-26 Steam update)
     - ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4
-    # auto-added by watch-steam.yml 2026-07-04: patterns verified by CI
-    # (Steam client version 1782861641). Live-install test on a Deck still recommended.
+    # steam_version: 1782861641   (steamdeck_stable, CI-verified 2026-07-04)
     - fa20a21df061aad7a5d4f1e793385fcf593dcb677d0bb74f4d29ce62f2bd858e
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Builds — ADDITIVE metadata. Maps a whitelisted steamclient.so SHA-256 to its
-# Steam build metadata. NOT read by lumalinux's runtime (update.cpp reads only
-# SafeModeHashes above); consumed by LumaDeck's safe-to-update-Steam gate, which
-# looks up steam_version -> "is this Steam build already supported by a released
-# lumalinux?". steam_version is the integer from Steam's client manifest (the
-# value headcrab_compat/LumaDeck speak). Backfill it for older hashes as builds
-# recur; whitelist_hash.py --steam-version fills it in on new bumps.
-# ─────────────────────────────────────────────────────────────────────────────
-Builds:
-  fa20a21df061aad7a5d4f1e793385fcf593dcb677d0bb74f4d29ce62f2bd858e:
-    steam_version: 1782861641
-  7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800:
-    steam_build_id: 7c4ac73ec1ae96b3338e06bdd69a1c79c7ab2f6932ca2c81b5b683f215ad1800
-  f5eb8bd3e98ac34b9f4610d9303cc4fbd931c672cb2d21b126e687bab95d9a95:
-    steam_version: 1782344391
-    steam_build_id: d8f66937a0de65c5b3b323707e6d9f8930ea4f5a
-    verified: 2026-06-19
-  ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4:
-    steam_build_id: 1cbb4f594c9fb1d0246cd4e392a7cf2cab1bd8b8
-    verified: 2026-06-26
