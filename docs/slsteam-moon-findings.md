@@ -559,9 +559,36 @@ survive (it can't fabricate a depot list — BuildDep inject SIGSEGVs). But the 
 Part-1 caveat holds: moon does it by **owning `appinfo.vdf` + hooking the PICS
 response**, which is SLSsteam's territory. For lumalinux it's portable **only** as
 the offline `appinfo.vdf` synthesis + a "don't refresh this app" marker, **not** as
-a message hook. Recorded as: the token-locked-app gap is now solved *in moon*; for
-us it would be a `steamidra_lite`-side offline synthesis, and only worth it for the
-handful of token-gated titles.
+a message hook.
+
+**Correction (2026-07-05, verified against vanilla SLSsteam source
+`AceSLS/SLSsteam@ebfb079`).** An earlier draft said vanilla SLSsteam "has nothing"
+for token-locked apps — that was wrong. SLSsteam has a real mechanism, and OUR
+stack already wires it:
+- `Apps::sendPICSInfoRequest` (`src/feats/apps.cpp:230`) attaches a
+  **user-supplied access token** (`g_config.appTokens`, an `AppTokens: {appid:
+  token}` map in config.yaml) to the outgoing PICS request. A valid token makes
+  Valve return the FULL appinfo — depots present, install works. That is its whole
+  appinfo handling; it has **no** depot synthesis and **no** anti-clobber (the
+  `meta_data_only` / `depot_id` hits in the tree are auto-generated protobuf
+  boilerplate, not SLSsteam logic).
+- **lumalinux/LumaDeck already plumb `AppTokens`**: `steamidra_lite --token` and
+  LumaDeck `add_game_token` write exactly that map (Part-1 audit artifact #5). So a
+  token-gated app whose token the source (Hubcap/community) can provide is
+  **already handled** end-to-end on our side — no synthesis needed.
+
+So M5 is much narrower than first stated. The two cases split:
+1. **Token gated, token obtainable** → **already covered** by our existing
+   `--token` / `add_game_token` → SLSsteam `AppTokens` path. Nothing to do.
+2. **Token gated, NO token obtainable anywhere** → the only residual, and the only
+   thing moon's synthesis buys. That is the non-portable half (fabricating depots +
+   blocking the refresh clobber lives in SLSsteam's message layer).
+
+**Verdict:** not an implementation issue. Token-gated apps use the existing
+`--token` flow; the no-token-obtainable sub-case is moon-synthesis territory we
+can't do cleanly (SLSsteam-side). At most a doc/UX note so LumaDeck can point a
+"downloads but shows 0 B / invalid config" title at the token flow (or a fix), same
+family as the Denuvo-ticket path (LumaDeck #27).
 
 ## Finding M6 — Decky coexistence: keep CEF debug port on 8080 (a880c9c, ee99e74) ★ LumaDeck-relevant
 
@@ -594,6 +621,26 @@ uninstall (`a9ea362`, `e7b3070`, `0ed3037`, `69c2190`, `414e048`, `6a577aa`,
 the same "don't inject at `steam.sh`, patch the `.desktop` Exec" conclusion** —
 relevant to however headcrab/LumaDeck ensures the LD_PRELOAD wrapper covers all of
 Game Mode, Desktop, and the SteamOS launcher drop-in.
+
+**This one touches our stack directly (verified 2026-07-05).** Our injection lives
+in `steam.sh`: lumalinux is `LD_PRELOAD`ed *by* `steam.sh` (`src/main.cpp:58`,
+`src/sha256.cpp:5`), and headcrab patches an `LD_PRELOAD=liblumalinux.so` block
+into it. LumaDeck already sees the failure symptom — `backend/paths.py` has an
+`injection_missing` state ("steam.sh lost the lumalinux block → reinstall") — but
+attributes it to *headcrab regenerating `steam.sh`*. M7 adds a **second cause for
+the same symptom**: Steam itself **re-extracts `steam.sh` when its size differs
+from the manifest** (i.e. after our block changed its size), which wipes the
+injection on a Steam update with no headcrab run involved. So we are on exactly
+the fragile method moon and luatools both abandoned.
+
+- **Not a lumalinux change.** lumalinux is only the payload `steam.sh` preloads;
+  it doesn't own the wrapper. The durable fix (patch the `.desktop` `Exec` instead
+  of `steam.sh`) is **headcrab's** layer — upstream, not ours.
+- **What is ours (LumaDeck):** the detect-and-nudge already exists; M7's value is
+  (a) documenting the *second* cause of `injection_missing` (Steam re-extract, not
+  only headcrab rewrite) so the diagnosis is complete, and (b) an upstream note to
+  headcrab that `.desktop Exec` patching survives Steam updates where a `steam.sh`
+  block does not. Filed as a LumaDeck doc/issue candidate, not lumalinux work.
 
 ## Finding M8 — config hardening (013b5a9, c90bd47, 131c4e8, 22c1393)
 
