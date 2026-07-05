@@ -498,6 +498,24 @@ is the pattern: key off a real crash **and** a client-fingerprint change, not a
 static gate. Note it dovetails with our existing `check_slssteam_hash_status`
 (which reads the SLSsteam log for the abort line) — complementary signals.
 
+**M2 and M3 are one trade — and we are on the other side of it.** M3 is the
+*recovery* half of what M2 *removed*: moon dropped the preemptive hash gate (M2)
+and, because it now hooks an unverified binary that can crash Steam, added M3 to
+recover from that crash. lumalinux **kept** the gate, so the crash-loop brick M3
+rescues from **essentially cannot happen to us** — an unrecognised Steam build
+makes us **block cleanly** (or SLSsteam self-aborts with "Unknown steamclient.so
+hash! Aborting…"), never crash-loop. Adopting M3 on top of M2 would be
+belt-and-suspenders where the belt already prevents the exact fall.
+
+**Decision (2026-07-05): context, not an issue.** No lumalinux work. The only
+residual gap M3 would cover — a crash from a *whitelisted* build with a buggy hook
+— is rare (caught before whitelisting) and not the failure we actually hit. The
+sole borrowable slice is a **LumaDeck-side UX nicety**: feed "client fingerprint
+changed since last known-good + a real failure signal (SLSsteam abort line /
+crash)" into the compatibility nudge it already shows (`headcrab_compat`), to
+sharpen the message and avoid false alarms on benign short sessions. Optional,
+low priority; not filed.
+
 ## Finding M4 — GMRC network circuit breaker + local-store-first (516eeb4, d263ba4, b3a9de7) ★ portable to gmrc_store
 
 Two changes to the load-bearing manifest-code path:
