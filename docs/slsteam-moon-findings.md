@@ -402,6 +402,207 @@ sound**: same validated source, the correct non-overlapping hook layer.
 
 ---
 
+# Part 2 — swwayps/slsteam-moon changes since 2026-06-23
+
+*Investigation date: 2026-07-05. Reference:
+[`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon) `main`
+(the GitHub continuation of the Codeberg `unplausible/slsteam-moon` reviewed in
+Part 1). Commits 2026-06-23 → 2026-07-05, read as real diffs. Same project as
+Part 1 — the SLSsteam `.so` — so these compare against **lumalinux** (and
+LumaDeck where the change touches Decky/Deck coexistence).*
+
+The 2026-06-23 Steam client update broke moon's load, and the fallout drove most
+of this window: signature self-heal, dropping the hash-whitelist SafeMode for a
+crash-recovery fail-safe, a GMRC circuit breaker, appinfo synthesis for
+token-locked apps, and Decky coexistence.
+
+## Finding M1 — structural signature self-heal (9f419a5) ★ portable, and NOT our reverted approach
+
+moon made its byte-pattern signatures survive a class of Steam-update drift
+**with no network and no new patterns**, two ways:
+
+1. **Mask the volatile layout-constant bytes that are only part of the
+   *location* signature.** `CUser::NotifyLicensesUpdated` embeds a `mov
+   edi,[eax+0x1bXX]` CUser member offset that drifted `0x1b18 → 0x1b14`;
+   `IClientUser::RequiresLegacyCDKey` embeds a `sub eax,<off>` interface→impl
+   thunk offset that drifted `0x18d8 → 0x18d4`. moon only needs to **find** these
+   functions (it calls them by pointer / hooks them; it never reads the offset
+   value), so it **wildcards** those bytes. The long surrounding tail keeps the
+   match unique — verified exactly 1 hit in both the pre- and post-update
+   `steamclient.so`. Result: that constant-only drift no longer needs a code
+   change.
+2. **Structurally re-derive the `IClient*::RunIPCFrame` dispatch-tree root at load
+   time from the live binary** (`autoResolveIpcFrameRoots` + `feats/ipcframe.hpp`).
+   It scans the executable segments *inside steamclient's address range*, collects
+   candidate roots, and accepts one **only if exactly one lies within a tight band
+   (`kMaxRootDrift`) of the stored seed**; otherwise it keeps the embedded value,
+   so an uncertain match **degrades to the prior loud failure rather than binding
+   the wrong function**. `Pattern_t::pattern` was made non-`const` so the trailing
+   root byte can be rewritten in place before `find()`.
+
+**Why this matters for lumalinux.** This is **not** the thing we reverted. We
+reverted a runtime **pattern-override fetched over the network** (a supply-chain
+surface, made redundant by the headcrab pin + the cron). This is **self-contained
+structural self-heal**: no server, fail-safe (uncertain → loud fail, never
+mis-hook). And technique **#1 is directly portable to `src/patterns.hpp`** —
+lumalinux uses the same libmem byte-scan, and several of our signatures surely
+embed layout-constant bytes we only need for *location*. Masking those would turn
+more Steam updates into **CLEAN hash-bumps** (the cron just appends the hash)
+instead of **ShaderDepot-moved re-derives** (which need a human + a release). It
+directly reduces how often `check_patterns.py` returns "pattern moved". The
+RunIPCFrame structural re-derive (#2) is heavier and lumalinux may not need it,
+but the **byte-masking discipline is a cheap, high-value hardening** for our
+pattern set — audit which of our sig bytes are load-bearing vs merely-present.
+
+## Finding M2 — moon DROPPED its hash-whitelist SafeMode (643a92c) — our incident, their opposite call
+
+moon **force-disabled** SafeMode (`safeMode = false;`, the key still parsed so old
+configs don't error). Its stated reasons are, verbatim, our production incident:
+*"its hash whitelist cannot be kept current: it goes stale on every Steam client
+update and would disable an otherwise-working client, and it is sourced from an
+upstream mirror we do not control."* They replaced the guard with the Steam
+wrapper's crash-loop fail-safe (M3).
+
+**Contrast with lumalinux — do NOT copy the removal, but note the trade-off.**
+This is the exact failure mode that SafeMode-blocked the user's Deck. But moon's
+SafeMode and lumalinux's are not the same instrument:
+- moon's only *disabled SLSsteam* on an unknown hash — losing it costs little
+  because its other resilience (self-heal, crash fail-safe) covers the brick case.
+- lumalinux's SafeMode is **fail-closed to prevent mis-hooking a changed binary**
+  (a wrong hook can corrupt), and we've **already mitigated the staleness** moon
+  complains about: the cron **auto-whitelists CLEAN hashes** and the whitelist is
+  **our own repo, not a mirror**. So the two big objections (stale, not-yours)
+  are largely answered on our side.
+- The residual lesson: moon pairs "don't hard-block" with a **crash-recovery
+  belt** (M3). lumalinux is fail-closed with a *fast auto-un-block* (cron) rather
+  than fail-open with recovery. Both are defensible; ours keeps the anti-mis-hook
+  guarantee. Worth recording that the whole ecosystem hit this and split on it.
+
+## Finding M3 — crash-loop fail-safe with a client-change fast-path (cdfd116, a9cf037, b103474, fc9d839)
+
+moon's replacement for SafeMode lives in the **Steam wrapper** (`setup.sh`), not
+the `.so`. It records `steamclient.so` identity (`size:mtime`) across boots and,
+on a **startup crash** — keyed off an actual **crash dump**, not a short session,
+so Game-Mode↔Desktop switches / self-update restarts / manual quits don't count,
+and non-fatal assert dumps are ignored — it latches "stay vanilla" recovery. The
+smart bit: if the crashed client **differs from the last cleanly-booted one**, a
+fresh update is the near-certain cause, so it latches on the **first** crash
+instead of making the user loop `MAX_FAILS` times; a crash on an **unchanged**
+client keeps the conservative threshold. Auto-clears once the payload is updated.
+
+**Relevance.** This is the fail-*open*-with-recovery end of the spectrum lumalinux
+deliberately isn't at — but the **client-change signal** (`size:mtime` of the
+32-bit `steamclient.so`) is a cheap, useful primitive. If LumaDeck ever wants a
+"SLSsteam/lumalinux just started crash-looping after a Steam update" detector, this
+is the pattern: key off a real crash **and** a client-fingerprint change, not a
+static gate. Note it dovetails with our existing `check_slssteam_hash_status`
+(which reads the SLSsteam log for the abort line) — complementary signals.
+
+## Finding M4 — GMRC network circuit breaker + local-store-first (516eeb4, d263ba4, b3a9de7) ★ portable to gmrc_store
+
+Two changes to the load-bearing manifest-code path:
+1. **Local ManifestStore before the network** (`pics.cpp`): during PICS staging,
+   `ManifestStore::restoreToDepotcache` is tried first; only on a miss does it
+   `submitManifestBlob` (the HTTP fetch). ManifestStore is a **persistent archive
+   that survives Steam's depotcache purges**.
+2. **A network circuit breaker** in `ManifestFetch::runOnce`: when a round trips
+   all providers with only **network/5xx** errors it sets `g_providersOffline`;
+   subsequent calls **return `nullopt` immediately without any HTTP**, so a dead
+   provider never blocks the **main Steam UI thread**. A **detached background
+   thread** re-probes the chain every **10 min** and resets the breaker when a
+   provider answers `<500`. Provider chain is `gmrc.wudrm.com` + `manifest.steam.run`
+   — the exact fallback the Part-1 gate-6 finding told us to add.
+
+**Relevance to lumalinux — real.** Our `gmrc_hook` calls `Gmrc::GetCode` on the
+**hot path** (`GetManifestRequestCode`); if the provider is down, repeated calls
+can stall the client. Part 1 already flagged "add the second endpoint"; **M4 adds
+the other half — a circuit breaker so a provider outage degrades to a clean
+Access-Denied instead of a UI hang**, plus a background re-probe. Both are 100%
+lumalinux's own code (no SLSsteam overlap). Upgrade the Part-1 gate-6 action to:
+*second endpoint **+** breaker + periodic re-probe.*
+
+## Finding M5 — appinfo depot/launch synthesis for token-locked apps (998ff6f)
+
+Part 1's gate-2 finding was moon's **anonymous appinfo provisioning** for apps
+whose PICS buffer comes back stripped. M5 extends it to the case where **even the
+anonymous fetch (and the steamcmd fallback) return no depots** — some titles gate
+product-info behind an app access token Valve denies anonymous sessions (their
+example: Risk of Rain 2, 632360), which showed **0 B** and failed launch with
+*"invalid configuration"*. moon now **reconstructs the `depots` block from data it
+already holds on disk** — `DepotKey::managedDepotsForApp` × `ManifestStore`'s best
+archived gid — deriving `oslist`/size from the parsed manifest, and synthesizes an
+`installdir` and per-OS `launch` entries. It **marks the app synthetic** so the
+outgoing-PICS hook strips it from Steam's product-info refresh (else Steam's
+`RequestAppInfoUpdate` returns an empty buffer and clobbers the synthesized depots
+mid-session → back to 0 B).
+
+**Relevance.** This closes exactly the hole Part 1 said lumalinux **cannot**
+survive (it can't fabricate a depot list — BuildDep inject SIGSEGVs). But the same
+Part-1 caveat holds: moon does it by **owning `appinfo.vdf` + hooking the PICS
+response**, which is SLSsteam's territory. For lumalinux it's portable **only** as
+the offline `appinfo.vdf` synthesis + a "don't refresh this app" marker, **not** as
+a message hook. Recorded as: the token-locked-app gap is now solved *in moon*; for
+us it would be a `steamidra_lite`-side offline synthesis, and only worth it for the
+handful of token-gated titles.
+
+## Finding M6 — Decky coexistence: keep CEF debug port on 8080 (a880c9c, ee99e74) ★ LumaDeck-relevant
+
+Lumen (moon's sidecar) normally **moves Steam's CEF remote-debug port off 8080**
+to an ephemeral one. But **Decky Loader's injector is hard-coded to
+`localhost:8080`** and runs as a persistent root daemon in both Desktop and Game
+Mode, so it can't follow. moon now **detects Decky** (`$HOME/homebrew/services/PluginLoader`)
+and, when present, **leaves CEF on 8080 and deletes any stale port contract** so
+Lumen falls back to 8080 too — multiple CDP clients coexist on one CEF target
+(verified on Bazzite), so Decky and Lumen share it.
+
+**Relevance.** The user's stack **is** Decky (LumaDeck). Older moon would have
+**stolen 8080 and broken Decky/LumaDeck** on a box running both; current moon is
+now Decky-aware and defends it. Good to know: **moon + LumaDeck can now coexist on
+one Deck** without a CEF-port fight. If we ever add our own CDP client, the same
+rule applies — never move Steam off 8080 when `~/homebrew/services/PluginLoader`
+exists.
+
+## Finding M7 — the steam.sh shim dead-end, again (d829fb2 → reverted dc89501)
+
+moon tried "cover every Steam launch path via a `steam.sh` shim", then **reverted
+it** — same reason luatools hit (Part-2-luatools L6): **Steam re-extracts
+`steam.sh` when its size differs from the manifest**, so a shim there doesn't
+survive. moon's surviving approach is **desktop-entry coverage**: scan & patch all
+`steam*.desktop` entries, rewrite the `Exec` token to the wrapper, keep the entry
+a `0644` regular file with a backup, re-assert coverage from the wrapper on each
+launch, skip the *system* entry on immutable distros, and restore everything on
+uninstall (`a9ea362`, `e7b3070`, `0ed3037`, `69c2190`, `414e048`, `6a577aa`,
+`c799210`, `a913fc7`, `f51ec13`, `d1720d9`). **Two independent tools converged on
+the same "don't inject at `steam.sh`, patch the `.desktop` Exec" conclusion** —
+relevant to however headcrab/LumaDeck ensures the LD_PRELOAD wrapper covers all of
+Game Mode, Desktop, and the SteamOS launcher drop-in.
+
+## Finding M8 — config hardening (013b5a9, c90bd47, 131c4e8, 22c1393)
+
+Parse scalars and manifest pins **without throwing**, contain out-of-range scalar
+parse errors, clarify the startup-disabled notice. Ordinary robustness — the kind
+of "a malformed config line must never abort the load" hygiene lumalinux's
+`update.cpp` / config reader should also hold. No action, just parity to keep in
+mind.
+
+## Part 2 verdict
+
+The two worth acting on for lumalinux:
+- **M1 byte-masking** — audit `src/patterns.hpp` and wildcard the layout-constant
+  bytes we only need for *location*, so more Steam updates stay CLEAN hash-bumps
+  instead of pattern-moved re-derives. Cheap, directly cuts release churn.
+- **M4 circuit breaker** — extend the Part-1 gate-6 action from "add
+  `manifest.steam.run`" to "add the fallback **and** a circuit breaker + 10-min
+  re-probe" so a GMRC outage degrades cleanly instead of stalling the client.
+
+Context to keep, not port: **M2/M3** (the ecosystem split on fail-closed-whitelist
+vs fail-open-recovery — ours is defensible and already mitigates moon's
+objections), **M5** (token-locked-app appinfo synthesis — solved in moon, a
+`steamidra_lite`-side offline job for us if ever needed), **M6** (moon is now
+Decky-aware; moon + LumaDeck can share 8080), **M7** (don't shim `steam.sh`).
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
@@ -421,3 +622,12 @@ sound**: same validated source, the correct non-overlapping hook layer.
   §2–3, §6.
 - moon source reviewed: [`unplausible/slsteam-moon`](https://codeberg.org/unplausible/slsteam-moon)
   v2.6 (AGPL-3.0).
+- Part 2 — reviewed: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon)
+  `main`, commits 2026-06-23 → 2026-07-05. Key files: `src/patterns.cpp`,
+  `src/patterns.hpp`, `src/feats/ipcframe.hpp` (M1); `src/config.cpp`,
+  `res/config.yaml` (M2); `setup.sh` (M3, M7); `src/utils/ManifestFetch.cpp`,
+  `src/feats/pics.cpp` (M4); `src/feats/appinfo_provision.cpp`,
+  `src/feats/manifestsynth.hpp`, `src/feats/apps.cpp` (M5); `src/feats/cefport.hpp`,
+  `src/main.cpp` (M6). Compared against lumalinux `src/patterns.hpp`,
+  `src/hooks/gmrc_hook.cpp`, `src/gmrc_store.hpp`, `src/update.cpp`,
+  `.github/workflows/watch-steam.yml`, `tools/steamidra_lite.py`.
