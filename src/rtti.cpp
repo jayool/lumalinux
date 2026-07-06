@@ -56,7 +56,7 @@ bool MapSteamclient(uintptr_t& base, size_t& size, std::vector<Range>& readable)
     uintptr_t labeledMin = 0, labeledMax = 0;
     char line[512];
     while (fgets(line, sizeof(line), f)) {
-        uintptr_t s, e;
+        unsigned long s, e;   // sscanf %lx target; assigned to uintptr_t below
         if (sscanf(line, "%lx-%lx", &s, &e) < 2) continue;
         if (strstr(line, "steamclient.so")) {
             if (labeledMin == 0 || s < labeledMin) labeledMin = s;
@@ -75,7 +75,7 @@ bool MapSteamclient(uintptr_t& base, size_t& size, std::vector<Range>& readable)
     const uintptr_t hi = labeledMax + adj;
     rewind(f);
     while (fgets(line, sizeof(line), f)) {
-        uintptr_t s, e; char perms[5] = {};
+        unsigned long s, e; char perms[5] = {};   // %lx targets
         if (sscanf(line, "%lx-%lx %4s", &s, &e, perms) < 3) continue;
         if (e <= lo || s >= hi) continue;
         if (perms[0] == 'r') readable.push_back({s, e});
