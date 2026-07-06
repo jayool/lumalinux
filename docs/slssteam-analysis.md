@@ -1,8 +1,10 @@
 # Análisis — SLSsteam (vanilla) para lumalinux
 
-*Fecha de investigación: 2026-07-06. Referencia: [`AceSLS/SLSsteam`](https://github.com/AceSLS/SLSsteam)
-@ `main` (commit `ebfb079`, `VERSION = 20260624075231`), i386, C++20/CMake, libmem.
-Compañero de [`slsteam-moon-findings.md`](slsteam-moon-findings.md) (el mod) y
+*Fecha de investigación: 2026-07-06. Base del análisis: [`AceSLS/SLSsteam`](https://github.com/AceSLS/SLSsteam)
+@ `ebfb079` (`VERSION = 20260624075231`), i386, C++20/CMake, libmem.
+Re-verificado contra las releases `20260705132808` (`5c632dd`) y `20260705144737`
+(`da97d11`) — ver §7 para los deltas. Compañero de
+[`slsteam-moon-findings.md`](slsteam-moon-findings.md) (el mod) y
 [`opensteamtool-findings.md`](opensteamtool-findings.md).*
 
 SLSsteam **no compite** con lumalinux: es el fork base, la capa de propiedad /
@@ -296,17 +298,32 @@ obvio: hay **dos gates de versión en serie**, no uno.
 
 ## 4. Config hot-reload + API local — ergonomía [PRESTABLE, menor]
 
-### 4.1 Hot-reload vía inotify
+### 4.1 Hot-reload vía inotify — **con la trampa que SLSsteam ya pisó**
 
-`CFileWatcher` (`filewatcher.cpp`) crea un `inotify_init`, observa el fichero con
-`IN_MODIFY` en un hilo (`watchLoop`), y llama a un callback al cambiar.
-`config.cpp:75-86` lo cablea: al editar `config.yaml`, `loadSettings()` recarga
-**sin reiniciar Steam**. Los settings viven en `mtvar` (variables thread-safe),
-así que los hooks leen el valor nuevo en caliente.
+`CFileWatcher` (`filewatcher.cpp`) crea un `inotify_init`, observa un fichero en
+un hilo (`watchLoop`), y llama a un callback al cambiar. `config.cpp:75-86` lo
+cablea: al editar `config.yaml`, `loadSettings()` recarga **sin reiniciar
+Steam**. Los settings viven en `mtvar` (variables thread-safe), así que los hooks
+leen el valor nuevo en caliente.
 
-Si lumalinux algún día quiere recargar su `KeyStore` / config sin reiniciar el
-cliente, `inotify + IN_MODIFY + recarga a estructura thread-safe` es el patrón
-exacto, ~50 líneas. Candidato de baja prioridad.
+**Aviso importante (corregido tras leer la release `5c632dd`):** la versión
+"obvia" de esto —`inotify_add_watch(fd, fichero, IN_MODIFY)` sobre el fichero
+directo— **está rota** y SLSsteam la tuvo que arreglar. Los editores que guardan
+por rename atómico (nvim, y muchos otros) reemplazan el inode: el watch queda
+colgado del fichero viejo y **sólo dispara una vez**. La forma correcta, la que
+SLSsteam usa ahora:
+
+- vigilar el **directorio padre** con `IN_CLOSE_WRITE` (no el fichero, no
+  `IN_MODIFY`),
+- **filtrar los eventos por nombre de fichero** (`event->name`),
+- leer el **buffer entero** de inotify de una (el código viejo leía sólo
+  `sizeof(inotify_event)` y se comía el nombre y los eventos encolados).
+
+Si lumalinux adopta hot-reload de su `KeyStore` / config algún día, **el patrón a
+copiar es el de directorio + `IN_CLOSE_WRITE` + filtro por nombre**, ~60 líneas,
+no el de vigilar el fichero (que documenté aquí antes como prestable y resultó
+ser justo la variante buggy). Candidato de baja prioridad, pero copiar la versión
+correcta desde el principio.
 
 ### 4.2 API local (canal de control)
 
@@ -354,6 +371,16 @@ detectó que solapaba con lo que SLSsteam ya hace (`CheckAppOwnership` +
 **quitó a propósito para no double-wrappear**. La frontera de coexistencia no es
 un ideal de diseño: es una decisión ya tomada y registrada en el código.
 
+**Re-verificado contra `20260705132808` (`5c632dd`).** Esa release añade dos
+hooks nuevos —`CAppDataCache::BParseResponseMessage` (recoge appids de las
+respuestas PICS) y `IClientAppManager::GetAppStateInfo` (nuevo mecanismo de
+bloqueo de updates, limpia los flags `APPSTATE_UPDATE_*` en sitio)— y reescribe
+el hot-reload para añadir/quitar apps en vivo posteando callbacks
+`AppLicensesChanged_t` (su equivalente al `MarkLicenseAsChanged` de OST,
+`opensteamtool-findings.md`). **Los dos hooks nuevos siguen en la capa
+appdata/ownership de SLSsteam; ninguno roza tus cinco puntos.** La disjunción de
+la tabla de arriba se mantiene 11 días y una release después. Detalle §7.
+
 **Coexistencia a tres niveles, resumida:**
 
 1. **Loader** — SLSsteam por `LD_AUDIT`, lumalinux por `LD_PRELOAD` (§0.1). No
@@ -390,3 +417,66 @@ Nada de esto es urgente ni cambia la arquitectura. El item 1 es el único que
 podría ser un bug; el resto son confirmaciones de rumbo (RTTI/slot) y
 herramientas de cinturón. El entregable real de este análisis es la **§5**: la
 frontera de coexistencia, ahora verificada función por función.
+
+---
+
+## 7. Deltas — releases 20260705 (`5c632dd` / `da97d11`)
+
+El análisis se hizo sobre `ebfb079` (2026-06-24). Once días después salieron dos
+releases; el diff de `src/` es modesto (~22 ficheros, ~450 líneas) y **no cambia
+ninguna conclusión** — la frontera sigue disjunta. Aquí los cambios, con su
+lectura para lumalinux.
+
+**`20260705144737` (`da97d11`) — la pequeña.** Cero código: sólo bumpea
+`VERSION` (20260624075231 → 20260705144737) en `version.hpp` y actualiza
+`res/updates.yaml`. En la release grande se olvidaron de subir la versión que usa
+el SafeMode, así que el gate de hash habría rechazado su propio build; esto lo
+arregla. Confirma en vivo el punto §3: **el SafeMode es un gate de versión, y un
+mismatch te bloquea el build** — incluso a ellos mismos.
+
+**`20260705132808` (`5c632dd`) — la de features:**
+
+1. **Patterns wildcardeados** (`patterns.cpp`) — cambiaron un byte del hash de
+   interfaz en los `cmp eax, <hash>` de varios `RunIPCFrame`
+   (`3D 37 9C 88 A6` → `3D ? 9C 88 A6`), reanclaron dos patterns enteros
+   (IClientAppManager / IClientUtils RunIPCFrame) y añadieron wildcards a
+   RequiresLegacyCDKey. → **La cinta de correr del byte-pattern en directo:** 11
+   días y ya reparando firmas por un update de Steam. Es justo el coste que el
+   RTTI de §15 elimina para DepotKey. Munición para el rumbo RTTI (§6).
+2. **Update-blocking reescrito** (`GetAppStateInfo`) — retiraron el VFThook de
+   `GetUpdateInfo` (devolvía `false`, una sola ruta) por un detour de
+   `IClientAppManager::GetAppStateInfo` que **limpia los flags `APPSTATE_UPDATE_*`
+   en la struct** (`&= ~APPSTATE_UPDATE_RUNNING`…). Mutar estado en sitio en vez
+   de mentir en el retorno → funciona para todos los juegos. Técnica anotada,
+   capa de SLSsteam. **[FRONTERA]**
+3. **Add/remove en caliente de AdditionalApps** — antes sólo añadías; ahora
+   añades y quitas sin reiniciar. La config calcula deltas `newApps`/`removedApps`
+   bajo mutex (`config.cpp`), y en cada frame IPC (`Apps::runIPCFrame`, disparado
+   desde `hkClientUtils_RunIPCFrame`) **postea callbacks `AppLicensesChanged_t`**
+   al objeto user (`postCallback`) + re-pide appinfo. Fuerza a Steam a
+   **re-indexar propiedad en vivo**. Es la versión propia de SLSsteam del
+   `MarkLicenseAsChanged` de OST. Habilitado por el hook nuevo
+   `CAppDataCache::BParseResponseMessage`. **[FRONTERA]** — capa de ownership,
+   disjunta de lumalinux.
+4. **Fix de race condition** — el disparador del re-index pasó de
+   `CProtoBufMsg::InitFromPacket` (a veces demasiado pronto) al tick estable de
+   `RunIPCFrame`. Sólo timing.
+5. **File-watching arreglado** — corrige §4.1: la variante "vigila el fichero con
+   `IN_MODIFY`" (que documenté como prestable) **está rota** con editores de
+   rename atómico; el fix es **directorio padre + `IN_CLOSE_WRITE` + filtro por
+   nombre + leer el buffer entero**. Más: recursión infinita en la API arreglada
+   (reabrir el stream disparaba su propio evento), fix de creación del fichero de
+   API, y comando `uninstall|appid` nuevo. **[PRESTABLE]** — copiar la versión
+   correcta.
+6. **schema-grabber** (`tools/`) — herramienta nueva que reemplaza a SLScheevo
+   (dejó de funcionar). Saca schemas de stats para **logros offline**; modo batch
+   que lee `loginusers.vdf` / `libraryfolders.vdf` para todos los usuarios/apps.
+   → Territorio de **LumaDeck** (achievements), no de la capa de depots de
+   lumalinux.
+
+**Observación de paso (bug suyo):** en `Hooks::remove()` el `CAppDataCache` llama
+a `.place()` en vez de `.remove()` (`hooks.cpp`, copy-paste). Inofensivo en la
+práctica —`remove()` casi no se usa— pero es un bug real de SLSsteam, no nuestro.
+
+**Neto:** disjunción intacta, §4.1 corregido, y una confirmación más de que el
+byte-pattern es una cinta de correr (punto 1) que el RTTI nos ahorra.
