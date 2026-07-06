@@ -1299,8 +1299,11 @@ whitelist entry (v0.15).
 
 **Status (2026-07-06): DepotKey has adopted this.** It now resolves via
 `CConfigStore` vtable slot 6 at runtime (`src/rtti.cpp`), with the byte pattern
-kept as a validated fallback. Confirmed on two builds (1782861641 and 1782866176)
-reporting `method=rtti(agrees-with-pattern)`. See §15.3. GMRC and BuildDep remain
+kept as a validated fallback. Confirmed on build 1782861641 both statically (CI
+ground-truth) and at runtime on a live Steam (codespace, `method=rtti(agrees-with-pattern)`)
+— the codespace's 1782866176 was downgraded by headcrab to its pin 1782861641
+before the test, so this is one build in two environments, NOT two builds; a
+second-build confirmation is still pending. See §15.3. GMRC and BuildDep remain
 byte-pattern (§15.3 for why).
 
 ### 15.1 The technique
@@ -1350,12 +1353,17 @@ Evidence:
   (mirrors CR's `FindVtableByRTTIName`, resolve-only) resolves `CConfigStore`
   slot 6; `depot_key_hook.cpp` installs the existing detour (§4) there, with the
   byte pattern kept as a fallback that never regresses (RTTI==pattern → use RTTI;
-  disagreement → use pattern + loud log). Validated: slot 6 == `kDepotKeyFnPattern`
-  == RVA `0x1188300` on build 1782861641 (CI) AND 1782866176 (real Steam,
-  `method=rtti(agrees-with-pattern)`). The `.data.rel.ro` relocation wait (from
-  CR, 30 s cap) was exercised (5.65 s). Still to do: the standalone slot-prologue
-  sanity check (only needed once the pattern is dropped) and dropping the pattern
-  after more `agrees-with-pattern` confirmations. Tracked in the DepotKey-RTTI issue.
+  disagreement → use pattern + loud log). Validated on build 1782861641:
+  statically on CI (slot 6 == `kDepotKeyFnPattern` == RVA `0x1188300`) and at
+  runtime on a live Steam in the codespace (`method=rtti(agrees-with-pattern)`).
+  NOTE: the codespace Steam bootstrapped at 1782866176 but headcrab downgraded it
+  to its pin 1782861641 before the test — so this is the *same* build in two
+  environments (static file check + live runtime), not two builds. The live run
+  did exercise the runtime-only path the static check can't: the `.data.rel.ro`
+  relocation wait (from CR, 30 s cap) fired for 5.65 s. Still to do: a
+  second-build confirmation; the standalone slot-prologue sanity check (only
+  needed once the pattern is dropped); and dropping the pattern after more
+  `agrees-with-pattern` confirmations. Tracked in the DepotKey-RTTI issue.
 - **GMRC → transport RPC (high value, high cost).** Hook the transport vtable
   and intercept by RPC name, injecting the response. Requires protobuf handling
   for `…GetManifestRequestCode_Request/Response` (CR has a whole `protobuf.cpp`).
