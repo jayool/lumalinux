@@ -81,10 +81,13 @@ That's it. Users get the fix on next Steam launch, zero action required.
 
 ### A.2 Re-derive moved patterns (rebuild + release)
 
-If `verify-fix` shows `outcome=pattern_miss` on one of the install-path hooks
-(**DepotKey**, **BuildDep**, **GMRC**), a byte pattern actually moved. The
-**string-anchored** hooks re-derive themselves; the **anchorless** one
-(DepotKey) needs more attention.
+If `verify-fix` shows `outcome=pattern_miss` on **BuildDep** or **GMRC**, a byte
+pattern actually moved; the **string-anchored** hooks re-derive themselves.
+**DepotKey is different since 2026-07-06**: the shipped hook resolves via RTTI
+first (`CConfigStore` slot 6, RESEARCH §15), so its byte pattern is only a
+fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
+pattern failed (rare; read the `RTTI:` log lines first). You only re-derive
+DepotKey's pattern to refresh that fallback, using the indirect anchor below.
 
 1. Grab the new `steamclient.so`:
    ```sh
@@ -104,7 +107,8 @@ If `verify-fix` shows `outcome=pattern_miss` on one of the install-path hooks
    - **BuildDep** anchors on the string `"BuildDepotDependency"` → auto.
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
-   - **DepotKey** tries an *indirect* anchor: the dispatcher refs
+   - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) tries an
+     *indirect* anchor: the dispatcher refs
      `"Software\Valve\Steam\Depots\"`, the script then follows the
      `CALL [reg+0x18]` to reach the inner accessor (RESEARCH §12.5). When the
      vcall walk resolves (best-effort — depends on Ghidra's analysis on the

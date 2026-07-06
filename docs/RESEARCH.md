@@ -417,14 +417,16 @@ intact, so they're an acceptable, non-removable anchor — not a bug to "fix".
 
 **Robustness ranking of the derivations** (most → least): the string-anchored
 trio (BuildDep, GMRC, ShaderDepot) is the most robust — a stable Steam string →
-the function → an auto-wildcarded prologue. **DepotKey is the least robust**: it
-has no in-function anchor, so the tool walks the dispatcher's `CALL [reg+0x18]`
-(hardcoded vtable slot `0x18`, plus reliance on Ghidra resolving the vtable). If
-Valve reorders virtuals or Ghidra's analysis misses it, the walk fails — but it
-then falls back to *validating* the current pattern, so a maintainer always gets
-a clear signal rather than a wrong answer. LoadPackage is diagnostic-only
-(multi-match by design). All current shipped patterns were re-confirmed UNIQUE
-(DepotKey/BuildDep/GMRC) or expected-multi (LoadPackage) on `7c4ac73e`.
+the function → an auto-wildcarded prologue. **DepotKey *was* the least robust as
+a byte-sig**: no in-function anchor, so the tool walked the dispatcher's `CALL
+[reg+0x18]` (hardcoded vtable slot `0x18`, relying on Ghidra resolving the
+vtable), which could fail. **Since 2026-07-06 DepotKey no longer depends on that
+at runtime**: the shipped hook resolves via RTTI (`CConfigStore` slot 6, §15)
+with the byte pattern kept only as a validated fallback — so a Ghidra vcall-walk
+miss no longer breaks the hook; the derivation below just refreshes that
+fallback. LoadPackage is diagnostic-only (multi-match by design). All current
+shipped patterns were re-confirmed UNIQUE (DepotKey/BuildDep/GMRC) or
+expected-multi (LoadPackage) on `7c4ac73e`.
 
 Paste the printed `UNIQUE` patterns into `src/patterns.hpp`, rebuild, redeploy.
 (`tools/ghidra_find_gmrc.py` is the original GMRC-only finder kept for reference.)
@@ -1295,6 +1297,12 @@ update"). Worth copying where it fits, because lumalinux's byte-pattern hooks
 move on every Steam build (§8) and the SafeMode hash gate needs a per-build
 whitelist entry (v0.15).
 
+**Status (2026-07-06): DepotKey has adopted this.** It now resolves via
+`CConfigStore` vtable slot 6 at runtime (`src/rtti.cpp`), with the byte pattern
+kept as a validated fallback. Confirmed on two builds (1782861641 and 1782866176)
+reporting `method=rtti(agrees-with-pattern)`. See §15.3. GMRC and BuildDep remain
+byte-pattern (§15.3 for why).
+
 ### 15.1 The technique
 
 CR does NOT scan byte patterns or hardcode RVAs. It resolves the hook target by
@@ -1338,11 +1346,16 @@ Evidence:
 
 ### 15.3 What this buys, and the cost
 
-- **DepotKey → RTTI vtable (high value, moderate cost).** Reuse the existing
-  detour (§4) but resolve the address from `CConfigStore` slot 6 instead of the
-  byte pattern. Removes one *critical* hook from both the pattern and the hash
-  dependency. ~a 100-line FindVtable helper + a runtime sanity check on the
-  slot's prologue.
+- **DepotKey → RTTI vtable — ✅ IMPLEMENTED (2026-07-06).** `src/rtti.cpp`
+  (mirrors CR's `FindVtableByRTTIName`, resolve-only) resolves `CConfigStore`
+  slot 6; `depot_key_hook.cpp` installs the existing detour (§4) there, with the
+  byte pattern kept as a fallback that never regresses (RTTI==pattern → use RTTI;
+  disagreement → use pattern + loud log). Validated: slot 6 == `kDepotKeyFnPattern`
+  == RVA `0x1188300` on build 1782861641 (CI) AND 1782866176 (real Steam,
+  `method=rtti(agrees-with-pattern)`). The `.data.rel.ro` relocation wait (from
+  CR, 30 s cap) was exercised (5.65 s). Still to do: the standalone slot-prologue
+  sanity check (only needed once the pattern is dropped) and dropping the pattern
+  after more `agrees-with-pattern` confirmations. Tracked in the DepotKey-RTTI issue.
 - **GMRC → transport RPC (high value, high cost).** Hook the transport vtable
   and intercept by RPC name, injecting the response. Requires protobuf handling
   for `…GetManifestRequestCode_Request/Response` (CR has a whole `protobuf.cpp`).
