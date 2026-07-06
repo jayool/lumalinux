@@ -1,5 +1,6 @@
 #include "depot_key_hook.hpp"
 #include "../patterns.hpp"
+#include "../rtti.hpp"
 #include "../key_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
@@ -96,28 +97,56 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
 namespace Hooks::DepotKey {
 
 bool Install() {
-    uintptr_t target = Patterns::FindDepotKeyFunction();
+    // Resolve the LoadDepotDecryptionKey accessor two ways during the RTTI
+    // transition (RESEARCH §15, issue: DepotKey→RTTI):
+    //   - RTTI   : CConfigStore vtable slot 6 — update-resilient (keyed on the
+    //              class name + slot, not on volatile prologue bytes).
+    //   - pattern: kDepotKeyFnPattern — today's proven method, kept as fallback.
+    // Both were verified to resolve to the SAME address across builds
+    // (tools/experiment_rtti_depotkey.py). We prefer RTTI, but NEVER regress:
+    // on a disagreement we use the pattern (today's behaviour) and log loudly so
+    // a real Deck reports it before the pattern is eventually dropped.
+    uintptr_t rtti = Rtti::ResolveVtableSlot("12CConfigStore", 6);
+    uintptr_t pat  = Patterns::FindDepotKeyFunction();
+
+    uintptr_t target = 0;
+    const char* method = "none";
+    if (rtti && pat) {
+        if (rtti == pat) {
+            target = rtti; method = "rtti(agrees-with-pattern)";
+        } else {
+            Log::Warn("DepotKey: RTTI 0x%lx != pattern 0x%lx — using pattern "
+                      "(no regression); investigate the mismatch",
+                      (unsigned long)rtti, (unsigned long)pat);
+            target = pat; method = "pattern(rtti-mismatch)";
+        }
+    } else if (rtti) {
+        target = rtti; method = "rtti(pattern-miss)";
+    } else if (pat) {
+        target = pat;  method = "pattern(rtti-miss)";
+    }
+
     if (!target) {
-        Log::Error("DepotKey hook: target not found");
-        Log::Warn("Hook install: name=DepotKey method=pattern outcome=pattern_miss");
+        Log::Error("DepotKey hook: target not found (RTTI and pattern both failed)");
+        Log::Warn("Hook install: name=DepotKey method=none outcome=miss");
         return false;
     }
     void* tramp = nullptr;
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("DepotKey hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
-        Log::Warn("Hook install: name=DepotKey method=pattern target=0x%lx outcome=hook_install_failed",
-                  (unsigned long)target);
+        Log::Warn("Hook install: name=DepotKey method=%s target=0x%lx outcome=hook_install_failed",
+                  method, (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<LoadDepotKeyFn>(tramp);
 
     Log::Info("DepotKey hook: INSTALLED (KeyValues accessor, target=0x%lx, "
-              "trampoline=%p, %zu keys loaded)",
-              (unsigned long)target, (void*)g_origFn, KeyStore::Size());
+              "method=%s, trampoline=%p, %zu keys loaded)",
+              (unsigned long)target, method, (void*)g_origFn, KeyStore::Size());
     uintptr_t base = Patterns::FindSteamclientBase();
-    Log::Info("Hook install: name=DepotKey method=pattern target=0x%lx rva=0x%lx outcome=installed",
-              (unsigned long)target, (unsigned long)(base ? target - base : 0));
+    Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx outcome=installed",
+              method, (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 

@@ -37,6 +37,7 @@ set(LUMA_SOURCES
     src/log.cpp
     src/key_store.cpp
     src/patterns.cpp
+    src/rtti.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp
