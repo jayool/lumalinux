@@ -1,0 +1,26 @@
+# Throwaway manual experiment for the DepotKey→RTTI migration (Fase A / ground
+# truth): does resolving DepotKey via RTTI (CConfigStore vtable slot 6) land on
+# the SAME address the byte pattern hooks today? Runs on a runner (Valve's CDN is
+# firewalled from the dev sandbox). Manual/one-shot; delete after use.
+name: experiment-rtti
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/experiment-rtti.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  experiment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the current steamclient.so (steamdeck_stable)
+        run: |
+          python3 tools/fetch_steamclient.py --output steamclient.so
+          ls -la steamclient.so
+      - name: DepotKey RTTI ground-truth check
+        run: python3 tools/experiment_rtti_depotkey.py steamclient.so --hpp src/patterns.hpp
