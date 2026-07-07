@@ -525,3 +525,36 @@ gid actual (`3512319404653808464`) sin tocar nada — justo lo que el bloqueo
 mataba. Coexistió con SLSsteam sin pisarse (hooks disjuntos, §5). Receta en
 `docs/update-testing.md`; detalle técnico del ancla y de los fail-safes en
 `RESEARCH.md` §16.
+
+### 7.2 Gap conocido de vanilla — CD-key legacy en added apps (visto vía moon `3acab45`)
+
+Anotado desde el análisis de los commits de julio de `swwayps/slsteam-moon`
+(fork de SLSsteam). moon `3acab45` (2026-07-01) arregla un agujero que **vanilla
+sigue teniendo** (ebfb079). Asimetría en `apps.cpp`:
+
+```cpp
+bool Apps::shouldDisableCDKey(uint32_t appId) {
+    return !isSubscribed(appId);                       // vanilla: SOLO !isSubscribed
+}
+bool Apps::shouldDisableUpdates(uint32_t appId) {
+    return isAddedAppId(appId) || !isSubscribed(appId);   // este sí mira isAddedAppId
+}
+```
+
+Un added app, por el hook de ownership, **lee como subscribed=true**, así que
+`!isSubscribed=false` → `shouldDisableCDKey` devuelve false → vanilla **no** le
+quita el gate de CD-key. moon lo corrige añadiendo `isAddedAppId(appId) ||
+isAddedAppDlcId(appId)` a `shouldDisableCDKey`, zereando el out-param, y
+neutralizando el campo `extended/hadthirdpartycdkey` del appinfo offline
+(`neutralizeLegacyCdKey`) para saltar el paso "GettingLegacyKey" del arranque.
+
+- **Síntoma si nos pasa:** un juego **añadido vía LumaDeck** (AdditionalApps) que
+  lleve **CD-key de terceros legacy** (campo `hadthirdpartycdkey`, DRM de juegos
+  viejos) se cuelga al lanzar pidiendo la clave. Los juegos modernos no lo llevan
+  → riesgo real pero de nicho.
+- **Capa:** SLSsteam (hook `RequiresLegacyCDKey`), no lumalinux. No lo arreglamos
+  desde la capa de depots. Si algún día muerde, la opción sería el mismo
+  runtime-patch que ya usamos para el update-clear (§7.1) — pero sería
+  sobre-ingeniería preventiva mientras no veamos el síntoma.
+- **Estado:** solo anotado, no accionado. Si aparece, la causa y el fix de
+  referencia (moon `3acab45`) ya están aquí.
