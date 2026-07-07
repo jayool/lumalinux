@@ -434,6 +434,73 @@ DB, which we explored and rejected.
 
 ---
 
+## Delta — the aitronz maintenance fork (2026-07)
+
+Upstream `OpenSteam001/OpenSteamTool` went quiet, so the audit above is against a
+dormant repo. The active fork `aitronz/OpenSteamTool` ("merge all possible PRs
+till the original dev comes back — EXPERIMENTAL", release `v1.4.9`, 2026-07-03) is
+**39 commits ahead / 1 behind** upstream (upstream briefly woke on 2026-07-06 to
+merge the same Cloud-RPC PR #153). Still **Windows-only** — nothing drop-in — but
+two of the fork's clusters bear directly on Findings 4 and 5, verified by reading
+the fork's source (cloned, not the compare UI).
+
+### Denuvo — refines Finding 4 (and answers its open question)
+
+The fork adds an **on-demand ticket mint** on top of the static replay Finding 4
+describes (`src/Utils/Tickets/EticketClient.cpp`, config `seteticketurl(...)`):
+OST sees the game's per-request **nonce**, POSTs `{app_id, nonce(hex)}` to a
+backend **you** run, and that backend — behind a **live Steam account that owns
+the game** — mints a **fresh** `{eticket, appticket}` for that nonce via a real
+Steam CM round-trip. Successful mints are cached per app; empty URL → falls back
+to the static credential-store ticket (stock behaviour). Denuvo detection also
+gained a fallback: if the OEP/string scan misses but an injected eticket is
+present, treat the app as Denuvo anyway (`DenuvoAuth.cpp::EnsureScanned`).
+
+Why this matters for Finding 4's **~30-min-window / "confirm before building"**
+question: OST's own maintainers judged static replay **insufficient** for at least
+some titles and built per-nonce minting to cover it. That's real evidence the
+fresh-per-nonce case exists. Implication for our stack: SLSsteam's
+`feats/ticket.cpp` is **static-only** (serves the same cached YAML on every call —
+no nonce awareness), so for a title that re-challenges by nonce, our replay would
+go stale exactly like a distributed static ticket. The fork's architecture (a mint
+backend fronted by an owning account) is the reference design if ever pursued —
+but it carries the same hard dependency (a live owning account), so it's **not** a
+cheap importer; it's a service. Doesn't change the verdict (not lumalinux, not
+cheap unless the window is activation-only), but sharpens it: **static replay has
+a real ceiling, and OST already hit it.**
+
+### OnlineFix — fills in Finding 5's "not verified" overlay note
+
+Finding 5 flagged, unverified, that OST keeps the real AppId on the overlay
+`CGameID`. The fork **expands exactly that** into full **selective-identity
+routing** (`Hooks_Misc.cpp`, `Hooks_Package.cpp`): the launched game is rewritten
+to **480 (Spacewar)** for the ownership/networking bypass, but the real AppId is
+routed back for **user-stats/achievements** (`GetAppIDForCurrentPipe` inside a
+stats call; stats callbacks `UserStatsReceived`/`UserAchievementStored`… have
+their `CGameID` rewritten 480↔real), the **overlay** (`BuildSpawnEnvBlock` overlay
+`CGameID` → real), and **Steam Input** (`OptedInMask` → real). So: ownership+online
+stay 480, presentation+achievements resolve to the real game.
+
+For us this stays **parity/not-portable** (Finding 5): the 480 trick is SLSsteam
+`FakeAppIds` (surfaced by LumaDeck), and OST does the identity routing **inside the
+Windows Steam client** — a layer we don't have (our client is native Linux; the
+game runs under Proton, so the equivalent would live in the OnlineFix DLL or a
+Proton-side shim, not lumalinux). Extra reason it likely doesn't bite us:
+**achievements on our stack go through SLScheevo**, not the game→client stats path
+OST is repairing. Value = **diagnostic map**: if an OnlineFix game ever shows wrong
+overlay or missing achievements on the Deck, the cause is the 480 identity and the
+fix shape is "route the real AppId back for stats/overlay". Ties to issue #15.
+
+### Everything else in the fork — not relevant
+
+Denuvo structural detection tuning, Cloud-RPC/stats-sync timing (PR #153, also
+upstream now), rich-presence-for-unowned (PR #144), and a batch of Windows
+plumbing (DllMain-detach loader-lock, WinHttp port parsing, portable build, new
+build signatures, Injection API, `LuaConfig`). Windows-internal or cosmetic;
+nothing for lumalinux/LumaDeck/SLSsteam.
+
+---
+
 ## References
 
 - OST (`OpenSteam001/OpenSteamTool` @ `main`): `src/dllmain.cpp`;
