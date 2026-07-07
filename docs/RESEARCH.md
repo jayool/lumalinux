@@ -1381,3 +1381,105 @@ SLSsteam had to bump (those are vtable-dispatched too). This trades "update ever
 build" for "update rarely" — what CR advertises. A migrated hook should still
 validate at runtime (e.g. check the resolved slot's prologue) and fail closed if
 the layout shifted.
+
+## 16. SLSsteam's update-block (20260705) and lumalinux's runtime unblock
+
+**Context.** SLSsteam's 2026-07-05 release (`5c632dd`) replaced its old
+`GetUpdateInfo` VFT hook with a detour of `IClientAppManager::GetAppStateInfo`
+(`Apps::getAppStateInfo`) that, for any app where
+`shouldDisableUpdates(appId) = isAddedAppId(appId) || !isSubscribed(appId)` is
+true, clears the `APPSTATE_UPDATE_*` bits in the app-state struct Steam reads.
+`isAddedAppId` is true for **every** `AdditionalApps` entry, permanently — and
+that's exactly where LumaDeck puts the games it manages. Net effect on the new
+SLSsteam: those games stop auto-updating (Steam shows "Update required" but never
+downloads on its own). Owned games are hit only transiently at startup (an
+`isSubscribed` race before licences load — benign, but it's why owned games can
+log a one-shot "Disabled updates"). This is deliberate on AceSLS's side; there is
+no config toggle. See docs/slssteam-analysis.md §7 for the SLSsteam-side reading.
+
+### 16.1 Why no config workaround is acceptable
+
+- `AdditionalApps` → the block fires (that's the trigger; can't leave it).
+- `PlayNotOwnedGames: yes` blanket-activates the whole non-owned library (clutter,
+  and doesn't move the game out of the AdditionalApps trigger anyway).
+- `UseWhitelist: yes` is a **global** switch: it flips SLSsteam from blacklist to
+  whitelist for *every* app, breaking unlock/DLC for everything not whitelisted
+  (the thecatantirat Discord case: Cuphead DLC vanished after enabling it).
+
+So the fix has to be surgical and leave SLSsteam's config untouched.
+
+### 16.2 The anchor — one instruction, ABI-stable immediate
+
+SLSsteam ships built `-flto=auto -O3`, so `shouldDisableUpdates` inlines and the
+six individual `state &= ~APPSTATE_UPDATE_*` clears fold into a **single**
+combined-mask instruction:
+
+    and dword [esi+0x8], 0xFFFFF8E5     ; 81 66 08 e5 f8 ff ff
+
+`0xFFFFF8E5 = ~0x71A = ~(REQUIRED 0x2 | QUEUED 0x8 | OPTIONAL 0x10 | RUNNING
+0x100 | PAUSED 0x200 | STARTED 0x400)`. On build `20260705132808` this sits at
+file offset `0x1cd7b0`. We anchor on the **immediate** `E5 F8 FF FF`, not a
+prologue: the `APPSTATE_*` values are ABI-stable (games depend on them), so the
+constant survives SLSsteam recompiles even as the surrounding code shifts — the
+very treadmill §8 / slssteam-analysis §7 point 1 describe for byte-patterns,
+dodged here by anchoring on a value the ABI freezes.
+
+The immediate `E5 F8 FF FF` also appears 6 other times in the binary as
+jump/call displacements (preceded by `e9`/`e8`/`0f 84`). To isolate the real
+clear, `AndInsnStart` requires the 4 bytes to be the imm32 operand of an
+`81 /4 r/m32, imm32` (AND) instruction — checks opcode `0x81`, ModRM reg field
+`== 4`, a non-SIB / non-`[disp32]` addressing form — across the three plausible
+`[reg+disp]` encodings (disp8 / no-disp / disp32). On the verified build exactly
+one match survives.
+
+### 16.3 The patch and its fail-safes
+
+`src/sls_update_unblock.cpp` (`SlsUpdateUnblock::Apply()`, called once from
+`InstallHooks` after the package-0 finder):
+
+1. Parse `/proc/self/maps` for `SLSsteam.so` `r-x` ranges — scan each mapping
+   **separately** (never an aggregated min..max span) so a read can't fall into
+   an unmapped hole between segments.
+2. Scan for `E5 F8 FF FF`, keep only hits that form a valid `81 /4 …` AND (§16.2).
+3. **Require exactly one hit.** Zero or >1 → log a warning and leave the block in
+   place (auto-update degrades to manual — safe, never a crash). This is the
+   guard against SLSsteam codegen shifting under us; refresh the anchor if it
+   ever trips.
+4. `mprotect(RW)` the page(s) (handling the 4 bytes straddling a page), `memcpy`
+   the immediate to `FF FF FF FF`, `mprotect(R|X)` back (W^X-friendly).
+   `AND reg, 0xFFFFFFFF` is a no-op → the update flags survive untouched.
+
+Env override `LUMA_NO_SLS_UNBLOCK=1` skips it entirely (the A/B control). Nothing
+else in SLSsteam is touched: the game stays in AdditionalApps; ownership, DLC
+surfacing, depot keys, tokens all behave exactly as before. The only removed
+behaviour is the flag-clearing. This is the **first place lumalinux modifies
+SLSsteam** rather than just coexisting with it (frontier note, slssteam-analysis
+§5 / §7.1).
+
+### 16.4 End-to-end validation (2026-07-07, Balatro, clean codespace)
+
+Stack: fresh Arch codespace, SLSsteam `20260705132808` (via Headcrab), lumalinux
+built from `main` and wired through `install.sh`'s `steam.sh` LD_PRELOAD patch.
+`SLS-unblock: patched SLSsteam update-clear … -> and reg,0xFFFFFFFF` appeared on
+every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
+
+- **Phase A (pin old):** built an "old" Balatro zip (depot 2379781 repinned to old
+  gid `3742336026811834465`, old `.manifest` swapped in — docs/update-testing.md
+  recipe), deployed `steamidra_lite --pin`. Steam installed the old version: `.acf`
+  `InstalledDepots 2379781 → 3742336026811834465`, `StateFlags 4`. Logs:
+  `BuildDep: PATCH … 3512319404653808464 -> 3742336026811834465` and
+  `LoadDepotKey: SERVED … depot 2379781`.
+- **Phase B (unpin → observe):** `steamidra_lite --unpin 2379780` (gid→0, purge
+  cached manifests). Restarted Steam and **touched nothing**. `content_log.txt`:
+
+      state changed : Update Required,Fully Installed,Update Queued,Update Running,Update Started
+      Downloading 2 chunks for depot 2379781 (3512319404653808464)
+      finished update, 1 mounted depots : 2379781 (3512319404653808464)
+
+  Balatro auto-updated old→current on its own — the exact behaviour the block
+  kills. (The delta was tiny: `reuse 55000644, delta 18300195`, 2 chunks fetched.)
+  With `LUMA_NO_SLS_UNBLOCK=1` the game instead stays at "Update required" and
+  never downloads — matching the pre-patch Mina observation that opened issue #2.
+
+Coexistence held throughout: SLSsteam and lumalinux both mapped in the same client
+(disjoint hook sets, §11 / slssteam-analysis §5), no heap corruption.

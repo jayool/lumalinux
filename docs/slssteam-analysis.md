@@ -480,3 +480,48 @@ práctica —`remove()` casi no se usa— pero es un bug real de SLSsteam, no nu
 
 **Neto:** disjunción intacta, §4.1 corregido, y una confirmación más de que el
 byte-pattern es una cinta de correr (punto 1) que el RTTI nos ahorra.
+
+### 7.1 El bloqueo de updates, resuelto — `sls_update_unblock` (2026-07)
+
+El punto 2 de arriba (el detour de `GetAppStateInfo` que limpia los flags
+`APPSTATE_UPDATE_*`) rompe una feature concreta de LumaDeck: los juegos que
+gestiona van a `AdditionalApps`, y `shouldDisableUpdates(appId) =
+isAddedAppId(appId) || !isSubscribed(appId)` es **permanentemente true** para
+cualquier appid de `AdditionalApps` (primera cláusula). Resultado: Steam deja de
+auto-actualizar esos juegos — muestra "Update required" pero no baja nada solo.
+No hay toggle de config para desactivarlo, y todos los workarounds de config
+tienen un efecto secundario peor (`UseWhitelist: yes` es **global** y rompe
+unlock/DLC de todo lo no-whitelisteado — el caso thecatantirat de Cuphead;
+`PlayNotOwnedGames` en bloque llena la library y ni siquiera saca el juego del
+trigger). Ver issue #2.
+
+**La solución no toca el config: lumalinux parchea en caliente esa única
+instrucción de SLSsteam.** SLSsteam se compila `-flto=auto -O3`, así que los seis
+`state &= ~APPSTATE_UPDATE_*` se colapsan en un solo
+`and dword [reg+disp], 0xFFFFF8E5` (`0xFFFFF8E5 = ~0x71A =
+~(REQUIRED|QUEUED|OPTIONAL|RUNNING|PAUSED|STARTED)`). El módulo
+`src/sls_update_unblock.cpp` localiza esa instrucción en el `SLSsteam.so`
+mapeado y voltea el inmediato a `0xFFFFFFFF`: `AND` con todo-unos es un no-op →
+los flags sobreviven → Steam auto-actualiza como con un juego poseído. Ancla en
+el inmediato `E5 F8 FF FF` (ABI-estable: los valores del enum los fijan los
+juegos, así que la constante sobrevive recompilaciones de SLSsteam — esquiva la
+cinta de correr del punto 1 anclando en un valor que la ABI congela); exige el
+prefijo `81 /4` para distinguir la instrucción de los seis desplazamientos de
+jump/call que coinciden por casualidad; fail-safe: exige **exactamente 1** hit o
+no parchea. Nada más de SLSsteam se toca: ownership, DLC, keys, tokens, todo
+igual; la única conducta retirada es el borrado de flags.
+
+Es la **primera vez que lumalinux cruza la frontera** de §5 y modifica a SLSsteam
+en vez de sólo coexistir — de forma quirúrgica (4 bytes, reversible) y con
+degradación segura: si el ancla no aparece exactamente una vez, no parchea y el
+auto-update cae a manual, nunca crashea.
+
+**Validado end-to-end (2026-07-07, codespace limpio, SLSsteam `20260705132808`).**
+Balatro (2379780) en `AdditionalApps`, instalado pinneado a un manifest viejo
+(`3742336026811834465`) vía `steamidra_lite --pin`, luego `--unpin`. Con el parche
+puesto (`SLS-unblock: patched … -> and reg,0xFFFFFFFF`), al reiniciar Steam el
+juego pasó **solo** `Update Required → Update Queued → Update Running` y bajó el
+gid actual (`3512319404653808464`) sin tocar nada — justo lo que el bloqueo
+mataba. Coexistió con SLSsteam sin pisarse (hooks disjuntos, §5). Receta en
+`docs/update-testing.md`; detalle técnico del ancla y de los fail-safes en
+`RESEARCH.md` §16.

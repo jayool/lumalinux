@@ -309,6 +309,19 @@ So pinning vs unpinning is a per-depot policy choice in `keys.txt`: a non-zero
 gid pins (exact version, always decryptable); `gid=0` follows Valve (auto-update,
 at the cost of a future update possibly adding a depot/key you don't have).
 
+> **SLSsteam 20260705+ blocks this by default — lumalinux undoes it.** As of its
+> 2026-07-05 release, SLSsteam detours `IClientAppManager::GetAppStateInfo` and
+> clears the `APPSTATE_UPDATE_*` flags for every `AdditionalApps` game
+> (`shouldDisableUpdates = isAddedAppId || !isSubscribed`, and `isAddedAppId` is
+> permanently true for AdditionalApps entries — where LumaDeck puts its games). So
+> the auto-update above never starts: the game shows "Update required" but doesn't
+> download. There is no config toggle, and every config workaround is worse
+> (`UseWhitelist` breaks unlock/DLC globally). lumalinux neutralises it at runtime
+> by flipping the single combined flag-clear instruction in the loaded
+> `SLSsteam.so` (`and …, 0xFFFFF8E5`) to a no-op (`and …, 0xFFFFFFFF`) —
+> `src/sls_update_unblock.cpp`; nothing else in SLSsteam changes. Validated with
+> Balatro on 2026-07-07 (RESEARCH §16, docs/slssteam-analysis.md §7.1).
+
 ### How an available update is detected
 
 `steamidra_lite` writes `~/.local/share/ACCELA/depots/<appid>.depot` recording
