@@ -29,6 +29,7 @@
 #include "hooks/package_zero_finder.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "hooks/shader_depot_hook.hpp"
+#include "sls_update_unblock.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "status.hpp"
@@ -233,6 +234,23 @@ void InstallHooks() {
         Status::RecordHook("PackageZeroFinder", Status::INSTALLED);
         if (!installed.empty()) installed += ", ";
         installed += "package-0 finder";
+    }
+
+    // Coexistence patch: undo SLSsteam's 20260705 update-block (it clears
+    // APPSTATE_UPDATE_* for AdditionalApps / non-owned games, killing auto-update
+    // for everything LumaDeck manages). One in-memory 4-byte no-op on SLSsteam.so;
+    // re-applied every launch so it survives headcrab re-downloading the .so.
+    // Fail-safe: if SLSsteam isn't loaded or the anchor moved, it no-ops and
+    // updates just fall back to manual. See docs/slssteam-analysis.md.
+    if (std::getenv("LUMA_NO_SLS_UNBLOCK")) {
+        Status::RecordHook("SlsUpdateUnblock", Status::DISABLED);
+    } else if (SlsUpdateUnblock::Apply()) {
+        Status::RecordHook("SlsUpdateUnblock", Status::INSTALLED);
+        if (!installed.empty()) installed += ", ";
+        installed += "SLS-unblock";
+    } else {
+        // Not fatal — no SLSsteam, or anchor not found (safe degradation).
+        Status::RecordHook("SlsUpdateUnblock", Status::DISABLED);
     }
 
     // Derived from the install table above (+ the finder), so it always reflects

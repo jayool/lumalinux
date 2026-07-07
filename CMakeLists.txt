@@ -38,6 +38,7 @@ set(LUMA_SOURCES
     src/key_store.cpp
     src/patterns.cpp
     src/rtti.cpp
+    src/sls_update_unblock.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp
