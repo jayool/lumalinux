@@ -493,7 +493,7 @@ No hay toggle de config para desactivarlo, y todos los workarounds de config
 tienen un efecto secundario peor (`UseWhitelist: yes` es **global** y rompe
 unlock/DLC de todo lo no-whitelisteado — el caso thecatantirat de Cuphead;
 `PlayNotOwnedGames` en bloque llena la library y ni siquiera saca el juego del
-trigger). Ver issue #2.
+trigger). Ver issue #20.
 
 **La solución no toca el config: lumalinux parchea en caliente esa única
 instrucción de SLSsteam.** SLSsteam se compila `-flto=auto -O3`, así que los seis

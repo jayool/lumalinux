@@ -1479,7 +1479,7 @@ every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
   Balatro auto-updated old→current on its own — the exact behaviour the block
   kills. (The delta was tiny: `reuse 55000644, delta 18300195`, 2 chunks fetched.)
   With `LUMA_NO_SLS_UNBLOCK=1` the game instead stays at "Update required" and
-  never downloads — matching the pre-patch Mina observation that opened issue #2.
+  never downloads — matching the pre-patch Mina observation that opened issue #20.
 
 Coexistence held throughout: SLSsteam and lumalinux both mapped in the same client
 (disjoint hook sets, §11 / slssteam-analysis §5), no heap corruption.
