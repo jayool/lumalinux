@@ -696,18 +696,26 @@ def _fetch_game_name(app_id, timeout=3.0):
     'Update' (matches what SFF does via sff/http_utils.py:get_game_name)."""
     import urllib.request
     import urllib.error
+    import time
     url = f"https://store.steampowered.com/api/appdetails/?appids={app_id}"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "steamidra_lite"})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        entry = data.get(str(app_id), {})
-        if not entry.get("success"):
+    # Retry transient failures (a single-shot fetch is what left Dave the Diver
+    # with the appid as installdir → re-download on the next .acf regeneration).
+    # A definitive "not found" (success=false) returns immediately, no retry.
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "steamidra_lite"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            entry = data.get(str(app_id), {})
+            if not entry.get("success"):
+                return None
+            name = entry.get("data", {}).get("name")
+            return name if isinstance(name, str) and name.strip() else None
+        except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
+            if attempt < 2:
+                time.sleep(0.5 * (attempt + 1))
+                continue
             return None
-        name = entry.get("data", {}).get("name")
-        return name if isinstance(name, str) and name.strip() else None
-    except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
-        return None
 
 
 def _sanitize_installdir(name):
@@ -720,7 +728,7 @@ def _sanitize_installdir(name):
     return sanitized or None
 
 
-def write_or_patch_acf(steam_root, app_id, manifest_gids):
+def write_or_patch_acf(steam_root, app_id, manifest_gids, name_override=None):
     """Step 6 of the install flow (replicates sff/lua/writer.py:write_acf +
     _patch_acf_error_state). Without this step Steam often shows 'NO INTERNET
     CONNECTION' on the next install attempt after any failure, even with the
@@ -775,13 +783,18 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids):
     # called without manifest_override (the Linux + SLS path at
     # sff/ui.py:1074). See docstring for why we omit InstalledDepots.
     #
-    # Try to fetch the canonical game name + use it as `name` + `installdir`.
-    # If we use str(app_id) instead, Steam sees the installdir as non-canonical
-    # and surfaces an "Update" button instead of "Install". Falling back to
-    # str(app_id) on network failure is safe — the install still works, just
-    # with the "Update" verb.
+    # Use the canonical game name as `name` + `installdir`. If we use str(app_id)
+    # instead, Steam sees the installdir as non-canonical and surfaces an
+    # "Update" button instead of "Install" — AND, worse, a later .acf
+    # regeneration (Steam or LumaDeck's Repair) rewrites the .acf with the
+    # OFFICIAL installdir, so Steam no longer recognises the files under
+    # steamapps/common/<app_id>/ and re-downloads the whole game. Prefer a
+    # caller-supplied name (LumaDeck passes --name from its local applist cache,
+    # more reliable than a live store lookup); fall back to fetching it; and only
+    # fall back to str(app_id) if both fail (install still works, just with the
+    # "Update" verb + the re-download-on-repair caveat).
     acf_path.parent.mkdir(parents=True, exist_ok=True)
-    fetched_name = _fetch_game_name(app_id)
+    fetched_name = name_override or _fetch_game_name(app_id)
     installdir = _sanitize_installdir(fetched_name) if fetched_name else None
     if not installdir:
         installdir = str(app_id)
@@ -1285,6 +1298,11 @@ def main():
                     help="config.yaml de SLSsteam")
     ap.add_argument("--luma-keys", type=Path, default=Path.home()/".config/lumalinux/keys.txt",
                     help="keys.txt de lumalinux")
+    ap.add_argument("--name", type=str, default=None, metavar="GAME_NAME",
+                    help="nombre canónico del juego, usado como `name` + `installdir` del .acf "
+                         "stub. Si se pasa, se salta el fetch al store API (que puede fallar y "
+                         "caer al appid como installdir, lo que provoca re-descarga si el .acf se "
+                         "regenera). LumaDeck lo pasa desde su applist cache local.")
     ap.add_argument("--no-vdf", action="store_true",
                     help="NO escribir las DecryptionKeys en Steam config.vdf. "
                          "Por defecto SÍ se escriben (SteaMidra Linux también lo hace; "
@@ -1475,7 +1493,7 @@ def main():
     # Bytes* fields in the .acf from a previous failure. Verbatim from
     # sff/lua/writer.py:113: "this is what causes 'NO INTERNET CONNECTION'".
     print(f"== Reseteando error-state del .acf (paso que evita 'no internet') ==")
-    acf_result = write_or_patch_acf(args.steam_root, app_id, manifests)
+    acf_result = write_or_patch_acf(args.steam_root, app_id, manifests, name_override=args.name)
     print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
     print()
 
