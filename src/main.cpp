@@ -30,6 +30,7 @@
 #include "hooks/gmrc_hook.hpp"
 #include "hooks/shader_depot_hook.hpp"
 #include "sls_update_unblock.hpp"
+#include "sls_achievement_unblock.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "status.hpp"
@@ -251,6 +252,22 @@ void InstallHooks() {
     } else {
         // Not fatal — no SLSsteam, or anchor not found (safe degradation).
         Status::RecordHook("SlsUpdateUnblock", Status::DISABLED);
+    }
+
+    // Coexistence patch #2: scope SLSsteam's native-achievement "legit app" guard
+    // so the schema borrow also fires for AdditionalApps (LumaDeck) games while
+    // leaving genuinely-owned games untouched. Repoints two `call isSubscribed`
+    // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check.
+    // Fail-safe: no SLSsteam / missing symbols / moved codegen → no-op, native
+    // achievements just stay off. See docs/slssteam-analysis.md.
+    if (std::getenv("LUMA_NO_SLS_ACH_UNBLOCK")) {
+        Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
+    } else if (SlsAchievementUnblock::Apply()) {
+        Status::RecordHook("SlsAchievementUnblock", Status::INSTALLED);
+        if (!installed.empty()) installed += ", ";
+        installed += "SLS-ach";
+    } else {
+        Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
     }
 
     // Derived from the install table above (+ the finder), so it always reflects
