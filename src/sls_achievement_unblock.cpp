@@ -145,15 +145,23 @@ bool ResolveSymbols(const std::string& path, const std::vector<const char*>& nam
     return true;
 }
 
-// Within [fn, fn+size) find the single `E8 rel32 / 84 C0 (test al,al) / 75 rel8
-// (jne)` — the isSubscribed guard. Returns the address of the E8 (call), or 0 on
-// zero/multiple matches (fail-safe).
+// Within [fn, fn+size) find the single isSubscribed guard and return the address
+// of its `call` (E8), or 0 on zero/multiple matches (fail-safe). The guard is:
+//   E8 rel32          call CUser::isSubscribed
+//   83 C4 imm8        add $imm,%esp   (cdecl caller cleanup — the byte I missed
+//                                      the first time; imm left wild so a build
+//                                      that cleans a different amount still hits)
+//   84 C0             test %al,%al
+//   75 rel8           jne <early return>
 uintptr_t FindGuardCall(uintptr_t fn, uint32_t size) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(fn);
     uintptr_t hit = 0;
     int count = 0;
-    for (uint32_t i = 0; i + 9 <= size; ++i)
-        if (p[i] == 0xE8 && p[i + 5] == 0x84 && p[i + 6] == 0xC0 && p[i + 7] == 0x75) {
+    for (uint32_t i = 0; i + 12 <= size; ++i)
+        if (p[i] == 0xE8 &&
+            p[i + 5] == 0x83 && p[i + 6] == 0xC4 &&        // add $imm8,%esp
+            p[i + 8] == 0x84 && p[i + 9] == 0xC0 &&        // test %al,%al
+            p[i + 10] == 0x75) {                           // jne rel8
             hit = fn + i;
             ++count;
         }
