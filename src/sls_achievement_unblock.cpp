@@ -52,9 +52,17 @@ bool g_trace = false;
 // Receives the same (this, appid) the original call site pushed. Never called
 // unless Apply() succeeded (the call is only repointed on success).
 extern "C" uint8_t sls_ach_combined_guard(void* cuser, uint32_t appid) {
-    const uint8_t sub   = g_isSubscribed(cuser, appid);
+    // Step-by-step trace (forced on while ARMED) so that if a call faults, the
+    // last surviving line pinpoints WHICH callee died: ENTER logs the args as
+    // the caller pushed them (a correct cdecl convention shows a real appid like
+    // 1454400 and a sane cuser pointer); "sub ok" means isSubscribed returned;
+    // "added ok" means isAddedAppId returned (i.e. g_configPtr was a valid this).
+    if (g_trace) Log::Info("SLS-ach guard ENTER: cuser=%p appid=%u", cuser, appid);
+    const uint8_t sub = g_isSubscribed(cuser, appid);
+    if (g_trace) Log::Info("SLS-ach guard: isSubscribed ok, sub=%u", sub);
     const uint8_t added = sub ? g_isAddedAppId(g_configPtr, appid) : 0;
-    const uint8_t skip  = static_cast<uint8_t>(sub && !added);
+    if (g_trace) Log::Info("SLS-ach guard: isAddedAppId ok, added=%u", added);
+    const uint8_t skip = static_cast<uint8_t>(sub && !added);
     if (g_trace)
         Log::Info("SLS-ach guard: appid=%u sub=%u added=%u -> skip=%u",
                   appid, sub, added, skip);
@@ -176,7 +184,7 @@ uintptr_t CallTarget(uintptr_t callSite) {
 }
 
 // mprotect RW → write → restore RX. `addr`..`addr+n` may straddle a page.
-[[maybe_unused]] bool WriteBytes(uintptr_t addr, const void* bytes, size_t n) {
+bool WriteBytes(uintptr_t addr, const void* bytes, size_t n) {
     const long pageSz = sysconf(_SC_PAGESIZE);
     const uintptr_t pageMask = ~static_cast<uintptr_t>(pageSz - 1);
     uintptr_t first = addr & pageMask;
@@ -249,26 +257,55 @@ bool Apply() {
     g_isAddedAppId = reinterpret_cast<IsAddedFn>(so.base + syms[1].value);
     g_configPtr    = reinterpret_cast<void*>(so.base + syms[2].value);
 
-    // DIAGNOSTIC BUILD (v0.16.3): the previous build repointed the two
-    // `call isSubscribed` sites (in SLSsteam.so) to sls_ach_combined_guard
-    // (in lumalinux.so) with an E8 rel32 — a SIGNED 32-bit relative offset,
-    // reachable only within +/-2GB. If the two .so's are mapped farther apart
-    // the call overflows and jumps to garbage → Steam crashes → gamescope's
-    // crash-loop detector wipes Steam (OOBE). To measure that WITHOUT any risk,
-    // this build DOES NOT WRITE ANYTHING — it only logs the distance. Steam
-    // loads normally; native achievements stay off until the range is fixed.
+    // v0.16.3 measured the rel32 cross-.so distance and it FITS on-device
+    // (~-23MB, well within +/-2GB), so the E8 rel32 repoint is sound. v0.16.2's
+    // OOBE was therefore NOT a rel32 overflow. Distances still logged for the
+    // record; the repoint itself is now gated behind LUMA_SLS_ACH_ARM so it can
+    // only ever run when a human opts in from a desktop terminal.
     const long long distA = static_cast<long long>(combined) -
                             static_cast<long long>(guardA + 5);
     const long long distB = static_cast<long long>(combined) -
                             static_cast<long long>(guardB + 5);
     const bool fitsA = distA >= -2147483648LL && distA <= 2147483647LL;
     const bool fitsB = distB >= -2147483648LL && distB <= 2147483647LL;
-    Log::Info("SLS-ach DIAG (not patching): combined_guard=0x%lx guardA=0x%lx "
-              "guardB=0x%lx | rel32 distA=%lld [%s] distB=%lld [%s]",
+    Log::Info("SLS-ach DIAG: combined_guard=0x%lx guardA=0x%lx guardB=0x%lx | "
+              "rel32 distA=%lld [%s] distB=%lld [%s]",
               (unsigned long)combined, (unsigned long)guardA, (unsigned long)guardB,
               distA, fitsA ? "FITS" : "OVERFLOW",
               distB, fitsB ? "FITS" : "OVERFLOW");
-    return false;  // diagnostic: never patches → cannot crash Steam
+
+    // ARM gate. Default (no env) = pure diagnostic, identical to v0.16.3: we do
+    // NOT write anything, Steam loads normally, native achievements stay off.
+    // Game mode never sets this env, so game mode can NEVER apply the patch and
+    // therefore can never trigger the crash-loop OOBE. To actually exercise the
+    // repoint, launch Steam from a desktop terminal with LUMA_SLS_ACH_ARM=1; if
+    // it crashes, the next plain launch is back on the safe path automatically.
+    const char* arm = std::getenv("LUMA_SLS_ACH_ARM");
+    if (!(arm && arm[0] && arm[0] != '0')) {
+        Log::Info("SLS-ach: not armed (set LUMA_SLS_ACH_ARM=1 to apply) — "
+                  "staying on the safe diagnostic path");
+        return false;
+    }
+    if (!fitsA || !fitsB) {
+        Log::Warn("SLS-ach: armed but a rel32 is OUT OF RANGE — refusing to patch");
+        return false;
+    }
+
+    // Armed: force the per-call guard trace so a fault localizes to a callee.
+    g_trace = true;
+
+    // Repoint both `call isSubscribed` rel32s → sls_ach_combined_guard. The jne
+    // that follows is untouched and now returns only for genuinely-owned games.
+    int32_t relA = static_cast<int32_t>(combined - (guardA + 5));
+    int32_t relB = static_cast<int32_t>(combined - (guardB + 5));
+    if (!WriteBytes(guardA + 1, &relA, 4)) return false;
+    if (!WriteBytes(guardB + 1, &relB, 4)) return false;
+
+    Log::Info("SLS-ach: ARMED — repointed guards (GetUserStats@0x%lx, "
+              "GetPlayerStats@0x%lx) -> combined_guard 0x%lx. AdditionalApps "
+              "games now get native achievements; owned games untouched.",
+              (unsigned long)guardA, (unsigned long)guardB, (unsigned long)combined);
+    return true;
 }
 
 } // namespace SlsAchievementUnblock
