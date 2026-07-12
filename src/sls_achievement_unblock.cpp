@@ -176,7 +176,7 @@ uintptr_t CallTarget(uintptr_t callSite) {
 }
 
 // mprotect RW → write → restore RX. `addr`..`addr+n` may straddle a page.
-bool WriteBytes(uintptr_t addr, const void* bytes, size_t n) {
+[[maybe_unused]] bool WriteBytes(uintptr_t addr, const void* bytes, size_t n) {
     const long pageSz = sysconf(_SC_PAGESIZE);
     const uintptr_t pageMask = ~static_cast<uintptr_t>(pageSz - 1);
     uintptr_t first = addr & pageMask;
@@ -242,23 +242,33 @@ bool Apply() {
         return false;
     }
 
-    // Wire the callees the replacement guard uses (direct, bypassing the PLT).
+    // Wire the callees (unused in this diagnostic build — combined_guard is
+    // never reached because we do not patch — but computed so the next build
+    // needs no change here).
     g_isSubscribed = reinterpret_cast<IsSubFn>(so.base + syms[0].value);
     g_isAddedAppId = reinterpret_cast<IsAddedFn>(so.base + syms[1].value);
     g_configPtr    = reinterpret_cast<void*>(so.base + syms[2].value);
 
-    // Repoint both `call isSubscribed` rel32s → sls_ach_combined_guard. The jne
-    // that follows is untouched and now returns only for genuinely-owned games.
-    int32_t relA = static_cast<int32_t>(combined - (guardA + 5));
-    int32_t relB = static_cast<int32_t>(combined - (guardB + 5));
-    if (!WriteBytes(guardA + 1, &relA, 4)) return false;
-    if (!WriteBytes(guardB + 1, &relB, 4)) return false;
-
-    Log::Info("SLS-ach: scoped the native-achievement guard (GetUserStats@0x%lx, "
-              "GetPlayerStats@0x%lx) -> combined_guard. AdditionalApps games now "
-              "get native achievements; owned games untouched.",
-              (unsigned long)guardA, (unsigned long)guardB);
-    return true;
+    // DIAGNOSTIC BUILD (v0.16.3): the previous build repointed the two
+    // `call isSubscribed` sites (in SLSsteam.so) to sls_ach_combined_guard
+    // (in lumalinux.so) with an E8 rel32 — a SIGNED 32-bit relative offset,
+    // reachable only within +/-2GB. If the two .so's are mapped farther apart
+    // the call overflows and jumps to garbage → Steam crashes → gamescope's
+    // crash-loop detector wipes Steam (OOBE). To measure that WITHOUT any risk,
+    // this build DOES NOT WRITE ANYTHING — it only logs the distance. Steam
+    // loads normally; native achievements stay off until the range is fixed.
+    const long long distA = static_cast<long long>(combined) -
+                            static_cast<long long>(guardA + 5);
+    const long long distB = static_cast<long long>(combined) -
+                            static_cast<long long>(guardB + 5);
+    const bool fitsA = distA >= -2147483648LL && distA <= 2147483647LL;
+    const bool fitsB = distB >= -2147483648LL && distB <= 2147483647LL;
+    Log::Info("SLS-ach DIAG (not patching): combined_guard=0x%lx guardA=0x%lx "
+              "guardB=0x%lx | rel32 distA=%lld [%s] distB=%lld [%s]",
+              (unsigned long)combined, (unsigned long)guardA, (unsigned long)guardB,
+              distA, fitsA ? "FITS" : "OVERFLOW",
+              distB, fitsB ? "FITS" : "OVERFLOW");
+    return false;  // diagnostic: never patches → cannot crash Steam
 }
 
 } // namespace SlsAchievementUnblock
