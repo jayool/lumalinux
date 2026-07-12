@@ -17,6 +17,7 @@ tells you:
 | `Hook install: name=<HOOK> … outcome=pattern_miss` | A pattern moved — that hook can't install | **A.2** / **A.3** Re-derive patterns |
 | `PKG0_FINDER: cache-access idiom not found` or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the `LD_PRELOAD` block is gone | **B** SLSsteam launcher regenerated |
+| `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patches |
 
 If install is broken but you can't tell which row from a single line, do this
 in order: B → A.1 → A.2/A.3 → C. They're listed by frequency: B and A.1 are
@@ -261,6 +262,48 @@ in the next release is sharper.
 
 ---
 
+## D) SLSsteam in-memory patches (update-unblock & native achievements)
+
+lumalinux patches two things *inside* `SLSsteam.so` at startup — the only places
+it modifies SLSsteam rather than just coexisting with it: the update-clear
+(`sls_update_unblock`, RESEARCH §16) and the native-achievement guard
+(`sls_achievement_unblock`, RESEARCH §17). Both are **fail-closed** — if their
+anchor/symbols don't resolve exactly, they no-op and log a warning; the feature
+degrades (auto-update → manual; native cheevos → off) but Steam never crashes.
+
+**Native achievements silently off.** Grep `SLS-ach`:
+
+- `SLS-ach: could not resolve SLSsteam symbols` → SLSsteam was stripped or renamed
+  its `CUser::isSubscribed` / `CConfig::isAddedAppId` / `g_config` /
+  `sendAndRecvGet*Stats` symbols. Update the mangled names in
+  `src/sls_achievement_unblock.cpp` to match the new SLSsteam.
+- `SLS-ach: guard pattern not found exactly once` → SLSsteam's codegen shifted the
+  guard shape (`call isSubscribed; add esp,imm; test al,al; jne`). Re-derive it.
+- Either way it's a no-op, not a crash. `LUMA_NO_SLS_ACH_UNBLOCK=1` force-disables;
+  `LUMA_SLS_ACH_TRACE=1` prints the per-call guard trace.
+
+**⚠️ Live-patching safety — learn from the v0.16.7 OOBE.** When you touch any code
+that writes into *live, multithreaded* SLSsteam/steamclient memory (`WriteRel32`,
+the update-unblock immediate write, any future in-memory patch), two rules are
+non-negotiable:
+
+1. **Keep `PROT_EXEC` set during the write** — `mprotect(R|W|X)`, not `R|W`.
+   Dropping execute makes the whole page non-executable for the write window; any
+   thread fetching an instruction from it faults.
+2. **Make the operand store atomic** — a single naturally-aligned ≤8-byte store
+   (`__atomic_store_n`), never a byte-wise `memcpy`. A concurrent thread executing
+   the instruction must read either the whole old operand or the whole new one,
+   never a torn mix.
+
+Skipping either caused the v0.16.7 OOBE: a byte-wise, non-executable-window write
+of the achievement guard's `rel32` let a Steam thread read a half-written call
+target and jump to a garbage address → `SIGILL` → 5 fast exits → gamescope wiped
+`~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4. Note
+`sls_update_unblock`'s immediate write is still the old unsafe shape and should
+adopt `WriteRel32`'s pattern.
+
+---
+
 ## TL;DR — which fix to try, in order
 
 1. **No banner in the log** → B (re-run `install.sh`).
@@ -269,3 +312,5 @@ in the next release is sharper.
 3. **`outcome=pattern_miss` on DepotKey/BuildDep/GMRC** → A.2 / A.3
    (re-derive patterns, rebuild, new release).
 4. **`PKG0_FINDER: ... not found`** → C (re-derive finder anchors by hand).
+5. **`SLS-ach: could not resolve…` / native cheevos off** → D (update SLSsteam
+   symbols/pattern; it's fail-closed, not a crash).

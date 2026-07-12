@@ -1483,3 +1483,161 @@ every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
 
 Coexistence held throughout: SLSsteam and lumalinux both mapped in the same client
 (disjoint hook sets, §11 / slssteam-analysis §5), no heap corruption.
+
+## 17. Native achievements — scoping SLSsteam's borrow guard (`sls_achievement_unblock`), and the atomic-rel32 OOBE fix
+
+**Context.** SLSsteam's 2026-07 releases added *native achievement support*: when
+a game asks Steam for its achievement stats and the account does **not** own the
+app, SLSsteam borrows an achievement *schema* from a real owner it finds via the
+game's recent reviews. Two entry points carry it —
+`Achievements::sendAndRecvGetUserStats` (legacy `CMsgClientGetUserStats`) and
+`Achievements::sendAndRecvGetPlayerStats` (unified `Player.GetUserStats#1`) — and
+both open with the same guard:
+
+    if (g_pSteamEngine->getUser(0)->isSubscribed(appId)) return;   // "you own it → don't borrow"
+
+`isSubscribed` reads *real* server ownership (through SLSsteam's own
+`CheckAppOwnership` trampoline). The invariant it enforces: never rewrite a stats
+request for an app the account actually holds a licence for — borrowing a
+stranger's schema would hijack your own request and hand back a zeroed one.
+
+**Why LumaDeck games get no native cheevos by default.** LumaDeck installs games
+via a *native Steam download* that writes a **real local licence** (`config.vdf`
+DecryptionKeys/AppTokens + the `.acf`). So `isSubscribed(appId)` returns **true**
+for them — the guard fires, the borrow is skipped, and the game shows no
+achievements. (Contrast a DepotDownloader-style tool that self-downloads with no
+local licence → `isSubscribed=false` → the borrow runs → cheevos work. lumalinux's
+whole differentiator is the native path, so it loses the borrow.) The
+SLSsteam-side reading of the borrow flow is in docs/slssteam-analysis.md §7.3.
+
+### 17.1 The scope we want: `isSubscribed && !isAddedAppId`
+
+A blunt NOP of the guard's `jne` would run the borrow for **genuinely owned**
+games too — hijacking your real stats request with a reviewer's and clearing your
+unlocked achievements. So the guard must stay for real purchases and only lift for
+LumaDeck games. The distinguishing fact: LumaDeck games are the ones SLSsteam has
+in `AdditionalApps`, i.e. `CConfig::isAddedAppId(appId) == true`. Target predicate:
+
+    if (isSubscribed(appId) && !isAddedAppId(appId)) return;
+
+- `subscribed && !added` → 1 → skip borrow (real purchase, untouched)
+- `subscribed &&  added` → 0 → run borrow  (LumaDeck game → native cheevos)
+- `!subscribed`          → 0 → run borrow  (unchanged from stock)
+
+### 17.2 The patch — `sls_achievement_unblock.cpp`
+
+`SlsAchievementUnblock::Apply()` (called once from `InstallHooks`, alongside
+`sls_update_unblock` §16) does an in-memory redirect of SLSsteam.so:
+
+1. **Resolve symbols** from the on-disk `SLSsteam.so` `.symtab` (SLSsteam ships
+   un-stripped): `CUser::isSubscribed`, `CConfig::isAddedAppId`, the `g_config`
+   object, and the two `sendAndRecvGet*Stats` functions. All-or-nothing — a
+   rename/strip fails the resolve and `Apply()` no-ops (cheevos off, never a crash).
+2. **Find the guard call** inside each `sendAndRecvGet*Stats` by scanning for
+   `E8 rel32 (call isSubscribed) · 83 C4 imm8 (add esp — cdecl caller cleanup) ·
+   84 C0 (test al,al) · 75 rel8 (jne)`. Require **exactly one** hit per function
+   and **cross-check** both call the same target (= `isSubscribed`). Zero /
+   multiple / mismatch → no-op. (The `83 C4 imm8` between the call and the test is
+   the byte that a first, wrong pattern missed — it's the cdecl caller-side stack
+   cleanup, imm left wild.)
+3. **Repoint** each `call isSubscribed` (E8 rel32) to a replacement free function
+   `sls_ach_combined_guard` in lumalinux.so, which calls the real `isSubscribed`,
+   then — only if true — `isAddedAppId(&g_config, appid)`, and returns
+   `sub && !added`. The untouched `test al,al; jne` then skips the borrow exactly
+   for genuinely-owned games.
+
+The ABI works out because SLSsteam is x86-32 GCC: non-static methods are **cdecl
+with `this` as an explicit first stack arg** (`push appId; push CUser*; call
+isSubscribed; add esp,imm`), so a plain `extern "C" uint8_t(void* this, uint32_t
+appid)` matches the call site's stack exactly. `combined_guard` calls back into
+SLSsteam via absolute pointers; each callee is normal PIC and establishes its own
+GOT (`get_pc_thunk`), so entering SLSsteam code through our rel32 is
+indistinguishable from any indirect call. `g_config` is the global object itself
+(symbol address = the `this` pointer). All verified on-device via the opt-in
+trace (17.5): a real appid (e.g. `1454400`) and sane 0/1 flags, no swapped ABI.
+
+This is lumalinux's **second** SLSsteam in-memory patch (after §16), same frontier
+note and same fail-closed discipline.
+
+### 17.3 The OOBE — a torn-write postmortem
+
+The first shipped build that actually applied the repoint (v0.16.2 — the earlier
+v0.16.1 had a wrong byte pattern and silently no-op'd) **hard-crashed Steam on the
+switch to game mode, five fast exits in a row → gamescope's `short_session_recover`
+wiped `~/.local/share/Steam` → OOBE.** No backtrace survived the wipe. Painful to
+diagnose because the *identical patch bytes*, armed from a desktop terminal, ran
+clean (guard fired for three appids, cheevos popped, owned games untouched).
+
+The evidence that cracked it was a later coredump (`coredumpctl`), captured on an
+armed desktop run before its Steam was killed:
+
+    trap invalid opcode ip:f59da5e0 … in liblumalinux.so[…]
+    #0  YAML::Scanner::PushIndentTo (liblumalinux.so + 0x3175e0)
+    #1  0x00000013  (garbage return address)
+
+A **SIGILL** (illegal instruction) whose instruction pointer was **inside
+liblumalinux.so** — our own module, the one holding `combined_guard` — but at the
+*wrong offset* (a yaml-cpp function, not `combined_guard`), reached with a
+**garbage stack** (`0x13` return). Nothing else jumps into liblumalinux.so, and
+normal control flow never lands in yaml-cpp with a `0x13` return. The only
+reading: a steamclient thread executed the patched `call` **while the 4-byte rel32
+was half-written**, read a torn target (some new bytes, some old), and jumped into
+hyperspace.
+
+Root cause = the original `WriteBytes`:
+
+    mprotect(page, RW);        // ← dropped PROT_EXEC for the whole page
+    memcpy(addr, rel32, 4);    // ← byte-wise, non-atomic
+    mprotect(page, RX);
+
+Two hazards in that window: (a) the page was momentarily **non-executable**, so
+any concurrent instruction fetch on it faults; (b) the rel32 store was **not
+atomic**, so a concurrent execution of the `call` could observe a torn operand.
+**Why game mode and not desktop:** game mode drives `sendAndRecvGet*Stats`
+concurrently at boot (it brings a title up and pulls its stats immediately), so a
+Steam thread is very likely executing that exact page while `Apply()` writes it. A
+single hand-paced desktop launch almost never overlaps the microsecond write
+window — which is why v0.16.4 looked clean and why this took a coredump to pin.
+
+(A second coredump — `cloud_redirect.so → __backtrace → ld.so` during `sigreturn`
+— is a *separate*, pre-existing full-stack teardown race, the one `main.cpp`'s
+`_exit(0)` atexit already documents, not this patch.)
+
+### 17.4 The fix — `WriteRel32` (v0.16.7)
+
+`WriteBytes` was replaced with a call-redirect-specific `WriteRel32` that removes
+both hazards:
+
+1. **Keep `PROT_EXEC` set for the write** — `mprotect(R|W|X)`, so the page is
+   never non-executable and a concurrent fetch can't fault. If a hardened kernel
+   refuses W^X the mprotect fails and we no-op (fail-safe).
+2. **Store the rel32 as one aligned `__atomic_store_n` dword.** x86 makes a 4-byte
+   store atomic as long as it does not cross a 64-byte cache line, so a thread
+   executing the `call` concurrently sees **either the old target (`isSubscribed`)
+   or the new one (`combined_guard`) — never a torn mix**. If the operand would
+   straddle a cache line (rare, ~6%), skip that site rather than risk it.
+
+Both targets are valid instructions, so even mid-swap the worst case is "guard
+runs once with the old semantics" — no illegal jump. The guard *logic*, ABI, PIC,
+symbol resolution and `g_config` were all already validated correct on-device
+(v0.16.4); v0.16.7 fixes the *delivery*, not the computation.
+
+**Lesson (see also docs/maintenance.md §D):** any in-memory patch of *live,
+multithreaded* code must (a) keep the page executable across the write and (b)
+make the operand store atomic (a single naturally-aligned ≤8-byte store, or park
+the threads). `sls_update_unblock` (§16) writes a 4-byte immediate the same unsafe
+way but collides far less (a rarely-hot app-state path, not a function steamclient
+calls at boot); it should adopt the same `WriteRel32`-style store as hardening.
+
+### 17.5 Switches & validation
+
+- `LUMA_NO_SLS_ACH_UNBLOCK=1` — disable the patch entirely (panic button; native
+  cheevos off, everything else unchanged).
+- `LUMA_SLS_ACH_TRACE=1` — per-call guard trace (`ENTER cuser=… appid=…`,
+  `isSubscribed ok`, `isAddedAppId ok`, `→ skip=`), off by default.
+
+On-device (v0.16.4 armed, then v0.16.7 default-on):
+
+    appid=1454400  sub=1 added=1 -> skip=0   ← LumaDeck game: borrow runs → native cheevos (popped in-game)
+    appid=22380    sub=1 added=0 -> skip=1   ← owned: guard holds, borrow skipped
+    appid=2371090  sub=1 added=0 -> skip=1   ← owned: untouched

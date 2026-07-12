@@ -558,3 +558,61 @@ neutralizando el campo `extended/hadthirdpartycdkey` del appinfo offline
   sobre-ingeniería preventiva mientras no veamos el síntoma.
 - **Estado:** solo anotado, no accionado. Si aparece, la causa y el fix de
   referencia (moon `3acab45`) ya están aquí.
+
+### 7.3 Logros nativos — el "borrow" de schema y su scoping (`sls_achievement_unblock`)
+
+Las releases de julio de SLSsteam añadieron **soporte de logros nativos**: cuando
+un juego pide sus stats a Steam y la cuenta **no** posee el app, SLSsteam toma
+prestado un *schema* de logros de un dueño real que localiza vía las **reviews
+recientes** del juego. Dos entradas lo implementan —
+`Achievements::sendAndRecvGetUserStats` (legacy `CMsgClientGetUserStats`) y
+`Achievements::sendAndRecvGetPlayerStats` (unificada `Player.GetUserStats#1`) — y
+ambas abren con el mismo guard:
+
+    if (g_pSteamEngine->getUser(0)->isSubscribed(appId)) return;   // "lo posees → no tomes prestado"
+
+Flujo del borrow (`feats/achievements.cpp`): `getReviewersForGame(appId)` hace un
+`Curl::getString` a `store.steampowered.com/appreviews/<appId>?…&num_per_page=
+<MaxSchemaTries>`, saca los `steamid` de los reviewers; para cada uno hace
+`set_steam_id_for_user(id)` sobre el protobuf de la petición, reenvía por el
+**trampolín** (el original, no el hook), obtiene el schema, **limpia**
+`achievement_blocks`/`crc_stats`/`stats` y devuelve un schema con progreso a cero
+(Steam lo mergea con lo local). Un `ownerBlacklist` global cachea ids que fallan.
+Dos detalles clave para nosotros:
+
+- `set_steam_id_for_user` es un **setter de campo del protobuf** de esa petición
+  concreta — **no** cambia el SteamID de sesión ni ningún estado global de
+  steamclient. No hay swap de identidad ni recursión (el reenvío usa el trampolín).
+- El borrow mete un `fork`+`curl` externo **bloqueante** + hasta `MaxSchemaTries`
+  RPCs de red secuenciales en el hilo de la petición, y el `ownerBlacklist` es un
+  `unordered_map` **sin lock** compartido por las dos entradas. Son hazards de
+  SLSsteam que sólo importan cuando el borrow **corre** — y nuestro parche
+  ensancha la población de apps que lo alcanzan.
+
+**Por qué los juegos de LumaDeck no tenían logros por defecto.** LumaDeck instala
+vía descarga **nativa** de Steam, que escribe una **licencia local real**
+(`config.vdf` DecryptionKeys/AppTokens + `.acf`). Así `isSubscribed(appId)`
+devuelve **true** para ellos → el guard salta el borrow → sin logros. (Una
+herramienta tipo DepotDownloader que se auto-descarga sin licencia local →
+`isSubscribed=false` → el borrow corre → logros. El diferencial de lumalinux es
+justo la vía nativa, y por eso pierde el borrow.)
+
+**Nuestro parche (scoping, no NOP).** Un NOP a secas del `jne` correría el borrow
+también para juegos **realmente poseídos** — secuestrando tu petición real con la
+de un reviewer y **borrando tus logros desbloqueados**. Así que el guard debe
+seguir para las compras reales y sólo levantarse para juegos LumaDeck. El
+distintivo: los juegos LumaDeck son los que SLSsteam tiene en `AdditionalApps`
+(`isAddedAppId == true`). `sls_achievement_unblock` repunta en caliente las dos
+llamadas `call isSubscribed` a un guard propio que devuelve
+`isSubscribed && !isAddedAppId`:
+
+- `subscribed && !added` → skip borrow (compra real, intacta)
+- `subscribed &&  added` → run borrow  (juego LumaDeck → logros nativos)
+- `!subscribed`          → run borrow  (igual que vanilla)
+
+Es la **segunda vez que lumalinux cruza la frontera** de §5 y parchea SLSsteam en
+memoria (tras §7.1), con la misma disciplina fail-closed. **El detalle técnico del
+parche (ABI cdecl, resolución de símbolos, los fail-safes) y el postmortem del
+OOBE que provocó — una escritura no atómica del `rel32` que dejó a un hilo de Steam
+leer un destino a medias → `SIGILL` → wipe de gamescope → arreglado con un
+`WriteRel32` atómico — están en `RESEARCH.md` §17.**
