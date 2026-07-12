@@ -52,8 +52,9 @@ bool g_trace = false;
 // Receives the same (this, appid) the original call site pushed. Never called
 // unless Apply() succeeded (the call is only repointed on success).
 extern "C" uint8_t sls_ach_combined_guard(void* cuser, uint32_t appid) {
-    // Step-by-step trace (forced on while ARMED) so that if a call faults, the
-    // last surviving line pinpoints WHICH callee died: ENTER logs the args as
+    // Step-by-step trace (opt-in via LUMA_SLS_ACH_TRACE) so that if a call
+    // faults, the last surviving line pinpoints WHICH callee died: ENTER logs
+    // the args as
     // the caller pushed them (a correct cdecl convention shows a real appid like
     // 1454400 and a sane cuser pointer); "sub ok" means isSubscribed returned;
     // "added ok" means isAddedAppId returned (i.e. g_configPtr was a valid this).
@@ -257,53 +258,44 @@ bool Apply() {
     g_isAddedAppId = reinterpret_cast<IsAddedFn>(so.base + syms[1].value);
     g_configPtr    = reinterpret_cast<void*>(so.base + syms[2].value);
 
-    // v0.16.3 measured the rel32 cross-.so distance and it FITS on-device
-    // (~-23MB, well within +/-2GB), so the E8 rel32 repoint is sound. v0.16.2's
-    // OOBE was therefore NOT a rel32 overflow. Distances still logged for the
-    // record; the repoint itself is now gated behind LUMA_SLS_ACH_ARM so it can
-    // only ever run when a human opts in from a desktop terminal.
+    // The rel32 cross-.so distance FITS on-device (~-23MB, well within +/-2GB),
+    // so the E8 rel32 repoint is sound. Kept as a one-line startup breadcrumb.
     const long long distA = static_cast<long long>(combined) -
                             static_cast<long long>(guardA + 5);
     const long long distB = static_cast<long long>(combined) -
                             static_cast<long long>(guardB + 5);
     const bool fitsA = distA >= -2147483648LL && distA <= 2147483647LL;
     const bool fitsB = distB >= -2147483648LL && distB <= 2147483647LL;
-    Log::Info("SLS-ach DIAG: combined_guard=0x%lx guardA=0x%lx guardB=0x%lx | "
+    Log::Info("SLS-ach: combined_guard=0x%lx guardA=0x%lx guardB=0x%lx | "
               "rel32 distA=%lld [%s] distB=%lld [%s]",
               (unsigned long)combined, (unsigned long)guardA, (unsigned long)guardB,
               distA, fitsA ? "FITS" : "OVERFLOW",
               distB, fitsB ? "FITS" : "OVERFLOW");
 
-    // ARM gate. Default (no env) = pure diagnostic, identical to v0.16.3: we do
-    // NOT write anything, Steam loads normally, native achievements stay off.
-    // Game mode never sets this env, so game mode can NEVER apply the patch and
-    // therefore can never trigger the crash-loop OOBE. To actually exercise the
-    // repoint, launch Steam from a desktop terminal with LUMA_SLS_ACH_ARM=1; if
-    // it crashes, the next plain launch is back on the safe path automatically.
-    const char* arm = std::getenv("LUMA_SLS_ACH_ARM");
-    if (!(arm && arm[0] && arm[0] != '0')) {
-        Log::Info("SLS-ach: not armed (set LUMA_SLS_ACH_ARM=1 to apply) — "
-                  "staying on the safe diagnostic path");
-        return false;
-    }
     if (!fitsA || !fitsB) {
-        Log::Warn("SLS-ach: armed but a rel32 is OUT OF RANGE — refusing to patch");
+        Log::Warn("SLS-ach: a rel32 is OUT OF RANGE — refusing to patch");
         return false;
     }
-
-    // Armed: force the per-call guard trace so a fault localizes to a callee.
-    g_trace = true;
 
     // Repoint both `call isSubscribed` rel32s → sls_ach_combined_guard. The jne
     // that follows is untouched and now returns only for genuinely-owned games.
+    //
+    // Default-on (v0.16.5) after full on-device validation via LUMA_SLS_ACH_ARM
+    // (v0.16.4): combined_guard runs crash-free through all four steps, native
+    // achievements fire for AdditionalApps games (appid=1454400 sub=1 added=1 ->
+    // skip=0) and genuinely-owned games are untouched (appid=22380/2371090 sub=1
+    // added=0 -> skip=1). The cdecl `this`-on-stack convention and g_config `this`
+    // are both confirmed correct at runtime. LUMA_NO_SLS_ACH_UNBLOCK=1 disables
+    // this entirely (checked at the top of Apply); LUMA_SLS_ACH_TRACE=1 turns the
+    // per-call guard trace back on (off by default to avoid log spam).
     int32_t relA = static_cast<int32_t>(combined - (guardA + 5));
     int32_t relB = static_cast<int32_t>(combined - (guardB + 5));
     if (!WriteBytes(guardA + 1, &relA, 4)) return false;
     if (!WriteBytes(guardB + 1, &relB, 4)) return false;
 
-    Log::Info("SLS-ach: ARMED — repointed guards (GetUserStats@0x%lx, "
-              "GetPlayerStats@0x%lx) -> combined_guard 0x%lx. AdditionalApps "
-              "games now get native achievements; owned games untouched.",
+    Log::Info("SLS-ach: scoped the native-achievement guard (GetUserStats@0x%lx, "
+              "GetPlayerStats@0x%lx) -> combined_guard 0x%lx. AdditionalApps games "
+              "get native achievements; owned games untouched.",
               (unsigned long)guardA, (unsigned long)guardB, (unsigned long)combined);
     return true;
 }
