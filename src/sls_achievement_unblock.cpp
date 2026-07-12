@@ -184,20 +184,48 @@ uintptr_t CallTarget(uintptr_t callSite) {
     return callSite + 5 + rel;
 }
 
-// mprotect RW → write → restore RX. `addr`..`addr+n` may straddle a page.
-bool WriteBytes(uintptr_t addr, const void* bytes, size_t n) {
+// Atomically repoint the 4-byte rel32 of a live `E8 rel32` call.
+//
+// The v0.16.2 OOBE was a TORN WRITE: the old code flipped the page to RW
+// (dropping PROT_EXEC) and did a byte-wise memcpy of the rel32 while steamclient
+// threads were executing the very function being patched. On-device coredump
+// proved it — a SIGILL whose instruction pointer landed at a *wrong* offset
+// inside liblumalinux.so (the redirect target's module) reached with a garbage
+// return address: a Steam thread executed the `call` mid-write, read a
+// half-updated rel32, and jumped into hyperspace. Game mode reproduced it
+// reliably because it drives those functions concurrently at boot.
+//
+// This version removes both hazards:
+//   1. The page keeps PROT_EXEC throughout, so no concurrent instruction fetch
+//      can hit a non-executable page. (If a hardened kernel refuses W^X the
+//      mprotect fails and we no-op — fail-safe, never a crash.)
+//   2. The rel32 is written with ONE aligned dword store. x86 guarantees a
+//      4-byte store is atomic as long as it does not cross a 64-byte cache line,
+//      so a thread executing the call concurrently observes either the OLD
+//      target (isSubscribed — fine) or the NEW one (combined_guard — fine),
+//      never a torn mix. If the operand would straddle a cache line (rare) we
+//      skip that site rather than risk a non-atomic store.
+bool WriteRel32(uintptr_t addr, uint32_t value) {
+    constexpr uintptr_t kCacheLine = 64;
+    if ((addr & (kCacheLine - 1)) > kCacheLine - 4) {
+        Log::Warn("SLS-ach: rel32 at 0x%lx straddles a cache line — skipping this "
+                  "site (no torn write)", (unsigned long)addr);
+        return false;
+    }
     const long pageSz = sysconf(_SC_PAGESIZE);
     const uintptr_t pageMask = ~static_cast<uintptr_t>(pageSz - 1);
     uintptr_t first = addr & pageMask;
-    uintptr_t last  = (addr + n - 1) & pageMask;
+    uintptr_t last  = (addr + 4 - 1) & pageMask;
     void*  page = reinterpret_cast<void*>(first);
     size_t len  = (last - first) + static_cast<size_t>(pageSz);
-    if (mprotect(page, len, PROT_READ | PROT_WRITE) != 0) {
-        Log::Warn("SLS-ach: mprotect(RW) failed at 0x%lx", (unsigned long)addr);
+    // Keep EXEC set — the page is never non-executable during the write.
+    if (mprotect(page, len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        Log::Warn("SLS-ach: mprotect(RWX) failed at 0x%lx", (unsigned long)addr);
         return false;
     }
-    std::memcpy(reinterpret_cast<void*>(addr), bytes, n);
-    mprotect(page, len, PROT_READ | PROT_EXEC);  // best-effort restore
+    // Single atomic (within-cache-line) dword store — no torn read possible.
+    __atomic_store_n(reinterpret_cast<uint32_t*>(addr), value, __ATOMIC_SEQ_CST);
+    mprotect(page, len, PROT_READ | PROT_EXEC);  // best-effort restore to RX
     return true;
 }
 
@@ -251,9 +279,7 @@ bool Apply() {
         return false;
     }
 
-    // Wire the callees (unused in this diagnostic build — combined_guard is
-    // never reached because we do not patch — but computed so the next build
-    // needs no change here).
+    // Wire the callees combined_guard invokes (direct, bypassing the PLT).
     g_isSubscribed = reinterpret_cast<IsSubFn>(so.base + syms[0].value);
     g_isAddedAppId = reinterpret_cast<IsAddedFn>(so.base + syms[1].value);
     g_configPtr    = reinterpret_cast<void*>(so.base + syms[2].value);
@@ -288,10 +314,10 @@ bool Apply() {
     // are both confirmed correct at runtime. LUMA_NO_SLS_ACH_UNBLOCK=1 disables
     // this entirely (checked at the top of Apply); LUMA_SLS_ACH_TRACE=1 turns the
     // per-call guard trace back on (off by default to avoid log spam).
-    int32_t relA = static_cast<int32_t>(combined - (guardA + 5));
-    int32_t relB = static_cast<int32_t>(combined - (guardB + 5));
-    if (!WriteBytes(guardA + 1, &relA, 4)) return false;
-    if (!WriteBytes(guardB + 1, &relB, 4)) return false;
+    const uint32_t relA = static_cast<uint32_t>(combined - (guardA + 5));
+    const uint32_t relB = static_cast<uint32_t>(combined - (guardB + 5));
+    if (!WriteRel32(guardA + 1, relA)) return false;
+    if (!WriteRel32(guardB + 1, relB)) return false;
 
     Log::Info("SLS-ach: scoped the native-achievement guard (GetUserStats@0x%lx, "
               "GetPlayerStats@0x%lx) -> combined_guard 0x%lx. AdditionalApps games "
