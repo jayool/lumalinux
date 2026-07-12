@@ -6,7 +6,10 @@ the native install flow. It runs **three function-level hooks** plus an **active
 package-0 finder** (a worker thread that walks the live package cache instead of
 waiting for a hook event — see [RESEARCH §13](docs/RESEARCH.md)). A fourth,
 diagnostic-only LoadPackage hook is opt-in via `LUMA_LOADPKG_DEBUG=1`.
-Designed to **coexist with SLSsteam without modifying or forking it**.
+Designed to run **alongside SLSsteam** — never forking it. The install-path hooks
+stay orthogonal to SLSsteam; on top of them, two small, reversible in-memory
+patches to `SLSsteam.so` (both opt-out) extend it so LumaDeck-managed games
+auto-update and earn native Steam achievements (see [What it does](#what-it-does)).
 
 > ⚠️ **Educational / research use only.** Use it with your own Steam account
 > and content. Do not redistribute Valve binaries. The author does not host or
@@ -30,10 +33,21 @@ Division of labour with SLSsteam:
 
 - **SLSsteam** → ownership / licensing layer. Fakes ownership, supplies PICS
   access tokens, handles family-share/offline.
-- **lumalinux** → the three install-path hooks plus the package-0 finder above.
+- **lumalinux** → the install-path hooks + package-0 finder above, plus two
+  in-memory patches to SLSsteam itself (below).
 
-The two are deliberately orthogonal: lumalinux does not touch what SLSsteam
-already handles, and SLSsteam does not touch any function lumalinux hooks.
+For the **install-path hooks** the two stay deliberately orthogonal: lumalinux
+does not touch what SLSsteam already handles, and SLSsteam does not touch any
+function lumalinux hooks. Separately, lumalinux applies two **surgical, reversible
+in-memory patches to `SLSsteam.so`** so LumaDeck-managed games behave like owned
+ones. Neither forks or edits SLSsteam's source or config; each is **fail-closed**
+(if its anchor/symbols don't resolve exactly it no-ops — the feature just degrades,
+never a crash) and opt-out via an env var:
+
+| Patch | What it does | Off with |
+|---|---|---|
+| **update-unblock** (`sls_update_unblock`) | Flips SLSsteam's combined `APPSTATE_UPDATE_*` clear to a no-op so `AdditionalApps` games auto-update instead of stalling at "Update required" — see [RESEARCH §16](docs/RESEARCH.md). | `LUMA_NO_SLS_UNBLOCK=1` |
+| **native achievements** (`sls_achievement_unblock`) | Scopes SLSsteam's native-achievement schema borrow to `isSubscribed && !isAddedAppId`, so LumaDeck games earn native Steam achievements while genuinely-owned games stay untouched — see [RESEARCH §17](docs/RESEARCH.md). | `LUMA_NO_SLS_ACH_UNBLOCK=1` |
 
 ## Installation
 
@@ -159,6 +173,11 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 - `LUMA_NO_SHADERSKIP` — disable the per-game shader-skip hook (ShaderDepot).
   Keyless games' shader pre-cache will then loop again as in §13.8; installs are
   unaffected either way.
+- `LUMA_NO_SLS_UNBLOCK=1` — disable the SLSsteam **update-unblock** in-memory patch
+  (RESEARCH §16). `AdditionalApps` games fall back to manual "Update required".
+- `LUMA_NO_SLS_ACH_UNBLOCK=1` — disable the SLSsteam **native-achievement** patch
+  (RESEARCH §17); LumaDeck games get no native cheevos, nothing else changes.
+  `LUMA_SLS_ACH_TRACE=1` adds a per-call guard trace for diagnosing it.
 - `LUMA_NO_PKG0_FINDER=1` — disable the package-0 finder. The finder is **on by
   default** (since v0.13.0) and is the **sole** depot injector: it walks the
   package cache directly, which is what makes installs work when Steam has
@@ -374,8 +393,11 @@ helper Python tools as an artifact.
 ## Credits / notes
 
 - Hook design references **LumaCore** (Windows), reimplemented for Linux.
-- Coexists with **SLSsteam** (ownership / licensing layer); does not fork or
-  modify it. The SafeMode hash-whitelist update flow (`src/update.cpp`,
+- Runs alongside **SLSsteam** (ownership / licensing layer); **never forks it**.
+  Beyond coexisting, it applies two surgical, reversible in-memory patches to
+  `SLSsteam.so` (update-unblock §16, native achievements §17) — no source fork,
+  no config change, each fail-closed and opt-out. The SafeMode hash-whitelist
+  update flow (`src/update.cpp`,
   `src/curl.cpp`, `src/sha256.cpp`, `src/globals.cpp`, `res/version.txt`,
   `res/updates.yaml`) was ported from SLSsteam (AGPL-3.0) with minimal
   adaptations — see the AGPL-3.0 header in each of those files. The full
