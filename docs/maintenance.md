@@ -298,9 +298,8 @@ non-negotiable:
 Skipping either caused the v0.16.7 OOBE: a byte-wise, non-executable-window write
 of the achievement guard's `rel32` let a Steam thread read a half-written call
 target and jump to a garbage address → `SIGILL` → 5 fast exits → gamescope wiped
-`~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4. Note
-`sls_update_unblock`'s immediate write is still the old unsafe shape and should
-adopt `WriteRel32`'s pattern.
+`~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4.
+`sls_update_unblock`'s immediate write was hardened the same way in v0.16.8.
 
 ---
 

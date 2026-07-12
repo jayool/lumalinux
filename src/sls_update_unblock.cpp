@@ -18,8 +18,8 @@ namespace {
 // constant is derived from Steam's APPSTATE_UPDATE_* enum, which is ABI-stable
 // (games depend on the flag values), so it survives SLSsteam recompiles even as
 // surrounding code shifts — the reason we anchor on it rather than a prologue.
-constexpr uint8_t kImm[4]     = { 0xE5, 0xF8, 0xFF, 0xFF };  // 0xFFFFF8E5
-constexpr uint8_t kPatched[4] = { 0xFF, 0xFF, 0xFF, 0xFF };  // AND all-ones = no-op
+constexpr uint8_t  kImm[4]      = { 0xE5, 0xF8, 0xFF, 0xFF };  // 0xFFFFF8E5
+constexpr uint32_t kPatchedImm  = 0xFFFFFFFFu;                 // AND all-ones = no-op
 
 struct Range { uintptr_t start, end; };
 
@@ -72,21 +72,35 @@ uintptr_t AndInsnStart(uintptr_t imm, uintptr_t lo) {
     return 0;
 }
 
+// Same atomic, executable-window-preserving write as the achievement patch's
+// WriteRel32 (src/sls_achievement_unblock.cpp + RESEARCH §17.4). This clear runs
+// on a COLD path (app-state queries, not a boot-hammered function), so the old
+// byte-wise / non-exec-window write never collided in practice — but it was the
+// exact same latent torn-write hazard that OOBE'd the achievement patch, so it
+// gets the same fix: keep PROT_EXEC across the write, and store the 4-byte
+// immediate atomically. A thread executing the AND concurrently then reads either
+// the whole old immediate or the whole new one, never a torn mix.
 bool WritePatch(uintptr_t imm) {
+    constexpr uintptr_t kCacheLine = 64;
+    if ((imm & (kCacheLine - 1)) > kCacheLine - 4) {
+        Log::Warn("SLS-unblock: imm at 0x%lx straddles a cache line — leaving block "
+                  "in place (no torn write)", (unsigned long)imm);
+        return false;
+    }
     const long pageSz = sysconf(_SC_PAGESIZE);
     const uintptr_t pageMask = ~static_cast<uintptr_t>(pageSz - 1);
     uintptr_t first = imm & pageMask;
     uintptr_t last  = (imm + 3) & pageMask;   // the 4 bytes may straddle a page
     void*  page = reinterpret_cast<void*>(first);
     size_t len  = (last - first) + static_cast<size_t>(pageSz);
-    // W^X-friendly: make it writable (no EXEC) for the write, then restore r-x.
-    if (mprotect(page, len, PROT_READ | PROT_WRITE) != 0) {
-        Log::Warn("SLS-unblock: mprotect(RW) failed at 0x%lx — leaving block in place",
+    // Keep EXEC set — the page is never non-executable during the write.
+    if (mprotect(page, len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        Log::Warn("SLS-unblock: mprotect(RWX) failed at 0x%lx — leaving block in place",
                   (unsigned long)imm);
         return false;
     }
-    std::memcpy(reinterpret_cast<void*>(imm), kPatched, 4);
-    mprotect(page, len, PROT_READ | PROT_EXEC);   // best-effort restore
+    __atomic_store_n(reinterpret_cast<uint32_t*>(imm), kPatchedImm, __ATOMIC_SEQ_CST);
+    mprotect(page, len, PROT_READ | PROT_EXEC);   // best-effort restore to RX
     return true;
 }
 

@@ -1625,9 +1625,10 @@ symbol resolution and `g_config` were all already validated correct on-device
 **Lesson (see also docs/maintenance.md §D):** any in-memory patch of *live,
 multithreaded* code must (a) keep the page executable across the write and (b)
 make the operand store atomic (a single naturally-aligned ≤8-byte store, or park
-the threads). `sls_update_unblock` (§16) writes a 4-byte immediate the same unsafe
-way but collides far less (a rarely-hot app-state path, not a function steamclient
-calls at boot); it should adopt the same `WriteRel32`-style store as hardening.
+the threads). `sls_update_unblock` (§16) writes a 4-byte immediate the same way; it
+collides far less (a rarely-hot app-state path, not a function steamclient calls at
+boot) so it never bit, but it carried the identical latent hazard — **v0.16.8 gave
+it the same atomic, executable-window-preserving write.**
 
 ### 17.5 Switches & validation
 
