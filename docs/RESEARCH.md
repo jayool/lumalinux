@@ -1445,9 +1445,18 @@ one match survives.
    place (auto-update degrades to manual — safe, never a crash). This is the
    guard against SLSsteam codegen shifting under us; refresh the anchor if it
    ever trips.
-4. `mprotect(RW)` the page(s) (handling the 4 bytes straddling a page), `memcpy`
-   the immediate to `FF FF FF FF`, `mprotect(R|X)` back (W^X-friendly).
-   `AND reg, 0xFFFFFFFF` is a no-op → the update flags survive untouched.
+4. **Repoint the immediate atomically.** `mprotect(R|W|X)` the page(s) (handling
+   the 4 bytes straddling a page) so the page never loses execute, store the
+   immediate to `0xFFFFFFFF` with a single aligned `__atomic_store_n` (not a
+   byte-wise `memcpy`), then `mprotect(R|X)` back. `AND reg, 0xFFFFFFFF` is a
+   no-op, so the update flags survive untouched. This is the same atomic,
+   executable-window-preserving write as §17.4's `WriteRel32`: the update-clear
+   is a cold path (app-state queries, not a boot-hammered function) so the old
+   `mprotect(RW)` + `memcpy` never collided in practice, but it carried the
+   identical latent torn-write hazard, hardened in v0.16.8.
+5. **Cache-line fail-safe.** If the 4-byte immediate would straddle a 64-byte
+   cache line (where a single store stops being atomic on x86), skip the patch
+   and leave the block in place rather than risk a torn write.
 
 Env override `LUMA_NO_SLS_UNBLOCK=1` skips it entirely (the A/B control). Nothing
 else in SLSsteam is touched: the game stays in AdditionalApps; ownership, DLC
