@@ -668,6 +668,57 @@ Decky-aware; moon + LumaDeck can share 8080), **M7** (don't shim `steam.sh`).
 
 ---
 
+## Delta — 2026-07-10 (commits since Part 2)
+
+Weekly pass over `swwayps/slsteam-moon` since Part 2's 2026-07-05 cutoff. Five
+substantive commits, all refining findings already here; two of them surfaced
+latent crash risks on our side.
+
+- **`53ab675` — alt-GID fallback gated on the circuit breaker** (refines M4).
+  moon only substitutes a stale local manifest when the fetch circuit breaker
+  reports providers offline; if online it lets Steam pull the real request-code.
+  Design confirmation for M4; not portable (we pin via BuildDep, never substitute).
+- **`362476d` — size-0 depot crash + per-GID 404 fallback** (refines M4). Drops
+  managed depots with size 0 in `hkBuildDepot` because Steam asserts/crashes on
+  degenerate manifests, and makes the breaker per-GID (404) instead of global.
+  For us: BuildDep passes through on no-pin (gid=size=0) so we never inject a
+  size-0 entry, but "a size-0 managed depot crashes Steam" is worth remembering.
+- **`b1da6b6` — drop the appinfo build-pin** (refines M5). moon reverted pinning
+  gid+buildid into appinfo: it made metadata lag the live build, stalled the
+  update job, hung the client at startup, and contaminated the download planner
+  (active==target==pin gives zero delta, so real content never downloads). It now
+  pins at the reconcile instead. Confirms our side is safer: we pin ManifestGid in
+  `pDepotInfo` via BuildDep, not in appinfo.
+- **`bbae0fc` — autofix script** (parallels M3/M7). A `curl | bash` that reinstalls
+  the release and repairs every steam `.desktop` when moon detects it did not
+  inject, served from the raw branch so fixes ship without a release. Our
+  equivalent is LumaDeck's "Install / Reapply lumalinux" + `install.sh`; parity.
+- **`30605f4` — config.yaml self-heal + exception-landing-pad pin** surfaced the
+  two risks below.
+
+### Two crash risks it surfaced for us
+
+1. **Exception landing pad in `.cold` (lumalinux) — ACTIONED.** A malformed
+   config.yaml made moon's yaml-cpp throw, and at -O2+ block partitioning stranded
+   the landing pad in `.cold` so even `catch(...)` was bypassed and the client
+   aborted; moon pinned the pads with `-fno-reorder-blocks-and-partition`.
+   lumalinux is -O3 and parses `updates.yaml` with `YAML::Load` inside try/catch
+   (`src/update.cpp`), the same structural setup. Probability is low (updates.yaml
+   is our CI-checked file; only a truncated download/cache would throw, and we
+   build without LTO so the miscompile may not even fire), but the failure mode is
+   a startup abort, i.e. the OOBE class. **Fix: added
+   `-fno-reorder-blocks-and-partition` to the GCC build in v0.16.9** (layout-only
+   flag, zero behaviour change).
+2. **config.yaml writer indentation (LumaDeck) — NOT actioned.** moon's abort came
+   from a writer (LuaTools) leaving inconsistent list indentation under
+   `AdditionalApps`. Our two writers (`steamidra_lite` `  - {n}`, `slssteam_ops`
+   `  - {appid}`) both use a consistent 2-space indent, so we do not self-inflict
+   it. The only trigger is a file already mixed from outside (manual edit / another
+   tool), and whether the real AceSLS SLSsteam aborts on it is unknown and not ours
+   to fix. Logged as known, low relevance, not self-caused.
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,

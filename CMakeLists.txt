@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.16.8)
+project(lumalinux LANGUAGES C CXX VERSION 0.16.9)
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior
@@ -30,6 +30,17 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter -fvisibility=hidden)
+endif()
+
+# -fno-reorder-blocks-and-partition (GCC only): keep exception landing pads out
+# of the .cold section. At -O2+ block partitioning can strand a throw's landing
+# pad in .cold so the call-site table fails to reach it, and even catch(...) is
+# bypassed -> the process aborts. src/update.cpp parses updates.yaml with
+# YAML::Load inside try/catch, so a corrupt/truncated updates.yaml could hit
+# exactly that. Layout-only flag: zero behaviour change, negligible perf cost.
+# Mirrors slsteam-moon's fix (see docs/slsteam-moon-findings.md, Delta 2026-07-10).
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_compile_options(-fno-reorder-blocks-and-partition)
 endif()
 
 set(LUMA_SOURCES
