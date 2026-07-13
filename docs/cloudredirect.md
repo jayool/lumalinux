@@ -27,11 +27,19 @@ by side.
 CloudRedirect goes in **before** lumalinux. lumalinux's installer detects
 CloudRedirect's `.so` if present and arranges for both to load.
 
-1. Install ACCELA + SLSsteam (`curl … enter-the-wired | bash`). This
-   creates `~/.config/SLSsteam/config.yaml` with `DisableCloud: yes` by
-   default.
+1. Install SLSsteam via Headcrab, from **desktop mode** (running it from
+   Game Mode restarts Steam mid-install and can trigger the gamescope
+   OOBE wipe):
 
-2. **Enable CloudRedirect in SLSsteam's config** — edit
+   ```bash
+   curl -fsSL https://headcrab.pages.dev | bash
+   ```
+
+   This creates `~/.config/SLSsteam/config.yaml` with `DisableCloud: yes`
+   by default. (ACCELA and enter-the-wired are dead; Headcrab is the
+   current installer.)
+
+2. **Enable CloudRedirect in SLSsteam's config**: edit
    `~/.config/SLSsteam/config.yaml` and change the `DisableCloud` line
    from `yes` to `no`.
 
@@ -69,7 +77,7 @@ GameLauncher(){
 }
 ```
 
-`export $INJECT_CR` sets `LD_PRELOAD` to `cloud_redirect.so` only — it
+`export $INJECT_CR` sets `LD_PRELOAD` to `cloud_redirect.so` only: it
 does **not** preserve whatever was previously in `LD_PRELOAD` (this is an
 upstream-Headcrab behaviour we work around).
 
@@ -82,8 +90,8 @@ export LD_PRELOAD="$HOME/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}$
 ```
 
 The `${LD_PRELOAD:+:}${LD_PRELOAD:-}` suffix preserves whatever
-`LD_PRELOAD` already has — in the CR case, that's
-`cloud_redirect.so`. Final result inside the Steam process:
+`LD_PRELOAD` already has (in the CR case, that's
+`cloud_redirect.so`). Final result inside the Steam process:
 
 ```
 LD_PRELOAD=/home/<user>/.local/share/lumalinux/liblumalinux.so:/home/<user>/.local/share/CloudRedirect/cloud_redirect.so
@@ -91,7 +99,7 @@ LD_PRELOAD=/home/<user>/.local/share/lumalinux/liblumalinux.so:/home/<user>/.loc
 
 Both `.so`s load. lumalinux comes first in the chain so its symbols
 shadow anything CR also provides, but the two hook disjoint functions in
-`steamclient.so` — no symbol-resolution conflicts observed.
+`steamclient.so`, with no symbol-resolution conflicts observed.
 
 ## Verifying both loaded
 
