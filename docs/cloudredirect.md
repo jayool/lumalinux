@@ -6,6 +6,22 @@ path** in `steamclient.so` via vtable swaps; lumalinux targets the
 disjoint, the mechanisms don't overlap, and they're designed to run side
 by side.
 
+> **Update (CloudRedirect v2.5.x, 2026-07).** CloudRedirect's Linux surface
+> shrank: it dropped its Linux achievement injection, RecvPkt hook, and schema
+> fetch (commit `31454e3`; SLSsteam now owns achievement-schema fetching) and
+> removed the achievement-sync UI (`1095306`), leaving only its cloud-save and
+> playtime hooks plus a native-stats export for SLSsteam. So the disjoint-surface
+> premise holds and strengthens. The RecvPkt inline-detour rewrite (`71e0544`) and
+> the manifest-endpoint override (`f3d9dfe`) in the same window are **Windows-only**
+> and do not touch the Linux side or our GMRC path. Its LD_PRELOAD log fix
+> (`0925cc2`: a global `std::mutex`/`std::string` used before C++ static init in an
+> LD_PRELOAD constructor) also likely resolves the `cloud_redirect.so ->
+> __backtrace -> ld.so` teardown `SIGSEGV` seen in a lumalinux coredump, so
+> updating CloudRedirect to v2.5.4+ is worthwhile. lumalinux's own logger is not
+> affected by that bug: its `g_logMutex` is a constexpr-constructed `std::mutex`
+> (constant-initialized before any constructor) and it builds the log path with a
+> local, not global, string.
+
 ## Install order
 
 CloudRedirect goes in **before** lumalinux. lumalinux's installer detects
