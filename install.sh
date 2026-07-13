@@ -4,8 +4,9 @@
 # user-local Steam launcher (~/.local/share/Steam/steam.sh) to load it via
 # LD_PRELOAD. No root needed.
 #
-# Prerequisites: SLSsteam installed via enter-the-wired AND Steam launched
-# once after that so Headcrab can bootstrap its steam.sh wrapper.
+# Prerequisites: SLSsteam installed via Headcrab (curl -fsSL https://headcrab.pages.dev
+# | bash, from desktop mode) AND Steam launched once after that so Headcrab can
+# bootstrap its steam.sh wrapper.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
@@ -59,8 +60,8 @@ trap cleanup EXIT
 
 # ── pre-flight ────────────────────────────────────────────────────────────
 [[ -f "$SLS_SO" ]] || die "SLSsteam is not installed (no $SLS_SO).
-Install it first:
-    curl -fsSL https://raw.githubusercontent.com/ciscosweater/enter-the-wired/main/enter-the-wired | bash"
+Install it first, from desktop mode:
+    curl -fsSL https://headcrab.pages.dev | bash"
 
 [[ -f "$STEAM_SH" ]] || die "$STEAM_SH does not exist.
 Run Steam once after installing SLSsteam so Headcrab can bootstrap its
@@ -68,11 +69,11 @@ launcher wrapper, then retry."
 
 # Headcrab steam.sh always defines INJECT_SLS near the top. Vanilla Valve
 # steam.sh does not. This catches the case where the user has a steam.sh but
-# Headcrab never patched it (e.g. they ran enter-the-wired with the install
-# failing midway).
+# Headcrab never patched it (e.g. Headcrab's install failed midway).
 if ! grep -q '^[[:space:]]*INJECT_SLS=' "$STEAM_SH"; then
     die "$STEAM_SH is not the Headcrab-patched launcher (no INJECT_SLS).
-Reinstall SLSsteam via enter-the-wired and retry."
+Reinstall SLSsteam via Headcrab (curl -fsSL https://headcrab.pages.dev | bash,
+from desktop mode) and retry."
 fi
 
 # ── uninstall ─────────────────────────────────────────────────────────────
