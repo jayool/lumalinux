@@ -616,3 +616,12 @@ parche (ABI cdecl, resolución de símbolos, los fail-safes) y el postmortem del
 OOBE que provocó — una escritura no atómica del `rel32` que dejó a un hilo de Steam
 leer un destino a medias → `SIGILL` → wipe de gamescope → arreglado con un
 `WriteRel32` atómico — están en `RESEARCH.md` §17.**
+
+### 7.4 Delta 2026-07-11 (VERSION `20260710192125`, HEAD `d35a697`)
+
+Repaso semanal de `AceSLS/SLSsteam` desde `da97d11` (20260705, base de §7). Cambios que nos tocan:
+
+- **`PlayNotOwnedGames` y `AutomaticFilterList` eliminados** (`84c3672`, 07-07). SLSsteam quitó ambas opciones por completo (config, parsing y uso en `apps.cpp`): `AdditionalApps` es ya el único mecanismo de unlock. Impacto en LumaDeck: tenía lógica de `_set_playnotowned_no` que devolvía un falso "reinstall dependencies" cuando la línea faltaba. Corregido (2026-07): "línea ausente" se trata como no-op OK, y se mantiene el flip para usuarios en SLSsteam antiguo (donde Headcrab aún fuerza `yes`). El default que siembra LumaDeck todavía escribe la clave (inerte, SLSsteam la ignora).
+- **curl in-process reemplazado por `curl` externo** (`f62d97c`, 07-11). SLSsteam pasó de libcurl in-process a `fork`+`execve("/bin/curl")` porque en SteamOS `libssl.3.so` **crashea** al curlear ciertas URLs (certs rotos, causa poco clara). **Riesgo de la misma clase para lumalinux:** usamos libcurl in-process (`curl.cpp` dlopen, `gmrc_store`, `update.cpp`) contra HTTPS (`raw.githubusercontent.com/.../updates.yaml` al arrancar, `manifest.opensteamtool.com`, `manifest.steam.run`). No observado nunca con nuestras URLs, y el fix de SLSsteam (curl externo) es pesado, así que **solo vigilado, no accionado**. Si aparece un crash de arranque correlado con el fetch de `updates.yaml`, esta es la causa.
+- **Evolución del borrow de logros** (refina §7.3): optimizado con **protobufs** en vez de scrapear el HTML del perfil (`4f3e607`), **blacklist de perfiles fallidos por AppId** para acelerar cargas posteriores (`0d6b3a8`), `MaxSchemaTries` configurable (default 10; `0` = solo caché offline) (`4ab84f7`, `c063fb1`), opción de auto-update de schema (`6e8d357`), y refactor + checks en `achievements.cpp` (`c12234f`, `aa316c4`), que es nuestro objetivo de hook. Validamos `sls_achievement_unblock` on-device contra `d35a697`/20260711, así que los anclajes (símbolos + patrón del guard) **casan hoy**; un refactor futuro podría moverlos y el fail-safe lo cubre.
+- **SafeMode**: bumps de `res/updates.yaml` / `res/version.txt` (nuevos hashes de `steamclient.so`). Sin impacto salvo el co-gating de §3.
