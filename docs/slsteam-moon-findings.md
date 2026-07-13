@@ -1,7 +1,7 @@
 # Findings — slsteam-moon vs lumalinux (research notes)
 
-*Investigation date: 2026-06-23. Reference: [`unplausible/slsteam-moon`](https://codeberg.org/unplausible/slsteam-moon)
-v2.6 (AGPL-3.0). These are notes for a possible future port of selected ideas
+*Investigation date: 2026-06-23. Reference: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon)
+v2.6 (AGPL-3.0) (the project moved off Codeberg `unplausible/slsteam-moon` to GitHub mid-2026). These are notes for a possible future port of selected ideas
 into lumalinux / LumaDeck — nothing here is implemented yet.*
 
 ## Context
@@ -685,8 +685,8 @@ Decky-aware; moon + LumaDeck can share 8080), **M7** (don't shim `steam.sh`).
   `src/hooks/depot_dependency_hook.cpp`, `src/hooks/gmrc_hook.cpp`,
   `src/gmrc_store.hpp`, `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
   §2–3, §6.
-- moon source reviewed: [`unplausible/slsteam-moon`](https://codeberg.org/unplausible/slsteam-moon)
-  v2.6 (AGPL-3.0).
+- moon source reviewed: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon)
+  v2.6 (AGPL-3.0) (formerly Codeberg `unplausible/slsteam-moon`; the project moved to GitHub).
 - Part 2 — reviewed: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon)
   `main`, commits 2026-06-23 → 2026-07-05. Key files: `src/patterns.cpp`,
   `src/patterns.hpp`, `src/feats/ipcframe.hpp` (M1); `src/config.cpp`,
