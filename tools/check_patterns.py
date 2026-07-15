@@ -49,12 +49,12 @@ import sys
 #   NONCRITICAL — ShaderDepot: a miss only loses the per-game shader skip;
 #                 installs still work, so the hash can still be whitelisted, but
 #                 we still open an issue so it gets re-derived (per user request).
-#   DIAGNOSTIC  — LoadPackage: opt-in, multi-match is EXPECTED (3 candidates, the
-#                 runtime picks index 0). Never blocks, never opens an issue —
-#                 reported for information only.
+#   DIAGNOSTIC  — never blocks, never opens an issue; reported for information
+#                 only. LoadPackage (opt-in, multi-match EXPECTED — 3 candidates,
+#                 runtime picks index 0) and BuildDep (disabled since SLSsteam
+#                 20260714 owns BuildDepotDependency and hooks it first) live here.
 CRITICAL = {
     "kDepotKeyFnPattern":          "DepotKey",
-    "kBuildDepotDependencyPattern": "BuildDep",
     "kGmrcFunctionPattern":        "GMRC",
 }
 NONCRITICAL = {
@@ -62,6 +62,11 @@ NONCRITICAL = {
 }
 DIAGNOSTIC = {
     "kLoadPackagePattern": "LoadPackage",
+    # BuildDep is disabled at runtime since SLSsteam 20260714 owns
+    # BuildDepotDependency (it hooks the prologue in memory first). We no longer
+    # install the hook, so a pattern miss must NOT block the whitelist. Validate
+    # for information only; re-promote to CRITICAL if BuildDep is re-enabled.
+    "kBuildDepotDependencyPattern": "BuildDep",
 }
 
 # ── finder anchors (§13.5) — mirrored from package_zero_finder.cpp ────────────
@@ -301,7 +306,7 @@ def main():
         rva = (" @ " + info["rvas"][0]) if info["rvas"] else ""
         extra = ""
         if info["tier"] == "diagnostic":
-            extra = "  (diagnostic-only; multi-match expected)"
+            extra = "  (diagnostic-only; does not block)"
         elif info["tier"] == "noncritical":
             extra = "  (non-critical)"
         print("  %-12s %-13s%s%s" % (label, info["status"], rva, extra))

@@ -183,10 +183,21 @@ void InstallHooks() {
     struct HookSpec { const char* name; const char* disableEnv; bool (*install)(); };
     std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
-        {"BuildDep",    "LUMA_NO_BUILDDEP", &Hooks::DepotDependency::Install},
         {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
         {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},
     };
+    // BuildDep is OFF by default since SLSsteam 20260714 hooks
+    // BuildDepotDependency itself (for its ManifestIds / DepotBlacklist
+    // features) and loads first (LD_AUDIT before our LD_PRELOAD), overwriting
+    // the prologue. Our pattern scan then can't match and reports a false
+    // FAILED, which LumaDeck used to surface as "Steam build not supported".
+    // The hook is pin-only and inert in the default no-pin flow, so disabling
+    // it loses nothing there; version pinning moves to SLSsteam's ManifestIds.
+    // Force it back on for testing with LUMA_FORCE_BUILDDEP.
+    const bool forceBuildDep = std::getenv("LUMA_FORCE_BUILDDEP") != nullptr;
+    if (forceBuildDep) {
+        specs.push_back({"BuildDep", "LUMA_NO_BUILDDEP", &Hooks::DepotDependency::Install});
+    }
     if (const char* dbg = std::getenv("LUMA_LOADPKG_DEBUG"); dbg && dbg[0] && dbg[0] != '0') {
         specs.push_back({"LoadPackage", "LUMA_NO_LOADPKG", &Hooks::LoadPackage::Install});
     }
@@ -214,6 +225,13 @@ void InstallHooks() {
             failed += s.name;
             Status::RecordHook(s.name, Status::FAILED);
         }
+    }
+
+    if (!forceBuildDep) {
+        // Record the intentional off-state so status.json is self-documenting:
+        // DISABLED, not FAILED. LumaDeck keys "Steam build not supported" off a
+        // failed critical hook; BuildDep is neither critical nor actually failing.
+        Status::RecordHook("BuildDep", Status::DISABLED);
     }
 
     Log::Info("Install: lumalinux active (%d/%d hooks)", active, expected);
