@@ -1084,7 +1084,8 @@ def run_accela_mark(args):
 # ── Modos sin-zip: pin/unpin de un juego YA desplegado (para LumaDeck) ─────────
 #
 # Cortan al principio de main() (como --accela-mark): NO abren zip, NO extraen,
-# NO tocan config.vdf. Solo editan keys.txt (y leen el .acf para --pin-installed).
+# NO tocan config.vdf. Editan la sección ManifestIds del config.yaml de SLSsteam
+# (y leen el .acf/keys.txt para saber los depots en --pin-installed).
 
 _KEYS_HEADER = [
     "# lumalinux keys.txt — managed by steamidra_lite.py",
@@ -1205,79 +1206,127 @@ def purge_depot_manifests(depotcache, config_depotcache, depot_ids):
     return removed
 
 
+# ── SLSsteam ManifestIds (el mecanismo de pin desde 20260714) ─────────────────
+#
+# lumalinux ya NO hookea BuildDepotDependency (SLSsteam lo hookea primero y gana
+# el orden de carga). El pin de versión se re-homea a `ManifestIds` en el
+# config.yaml de SLSsteam: un mapa depot_id -> manifest_gid que SLSsteam aplica
+# en SU buildDepotDependency (depot->manifestId = override). SLSsteam vigila el
+# config con inotify y lo recarga en caliente, así que no hace falta reiniciar
+# Steam; el freeze aplica en la siguiente evaluación del plan de descarga.
+
+def _app_content_depots(keys_path, app_id):
+    """Content depot ids de app_id según keys.txt (entradas EXTENDED, parent==app_id)."""
+    existing = _load_keys_file(keys_path)
+    return [did for did, e in existing.items() if e[0] == "ext" and e[1] == app_id]
+
+
+def _read_manifest_ids(config_path):
+    """Parsea la sección ManifestIds del config.yaml de SLSsteam → {depot_id: gid}
+    (ints). Editor de líneas a mano (SteamOS python no trae pyyaml). {} si el
+    fichero o la sección no existen."""
+    if not config_path.exists():
+        return {}
+    out = {}
+    in_section = False
+    for line in config_path.read_text(encoding="utf-8").splitlines():
+        if not in_section:
+            if line.strip().startswith("ManifestIds:"):
+                in_section = True
+            continue
+        # dentro de la sección: hijos indentados "depot: gid"; la primera línea
+        # NO indentada (o en blanco) cierra la sección.
+        if line[:1] not in (" ", "\t"):
+            break
+        m = re.match(r"^\s*(\d+)\s*:\s*(\d+)", line)
+        if m:
+            out[int(m.group(1))] = int(m.group(2))
+    return out
+
+
+def _write_manifest_ids(config_path, manifest_ids):
+    """Reescribe la sección ManifestIds del config.yaml con `manifest_ids`
+    ({depot: gid}). Crea la sección si falta (o el fichero, mínimo). Hace .bak.
+    Editor de líneas a mano; NO toca el resto del config."""
+    body = ["ManifestIds:"] + [f"  {did}: {gid}" for did, gid in sorted(manifest_ids.items())]
+    if not config_path.exists():
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("\n".join(body) + "\n", encoding="utf-8")
+        return
+    shutil.copy2(config_path, config_path.with_suffix(".yaml.bak"))
+    lines = config_path.read_text(encoding="utf-8").splitlines()
+    out, i, n, replaced = [], 0, len(lines), False
+    while i < n:
+        if lines[i].strip().startswith("ManifestIds:"):
+            i += 1  # saltar cabecera vieja + sus hijos indentados
+            while i < n and lines[i][:1] in (" ", "\t"):
+                i += 1
+            out.extend(body)
+            replaced = True
+            continue
+        out.append(lines[i])
+        i += 1
+    if not replaced:
+        if out and out[-1].strip() != "":
+            out.append("")
+        out.extend(body)
+    config_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+
+
 def run_pin_installed(args):
-    """--pin-installed APPID: congela el juego en la versión INSTALADA. Lee los
-    gids de appmanifest_<APPID>.acf:InstalledDepots y los escribe en keys.txt para
-    los content depots de este app (parent==APPID). No necesita zip."""
+    """--pin-installed APPID: congela el juego en la versión INSTALADA escribiendo
+    ManifestIds (depot->gid) en el config.yaml de SLSsteam. Lee los gids de
+    appmanifest_<APPID>.acf:InstalledDepots, acotado a los content depots de este
+    app (keys.txt). No necesita zip; SLSsteam recarga el config solo."""
     app_id = int(args.pin_installed)
-    print(f"== Pin a la versión instalada: appid {app_id} ==")
+    print(f"== Pin a la versión instalada (SLSsteam ManifestIds): appid {app_id} ==")
     installed = read_installed_depots(args.steam_root, app_id)
     if not installed:
         sys.exit(f"ERROR: sin InstalledDepots en appmanifest_{app_id}.acf "
                  f"(¿el juego está instalado?). Sin versión instalada no hay nada que pinear.")
-    existing = _load_keys_file(args.luma_keys)
-    pinned = []
-    for did, entry in list(existing.items()):
-        if entry[0] != "ext":
-            continue
-        _, parent, gid, size, key = entry
-        if parent == app_id and did in installed:
-            new_gid, new_size = installed[did]
-            existing[did] = ("ext", parent, new_gid, new_size, key)
-            pinned.append((did, new_gid))
-    if not pinned:
-        sys.exit(f"ERROR: ningún content depot de {app_id} en keys.txt coincide con "
+    content = _app_content_depots(args.luma_keys, app_id)
+    to_pin = {did: installed[did][0] for did in content
+              if did in installed and installed[did][0]}
+    if not to_pin:
+        sys.exit(f"ERROR: ningún content depot de {app_id} (keys.txt) coincide con "
                  f"InstalledDepots {sorted(installed)}. ¿Se desplegó con steamidra_lite?")
-    _write_keys_file(args.luma_keys, existing)
-    _toggle_stplugin_pin(args.steam_root, app_id, pin=True)
-    for did, gid in pinned:
-        print(f"  [+] {did} → gid {gid} (congelado)")
-    print("== Pinneado. Reinicia Steam; el juego se queda en esta versión. ==")
+    manifest_ids = _read_manifest_ids(args.sls_config)
+    manifest_ids.update(to_pin)
+    _write_manifest_ids(args.sls_config, manifest_ids)
+    for did, gid in sorted(to_pin.items()):
+        print(f"  [+] depot {did} → gid {gid} (ManifestIds)")
+    print("== Pinneado. SLSsteam recarga el config solo; el juego se queda en esta versión. ==")
 
 
 def run_unpin(args):
-    """--unpin APPID: vuelve el juego a auto-update. Pone a 0 los gids de los
-    content depots PINNEADOS de este app en keys.txt, comenta setManifestid, y
-    prunea su depotcache para que Steam re-pida el manifest actual a Valve."""
+    """--unpin APPID: vuelve el juego a auto-update quitando sus content depots de
+    ManifestIds en el config.yaml de SLSsteam. Steam vuelve a planear el manifest
+    más nuevo (GMRC lo pide) en el próximo update-check."""
     app_id = int(args.unpin)
     print(f"== Unpin (auto-update): appid {app_id} ==")
-    existing = _load_keys_file(args.luma_keys)
-    touched, changed = [], False
-    for did, entry in list(existing.items()):
-        if entry[0] != "ext":
-            continue
-        _, parent, gid, size, key = entry
-        if parent == app_id and (gid != 0 or size != 0):
-            existing[did] = ("ext", parent, 0, 0, key)
-            touched.append(did)
-            changed = True
-    if not any(e[0] == "ext" and e[1] == app_id for e in existing.values()):
+    content = set(_app_content_depots(args.luma_keys, app_id))
+    if not content:
         sys.exit(f"ERROR: ningún content depot de {app_id} en keys.txt. ¿appid correcto?")
-    if changed:
-        _write_keys_file(args.luma_keys, existing)
-    _toggle_stplugin_pin(args.steam_root, app_id, pin=False)
-    depotcache = args.steam_root / "depotcache"
-    config_depotcache = args.steam_root / "config" / "depotcache"
-    removed = purge_depot_manifests(depotcache, config_depotcache, touched)
-    if touched:
-        print(f"  [+] {len(touched)} depot(s) → gid 0 (auto-update): {sorted(touched)}")
-    else:
-        print("  [i] ya estaba en auto-update (gids a 0); nada que cambiar.")
+    manifest_ids = _read_manifest_ids(args.sls_config)
+    removed = [d for d in content if d in manifest_ids]
+    for d in removed:
+        del manifest_ids[d]
+    _write_manifest_ids(args.sls_config, manifest_ids)
     if removed:
-        print(f"  [+] depotcache: borrados {len(removed)} manifest(s) de esos depots")
-    print("== Despinneado. Reinicia Steam; volverá a seguir a Valve (auto-update). ==")
+        print(f"  [+] {len(removed)} depot(s) fuera de ManifestIds (auto-update): {sorted(removed)}")
+    else:
+        print("  [i] no estaba pinneado; nada que cambiar.")
+    print("== Despinneado. SLSsteam recarga el config solo; volverá a seguir a Valve. ==")
 
 
 def run_pin_status(args):
     """--pin-status APPID: imprime JSON {appid, pinned, depots}. pinned=True si
-    algún content depot de este app tiene gid≠0 en keys.txt."""
+    algún content depot de este app está en ManifestIds del config de SLSsteam."""
     app_id = int(args.pin_status)
-    existing = _load_keys_file(args.luma_keys)
-    depots = {}
-    for did, entry in existing.items():
-        if entry[0] == "ext" and entry[1] == app_id:
-            depots[did] = entry[2]  # gid
-    pinned = any(g != 0 for g in depots.values()) if depots else False
+    content = _app_content_depots(args.luma_keys, app_id)
+    manifest_ids = _read_manifest_ids(args.sls_config)
+    depots = {did: manifest_ids[did] for did in content if did in manifest_ids}
+    pinned = bool(depots)
     print(json.dumps({"appid": app_id, "pinned": pinned,
                       "depots": {str(d): str(g) for d, g in sorted(depots.items())}}))
 
@@ -1323,11 +1372,11 @@ def main():
                          "Steam termine de instalar el juego.")
     ap.add_argument("--pin-installed", type=int, default=None, metavar="APPID",
                     help="(modo sin-zip) Congela el juego en la versión INSTALADA: lee los gids "
-                         "de appmanifest_<APPID>.acf:InstalledDepots y los escribe en keys.txt. "
-                         "Para el toggle 'Pin' de LumaDeck. Ver docs/method.md §6.")
+                         "de appmanifest_<APPID>.acf:InstalledDepots y los escribe en ManifestIds "
+                         "del config.yaml de SLSsteam. Para el toggle 'Pin' de LumaDeck.")
     ap.add_argument("--unpin", type=int, default=None, metavar="APPID",
-                    help="(modo sin-zip) Vuelve el juego a auto-update: gids→0 en keys.txt + "
-                         "comenta setManifestid + prunea su depotcache.")
+                    help="(modo sin-zip) Vuelve el juego a auto-update: quita sus content depots "
+                         "de ManifestIds en el config.yaml de SLSsteam.")
     ap.add_argument("--pin-status", type=int, default=None, metavar="APPID",
                     help="(modo sin-zip) Imprime JSON {appid,pinned,depots} (para LumaDeck).")
     args = ap.parse_args()
