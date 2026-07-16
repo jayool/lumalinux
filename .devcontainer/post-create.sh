@@ -110,6 +110,13 @@ curl -fsSL -o "$HOME/homebrew/services/PluginLoader" \
     && chmod +x "$HOME/homebrew/services/PluginLoader" \
     || echo "  (descarga de PluginLoader falló — bájalo a mano si lo necesitas)"
 
+# Decky se inyecta por el puerto de debug CEF de Steam (localhost:8080), que
+# viene APAGADO por defecto. Este fichero marcador lo enciende. Creándolo AHORA
+# (antes del 1er arranque de Steam) el puerto abre desde el primer launch, sin
+# tener que reiniciar Steam luego.
+mkdir -p "$HOME/.local/share/Steam"
+touch "$HOME/.local/share/Steam/.cef-enable-remote-debugging"
+
 # =============================================================================
 # Helper: build lumalinux's liblumalinux.so (32-bit) from the checked-out repo.
 # =============================================================================
@@ -170,11 +177,25 @@ chmod +x "$HOME/deploy-lumadeck.sh"
 # =============================================================================
 cat > "$HOME/start-decky.sh" <<'SDK'
 #!/usr/bin/env bash
-# Arranca Decky PluginLoader como el usuario actual (NO root). Steam debe
-# estar ya corriendo (Decky se inyecta en su CEF).
+# Arranca Decky PluginLoader como el usuario actual (NO root: root rompe el
+# socket y chownea ~/homebrew). Steam debe estar corriendo con el debug CEF
+# abierto (puerto 8080).
 set -e
 LOADER="$HOME/homebrew/services/PluginLoader"
 [ -x "$LOADER" ] || { echo "No está $LOADER. Bájalo (post-create lo hace) o a mano."; exit 1; }
+
+# Decky se inyecta por el debug CEF de Steam (localhost:8080). Asegura el marcador.
+mkdir -p "$HOME/.local/share/Steam"
+touch "$HOME/.local/share/Steam/.cef-enable-remote-debugging"
+
+# ¿Responde el 8080? Si no, Steam arrancó sin el marcador -> hay que reiniciarlo.
+if ! curl -s http://localhost:8080/json/version >/dev/null 2>&1; then
+    echo "⚠ El debug CEF (8080) no responde: Steam arrancó sin el marcador."
+    echo "  El marcador ya está puesto; reinicia Steam y vuelve a lanzar esto:"
+    echo "    ~/.local/share/Steam/ubuntu12_32/steam -shutdown; sleep 5; DISPLAY=:1 steam -no-cef-sandbox &"
+    exit 1
+fi
+
 pkill -f 'homebrew/services/PluginLoader' 2>/dev/null || true
 sleep 0.3
 # Si un arranque previo como root dejó ~/homebrew de root, recupéralo:
@@ -271,7 +292,11 @@ no tienes la Deck a mano.
 
 1. `~/start-display.sh` -> abre el puerto **6080** forwardeado -> `/vnc.html`.
 2. `DISPLAY=:1 steam -no-cef-sandbox &` -> loguéate (la 1ª vez baja su runtime).
+   **Lánzalo así, simple. NO uses `dbus-run-session`** (ver Notas).
 3. `~/start-decky.sh` -> abre el QAM en Steam: icono Decky -> LumaDeck.
+   (El debug CEF de Steam ya viene activado por el marcador que crea post-create,
+   así que en un codespace nuevo no hace falta reiniciar Steam. Si start-decky
+   avisa de que el 8080 no responde, reinicia Steam una vez y relánzalo.)
 
 La UI se ve aunque los componentes salgan "not installed"; para revisar estados
 usa la pestaña **Dev** de LumaDeck (fuerza health/credenciales).
@@ -288,13 +313,27 @@ Hace, en orden y parándose en los pasos frágiles: headcrab (SLSsteam +
 CloudRedirect) -> reinicio Steam -> build + install.sh de lumalinux -> reinicio
 -> deploy LumaDeck -> arranca Decky.
 
-## Notas honestas
+## Lecciones aprendidas (léelas)
+
+- **Lanza Steam SIMPLE** (`DISPLAY=:1 steam -no-cef-sandbox &`). **NO lo envuelvas
+  en `dbus-run-session`**: levanta xdg-desktop-portal / a11y / launcher-service
+  que se comen la memoria, y el proceso peta con `mmap() failed: Cannot allocate
+  memory` a mansalva -> **pantalla negra**. Los warnings de dbus del arranque
+  simple (session bus, zenity) son **cosméticos**; déjalos.
+- **Decky necesita el debug CEF de Steam (localhost:8080)**, apagado por defecto.
+  Lo enciende el fichero `~/.local/share/Steam/.cef-enable-remote-debugging`
+  (post-create ya lo crea) + un arranque de Steam con él puesto. Arrancar el
+  PluginLoader SIN ese puerto abierto = Decky no aparece.
+- **Decky se arranca como el usuario `codespace`, NUNCA como root** (root rompe
+  el bind del socket y chownea ~/homebrew). ~/start-decky.sh ya lo hace bien.
+
+## Otras notas
 
 - El **login de Steam** es el único paso irreducible manual.
-- **Decky headless**: se arranca como usuario `codespace`, NUNCA como root (root
-  rompe el socket y chownea ~/homebrew). ~/start-decky.sh ya lo hace bien.
 - **headcrab** aquí es más benigno que en la Deck (no hay Game Mode / OOBE),
   pero sigue necesitando Steam corriendo.
+- Si ves `mmap() failed` incluso con el arranque simple, es el límite de memoria
+  del Codespace; usa un tipo de máquina más grande.
 - Logs: Decky /tmp/decky.log · Steam /tmp/steam.log · lumalinux
   ~/.cache/lumalinux/lumalinux.log
 EOF
