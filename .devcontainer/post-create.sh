@@ -97,6 +97,20 @@ else
 fi
 
 # =============================================================================
+# Decky Loader: create ~/homebrew and download the PluginLoader binary.
+# El binario se baja aqui (build-time); ARRANCARLO es runtime (~/start-decky.sh)
+# y va DESPUES de Steam. Siempre como el usuario codespace, NUNCA root: como
+# root Decky rompe el bind del socket (EACCES) y chownea ~/homebrew a root.
+# =============================================================================
+echo "Preparando Decky Loader..."
+mkdir -p "$HOME/homebrew/plugins" "$HOME/homebrew/services" \
+         "$HOME/homebrew/data" "$HOME/homebrew/logs" "$HOME/homebrew/themes"
+curl -fsSL -o "$HOME/homebrew/services/PluginLoader" \
+    https://github.com/SteamDeckHomebrew/decky-loader/releases/latest/download/PluginLoader \
+    && chmod +x "$HOME/homebrew/services/PluginLoader" \
+    || echo "  (descarga de PluginLoader falló — bájalo a mano si lo necesitas)"
+
+# =============================================================================
 # Helper: build lumalinux's liblumalinux.so (32-bit) from the checked-out repo.
 # =============================================================================
 cat > "$HOME/build-lumalinux.sh" <<'BLL'
@@ -119,15 +133,13 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 echo "== done. .so: =="
 find build -maxdepth 2 -name '*.so' -print
-echo
-echo "Para DESPLEGARLO hace falta SLSsteam (headcrab) + Steam arrancado una vez,"
-echo "y luego ./install.sh (ver ~/README.dev.md). El .so recién compilado va a"
-echo "~/.local/share/lumalinux/liblumalinux.so (cópialo ahí si install.sh bajó el de release)."
 BLL
 chmod +x "$HOME/build-lumalinux.sh"
 
 # =============================================================================
 # Helper: build LumaDeck and deploy it into Decky's plugins dir.
+# ~/homebrew es del usuario codespace (Decky corre como codespace), asi que
+# NO hace falta sudo.
 # =============================================================================
 cat > "$HOME/deploy-lumadeck.sh" <<'DLD'
 #!/usr/bin/env bash
@@ -143,16 +155,96 @@ npm install
 npm run build
 DEST="$HOME/homebrew/plugins/LumaDeck"
 echo "== deploy -> $DEST =="
-sudo rm -rf "$DEST"
-sudo mkdir -p "$DEST"
+rm -rf "$DEST"
+mkdir -p "$DEST"
 # A deployed Decky plugin = its runtime files (NOT src/, node_modules/, .git/).
 for p in plugin.json main.py package.json dist backend defaults assets LICENSE; do
-    [ -e "$p" ] && sudo cp -r "$p" "$DEST"/
+    [ -e "$p" ] && cp -r "$p" "$DEST"/
 done
-sudo chown -R "$(id -u):$(id -g)" "$DEST" 2>/dev/null || true
-echo "== hecho. Reinicia el plugin_loader de Decky para que lo recoja (ver ~/README.dev.md). =="
+echo "== hecho. Si Decky ya corre, reinícialo (~/start-decky.sh) para que lo recoja. =="
 DLD
 chmod +x "$HOME/deploy-lumadeck.sh"
+
+# =============================================================================
+# Helper: start Decky's PluginLoader (headless). Steam debe estar corriendo.
+# =============================================================================
+cat > "$HOME/start-decky.sh" <<'SDK'
+#!/usr/bin/env bash
+# Arranca Decky PluginLoader como el usuario actual (NO root). Steam debe
+# estar ya corriendo (Decky se inyecta en su CEF).
+set -e
+LOADER="$HOME/homebrew/services/PluginLoader"
+[ -x "$LOADER" ] || { echo "No está $LOADER. Bájalo (post-create lo hace) o a mano."; exit 1; }
+pkill -f 'homebrew/services/PluginLoader' 2>/dev/null || true
+sleep 0.3
+# Si un arranque previo como root dejó ~/homebrew de root, recupéralo:
+sudo chown -R "$(id -un):$(id -gn)" "$HOME/homebrew" 2>/dev/null || true
+env UNPRIVILEGED_PATH="$HOME/homebrew" PRIVILEGED_PATH="$HOME/homebrew" \
+    LOG_LEVEL=INFO HOME="$HOME" \
+    "$LOADER" > /tmp/decky.log 2>&1 &
+echo "Decky PluginLoader arrancado (PID $!). Log: /tmp/decky.log"
+echo "Abre el QAM en Steam; debería salir el icono de Decky con LumaDeck."
+SDK
+chmod +x "$HOME/start-decky.sh"
+
+# =============================================================================
+# Helper: finish-setup — la cadena funcional que necesita Steam corriendo.
+# Guiado (para en los pasos frágiles), NO caja negra.
+# =============================================================================
+cat > "$HOME/finish-setup.sh" <<'FIN'
+#!/usr/bin/env bash
+# Monta SLSsteam + lumalinux + LumaDeck + Decky. Ejecutar DESPUÉS de arrancar
+# Steam y loguearte. Cada paso frágil se para para que puedas verlo.
+set -e
+LUMALINUX="${LUMALINUX:-/workspaces/lumalinux}"
+[ -d "$LUMALINUX" ] || LUMALINUX="$HOME/lumalinux"
+STEAM="$HOME/.local/share/Steam/ubuntu12_32/steam"
+
+restart_steam() {
+    "$STEAM" -shutdown 2>/dev/null || true
+    for i in $(seq 1 20); do pgrep -x steam >/dev/null 2>&1 || break; sleep 1; done
+    ( DISPLAY=:1 steam -no-cef-sandbox >/tmp/steam.log 2>&1 & )
+    echo "  Steam relanzándose... dale ~20s."
+}
+
+echo "== 1) headcrab: SLSsteam + CloudRedirect =="
+echo "   (Steam debe estar corriendo. Aquí no hay Game Mode, va en escritorio.)"
+curl -fsSL https://headcrab.pages.dev | bash
+
+echo; echo ">> Reinicio Steam para cargar SLSsteam..."; restart_steam
+read -rp ">> Cuando Steam haya vuelto y esté logueado, Enter para seguir con lumalinux... " _
+
+echo "== 2) lumalinux: build + install.sh =="
+"$HOME/build-lumalinux.sh" "$LUMALINUX" || echo "   (build falló; install.sh usará el .so del release)"
+( cd "$LUMALINUX" && ./install.sh ) || echo "   install.sh falló (¿SLSsteam/steam.sh listos?)"
+SO=$(find "$LUMALINUX/build" -maxdepth 2 -name 'liblumalinux.so' 2>/dev/null | head -1)
+if [ -n "$SO" ]; then
+    mkdir -p "$HOME/.local/share/lumalinux"
+    cp "$SO" "$HOME/.local/share/lumalinux/liblumalinux.so"
+    echo "   (desplegado TU .so compilado en vez del release)"
+fi
+
+echo; echo ">> Reinicio Steam para cargar lumalinux..."; restart_steam
+read -rp ">> Cuando Steam haya vuelto, Enter para desplegar LumaDeck + Decky... " _
+
+echo "== 3) LumaDeck: build + deploy =="
+"$HOME/deploy-lumadeck.sh"
+
+echo "== 4) Decky =="
+"$HOME/start-decky.sh"
+
+echo
+echo "Hecho. Abre el QAM -> icono Decky -> LumaDeck."
+echo "Si algo no salió, mira: /tmp/decky.log (Decky), ~/.cache/lumalinux/lumalinux.log (lumalinux)."
+FIN
+chmod +x "$HOME/finish-setup.sh"
+
+# =============================================================================
+# Pre-deploy LumaDeck (build-time) so el plugin ya está puesto al arrancar.
+# No-fatal: si falla, se hace luego con ~/deploy-lumadeck.sh.
+# =============================================================================
+echo "Pre-desplegando LumaDeck..."
+"$HOME/deploy-lumadeck.sh" 2>&1 | tail -4 || echo "  (pre-deploy falló — hazlo luego con ~/deploy-lumadeck.sh)"
 
 # =============================================================================
 # README
@@ -164,47 +256,52 @@ Base = Arch Linux (SteamOS también es Arch, así que paths y paquetes coinciden
 con la Deck). Sirve para probar lumalinux y LumaDeck sobre un Steam real cuando
 no tienes la Deck a mano.
 
-## Pre-instalado por el container
+## Pre-hecho al crear el codespace
 
-  - Arch + multilib + locales, render por software (Mesa/Vulkan SW, no hay GPU)
-  - **Steam** (cliente), bwrap setuid (necesario en Codespaces)
-  - Display headless: Xvfb + openbox + x11vnc + noVNC (puerto 6080)
-  - Toolchain 32-bit (lumalinux): cmake, ninja, pkgconf, lib32-curl/openssl
-  - **nodejs + npm** (build de LumaDeck), unzip
-  - Repo LumaDeck clonado en ~/LumaDeck
-  - Scripts: ~/start-display.sh, ~/build-lumalinux.sh, ~/deploy-lumadeck.sh
+  - Arch + multilib + Steam + render por software (Mesa/Vulkan SW)
+  - Display headless (Xvfb + x11vnc + noVNC en :6080), machine-id, bwrap setuid
+  - Toolchain 32-bit (lumalinux) + nodejs/npm (LumaDeck) + unzip
+  - Repo LumaDeck clonado en ~/LumaDeck y **ya buildeado + desplegado** en
+    ~/homebrew/plugins/LumaDeck
+  - **Decky PluginLoader** bajado en ~/homebrew/services (falta arrancarlo)
+  - Scripts: ~/start-display.sh, ~/start-decky.sh, ~/finish-setup.sh,
+    ~/build-lumalinux.sh, ~/deploy-lumadeck.sh
 
-## Orden para montar el entorno
+## Arranque rápido (revisar la UI de LumaDeck)
 
-1. **Display**: `~/start-display.sh`, luego abre el puerto **6080** forwardeado
-   y entra a `/vnc.html`.
-2. **Steam**: `DISPLAY=:1 steam -no-cef-sandbox &`. La primera vez baja su
-   runtime y pide login. (Ya está instalado; no hace falta `pacman -S steam`.)
-3. **Decky Loader** (manual): instálalo. ⚠ En Codespaces **systemd no es PID 1**,
-   así que el instalador oficial (`systemctl --user enable plugin_loader`) puede
-   fallar; toca la ruta manual (bajar el binario a ~/homebrew/services y
-   arrancar el `plugin_loader` a mano). Este es el paso más frágil.
-4. **SLSsteam + CloudRedirect** (headcrab): `curl -fsSL https://headcrab.pages.dev | bash`.
-   ⚠ Hazlo con Steam **cerrado / fuera de Game Mode** (Game Mode reinicia Steam a
-   media instalación y puede dar OOBE). Arranca Steam una vez después para que
-   headcrab bootstrapee `steam.sh` (crea el `INJECT_SLS`).
-5. **lumalinux**: `~/build-lumalinux.sh` compila el `.so`. Para desplegarlo,
-   desde el repo: `./install.sh` (exige SLSsteam + `steam.sh` del paso 4).
-   install.sh baja el `.so` del último release; si quieres el que acabas de
-   compilar, cópialo a `~/.local/share/lumalinux/liblumalinux.so`.
-6. **LumaDeck**: `~/deploy-lumadeck.sh` (build + copia a ~/homebrew/plugins),
-   luego **reinicia el plugin_loader** para que lo recoja.
-7. **Reinicia Steam** para cargarlo todo.
+1. `~/start-display.sh` -> abre el puerto **6080** forwardeado -> `/vnc.html`.
+2. `DISPLAY=:1 steam -no-cef-sandbox &` -> loguéate (la 1ª vez baja su runtime).
+3. `~/start-decky.sh` -> abre el QAM en Steam: icono Decky -> LumaDeck.
+
+La UI se ve aunque los componentes salgan "not installed"; para revisar estados
+usa la pestaña **Dev** de LumaDeck (fuerza health/credenciales).
+
+## Stack funcional completo (descargas de verdad)
+
+Para SLSsteam + lumalinux + descargas reales, tras loguearte en Steam:
+
+```
+~/finish-setup.sh
+```
+
+Hace, en orden y parándose en los pasos frágiles: headcrab (SLSsteam +
+CloudRedirect) -> reinicio Steam -> build + install.sh de lumalinux -> reinicio
+-> deploy LumaDeck -> arranca Decky.
 
 ## Notas honestas
 
-Los pasos 3 (Decky headless) y 4 (headcrab quiere desktop, Game Mode da OOBE)
-son los que dan guerra en Codespaces. Los scripts automatizan lo fiable (deps,
-build, deploy de ficheros); esos dos pasos van a mano y pueden requerir toqueteo.
+- El **login de Steam** es el único paso irreducible manual.
+- **Decky headless**: se arranca como usuario `codespace`, NUNCA como root (root
+  rompe el socket y chownea ~/homebrew). ~/start-decky.sh ya lo hace bien.
+- **headcrab** aquí es más benigno que en la Deck (no hay Game Mode / OOBE),
+  pero sigue necesitando Steam corriendo.
+- Logs: Decky /tmp/decky.log · Steam /tmp/steam.log · lumalinux
+  ~/.cache/lumalinux/lumalinux.log
 EOF
 
 echo
 echo "post-create OK."
-echo "  1) ~/start-display.sh  -> abre el puerto 6080 (/vnc.html)"
-echo "  2) DISPLAY=:1 steam -no-cef-sandbox &"
-echo "  Flujo completo en ~/README.dev.md"
+echo "  1) ~/start-display.sh   -> puerto 6080 (/vnc.html)"
+echo "  2) DISPLAY=:1 steam -no-cef-sandbox &   (login)"
+echo "  3) ~/start-decky.sh     -> QAM -> LumaDeck"
+echo "  Stack funcional completo: ~/finish-setup.sh   ·   Todo en ~/README.dev.md"
