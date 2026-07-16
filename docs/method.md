@@ -61,8 +61,9 @@ make the client *able* to: fake ownership, surface the depots, serve the depot
 keys, and supply the manifest request code(s). Disk layout is identical to a
 legitimate install.
 
-- **lumalinux** (Linux) — the package-0 finder + DepotKey/BuildDep/GMRC hooks +
-  SLSsteam.
+- **lumalinux** (Linux) — the package-0 finder + DepotKey/GMRC hooks +
+  SLSsteam. (The BuildDep hook is disabled since v0.16.10; pinning moved to
+  SLSsteam `ManifestIds`.)
 - **SteamTools / OpenSteamTool** (Windows) — hooks `steamclient64.dll` and
   supplies the manifest code to the client (`fetch_manifest_code_ex`). Verified:
   OpenSteamTool ships **no depot chunk downloader** — Steam does the download.
@@ -121,16 +122,20 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
    Steam is already querying — **not** load-bearing; the LumaDeck flow writes no
    AppTokens. moon/LumaCore confirm ownership is established purely by package-0 +
    `CheckAppOwnership`.)
-9. **lumalinux** installs the DepotKey / BuildDep / GMRC hooks (plus the
-   **ShaderDepot** per-game shader-skip hook, §13.10) and starts the
-   **package-0 finder** (see RESEARCH §13).
+9. **lumalinux** installs the DepotKey / GMRC hooks (plus the **ShaderDepot**
+   per-game shader-skip hook, §13.10) and starts the **package-0 finder** (see
+   RESEARCH §13). (The **BuildDep** hook is disabled since v0.16.10 — SLSsteam
+   20260714 owns `BuildDepotDependency`; see gate 4 below.)
 
 **Phase 2 — you press Install (the runtime chain):**
 10. **package-0 finder** clears **gate 3**: finds Package 0 in memory and
     appends the game's depot ids to its `AppIdVec` → the depots survive the
     per-depot licence filter.
-11. **BuildDep** clears **gate 4**: patches each surfaced depot's manifest
-    GID/size to the pinned version.
+11. **Gate 4** (manifest pinning) is only needed when a game is pinned to an
+    older version. It is now handled by **SLSsteam's `ManifestIds`** (written by
+    `steamidra_lite --pin-installed`), not lumalinux: SLSsteam 20260714 hooks
+    `BuildDepotDependency` itself, so lumalinux's BuildDep hook is disabled. In
+    the default no-pin flow nothing pins, and Steam fetches the current manifest.
 12. **DepotKey** clears **gate 5**: serves each depot's AES key from `keys.txt`
     when Steam asks.
 13. **GMRC** clears **gate 6**: when Steam asks Valve for a manifest request code
@@ -154,7 +159,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 | **Injection** | `LD_PRELOAD` in `steam.sh` (added by Headcrab) | `dwmapi.dll` proxy → `LumaCore.dll` → copies `steamclient64.dll` to `bin\lcoverlay.dll` and hooks the copy | `dwmapi.dll`+`xinput1_4.dll`+`OpenSteamTool.dll` proxies; hooks `steamclient64.dll` + `steamui.dll` |
 | **1+2 Ownership / PICS** | **SLSsteam** (separate, `LD_AUDIT`): `CheckAppOwnership` + subscribed apps (these open the appinfo); optional PICS access-token attach (secondary, LumaDeck writes none) | **LumaCore itself**: `PackagePatch::CheckAppOwnership` patch, forged AppTicket/ETicket (`CmdUser`/`IPCBus`, for Denuvo), `SteamCapture::NotifyLicenseChanged` (in-memory licence inject, no restart) | Forged AppTicket/ETicket, ConfigStore ticket reuse, SteamStub vuln |
 | **3 Depot surfacing** | package-0 **finder** (active cache walk, §13) | `PackagePatch::LoadPackage` (hook, injects appids into Package 0's `AppIdVec`) | KeyValues / manifest patching |
-| **4 Manifest pinning** | **BuildDep** hook (`BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (identical) | manifest patching |
+| **4 Manifest pinning** | **SLSsteam** `ManifestIds` (since v0.16.10; lumalinux's BuildDep hook disabled, SLSsteam owns `BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (hook) | manifest patching |
 | **5 Depot key** | **DepotKey** hook from `keys.txt` | `DepotKeys::LoadDepotDecryptionKey` from `.lua` | `addappid(depot,0,"hexkey")` in lua |
 | **6 Manifest request code** | **GMRC** hook at runtime (3-provider cascade: opensteamtool→wudrm→steamrun, §5) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-download manifests — **LumaCore.dll has no runtime GMRC hook** (verified) | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
 | **Who downloads content** | Steam client (Model A) | Steam client; manifests pre-seeded by SteaMidra (Model A) | Steam client (Model A) |

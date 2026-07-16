@@ -31,7 +31,7 @@ SLSsteam** (no fork, no patch of SLSsteam).
 | Appinfo for unowned apps (so Steam sees the depot/manifest list) | **SLSsteam** ownership spoof (`CheckAppOwnership`) + lumalinux package-0 inject — these open it. `Apps::sendPICSInfoRequest` (eMsg 8903) can *also* attach an access token, but only as a **secondary** helper for apps Steam already queries; not load-bearing, and LumaDeck writes none |
 | Family-share / offline bits | **SLSsteam** |
 | Surface the content depots into the download plan | **lumalinux** package-0 finder (see §13). The LoadPackage hook stays installed but is diagnostic-only since v0.13.0. |
-| Pin each depot to the right manifest (gid/size) | **lumalinux** BuildDep |
+| Pin each depot to the right manifest (gid/size) | **SLSsteam** `ManifestIds` (since v0.16.10; lumalinux's BuildDep hook is **disabled** because SLSsteam 20260714 owns `BuildDepotDependency`) |
 | Provide the depot AES decryption keys | **lumalinux** DepotKey |
 | Provide the **manifest request code** (CDN download authorization) | **lumalinux** GMRC |
 | Skip the shader pre-cache for keyless games (per game, not global) | **lumalinux** ShaderDepot (§13.10) |
@@ -114,6 +114,16 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   dispatcher and short-circuiting it corrupts Steam's heap on owned depots.
 
 ### BuildDep — `CUserAppManager::BuildDepotDependency`
+
+> **STATUS (v0.16.10+): the BuildDep hook is DISABLED.** SLSsteam 20260714 hooks
+> `BuildDepotDependency` itself (for its `ManifestIds`/`DepotBlacklist` features)
+> and loads first (`LD_AUDIT` before our `LD_PRELOAD`), overwriting the prologue,
+> so our pattern scan can no longer match. Version pinning moved to SLSsteam's
+> `ManifestIds` (written by `steamidra_lite --pin-installed`). The hook is
+> pin-only and inert in the default no-pin flow, so nothing is lost. Re-enable
+> for testing with `LUMA_FORCE_BUILDDEP`. Everything below describes how the hook
+> worked while it was active.
+
 - 8 args, cdecl; `pDepotInfo`/`pSharedDepotInfo` are `CUtlVector<DepotEntry>`.
 - `DepotEntry` = 32 bytes: `{u32 DepotId; u32 AppId; u64 ManifestGid; u64 ManifestSize; u32 DlcAppId; u8 LcsRequired; u8 bNotNewTarget; u8 SharedInstall; u8 pad}`.
 - `CUtlVector<T>` = 16-byte header `{T* m_pMemory; int m_nAllocationCount; int m_nGrowSize; u32 m_Size}`.
@@ -641,9 +651,12 @@ suspicion, no longer using LumaCore parallels as anchors, is:
 
 1. **Stale Patterns after a Steam update** — a single byte change in any
    hooked function's prologue silently uninstalls that hook. This matters
-   most for **DepotKey, BuildDep and GMRC**: those are pattern-anchored
-   inline hooks, and if they break, install breaks. **LoadPackage is much
-   less critical now**: since v0.13.0 it's diagnostic-only, and depot
+   most for **DepotKey and GMRC**: those are pattern-anchored inline hooks,
+   and if they break, install breaks. (**BuildDep** was in this set until
+   v0.16.10; it is now disabled — SLSsteam owns `BuildDepotDependency` — so a
+   BuildDep pattern miss no longer matters and `check_patterns.py` treats it as
+   diagnostic.) **LoadPackage is much less critical now**: since v0.13.0 it's
+   diagnostic-only, and depot
    injection runs through the package-0 finder, which derives its addresses
    at runtime and doesn't depend on `kLoadPackagePattern` (so even a broken
    LoadPackage pattern still leaves installs working — only the
