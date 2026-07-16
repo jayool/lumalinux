@@ -16,7 +16,7 @@ stack. For the *why* behind every step see [`method.md`](method.md) §6 and
 - Native Steam + SLSsteam (via enter-the-wired/Headcrab) + lumalinux installed
   via `install.sh` (so `steam.sh` carries the `LD_PRELOAD` patch). Confirm with a
   toast `lumalinux … N/N hooks active` and `~/.cache/lumalinux/lumalinux.log`
-  showing `4/4 hooks active` + `PKG0_FINDER: HIT`.
+  showing `3/3 hooks active` + `PKG0_FINDER: HIT`.
 - A Hubcap `.zip` for the game (the **current** version) and **one old
   `.manifest`** per content depot you want to start from. The old manifests come
   from SteamDB / a previous Hubcap; their filename must be
@@ -61,6 +61,13 @@ with zipfile.ZipFile(f"{APP}_old.zip", "w", zipfile.ZIP_DEFLATED) as zout:
 
 ## Step 2 — deploy + install the old version, pinned (Fase A)
 
+> **NOTE — BuildDep is disabled by default.** SLSsteam now owns version pinning
+> via its `config.yaml` `ManifestIds`, so lumalinux's BuildDep hook is **not in
+> the default hook set** and the zip `--pin` flag only writes `keys.txt` (whose
+> sole consumer was BuildDep). This pin-an-old-version test path therefore
+> **only works if you launch Steam with `LUMA_FORCE_BUILDDEP=1`**; without it
+> the `--pin` write lands in `keys.txt` but nothing actually pins.
+
 Steam must be **closed** first (`steamidra_lite` writes `config.vdf`, which Steam
 rewrites on exit). We use **`--pin`** so the game installs at the old version and
 **stays** there (the default is no-pin / auto-update).
@@ -72,9 +79,10 @@ python3 tools/steamidra_lite.py ./APP_old.zip --pin
 grep "^DEPOT;" ~/.config/lumalinux/keys.txt
 ```
 
-Start Steam and click **Install**. Watch `BuildDep: PATCH … -> GID_OLD` and
-`LoadDepotKey: SERVED` in `lumalinux.log`. When it finishes, the `.acf` proves
-the old version is installed:
+Start Steam (with `LUMA_FORCE_BUILDDEP=1`) and click **Install**. Watch
+`LoadDepotKey: SERVED` in `lumalinux.log`; the `BuildDep: PATCH … -> GID_OLD`
+line **only appears when `LUMA_FORCE_BUILDDEP=1`** (BuildDep is off in the
+default set). When it finishes, the `.acf` proves the old version is installed:
 
 ```bash
 grep -A3 InstalledDepots ~/.local/share/Steam/steamapps/appmanifest_APP.acf
@@ -110,10 +118,11 @@ rm -f ~/.local/share/Steam/depotcache/DEPOT_* \
       ~/.local/share/Steam/config/depotcache/DEPOT_*
 ```
 
-Restart Steam. With `gid=0`, BuildDep stops patching this depot (log:
-`BuildDep: app APP … none required patching`, **no** `PATCH` line), so Steam uses
-Valve's current gid, fetches the new manifest (GMRC supplies its request code at
-runtime), downloads the delta, and updates — **on its own**. Verify:
+Restart Steam. With `gid=0` there is no pin, so by default there are **no
+BuildDep log lines at all** (the hook is disabled) — the auto-update follows
+directly from `gid=0`: Steam plans Valve's current manifest, fetches it (GMRC
+supplies its request code at runtime), downloads the delta, and updates — **on
+its own**. Verify:
 
 ```bash
 grep -iE 'APP.*finished update|DEPOT \(' ~/.local/share/Steam/logs/content_log.txt | tail

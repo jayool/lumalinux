@@ -75,10 +75,14 @@ progress shown in the Steam library.
 ## Pinning: auto-update vs frozen
 
 By **default (no `--pin`)** the EXTENDED entries are written with `gid` and `size`
-set to `0`, so the BuildDep hook passes the depot through unchanged and the game
-**auto-updates** like an owned title. Pass **`--pin`** to freeze the game to the
-exact manifest in the zip (real `gid`/`size`, `setManifestid` kept uncommented in
-the stplug-in `.lua`). The tradeoffs, and how to move a pinned game to a new
+set to `0` (no pin), so with nothing pinning the depot the game **auto-updates**
+like an owned title. Pass **`--pin`** to write the zip's exact `gid`/`size` into
+`keys.txt` (and keep `setManifestid` uncommented in the stplug-in `.lua`) — but
+note that `keys.txt`'s only consumer was the **BuildDep hook, which is disabled by
+default**, so the zip `--pin` no longer freezes anything on its own. The supported
+freeze is `--pin-installed`, which writes SLSsteam `config.yaml` `ManifestIds`
+(see below); the zip `--pin` write only takes effect if you launch Steam with
+`LUMA_FORCE_BUILDDEP=1`. The tradeoffs, and how to move a pinned game to a new
 version, are in [`method.md`](method.md) §6.
 
 ## CLI reference
@@ -89,7 +93,7 @@ Main install (zip in, full deploy):
 |---|---|
 | `<appid>.zip` | Hubcap-style zip (`.lua` + `.manifest` files). The default input. |
 | `--manifests-dir <dir>` | Legacy input: a loose `.lua` + manifests directory instead of a zip. |
-| `--pin` | Freeze to the zip's manifest (default is no-pin, which auto-updates). |
+| `--pin` | Write the zip's manifest gid into `keys.txt` (default is no-pin, which auto-updates). Note: this no longer freezes on its own — its only consumer, the BuildDep hook, is disabled by default; the supported freeze is `--pin-installed` via SLSsteam `ManifestIds`. |
 | `--name <name>` | Canonical game name used for the `.acf` `name` + `installdir`, skipping the store-API fetch (avoids the appid-as-installdir fallback). LumaDeck passes it. |
 | `--token APPID:HEX` | AppToken for a game that needs one (repeatable). |
 | `--no-vdf` | Skip the `config.vdf` DecryptionKeys injection. |
@@ -100,7 +104,7 @@ Modes that operate on an **already-deployed** game (no zip, install nothing new)
 | Mode | Effect |
 |---|---|
 | `--accela-mark <appid>` | Recreate the ACCELA `.DepotDownloader` marker + `.depot` tracker once the game's files exist. Reads the real `installdir` from the `.acf` and recovers the depot/manifest from the stplug-in `.lua`. Idempotent. |
-| `--pin-installed <appid>` | Freeze an already-installed game to its current manifest (touches `keys.txt` / stplug-in / depotcache only). |
+| `--pin-installed <appid>` | Freeze an already-installed game to its current manifest by writing its depot→gid map into SLSsteam `config.yaml` `ManifestIds` (touches none of `keys.txt` / stplug-in / depotcache). |
 | `--unpin <appid>` | Un-freeze an installed game so it auto-updates again. |
 | `--pin-status <appid>` | Report whether an installed game is pinned. |
 
@@ -109,8 +113,10 @@ Modes that operate on an **already-deployed** game (no zip, install nothing new)
 `keys.txt` lives at `~/.config/lumalinux/keys.txt`. Three line shapes:
 
 - **EXTENDED** (all keyed depots, content and shared):
-  `depot;parent_app;manifest_gid;size;key`. lumalinux pins the manifest via
-  BuildDep (unless `gid`/`size` are 0, the no-pin passthrough) and serves the key.
+  `depot;parent_app;manifest_gid;size;key`. The DepotKey hook serves the key.
+  (Manifest pinning is **not** driven from here: it's owned by SLSsteam
+  `config.yaml` `ManifestIds`; the `gid`/`size` fields fed the BuildDep hook,
+  which is disabled by default.)
 - **LEGACY** (the app id, when the `.lua` ships a real key for it): `app_id;<key>`.
   The DepotKey hook serves it.
 - **presence-only** (the app id, no key): `app_id;` (empty key field). Listed so

@@ -83,8 +83,10 @@ Inside `steamclient.so`, lumalinux supplies what Steam's native install needs fo
 game you configured locally:
 
 - **depot keys** from a local `keys.txt` (DepotKey hook)
-- **manifest pinning** to the right version per depot (BuildDep hook)
-- the **manifest request code** fetch from `gmrc.wudrm.com` (GMRC hook)
+- **manifest pinning** to the right version per depot (SLSsteam `config.yaml`
+  `ManifestIds`; lumalinux's BuildDep hook is disabled by default)
+- the **manifest request code** fetch via a provider cascade — `opensteamtool`
+  (primary) → `wudrm` → `steamrun` (GMRC hook)
 - a per-game **shader-cache skip** so keyless games don't loop on `Missing
   decryption key` (ShaderDepot hook)
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
@@ -134,7 +136,8 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
 - `LUMA_LOG_LEVEL`: `error` / `warn` / `info` / `debug` (or `0`..`3`); default
   `info`. Set `debug` for the per-call hook traces.
 - `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC`: disable one install-path
-  hook.
+  hook. (`LUMA_NO_BUILDDEP` is a no-op unless `LUMA_FORCE_BUILDDEP` is also set,
+  since BuildDep isn't installed by default.)
 - `LUMA_NO_SHADERSKIP`: disable the per-game shader-skip (ShaderDepot); installs are
   unaffected.
 - `LUMA_NO_PKG0_FINDER=1`: disable the package-0 finder (the sole depot injector, on
@@ -154,7 +157,8 @@ Almost always a Steam client or SLSsteam update. The log tells the cases apart, 
   `steam.sh`). Reapply lumalinux (see [After a Headcrab/SLSsteam
   update](#after-a-headcrabslssteam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
-  §A). DepotKey/BuildDep/GMRC failing breaks installs; ShaderDepot is cosmetic.
+  §A). DepotKey + GMRC (plus the package-0 finder) failing breaks installs;
+  BuildDep is disabled by default and non-critical, and ShaderDepot is cosmetic.
 - **Install hangs at "0 target depots"**: the package-0 finder couldn't locate its
   anchors (maintenance §C).
 - **Native achievements off / `SLS-ach: could not resolve`**: SLSsteam changed;
@@ -216,8 +220,8 @@ Exact anchor and namespace detail in [RESEARCH §5](docs/RESEARCH.md).
   is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
   [`docs/cloudredirect.md`](docs/cloudredirect.md) for the `LD_PRELOAD` ordering.
-- Manifest request codes come from a provider cascade: `gmrc.wudrm.com` (primary),
-  with `manifest.opensteamtool.com` and `manifest.steam.run` as fallbacks
+- Manifest request codes come from a provider cascade: `manifest.opensteamtool.com`
+  (primary), with `gmrc.wudrm.com` and `manifest.steam.run` as fallbacks
   (RESEARCH §7).
 - Research / educational. Use with your own Steam account and content. Do not
   redistribute Valve binaries.

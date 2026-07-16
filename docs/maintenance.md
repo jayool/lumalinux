@@ -7,9 +7,9 @@ tiers of fix — start with the cheapest.
 
 Log: `~/.cache/lumalinux/lumalinux.log`.
 
-The startup toast shows `X/Y hooks active` (e.g. `4/4 hooks active` on v0.14
-defaults: DepotKey, BuildDep, GMRC, ShaderDepot). What to grep for, and what it
-tells you:
+The startup toast shows `X/Y hooks active` (e.g. `3/3 hooks active` on current
+defaults: DepotKey, GMRC, ShaderDepot — BuildDep is not in the default set). What
+to grep for, and what it tells you:
 
 | Grep finds… | Diagnosis | Go to |
 |---|---|---|
@@ -82,8 +82,10 @@ That's it. Users get the fix on next Steam launch, zero action required.
 
 ### A.2 Re-derive moved patterns (rebuild + release)
 
-If `verify-fix` shows `outcome=pattern_miss` on **BuildDep** or **GMRC**, a byte
+If `verify-fix` shows `outcome=pattern_miss` on **GMRC**, a byte
 pattern actually moved; the **string-anchored** hooks re-derive themselves.
+(BuildDep is **diagnostic** and disabled by default — a `pattern_miss` on it does
+not block; the blocking re-derive triggers are DepotKey + GMRC.)
 **DepotKey is different since 2026-07-06**: the shipped hook resolves via RTTI
 first (`CConfigStore` slot 6, RESEARCH §15), so its byte pattern is only a
 fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
@@ -105,7 +107,9 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
        -noanalysis -scriptPath tools -postScript derive_patterns.py
    ```
 
-   - **BuildDep** anchors on the string `"BuildDepotDependency"` → auto.
+   - **BuildDep** anchors on the string `"BuildDepotDependency"` → auto
+     (informational only now — the hook is disabled by default, so re-deriving
+     BuildDep doesn't block installs).
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
    - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) tries an
@@ -198,7 +202,7 @@ curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | 
 
 ## C) Package-0 finder lost its anchors (rare but blocking)
 
-**Symptom**: hooks install fine (`4/4 hooks active`), but installs hang at
+**Symptom**: hooks install fine (`3/3 hooks active`), but installs hang at
 "0 target depots" / "Fully Installed" with 0 bytes. The log shows the finder
 giving up:
 
@@ -308,7 +312,7 @@ target and jump to a garbage address → `SIGILL` → 5 fast exits → gamescope
 1. **No banner in the log** → B (re-run `install.sh`).
 2. **`SafeMode` mismatch but `verify-fix` is green** → A.1 (hash bump in
    `updates.yaml`, no rebuild).
-3. **`outcome=pattern_miss` on DepotKey/BuildDep/GMRC** → A.2 / A.3
+3. **`outcome=pattern_miss` on DepotKey/GMRC** → A.2 / A.3
    (re-derive patterns, rebuild, new release).
 4. **`PKG0_FINDER: ... not found`** → C (re-derive finder anchors by hand).
 5. **`SLS-ach: could not resolve…` / native cheevos off** → D (update SLSsteam

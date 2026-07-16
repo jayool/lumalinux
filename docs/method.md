@@ -213,16 +213,21 @@ today.
 
 ## 6. Game lifecycle: install, update, and manifest pinning
 
-Once a game is installed, its life is governed by the **manifest GID** each depot
-carries in `keys.txt` (`depot;parent;gid;size;key`) and how BuildDep acts on it.
-`steamidra_lite` has two modes:
+Once a game is installed, its life is governed by whether its depots are pinned
+to a specific **manifest GID** in SLSsteam's `config.yaml` `ManifestIds` (map
+depot_id → manifest_gid). `steamidra_lite` has two modes:
 
-- **No-pin (default)** — writes `gid=0`. BuildDep does **not** patch, so Steam
-  follows Valve's current manifest and the game **auto-updates** like a legit
-  owner. See "Auto-update by unpinning" below; validated in RESEARCH §14.
-- **`--pin`** — writes the zip's GID. BuildDep patches Steam's download plan to
-  it, so the game **stays frozen** on that exact version (e.g. a modded game that
-  only works on a specific build).
+- **No-pin (default)** — writes `gid=0` into `keys.txt` and adds **no**
+  `ManifestIds` entry, so Steam follows Valve's current manifest and the game
+  **auto-updates** like a legit owner. See "Auto-update by unpinning" below;
+  validated in RESEARCH §14.
+- **`--pin`** — writes the zip's GID into `keys.txt`. Note this **no longer
+  freezes on its own**: `keys.txt`'s only consumer was the BuildDep hook, which
+  is **disabled by default** (SLSsteam now owns pinning via `ManifestIds`), so
+  the zip `--pin` write only takes effect under `LUMA_FORCE_BUILDDEP=1`. To
+  actually freeze a game on an exact version (e.g. a modded game that only works
+  on a specific build), use `--pin-installed`, which writes SLSsteam
+  `ManifestIds`.
 
 ### Why a pin exists — and what auto-update risks
 
@@ -262,20 +267,23 @@ zip**:
 - Re-run `steamidra_lite --pin` with the new zip (LumaDeck's **"Re-download
   Manifest"** does exactly this). It rewrites `keys.txt` with the **new** GID
   (plus any new depots/keys the update added), pre-seeds the new manifest into
-  `depotcache`, and re-stubs the `.acf`.
-- BuildDep then pins the **new** version → Steam downloads the delta.
+  `depotcache`, and re-stubs the `.acf`. To actually hold the game on that
+  version, follow with `--pin-installed` (SLSsteam `ManifestIds`) — the zip
+  `--pin` alone doesn't freeze while BuildDep is disabled.
 
 To **freeze a running game on its current version** without a zip, LumaDeck's
 "pin to installed manifests" reads the gids from the `.acf` `InstalledDepots` and
-writes them into `keys.txt` (gid set) — the inverse of unpinning. This is
-implemented by `steamidra_lite`'s zip-less modes, which LumaDeck shells out to:
+writes them into SLSsteam's `config.yaml` `ManifestIds` (depot→gid) — the inverse
+of unpinning. This is implemented by `steamidra_lite`'s zip-less modes, which
+LumaDeck shells out to:
 
 - `--pin-installed APPID` — read `appmanifest_<APPID>.acf` `InstalledDepots` →
-  write those gids into the app's content-depot lines in `keys.txt` (freeze).
-- `--unpin APPID` — set those gids to 0, comment `setManifestid`, purge the
-  app's depotcache (back to auto-update).
-- `--pin-status APPID` — print `{appid, pinned, depots}` (so the UI toggle knows
-  which state to show).
+  write those depot→gid pairs into SLSsteam `config.yaml` `ManifestIds` (freeze).
+- `--unpin APPID` — remove the app's depots from `ManifestIds` (back to
+  auto-update); it does **not** touch `keys.txt`, the stplug-in `setManifestid`,
+  or `depotcache`.
+- `--pin-status APPID` — read `ManifestIds` and print `{appid, pinned, depots}`
+  (so the UI toggle knows which state to show).
 
 These short-circuit early (like `--accela-mark`): no zip, no full deploy.
 
@@ -291,10 +299,11 @@ On Linux/lumalinux, `keys.txt` — not the stplug-in `.lua` — is the source of
 truth, so "unpinning" a depot means three concrete steps:
 
 1. **`keys.txt`: set the depot's `manifest_gid` (and size) to `0`**, keeping the
-   key: `depot;parent;0;0;key`. With `gid=0`, `GetDepotsForApp` excludes the
-   depot, so **BuildDep does not patch it** → Steam uses Valve's real current
-   manifest gid (logs `BuildDep: app … none required patching`, never
-   `BuildDep: PATCH`). The depot is still injected into `PackageId=0`
+   key: `depot;parent;0;0;key`. With `gid=0` there is no pin, so Steam uses
+   Valve's real current manifest gid. (By default there are **no BuildDep log
+   lines at all** — the hook is disabled; even under `LUMA_FORCE_BUILDDEP=1`,
+   `GetDepotsForApp` would exclude a `gid=0` depot, so BuildDep wouldn't patch
+   it.) The depot is still injected into `PackageId=0`
    (`GetAllDepotIds` returns all depots regardless of gid) and its key is still
    served (DepotKey hook), so the new content still decrypts.
 2. **Comment `--setManifestid` in `config/stplug-in/<appid>.lua`** — parity with
@@ -370,8 +379,9 @@ shader pre-cache, never fired GMRC and still installed end to end.
 The content always comes from Steam's CDN, and in the native method the **Steam
 client** downloads it. The tools' job is to clear the six gates so the client
 will: SLSsteam/LumaCore fake **ownership** (1–2); a LoadPackage injection or the
-package-0 finder **surface the depots** (3); a BuildDep hook **pins the
-manifest** (4); a DepotKey hook **serves the AES key** (5); and the **manifest
+package-0 finder **surface the depots** (3); SLSsteam's `ManifestIds` **pin the
+manifest** (4, only when a game is pinned — lumalinux's BuildDep hook is disabled
+by default); a DepotKey hook **serves the AES key** (5); and the **manifest
 request code** (6) — the only server-validated token — is obtained from a
 third-party GMRC service, either by a runtime hook (lumalinux, SteamTools) or by
 pre-fetching the manifests (SteaMidra).
