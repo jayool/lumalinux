@@ -51,6 +51,15 @@ RUN chmod u+s /usr/bin/bwrap
 RUN echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen && locale-gen
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 
+# /etc/machine-id. Sin el, dbus no levanta el session bus y el
+# steam-runtime-launcher-service entra en crash-loop (Steam lo desactiva y
+# sigue, pero se pierden notificaciones / IPC). systemd-machine-id-setup
+# escribe un id aleatorio (no necesita systemd corriendo). Steam mira tanto
+# /etc/machine-id como /var/lib/dbus/machine-id, asi que enlazamos el segundo.
+RUN systemd-machine-id-setup \
+ && mkdir -p /var/lib/dbus \
+ && ln -sf /etc/machine-id /var/lib/dbus/machine-id
+
 # Usuario `codespace` con sudo NOPASSWD. Nombre coincide con la convencion
 # de Codespaces y con el `remoteUser` del devcontainer.json.
 RUN useradd -m -s /bin/bash -G wheel codespace \
