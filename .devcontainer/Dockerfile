@@ -1,8 +1,10 @@
-# Arch base for Codespaces — dependencies to install & run Steam.
+# Arch base for Codespaces — a SteamOS-like env to test lumalinux + LumaDeck.
 #
-# Provides: Arch + multilib + display headless por noVNC + Mesa SW +
-# bwrap setuid + build toolchain 32-bit. NO instala Steam: solo deja el
-# sistema listo para instalarlo/ejecutarlo.
+# Provides: Arch + multilib + Steam + display headless por noVNC + Mesa SW +
+# bwrap setuid + build toolchain 32-bit (lumalinux) + nodejs/npm (LumaDeck).
+# Steam se instala pero NO se arranca ni configura aqui (eso es runtime, via
+# los scripts que genera post-create.sh). Decky, SLSsteam/CloudRedirect
+# (headcrab) y el deploy de lumalinux siguen siendo manuales: ver README.dev.md.
 
 FROM archlinux:latest
 
@@ -14,24 +16,27 @@ RUN printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.c
 # pacman -Syu antes del install: mezclar partial-update con install corrompe
 # el sistema en Arch.
 #
-# Paquetes (dependencias para instalar/ejecutar Steam — Steam NO se instala):
+# Paquetes:
 #   - utilidades: base-devel git curl wget sudo nano vim less which
-#   - build toolchain 32-bit: cmake ninja pkgconf + lib32-curl lib32-openssl
+#   - build toolchain 32-bit (lumalinux): cmake ninja pkgconf + lib32-curl lib32-openssl
+#   - nodejs + npm: build del plugin LumaDeck (rollup). unzip: deploy por zip.
 #   - display headless: xorg-server-xvfb x11vnc openbox
 #       (noVNC y websockify se instalan en post-create — no estan en repos
 #       oficiales de Arch)
 #   - python + pip: necesarios para `pip install websockify`
 #   - Mesa SW + Vulkan SW + ICD loader: render por software (no hay GPU)
 #   - bubblewrap: setuid root en el siguiente RUN, ver justificacion abajo
+#   - steam: el cliente (multilib). Se instala aqui; se arranca en runtime.
 RUN pacman -Syu --noconfirm \
     base-devel git curl wget sudo nano vim less which \
     cmake ninja pkgconf \
+    nodejs npm unzip \
     xorg-server-xvfb x11vnc openbox \
     python python-pip \
     mesa lib32-mesa vulkan-swrast lib32-vulkan-swrast vulkan-mesa-layers \
     vulkan-icd-loader lib32-vulkan-icd-loader \
     lib32-curl lib32-openssl \
-    bubblewrap
+    bubblewrap steam
 
 # bwrap setuid root. Arch moderno distribuye bubblewrap sin setuid porque
 # asume el kernel tiene `kernel.unprivileged_userns_clone=1`. El kernel de
