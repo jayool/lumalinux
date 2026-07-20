@@ -389,13 +389,6 @@ void LumalinuxCtor() {
         }
         Log::Warn("Ctor: steamclient.so never appeared — giving up");
     }).detach();
-
-    // Hot-reload depot keys: watch keys.txt so a game added while Steam is
-    // running has its keys served by the DepotKey hook without a Steam restart.
-    // Detached like the thread above; the atexit(_exit) registered above covers
-    // its teardown, so it adds no _dl_fini teardown race. Only reloads our own
-    // KeyStore map — never touches Steam or re-installs hooks.
-    KeyStore::StartWatcher(KeyStore::DefaultPath());
 }
 
 __attribute__((destructor))

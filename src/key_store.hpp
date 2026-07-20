@@ -51,15 +51,6 @@ std::string DefaultPath();
 // Lines starting with # and blank lines are ignored.
 bool LoadFromFile(const std::string& path);
 
-// Start a detached background thread that watches the directory holding `path`
-// and reloads the store (LoadFromFile) whenever `path` is written or (re)created.
-// This is what lets a game added while Steam is *running* have its depot keys
-// served without a Steam restart: the DepotKey hook calls Lookup() per request,
-// so keys reloaded here take effect on the next download. steamidra_lite writes
-// keys.txt with a plain open/write/close, so the watch fires on a complete file.
-// Idempotent (a second call is a no-op). Call once, after the initial load.
-void StartWatcher(const std::string& path);
-
 // Lookup just the 32-byte key for a depot. Used by depot_key_hook.
 // Returns nullopt if the depot is not in the store OR if its entry is
 // presence-only (has_key=false) — in the latter case the hook should
