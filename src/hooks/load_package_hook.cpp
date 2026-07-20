@@ -8,10 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <string>
 #include <vector>
-
-#include <sys/stat.h>
 
 namespace {
 
@@ -178,34 +175,11 @@ bool InjectDepots(void* pInfo, const char* source) {
     auto depotIds = KeyStore::GetAllDepotIds();
     if (depotIds.empty()) return false;
 
-    // Default path: seed everything into AppIdVec (+0x38), as lumalinux always
-    // has — Steam's per-depot license filter reads it (RESEARCH.md §"PackageId 0").
-    bool any = AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec");
-
-    // EXPERIMENT — ALSO seed DepotIdVec (+0x48). moon claims Steam's
-    // depot-eligibility filter reads DepotIdVec, not AppIdVec; our docs say the
-    // opposite. This is purely additive (AppIdVec is still seeded above, so
-    // downloads cannot regress), so it lets us observe on-device whether a
-    // populated DepotIdVec changes the install/no-restart behaviour before
-    // committing to moon's split model. Enabled by the env var
-    // LUMA_DEPOT_IDVEC=1 OR a marker file ~/.config/lumalinux/depot_idvec
-    // (the marker is easier to toggle in Game Mode — touch/rm + restart Steam).
-    // Read once (the finder re-injects on the same package, so a live toggle
-    // wouldn't retro-fill anyway; a Steam restart applies the change).
-    static const bool kDepotIdVec = []() -> bool {
-        if (std::getenv("LUMA_DEPOT_IDVEC") != nullptr) return true;
-        if (const char* home = std::getenv("HOME")) {
-            std::string marker = std::string(home) + "/.config/lumalinux/depot_idvec";
-            struct stat st;
-            if (::stat(marker.c_str(), &st) == 0) return true;
-        }
-        return false;
-    }();
-    if (kDepotIdVec) {
-        bool d = AppendIdsToVec(DepotIdVec(pInfo), depotIds, source, "DepotIdVec");
-        any = any || d;
-    }
-    return any;
+    // Seed everything into AppIdVec (+0x38) — Steam's per-depot license filter
+    // reads it (RESEARCH.md §"PackageId 0"). (The DepotIdVec experiment was
+    // removed: it did nothing without a license reconcile, which is the actual
+    // no-restart mechanism — see the reconcile path.)
+    return AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec");
 }
 
 bool Install() {
