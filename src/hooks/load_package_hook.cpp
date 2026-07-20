@@ -8,7 +8,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#include <sys/stat.h>
 
 namespace {
 
@@ -69,81 +72,64 @@ bool HookFn(void* pInfo, uint8_t* sha1, int32_t cn, void* p4) {
 
 namespace Hooks::LoadPackage {
 
-bool InjectDepots(void* pInfo, const char* source) {
-    if (!pInfo) return false;
+// Append `ids` to a package CUtlVector (AppIdVec or DepotIdVec), with the same
+// sanity checks / idempotent dedup / realloc-doubling growth the injection has
+// always had. `label` names the target vector for the logs. Returns true only
+// if something was actually written.
+static bool AppendIdsToVec(CUtlVector<uint32_t>* vec,
+                           const std::vector<uint32_t>& ids,
+                           const char* source, const char* label) {
+    if (!vec || ids.empty()) return false;
 
-    auto depotIds = KeyStore::GetAllDepotIds();
-    if (depotIds.empty()) return false;
-
-    CUtlVector<uint32_t>* vec = AppIdVec(pInfo);
     uint32_t oldSize = vec->m_Size;
     if (oldSize > 4096) {
-        Log::Warn("LoadPackage[%s]: PackageId=0 AppIdVec->m_Size=%u looks "
+        Log::Warn("LoadPackage[%s]: PackageId=0 %s->m_Size=%u looks "
                   "implausible (offset wrong?) — skipping injection",
-                  source, oldSize);
+                  source, label, oldSize);
         return false;
     }
 
-    Log::Debug("LoadPackage[%s]: PackageId=0 hit — vec mem=%p size=%u alloc=%d grow=%d",
-               source, (void*)vec->m_pMemory, vec->m_Size,
+    Log::Debug("LoadPackage[%s]: PackageId=0 %s — mem=%p size=%u alloc=%d grow=%d",
+               source, label, (void*)vec->m_pMemory, vec->m_Size,
                vec->m_nAllocationCount, vec->m_nGrowSize);
 
-    // Sanity: verify the offset we deduced for AppIdVec (+0x38) is sane.
-    // The free package on real accounts contains real AppIds — small positive
-    // integers, typically all distinct. If we're reading garbage we'd see
-    // values like 0, 0xFFFFFFFF, repeating bytes, or huge clusters. Sample
-    // the first 8 entries and abort if any look bogus.
+    // Sanity: verify the deduced offset is sane. Existing entries are real ids
+    // (small positive, distinct). Garbage (0, 0xFFFFFFFF, huge) means the
+    // offset is wrong — abort rather than corrupt the package.
     if (vec->m_pMemory && oldSize > 0) {
         uint32_t sampleN = oldSize < 8 ? oldSize : 8;
         for (uint32_t i = 0; i < sampleN; ++i) {
             uint32_t a = vec->m_pMemory[i];
             if (a == 0 || a > 50'000'000) {
-                Log::Warn("LoadPackage[%s]: SANITY FAIL — AppIdVec[%u]=%u looks bogus "
-                          "(offset 0x38 may be wrong on this build). Skipping injection.",
-                          source, i, a);
+                Log::Warn("LoadPackage[%s]: SANITY FAIL — %s[%u]=%u looks bogus "
+                          "(offset may be wrong on this build). Skipping injection.",
+                          source, label, i, a);
                 return false;
             }
         }
-        Log::Debug("LoadPackage[%s]: sanity OK — vec[0..%u]={%u,%u,%u,%u,...}",
-                   source, sampleN,
-                   vec->m_pMemory[0],
-                   sampleN > 1 ? vec->m_pMemory[1] : 0,
-                   sampleN > 2 ? vec->m_pMemory[2] : 0,
-                   sampleN > 3 ? vec->m_pMemory[3] : 0);
     }
 
-    // Content-based idempotency: filter out depot ids already present. This
-    // makes the function safe to call multiple times (e.g. both from the
-    // LoadPackage hook and from the package-0 finder) without doubling
-    // entries. No external flag needed — the state of the vector itself is
-    // the source of truth.
+    // Content-based idempotency: filter out ids already present, so calling
+    // this twice (hook + finder) never doubles entries.
     std::vector<uint32_t> toAdd;
-    toAdd.reserve(depotIds.size());
-    for (uint32_t depotId : depotIds) {
+    toAdd.reserve(ids.size());
+    for (uint32_t id : ids) {
         bool already = false;
         for (uint32_t i = 0; i < oldSize; ++i) {
-            if (vec->m_pMemory && vec->m_pMemory[i] == depotId) { already = true; break; }
+            if (vec->m_pMemory && vec->m_pMemory[i] == id) { already = true; break; }
         }
-        if (!already) toAdd.push_back(depotId);
+        if (!already) toAdd.push_back(id);
     }
     if (toAdd.empty()) {
-        Log::Debug("LoadPackage[%s]: all %zu depot ids already in PackageId=0",
-                   source, depotIds.size());
+        Log::Debug("LoadPackage[%s]: all %zu id(s) already in %s",
+                   source, ids.size(), label);
         return false;
     }
 
     uint32_t total = oldSize + static_cast<uint32_t>(toAdd.size());
 
-    // Grow if needed. Steam Linux i386 uses raw libc realloc for CUtlMemory
-    // (verified by disassembling the only 5 callers of realloc@plt in
-    // steamclient.so — the leaf helper at +0x5c79d30 is `realloc(ptr, count *
-    // elem_size)` with no tier0 allocator wrapper, confirming that m_pMemory
-    // was malloc-allocated and is safe to realloc from outside. This is the
-    // Linux equivalent of LumaCore's oCUtlMemoryGrow on Windows.
-    //
-    // Growth policy mirrors Source SDK CUtlMemory::Grow: double capacity if
-    // possible, else snap to the requested size; minimum first allocation is
-    // 32 entries to avoid a ladder of small reallocs.
+    // Grow if needed (raw libc realloc — CUtlMemory is malloc-backed on Steam
+    // Linux i386; growth doubles capacity, min first alloc 32).
     if (!vec->m_pMemory || vec->m_nAllocationCount < static_cast<int>(total)) {
         int new_alloc;
         if (vec->m_nAllocationCount <= 0) {
@@ -159,18 +145,17 @@ bool InjectDepots(void* pInfo, const char* source) {
                       source, new_alloc);
             return false;
         }
-        Log::Info("LoadPackage[%s]: grew AppIdVec capacity %d -> %d via realloc "
+        Log::Info("LoadPackage[%s]: grew %s capacity %d -> %d via realloc "
                   "(m_pMemory %p -> %p)",
-                  source, vec->m_nAllocationCount, new_alloc,
+                  source, label, vec->m_nAllocationCount, new_alloc,
                   (void*)vec->m_pMemory, new_mem);
         vec->m_pMemory = static_cast<uint32_t*>(new_mem);
         vec->m_nAllocationCount = new_alloc;
     }
 
-    // Unreachable safeguard — kept so static analysis sees a path that returns.
     if (!vec->m_pMemory) {
-        Log::Error("LoadPackage[%s]: vec->m_pMemory is null after grow attempt",
-                   source);
+        Log::Error("LoadPackage[%s]: %s m_pMemory is null after grow attempt",
+                   source, label);
         return false;
     }
 
@@ -178,13 +163,49 @@ bool InjectDepots(void* pInfo, const char* source) {
         vec->m_pMemory[oldSize + i] = toAdd[i];
     }
     vec->m_Size = total;
-    Log::Info("LoadPackage[%s]: APPENDED %zu depot id(s) to PackageId=0 "
+    Log::Info("LoadPackage[%s]: APPENDED %zu id(s) to PackageId=0 %s "
               "(size %u -> %u, capacity now %d)",
-              source, toAdd.size(), oldSize, total, vec->m_nAllocationCount);
+              source, toAdd.size(), label, oldSize, total, vec->m_nAllocationCount);
     for (uint32_t a : toAdd) {
-        Log::Info("LoadPackage[%s]:   + depot %u", source, a);
+        Log::Info("LoadPackage[%s]:   + %s %u", source, label, a);
     }
     return true;
+}
+
+bool InjectDepots(void* pInfo, const char* source) {
+    if (!pInfo) return false;
+
+    auto depotIds = KeyStore::GetAllDepotIds();
+    if (depotIds.empty()) return false;
+
+    // Default path: seed everything into AppIdVec (+0x38), as lumalinux always
+    // has — Steam's per-depot license filter reads it (RESEARCH.md §"PackageId 0").
+    bool any = AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec");
+
+    // EXPERIMENT — ALSO seed DepotIdVec (+0x48). moon claims Steam's
+    // depot-eligibility filter reads DepotIdVec, not AppIdVec; our docs say the
+    // opposite. This is purely additive (AppIdVec is still seeded above, so
+    // downloads cannot regress), so it lets us observe on-device whether a
+    // populated DepotIdVec changes the install/no-restart behaviour before
+    // committing to moon's split model. Enabled by the env var
+    // LUMA_DEPOT_IDVEC=1 OR a marker file ~/.config/lumalinux/depot_idvec
+    // (the marker is easier to toggle in Game Mode — touch/rm + restart Steam).
+    // Read once (the finder re-injects on the same package, so a live toggle
+    // wouldn't retro-fill anyway; a Steam restart applies the change).
+    static const bool kDepotIdVec = []() -> bool {
+        if (std::getenv("LUMA_DEPOT_IDVEC") != nullptr) return true;
+        if (const char* home = std::getenv("HOME")) {
+            std::string marker = std::string(home) + "/.config/lumalinux/depot_idvec";
+            struct stat st;
+            if (::stat(marker.c_str(), &st) == 0) return true;
+        }
+        return false;
+    }();
+    if (kDepotIdVec) {
+        bool d = AppendIdsToVec(DepotIdVec(pInfo), depotIds, source, "DepotIdVec");
+        any = any || d;
+    }
+    return any;
 }
 
 bool Install() {

@@ -41,8 +41,9 @@ void Uninstall();
 //
 // CUtlVector<T> lives in steam_types.hpp (shared with the BuildDep hook).
 
-constexpr std::size_t kOffPackageId = 0x00;
-constexpr std::size_t kOffAppIdVec  = 0x38;
+constexpr std::size_t kOffPackageId  = 0x00;
+constexpr std::size_t kOffAppIdVec   = 0x38;
+constexpr std::size_t kOffDepotIdVec = 0x48;
 
 inline uint32_t PkgId(void* pInfo) {
     return *reinterpret_cast<uint32_t*>(
@@ -51,6 +52,13 @@ inline uint32_t PkgId(void* pInfo) {
 inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
     return reinterpret_cast<CUtlVector<uint32_t>*>(
         static_cast<uint8_t*>(pInfo) + kOffAppIdVec);
+}
+// Experiment only (LUMA_DEPOT_IDVEC): the package's separate depot-eligibility
+// vector. moon populates this with depot ids; lumalinux historically used
+// AppIdVec for everything. See InjectDepots.
+inline CUtlVector<uint32_t>* DepotIdVec(void* pInfo) {
+    return reinterpret_cast<CUtlVector<uint32_t>*>(
+        static_cast<uint8_t*>(pInfo) + kOffDepotIdVec);
 }
 
 // =============================================================================
