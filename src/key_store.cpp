@@ -2,6 +2,8 @@
 #include "log.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -9,7 +11,12 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
+
+#include <sys/inotify.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 // Lock ordering (outer → inner): KeyStore::Mtx > Log::g_logMutex.
 // Several functions below call Log::Info / Log::Warn while holding
@@ -146,6 +153,70 @@ bool LoadFromFile(const std::string& path) {
     Log::Info("KeyStore: loaded %zu key(s) from %s (%zu injectable)",
               loaded, path.c_str(), injectable);
     return true;
+}
+
+void StartWatcher(const std::string& path) {
+    static std::atomic<bool> started{false};
+    if (started.exchange(true)) return;
+
+    std::thread([path]() {
+        // Watch the DIRECTORY, not the file: a keys.txt created after launch or
+        // replaced via rename is still caught, and we filter events by basename.
+        std::string dir, base;
+        auto slash = path.find_last_of('/');
+        if (slash == std::string::npos) { dir = "."; base = path; }
+        else { dir = path.substr(0, slash); base = path.substr(slash + 1); }
+
+        // Best-effort: create the dir so the watch can be set even before the
+        // first game is ever added (~/.config already exists).
+        mkdir(dir.c_str(), 0755);
+
+        int fd = inotify_init1(IN_CLOEXEC);
+        if (fd < 0) {
+            Log::Warn("KeyStore watcher: inotify_init1 failed (%s) — hot-reload disabled",
+                      std::strerror(errno));
+            return;
+        }
+        // IN_CLOSE_WRITE fires once on a COMPLETE file (steamidra_lite does a
+        // plain open/write/close), so we never act on a half-written keys.txt.
+        // IN_MOVED_TO / IN_CREATE cover a rename-into-place or the first-ever
+        // keys.txt. This only mutates our own in-memory map (Mtx-guarded, read
+        // per-request by the hooks) — it never re-installs hooks or touches
+        // Steam, so it cannot destabilise Steam the way re-hooking could.
+        int wd = inotify_add_watch(fd, dir.c_str(),
+                                   IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE);
+        if (wd < 0) {
+            Log::Warn("KeyStore watcher: cannot watch %s (%s) — hot-reload disabled",
+                      dir.c_str(), std::strerror(errno));
+            close(fd);
+            return;
+        }
+        Log::Info("KeyStore watcher: watching %s for changes to %s",
+                  dir.c_str(), base.c_str());
+
+        alignas(struct inotify_event) char buf[4096];
+        for (;;) {
+            ssize_t n = read(fd, buf, sizeof(buf));
+            if (n <= 0) {
+                if (n < 0 && errno == EINTR) continue;
+                Log::Warn("KeyStore watcher: read ended (%s) — stopping",
+                          n < 0 ? std::strerror(errno) : "eof");
+                break;
+            }
+            bool hit = false;
+            for (char* p = buf; p < buf + n; ) {
+                auto* ev = reinterpret_cast<const struct inotify_event*>(p);
+                if (ev->len > 0 && base == ev->name) hit = true;
+                p += sizeof(struct inotify_event) + ev->len;
+            }
+            if (hit) {
+                LoadFromFile(path);
+                Log::Info("KeyStore watcher: %s changed — reloaded, Size=%zu",
+                          base.c_str(), Size());
+            }
+        }
+        close(fd);
+    }).detach();
 }
 
 std::optional<DepotKey> Lookup(uint32_t depot_id) {
