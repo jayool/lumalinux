@@ -23,6 +23,7 @@
 
 #include "log.hpp"
 #include "key_store.hpp"
+#include "license_reconcile.hpp"
 #include "hooks/depot_key_hook.hpp"
 #include "hooks/depot_dependency_hook.hpp"
 #include "hooks/load_package_hook.hpp"
@@ -389,6 +390,15 @@ void LumalinuxCtor() {
         }
         Log::Warn("Ctor: steamclient.so never appeared — giving up");
     }).detach();
+
+    // no-restart experiment (LUMA_NO_RESTART / marker): watch keys.txt so a
+    // game added while Steam runs gets its keys loaded and the license reconcile
+    // armed — no Steam restart. Off by default; the watcher only starts, and the
+    // reconcile only fires, when the flag is set.
+    if (LicenseReconcile::Enabled()) {
+        KeyStore::StartWatcher(KeyStore::DefaultPath());
+        Log::Info("no-restart experiment ENABLED (LUMA_NO_RESTART) — keys.txt watcher started");
+    }
 }
 
 __attribute__((destructor))

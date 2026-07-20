@@ -47,6 +47,7 @@ set(LUMA_SOURCES
     src/main.cpp
     src/log.cpp
     src/key_store.cpp
+    src/license_reconcile.cpp
     src/patterns.cpp
     src/rtti.cpp
     src/sls_update_unblock.cpp

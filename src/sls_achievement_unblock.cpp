@@ -1,4 +1,5 @@
 #include "sls_achievement_unblock.hpp"
+#include "license_reconcile.hpp"
 #include "log.hpp"
 
 #include <cstdint>
@@ -52,6 +53,10 @@ bool g_trace = false;
 // Receives the same (this, appid) the original call site pushed. Never called
 // unless Apply() succeeded (the call is only repointed on success).
 extern "C" uint8_t sls_ach_combined_guard(void* cuser, uint32_t appid) {
+    // Capture a live CUser* for the no-restart license reconcile (no-op unless
+    // that experiment is enabled). This guard fires on a Steam thread with a
+    // valid pipe-0 CUser, which is exactly what NotifyLicensesUpdated needs.
+    LicenseReconcile::SetUser(cuser);
     // Step-by-step trace (opt-in via LUMA_SLS_ACH_TRACE) so that if a call
     // faults, the last surviving line pinpoints WHICH callee died: ENTER logs
     // the args as

@@ -137,6 +137,40 @@ uintptr_t FindSteamclientBase() {
     return r.base;
 }
 
+uintptr_t FindNotifyLicensesUpdatedFunction() {
+    // UNIQUE-match required: this pattern is ported from moon and NOT re-verified
+    // against the user's exact steamclient.so, so if it matches 0 or >1 places
+    // we bail (the license reconcile then no-ops and the restart path is used).
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern(kNotifyLicensesUpdatedPattern);
+    if (parsed.bytes.empty()) return 0;
+
+    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
+    const size_t patLen = parsed.bytes.size();
+    uintptr_t hit = 0;
+    size_t count = 0;
+    for (size_t i = 0; i + patLen <= r.size; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
+        }
+        if (match) {
+            if (++count == 1) hit = r.base + i;
+            else break;  // >1 -> ambiguous, stop
+        }
+    }
+    if (count != 1) {
+        Log::Warn("Patterns: NotifyLicensesUpdated — %zu match(es), need exactly 1; "
+                  "license reconcile disabled (restart path unaffected)", count);
+        return 0;
+    }
+    Log::Info("Patterns: NotifyLicensesUpdated found at 0x%lx (RVA 0x%lx)",
+              (unsigned long)hit, (unsigned long)(hit - r.base));
+    return hit;
+}
+
 uintptr_t FindDepotKeyFunction() {
     return FindInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }

@@ -194,8 +194,32 @@ inline constexpr const char* kShaderCacheDepotPattern =
 
 
 // =============================================================================
+// no-restart experiment — CUser::NotifyLicensesUpdated (license reconcile)
+// =============================================================================
+//
+// Ported from slsteam-moon (same Linux steamclient.so). Broadcasts the
+// LicensesUpdated_t callback (ECallbackType 0x7d) so Steam re-reads ownership
+// and appinfo without a restart — the no-restart Add Game mechanism. cdecl,
+// single arg (`this` = CUser*).
+//
+// Prologue with the volatile bytes masked (moon's masks — they survive the
+// layout drift class): get_pc_thunk rel, PIC add imm, frame size, the CUser
+// member offset that drifted 0x1b18->0x1b14, and the spill offset. moon
+// positively identified it via the RTTI string "17LicensesUpdated_t" and
+// verified exactly 1 match. Because we cannot re-verify against the user's
+// exact build, FindNotifyLicensesUpdatedFunction requires a UNIQUE match and
+// returns 0 otherwise (-> reconcile no-ops, restart path unaffected).
+inline constexpr const char* kNotifyLicensesUpdatedPattern =
+    "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B B8 ?? ?? 00 00 89 9D ?? ?? FF FF 85 FF";
+
+
+// =============================================================================
 // Finders
 // =============================================================================
+
+// Unique-match only: returns the address iff the pattern matches exactly once
+// in steamclient.so, else 0 (ambiguous/absent -> caller must no-op).
+uintptr_t FindNotifyLicensesUpdatedFunction();
 
 uintptr_t FindDepotKeyFunction();
 uintptr_t FindBuildDepotDependencyFunction();

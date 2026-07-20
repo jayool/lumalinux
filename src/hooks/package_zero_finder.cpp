@@ -1,6 +1,7 @@
 #include "package_zero_finder.hpp"
 #include "load_package_hook.hpp"
 #include "../patterns.hpp"
+#include "../license_reconcile.hpp"
 #include "../log.hpp"
 
 #include <atomic>
@@ -345,6 +346,15 @@ void Run() {
                     // injects), so only this one thread mutates AppIdVec — no
                     // cross-thread race, no lock needed.
                     if (inject) Hooks::LoadPackage::InjectDepots(pkg, "finder");
+
+                    // no-restart experiment: if a game was just added (keys.txt
+                    // changed), fire the license reconcile HERE — on this thread,
+                    // AFTER the new depots are injected above — so Steam re-reads
+                    // ownership/appinfo without a restart. No-op unless enabled.
+                    if (inject && LicenseReconcile::Enabled() &&
+                        LicenseReconcile::TakeKeysChanged()) {
+                        LicenseReconcile::Reconcile();
+                    }
                 }
             }
         }

@@ -51,6 +51,13 @@ std::string DefaultPath();
 // Lines starting with # and blank lines are ignored.
 bool LoadFromFile(const std::string& path);
 
+// no-restart experiment only: start a detached inotify thread that watches the
+// directory of `path` and, on a write to keys.txt, reloads the store and marks
+// LicenseReconcile::NotifyKeysChanged(). The watcher NEVER calls into Steam —
+// the reconcile itself fires later on the finder thread. Idempotent; call once,
+// gated on LicenseReconcile::Enabled().
+void StartWatcher(const std::string& path);
+
 // Lookup just the 32-byte key for a depot. Used by depot_key_hook.
 // Returns nullopt if the depot is not in the store OR if its entry is
 // presence-only (has_key=false) — in the latter case the hook should
