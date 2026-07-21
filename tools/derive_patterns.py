@@ -104,6 +104,17 @@ DEPOTKEY_VTABLE_OFFSET = 0x18  # see RESEARCH §12.5: fn = *(vtable + 0x18)
 LOADPKG_LABEL    = "kLoadPackagePattern"
 LOADPKG_CURRENT  = "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00"
 
+# NotifyLicensesUpdated (v0.16.15, the no-restart licence reconcile). Indirect
+# RTTI anchor: the callback-poster function references the type_info for
+# LicensesUpdated_t, whose name string is "17LicensesUpdated_t". Non-load-bearing:
+# a miss only disables no-restart (Add Game falls back to needing a Steam
+# restart), never blocks installs. NOTE: the auto-walk below is UNTESTED against a
+# live Ghidra run — it degrades to validating the current pattern + a manual
+# recipe, exactly like DepotKey.
+NOTIFY_LABEL   = "kNotifyLicensesUpdatedPattern"
+NOTIFY_ANCHOR  = "17LicensesUpdated_t"
+NOTIFY_CURRENT = "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B B8 ?? ?? 00 00 89 9D ?? ?? FF FF 85 FF"
+
 # Package-0 finder anchors (§13.5)
 CACHE_ROOT_OFFSET = 0xc58
 GMRC_PROLOGUE_TAIL = "55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"
@@ -268,6 +279,50 @@ def try_derive_depotkey():
     return None, "found %d dispatcher candidate(s) but none had a resolvable CALL [reg+0x18]" % len(dispatchers)
 
 
+def try_derive_notifylicenses():
+    """Indirect RTTI anchor. The RTTI name string "17LicensesUpdated_t" is held
+    by the type_info object `_ZTI17LicensesUpdated_t` in its name field (at
+    type_info + 0x4 on i386); the callback-poster references the type_info start.
+    So: string -> (name-field ref, so type_info = ref - 0x4) -> functions
+    referencing that type_info -> the one whose fresh prologue matches UNIQUELY.
+    Returns (addr, pattern, 1) or (None, errmsg). This walk is UNTESTED on a live
+    binary; the caller falls back to validating NOTIFY_CURRENT."""
+    sa = find_string_addrs(NOTIFY_ANCHOR)
+    if not sa:
+        return None, "anchor string %r not found" % NOTIFY_ANCHOR
+    typeinfos = set()
+    for a in sa:
+        for r in refmgr.getReferencesTo(a):
+            # from-address is the type_info name field (type_info + 0x4 on i386);
+            # the type_info object itself starts one pointer earlier.
+            try:
+                typeinfos.add(r.getFromAddress().add(-4))
+            except Exception:
+                pass
+    if not typeinfos:
+        return None, "RTTI name %r not referenced by any type_info" % NOTIFY_ANCHOR
+    fns = []
+    seen = set()
+    for ti in typeinfos:
+        for r in refmgr.getReferencesTo(ti):
+            f = fm.getFunctionContaining(r.getFromAddress())
+            if f and f.getEntryPoint().getOffset() not in seen:
+                seen.add(f.getEntryPoint().getOffset())
+                fns.append(f)
+    if not fns:
+        return None, "type_info not referenced by any function"
+    uniq = []
+    for f in fns:
+        pat = extract_pattern(f.getEntryPoint())
+        if len(pattern_matches(pat)) == 1:
+            uniq.append((f, pat))
+    if len(uniq) == 1:
+        f, pat = uniq[0]
+        return (f.getEntryPoint(), pat, 1), None
+    return None, ("found %d function(s) via type_info, %d with a UNIQUE prologue "
+                  "— pick manually" % (len(fns), len(uniq)))
+
+
 def verify_finder_cache_idiom():
     """The cache-access idiom anchored on 0xc58:
         lea r1, [GOT+X]   = 8D /MODRM(mod=10) disp32      (6 bytes)
@@ -380,6 +435,33 @@ else:
         print("    open steamclient.so in Ghidra, locate the function (RESEARCH §12.5),")
         print("    copy its first ~28 prologue bytes, wildcard the get_pc_thunk call rel32")
         print("    and the following `add reg,imm32`.")
+    else:
+        print("  CURRENT pattern matches %d places (ambiguous) — tighten it." % len(hits))
+
+# 2b) NotifyLicensesUpdated: indirect RTTI anchor (non-load-bearing, no-restart)
+print("\n---- %s ----" % NOTIFY_LABEL)
+print("  (non-load-bearing since v0.16.15: a miss only disables the no-restart")
+print("   licence reconcile — Add Game falls back to needing a Steam restart.")
+print("   the auto-walk is UNTESTED; it degrades to validating the current pattern.)")
+result, errmsg = try_derive_notifylicenses()
+if result is not None:
+    addr, pat, n = result
+    print("  RTTI-derived @ %s : %s   (UNIQUE)" % (addr, pat))
+    print("  -> derived via type_info xref — use the pattern above")
+    DERIVED[NOTIFY_LABEL] = {"pattern": pat, "matches": 1,
+                             "rva": "0x%x" % addr.getOffset()}
+else:
+    print("  RTTI derivation failed: %s" % errmsg)
+    hits = pattern_matches(NOTIFY_CURRENT)
+    if len(hits) == 1:
+        print("  CURRENT pattern still matches UNIQUELY @ %s — keep it." % hits[0])
+    elif len(hits) == 0:
+        print("  CURRENT pattern NO LONGER MATCHES — re-derive manually:")
+        print("    in Ghidra, find the string \"17LicensesUpdated_t\", follow its")
+        print("    type_info xref to the poster function, copy its ~40 prologue bytes,")
+        print("    and wildcard the get_pc_thunk call rel32, the `add ebx,imm32`, the")
+        print("    frame size, the `mov edi,[eax+0x1bXX]` member offset, and the spill")
+        print("    offset (see patterns.hpp kNotifyLicensesUpdatedPattern for the mask).")
     else:
         print("  CURRENT pattern matches %d places (ambiguous) — tighten it." % len(hits))
 
