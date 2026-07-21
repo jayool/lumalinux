@@ -131,6 +131,21 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
      manual stop-gap until you paste the fresh pattern.
    - **Package-0 finder anchors** (§13.5) — the script also verifies them as
      part of this run; see C if either says NOT FOUND.
+   - **NotifyLicensesUpdated** (since v0.16.15, the no-restart licence reconcile,
+     `src/license_reconcile.cpp`) — the **LEAST urgent** of all: it is
+     **non-load-bearing** and **unique-match-or-no-op**. A miss on this build
+     (`FindNotifyLicensesUpdatedFunction` logs `N match(es), need exactly 1`)
+     just disables the no-restart path → **Add Game falls back to needing a Steam
+     restart** (the old behaviour). It NEVER blocks installs and NEVER crashes.
+     Also gated behind `LUMA_NO_RESTART`, so a break is invisible unless that
+     flag is on. Re-derive via the RTTI anchor: the string `"17LicensesUpdated_t"`
+     (the callback type's `type_info` name) is referenced right before the
+     function posts callback `0x7d`; find that xref, walk to the enclosing
+     function prologue, and mask the volatile bytes (get_pc_thunk rel, PIC add
+     imm, frame size, the `mov edi,[eax+0x1bXX]` CUser member offset that drifts,
+     the spill offset) — exactly moon's pattern in `patterns.hpp`
+     (`kNotifyLicensesUpdatedPattern`). Ported from slsteam-moon; keep the
+     unique-match requirement so a re-derive that isn't unique bails safely.
 
 3. Paste the printed `UNIQUE` patterns into `src/patterns.hpp`.
 

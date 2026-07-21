@@ -385,3 +385,42 @@ by default); a DepotKey hook **serves the AES key** (5); and the **manifest
 request code** (6) — the only server-validated token — is obtained from a
 third-party GMRC service, either by a runtime hook (lumalinux, SteamTools) or by
 pre-fetching the manifests (SteaMidra).
+
+## 8. No-restart Add Game — the license reconcile (v0.16.15)
+
+The six gates get a game installable, but **only after a Steam restart** when the
+game is added while Steam is already running. Why: the six gates cover ownership,
+depot injection, keys and the manifest code — but Steam's **appinfo cache** for
+the new app still has **no depot list** until Steam re-fetches its PICS product
+info, and it only does that on a **restart** (or a re-login). Symptom of adding
+without the reconcile: Steam shows `has no changes, 0 target` → `0 mounted
+depots` → "Fully Installed, files missing". After a restart, `config changed:
+added depots …` appears and the download proceeds. Verified in both Mina the
+Hollower (2379780) and Balatro before the reconcile.
+
+The **license reconcile** removes the restart. It broadcasts the
+`LicensesUpdated_t` callback (ECallbackType `0x7d`) on the local `CUser` via
+`CUser::NotifyLicensesUpdated`, which makes Steam re-read ownership **and appinfo**
+for the newly-owned apps live — so the depot list appears and the download starts,
+no restart. This is what slsteam-moon and OpenSteamTool both do (moon calls
+`NotifyLicensesUpdated`; OST calls `MarkLicenseAsChanged` + `ProcessPending­Licen­se­Updates`
+— the same effect). Not the `DepotIdVec` (tested; it's downstream of appinfo — a
+dead end, see RESEARCH).
+
+lumalinux's implementation (`src/license_reconcile.cpp`, gated behind
+`LUMA_NO_RESTART`), each piece chosen for safety:
+- **Resolve** `NotifyLicensesUpdated` by moon's Linux byte-pattern, **unique-match
+  or no-op** (`patterns.cpp`) — a wrong-build pattern disables the feature, never
+  crashes.
+- **`CUser*`** is captured from the SLSsteam achievement guard (a Steam thread that
+  already receives a valid pipe-0 user) — no new hook.
+- **Trigger**: the `keys.txt` watcher reloads the KeyStore and *arms* the reconcile
+  (it never calls Steam from the inotify thread); the **package-0 finder** fires it
+  on its own thread **after** re-injecting the new depots (right ordering).
+- **Hang**: none. The "Steam re-requests PICS forever / Loading user data" hang is
+  a cold-cache / early-inject problem; the finder injects after login (warm cache),
+  so — as moon predicted — the reconcile is safe. Verified live 2026-07-20.
+
+Graceful degradation is the design point: if the pattern breaks on a Steam update
+(see `maintenance.md`) or no `CUser` is captured, the reconcile no-ops and Add Game
+falls back to **needing a restart** — the pre-v0.16.15 behaviour. Nothing breaks.

@@ -275,6 +275,13 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   (§13.10). This note stays as the historical diagnosis and still applies to a
   keyless *content* depot (only the shader depot is skippable).
 
+- **`DepotIdVec` is NOT the no-restart lever (tested, v0.16.14).** Seeding the
+  package's `DepotIdVec` (+0x48) in addition to `AppIdVec` changed nothing — a
+  game added mid-session still showed `0 target depots` until a restart. The
+  blocker is upstream (Steam's appinfo has no depot list until it re-fetches it);
+  depot eligibility is never reached. The actual fix is the **license reconcile**
+  (§18), not the vector. Don't re-try the `DepotIdVec` angle on its own.
+
 ## 7. The GMRC endpoint(s)
 
 The endpoint returns a **request CODE** (a bare uint64 number), **not** the
@@ -1664,3 +1671,80 @@ On-device (v0.16.4 armed, then v0.16.7 default-on):
     appid=1454400  sub=1 added=1 -> skip=0   ← LumaDeck game: borrow runs → native cheevos (popped in-game)
     appid=22380    sub=1 added=0 -> skip=1   ← owned: guard holds, borrow skipped
     appid=2371090  sub=1 added=0 -> skip=1   ← owned: untouched
+
+## 18. No-restart Add Game — the license reconcile (v0.16.15)
+
+**Problem.** A game added while Steam is *running* clears all six gates
+(ownership, package-0 depot injection, keys, GMRC) yet still won't download until
+a **Steam restart**. Symptom in `content_log.txt`: `has no changes, 0 active: 0
+target` → `finished update, 0 mounted depots` → the app is marked *Fully
+Installed, Files Missing* and launching it fails with a missing executable. After
+a restart, `AppID … config changed : added depots …` appears and the exact same
+install proceeds and completes.
+
+**Root cause.** The blocker is Steam's **appinfo** (PICS product info) cache for
+the app: it carries the depot *list*, and lumalinux **cannot inject depots into
+appinfo** (§6 dead-end — SLSsteam owns the message layer). Steam only re-fetches
+that appinfo on a **restart / re-login / PICS change**. Until then the app's depot
+list is empty, so the per-depot eligibility filter has nothing to pass and Steam
+downloads nothing. This is *upstream* of everything the gates do — the keys are
+served and the depots are injected into package 0, but Steam never asks for them
+because it doesn't believe the app has any.
+
+**Dead end — `DepotIdVec` (tested, ruled out).** slsteam-moon populates the
+package's separate `DepotIdVec` (+0x48) and comments that "Steam's depot
+eligibility filter looks at pkg.DepotIdVec"; lumalinux always put everything in
+`AppIdVec` (+0x38). We shipped an experiment (v0.16.14, `LUMA_DEPOT_IDVEC`) that
+*also* seeds `DepotIdVec`. Result: **no change** — still `0 target depots` without
+a restart. Because the failure is upstream (empty appinfo depot list), eligibility
+(whichever vector it reads) is never consulted. So `DepotIdVec` is **not** the
+lever; it's only relevant *with* the reconcile, as moon's way of keeping `AppIdVec`
+clean (see below). Removed in v0.16.15.
+
+**The fix — a license reconcile.** Broadcast the `LicensesUpdated_t` callback
+(ECallbackType `0x7d`) on the local `CUser` via `CUser::NotifyLicensesUpdated`.
+That makes Steam re-read ownership **and appinfo** for the newly-owned apps live —
+the depot list appears and the download starts, no restart. This is what
+slsteam-moon (`NotifyLicensesUpdated`) and OpenSteamTool
+(`MarkLicenseAsChanged` + `ProcessPendingLicenseUpdates`) both do; the reconcile,
+not the vector, is the mechanism. OST needs an anti-hang hook
+(`CAppInfoCache::GetOrAddAppData` → `bSkipFlag`) because it injects depot ids into
+`AppIdVec` that never resolve appinfo, blocking `ProcessPendingLicenseUpdates`
+forever; OST shipped that hook **disabled** ("TODO: robust way"). moon avoids the
+hang by keeping `AppIdVec` app-ids-only and depots in `DepotIdVec` — that is the
+*only* reason moon touches `DepotIdVec`.
+
+**lumalinux implementation** (`src/license_reconcile.cpp`, gated `LUMA_NO_RESTART`):
+- **Resolve** `NotifyLicensesUpdated` by moon's Linux byte-pattern
+  (`kNotifyLicensesUpdatedPattern`), **unique-match-or-no-op**
+  (`FindNotifyLicensesUpdatedFunction`) — a wrong-build pattern disables the
+  feature rather than calling garbage.
+- **`CUser*`** captured from the SLSsteam achievement guard (a Steam thread with a
+  valid pipe-0 `CUser`) — no new hook, no `CSteamEngine::getUser` resolution.
+- **Trigger**: the re-enabled `keys.txt` watcher reloads the KeyStore and *arms*
+  the reconcile (it never calls Steam itself); the **package-0 finder** fires it
+  on its own thread **after** re-injecting the new depots (correct ordering).
+- **Hang**: none observed. The cold-cache PICS-re-request hang doesn't apply — the
+  finder injects after login (warm cache), exactly moon's prediction.
+
+**Did the hang matter for us?** No. We over-weighted it. moon's own note: the hang
+is a cold-cache/early-inject problem and lumalinux (finder, post-login) "most
+likely doesn't need" the anti-hang; OST even ships with its anti-hang hook
+disabled. Confirmed live: the reconcile fired and Steam downloaded cleanly.
+
+**Verified live (2026-07-20, v0.16.15).** Game added mid-session, `no_restart`
+marker set:
+
+    22:02:28  KeyStore watcher: keys.txt changed — reloaded (Size=24), reconcile armed
+    22:02:33  LoadPackage[finder]: APPENDED 5 id(s) to PackageId=0 AppIdVec (+ the new depots)
+    22:02:33  Patterns: NotifyLicensesUpdated found at 0x… (RVA 0x9f0f10)   ← unique match
+    22:02:33  Reconcile: broadcast LicensesUpdated_t (CUser=0x…) — appinfo/ownership refresh, no restart
+    # content_log, no restart in between:
+    22:02:36  preallocated 6 files (272 MB)      ← Steam SEES the depots (no "0 target")
+    22:02:36  Downloading … depot 2868390 / 1942282
+    22:02:50  finished update, 2 mounted depots  → Fully Installed
+    22:03:04  App Running                        ← launched, still before any restart
+
+**Maintenance.** The pattern is **non-load-bearing**: a break disables no-restart
+(→ restart fallback), never blocks installs, never crashes. Re-derive via the RTTI
+anchor `"17LicensesUpdated_t"` — see `docs/maintenance.md` A.2.

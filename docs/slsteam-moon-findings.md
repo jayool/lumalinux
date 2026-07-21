@@ -274,19 +274,44 @@ differently: moon patches *around* the hook (manual re-inject + reconcile);
 lumalinux drops the hook and polls. lumalinux's approach is cleaner and
 timing-robust. **Nothing to port for the mechanism itself.**
 
-## The one thing worth recording — moon's licence reconcile
+## Ported: moon's licence reconcile (no-restart Add Game)
 
-lumalinux does **not** do a licence reconcile (verified — no `LicensesUpdated_t`
-broadcast anywhere). lumalinux most likely doesn't need it: its finder injects
-**after login** (warm-ish cache), whereas moon's hook injects **early/cold** and
-therefore hits the re-request hang.
+> **UPDATE (2026-07-20): lumalinux now DOES a licence reconcile.** The note below
+> used to say it didn't and probably didn't need to — that was for the
+> *login-time* injection (warm cache, no hang). It turned out to be exactly the
+> missing piece for a **different** goal: **no-restart Add Game**. Ported in
+> v0.16.15 as `src/license_reconcile.cpp` (see `docs/method.md` §"license
+> reconcile" and RESEARCH §"no-restart"). Kept behind `LUMA_NO_RESTART` until
+> promoted to default.
 
-But it's a documented fix worth knowing: if lumalinux ever hits "injected into
-package 0, then Steam re-requests PICS forever", the fix is to **broadcast a
-`LicensesUpdated_t` once on the local `CUser`** after the first injection. It is
-reasonably portable (a one-shot callback broadcast, **not** a message-dispatch
-hook, so no SLSsteam overlap), though it depends on resolving the `CUser` /
-broadcast pattern.
+The problem it solves: a game added while Steam is *running* injects fine into
+package 0 and its keys are served, but Steam still shows **"0 target depots"** /
+"Fully Installed, files missing" — because Steam's **appinfo** for the app has no
+depot list until it re-fetches it, which only happens on **restart** (observed:
+`config changed: added depots …` fires only post-restart). The DepotIdVec angle
+was a dead end (tested — it's downstream of appinfo; see RESEARCH). The fix is
+the reconcile: **broadcast `LicensesUpdated_t` on the local `CUser`** so Steam
+re-reads ownership+appinfo without a restart.
+
+How lumalinux does it (mirrors moon, adapted to our warm-cache/finder model):
+- **`CUser::NotifyLicensesUpdated`** resolved by moon's Linux byte-pattern
+  (`Patterns::FindNotifyLicensesUpdatedFunction`), **unique-match-or-no-op** — a
+  wrong-build pattern degrades to a no-op, never a crash.
+- **`CUser*`** captured from the SLSsteam achievement guard (a Steam thread with a
+  valid pipe-0 user) — no new hook, no `CSteamEngine::getUser` resolution needed.
+- **Trigger**: the re-enabled `keys.txt` watcher reloads the store and *arms* the
+  reconcile (it never calls Steam itself); the **package-0 finder** fires it on
+  its own thread **after** re-injecting the new depots (correct ordering).
+- **No hang** observed — consistent with moon's warm-cache note (the re-request
+  hang is a cold-cache/early-inject problem; our finder injects after login).
+
+Verified live 2026-07-20 (v0.16.15): a game added mid-session went
+`Reconcile: broadcast LicensesUpdated_t` → Steam preallocated + downloaded +
+mounted + **App Running**, all before any restart.
+
+It is reasonably portable (a one-shot callback broadcast, **not** a
+message-dispatch hook, so no SLSsteam overlap). Re-derive the pattern via the
+RTTI anchor if a Steam update breaks it — see `docs/maintenance.md`.
 
 ---
 
