@@ -41,9 +41,11 @@ operational "what".
    under `InstallConfigStore > Software > Valve > Steam > depots`. The tool edits
    the file as text (no `vdf` Python module needed). It no-ops only if `config.vdf`
    or its `depots` block is absent. The main AppID is filtered out of the VDF even
-   if it is in `keys.txt`. The step also flips a legacy global `DisableShaderCache`
-   from `1` back to `0` if present. Skip the whole step with `--no-vdf` (the
-   DepotKey hook covers most cases).
+   if it is in `keys.txt`. Skip the whole step with `--no-vdf` (the DepotKey hook
+   covers most cases). The tool deliberately does **not** touch
+   `DisableShaderCache` — that is the user's own Steam "Shader Pre-Caching"
+   setting, and the per-game ShaderDepot hook (§13.9) handles keyless games
+   without any global flag.
 
 5. **AppToken** (optional, `--token APPID:HEX`, repeatable) for games whose PICS
    appinfo Valve won't return without a token. Most games don't need it.

@@ -1171,12 +1171,16 @@ tail. Collision check: SLSsteam hooks the message dispatch, not shader functions
 **Why this beats the global `DisableShaderCache` (§13.8).** The global flag
 killed Valve's precompiled-shader download for *every* game (keyed and owned)
 too; path C touches only the keyless games that can never use it anyway.
-`steamidra_lite` therefore stops writing the global flag and *reverts* a
-previously-written `DisableShaderCache "1" -> "0"` (`restore_shader_precache`)
-so keyed/owned games get their shaders back and the hook governs the rest. The
-global flag remains a manual fallback if the pattern ever breaks (a pattern miss
-is non-fatal: the hook just doesn't install and keyless games fall back to the
-§13.8 shader loop — installs are unaffected either way).
+`steamidra_lite` therefore stops writing the global flag and, as of v0.16.x,
+**no longer touches `DisableShaderCache` at all** — the hook governs the keyless
+games, and the flag is left entirely to the user (it *is* Steam's own "Shader
+Pre-Caching" setting). An earlier `restore_shader_precache` that reverted a
+legacy `1 -> 0` on every install was removed: it could not tell a legacy kill
+from a deliberate user-off, so it stomped the latter. The global flag remains a
+manual fallback the user can toggle if the ShaderDepot pattern ever breaks (a
+pattern miss is non-fatal: the hook just doesn't install and keyless games fall
+back to the §13.8 shader loop — installs are unaffected either way; LumaDeck's
+update gate keeps such a build off Stable users).
 
 **Failure mode on a Steam update.** If `kShaderCacheDepotPattern` stops matching,
 `ShaderDepot` shows FAILED in the startup toast (it's a counted core hook) and
