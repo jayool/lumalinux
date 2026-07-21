@@ -23,6 +23,20 @@ namespace LicenseReconcile {
 // file ~/.config/lumalinux/no_reconcile exists. Default ON. Read once.
 bool Enabled();
 
+// Resolution state of the NotifyLicensesUpdated function, for status reporting.
+//   Disabled   — the kill-switch is set; the feature is off on purpose.
+//   Resolved   — enabled AND the pattern resolved uniquely (no-restart works).
+//   Unresolved — enabled but the pattern didn't resolve on this build (a Steam
+//                update moved it): Reconcile() no-ops, Add Game falls back to
+//                needing a restart. LumaDeck reads this (status.json hook
+//                "Reconcile") to suppress the premature library appearance.
+enum class Resolution { Disabled, Resolved, Unresolved };
+
+// Resolve the function once (cached) and report its state. Call at hook-install
+// time, when steamclient.so is already mapped (the other patterns resolve there
+// too). Reconcile() reuses the same cached address.
+Resolution Resolve();
+
 // Capture a live CUser* (called from the SLSsteam achievement guard, which
 // receives one). First non-null wins. Needed to call NotifyLicensesUpdated.
 void SetUser(void* cuser);

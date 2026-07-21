@@ -18,6 +18,16 @@ std::atomic<bool>  g_keysChanged{false};
 // LicensesUpdated_t callback from this user's own license vector and posts it.
 using NotifyFn = void (*)(void*);
 
+// Resolve the NotifyLicensesUpdated address ONCE and cache it. Deterministic per
+// process (steamclient.so base is fixed after load), so a static is safe.
+// FindNotifyLicensesUpdatedFunction requires a UNIQUE match and returns 0
+// otherwise, so a wrong-build pattern caches 0 -> the feature no-ops. Shared by
+// Resolve() (status, called at hook-install time) and Reconcile() (the fire).
+uintptr_t ResolveAddr() {
+    static const uintptr_t addr = Patterns::FindNotifyLicensesUpdatedFunction();
+    return addr;
+}
+
 }  // namespace
 
 namespace LicenseReconcile {
@@ -38,6 +48,11 @@ bool Enabled() {
         return true;
     }();
     return on;
+}
+
+Resolution Resolve() {
+    if (!Enabled()) return Resolution::Disabled;
+    return ResolveAddr() ? Resolution::Resolved : Resolution::Unresolved;
 }
 
 void SetUser(void* cuser) {
@@ -65,11 +80,10 @@ void Reconcile() {
         return;
     }
 
-    // Resolve once. FindNotifyLicensesUpdatedFunction requires a UNIQUE match
-    // and returns 0 otherwise (ambiguous/absent), so a wrong-build pattern
-    // degrades to a no-op instead of calling garbage. Cached: if it's 0 the
-    // first time (with a user + steamclient.so mapped), it stays 0.
-    static const uintptr_t addr = Patterns::FindNotifyLicensesUpdatedFunction();
+    // Reuse the cached resolution (same address Resolve() reported to status).
+    // Unique-match-or-no-op: a wrong-build pattern is 0 here and we degrade to a
+    // no-op instead of calling garbage.
+    const uintptr_t addr = ResolveAddr();
     if (!addr) {
         Log::Warn("Reconcile: NotifyLicensesUpdated unresolved — no-op "
                   "(restart still works)");

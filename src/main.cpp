@@ -289,6 +289,22 @@ void InstallHooks() {
         Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
     }
 
+    // No-restart license reconcile (src/license_reconcile.cpp): resolve its
+    // NotifyLicensesUpdated pattern now (steamclient.so is mapped) and record the
+    // state so LumaDeck knows, per build, whether no-restart Add Game works —
+    // resolved -> the game can appear live; failed (pattern moved) -> LumaDeck
+    // suppresses the premature library appearance so the user doesn't hit the
+    // "0 target depots" trap; disabled -> kill-switch. Non-load-bearing: a miss
+    // only means installs need a Steam restart, never blocks them.
+    switch (LicenseReconcile::Resolve()) {
+        case LicenseReconcile::Resolution::Resolved:
+            Status::RecordHook("Reconcile", Status::INSTALLED); break;
+        case LicenseReconcile::Resolution::Unresolved:
+            Status::RecordHook("Reconcile", Status::FAILED); break;
+        case LicenseReconcile::Resolution::Disabled:
+            Status::RecordHook("Reconcile", Status::DISABLED); break;
+    }
+
     // Derived from the install table above (+ the finder), so it always reflects
     // exactly what loaded — never a hand-maintained list that drifts.
     Log::Info("Install: lumalinux active pieces: %s", installed.empty() ? "none" : installed.c_str());
