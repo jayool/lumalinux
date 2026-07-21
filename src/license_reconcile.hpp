@@ -1,6 +1,6 @@
 #pragma once
 
-// EXPERIMENT (LUMA_NO_RESTART): the no-restart Add Game path.
+// The no-restart Add Game path (default ON since v0.16.16).
 //
 // After a game is added while Steam is running, Steam has neither the new
 // game's keys loaded (KeyStore is preinit-only) nor a refreshed appinfo/depot
@@ -10,17 +10,17 @@
 // This module wires the missing "license reconcile" (moon/OST): broadcast
 // CUser::NotifyLicensesUpdated (LicensesUpdated_t) so Steam re-reads
 // ownership + appinfo for the newly-owned apps WITHOUT a restart. The keys
-// are refreshed by re-enabling the keys.txt watcher (gated on Enabled()); the
-// depots are re-injected by the existing package-0 finder; then the finder
-// fires the reconcile.
+// are refreshed by the keys.txt watcher (gated on Enabled()); the depots are
+// re-injected by the existing package-0 finder; then the finder fires the
+// reconcile.
 //
-// ALL of this is off unless Enabled(). Worst case with the flag on: the
-// NotifyLicensesUpdated pattern doesn't resolve uniquely on this Steam build
-// -> no-op -> the restart path still works.
+// ALL of this degrades gracefully. Worst case: the NotifyLicensesUpdated
+// pattern doesn't resolve uniquely on this Steam build -> no-op -> the restart
+// path still works. The kill-switch LUMA_NO_RECONCILE forces that fallback.
 namespace LicenseReconcile {
 
-// True if the no-restart experiment is on: env LUMA_NO_RESTART set, or the
-// marker file ~/.config/lumalinux/no_restart exists. Read once.
+// True unless the kill-switch is set: env LUMA_NO_RECONCILE, or the marker
+// file ~/.config/lumalinux/no_reconcile exists. Default ON. Read once.
 bool Enabled();
 
 // Capture a live CUser* (called from the SLSsteam achievement guard, which

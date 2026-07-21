@@ -1714,7 +1714,8 @@ forever; OST shipped that hook **disabled** ("TODO: robust way"). moon avoids th
 hang by keeping `AppIdVec` app-ids-only and depots in `DepotIdVec` — that is the
 *only* reason moon touches `DepotIdVec`.
 
-**lumalinux implementation** (`src/license_reconcile.cpp`, gated `LUMA_NO_RESTART`):
+**lumalinux implementation** (`src/license_reconcile.cpp`, default ON since
+v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
 - **Resolve** `NotifyLicensesUpdated` by moon's Linux byte-pattern
   (`kNotifyLicensesUpdatedPattern`), **unique-match-or-no-op**
   (`FindNotifyLicensesUpdatedFunction`) — a wrong-build pattern disables the

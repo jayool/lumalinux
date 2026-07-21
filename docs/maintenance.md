@@ -137,8 +137,9 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
      (`FindNotifyLicensesUpdatedFunction` logs `N match(es), need exactly 1`)
      just disables the no-restart path → **Add Game falls back to needing a Steam
      restart** (the old behaviour). It NEVER blocks installs and NEVER crashes.
-     Also gated behind `LUMA_NO_RESTART`, so a break is invisible unless that
-     flag is on. Re-derive via the RTTI anchor: the string `"17LicensesUpdated_t"`
+     Default ON since v0.16.16 (kill-switch `LUMA_NO_RECONCILE`), so a break
+     silently falls back to the restart path. Re-derive via the RTTI anchor: the
+     string `"17LicensesUpdated_t"`
      (the callback type's `type_info` name) is referenced right before the
      function posts callback `0x7d`; find that xref, walk to the enclosing
      function prologue, and mask the volatile bytes (get_pc_thunk rel, PIC add

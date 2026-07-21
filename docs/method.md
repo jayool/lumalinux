@@ -407,8 +407,8 @@ no restart. This is what slsteam-moon and OpenSteamTool both do (moon calls
 — the same effect). Not the `DepotIdVec` (tested; it's downstream of appinfo — a
 dead end, see RESEARCH).
 
-lumalinux's implementation (`src/license_reconcile.cpp`, gated behind
-`LUMA_NO_RESTART`), each piece chosen for safety:
+lumalinux's implementation (`src/license_reconcile.cpp`, default ON since
+v0.16.16; kill-switch `LUMA_NO_RECONCILE`), each piece chosen for safety:
 - **Resolve** `NotifyLicensesUpdated` by moon's Linux byte-pattern, **unique-match
   or no-op** (`patterns.cpp`) — a wrong-build pattern disables the feature, never
   crashes.

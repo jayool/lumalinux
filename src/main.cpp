@@ -391,13 +391,14 @@ void LumalinuxCtor() {
         Log::Warn("Ctor: steamclient.so never appeared — giving up");
     }).detach();
 
-    // no-restart experiment (LUMA_NO_RESTART / marker): watch keys.txt so a
+    // no-restart Add Game (default ON since v0.16.16): watch keys.txt so a
     // game added while Steam runs gets its keys loaded and the license reconcile
-    // armed — no Steam restart. Off by default; the watcher only starts, and the
-    // reconcile only fires, when the flag is set.
+    // armed — no Steam restart. The kill-switch LUMA_NO_RECONCILE (env or marker)
+    // turns it off; the watcher only starts, and the reconcile only fires, when
+    // Enabled().
     if (LicenseReconcile::Enabled()) {
         KeyStore::StartWatcher(KeyStore::DefaultPath());
-        Log::Info("no-restart experiment ENABLED (LUMA_NO_RESTART) — keys.txt watcher started");
+        Log::Info("no-restart Add Game ENABLED (default; kill-switch LUMA_NO_RECONCILE) — keys.txt watcher started");
     }
 }
 

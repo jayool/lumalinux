@@ -281,8 +281,8 @@ timing-robust. **Nothing to port for the mechanism itself.**
 > *login-time* injection (warm cache, no hang). It turned out to be exactly the
 > missing piece for a **different** goal: **no-restart Add Game**. Ported in
 > v0.16.15 as `src/license_reconcile.cpp` (see `docs/method.md` §"license
-> reconcile" and RESEARCH §"no-restart"). Kept behind `LUMA_NO_RESTART` until
-> promoted to default.
+> reconcile" and RESEARCH §"no-restart"). **Promoted to default in v0.16.16**;
+> kill-switch `LUMA_NO_RECONCILE` forces the old restart-based behaviour.
 
 The problem it solves: a game added while Steam is *running* injects fine into
 package 0 and its keys are served, but Steam still shows **"0 target depots"** /
