@@ -1030,9 +1030,13 @@ package-0 exclusion) and suppressed the doomed shader pre-cache by writing the
 **global** `DisableShaderCache=1` into config.vdf at add-game time
 (steamidra_lite), matching the Steam toggle / moon. That worked but was blunt:
 keyed and owned games lost Valve's precompiled-shader download too. **v0.14.0
-replaced it with a per-game skip** (the ShaderDepot hook, §13.10) and
-steamidra_lite now *reverts* a previously-written `DisableShaderCache` instead of
-writing one. Note the framing in this subsection — "making the shader pre-cache
+replaced it with a per-game skip** (the ShaderDepot hook, §13.10). As of v0.16.x
+steamidra_lite **no longer writes or reverts `DisableShaderCache` at all** — the
+flag is left entirely to the user (it *is* Steam's own "Shader Pre-Caching"
+setting) and the hook handles keyless games per-game. (v0.14–0.16 had a
+`restore_shader_precache` that reverted a legacy `1→0`, but it could not tell an
+inherited kill from a deliberate user-off, so it was removed — see §13.9.) Note
+the framing in this subsection — "making the shader pre-cache
 *work* for a keyless game is impossible without the real key" — is still true,
 but it was the wrong goal: §13.10 doesn't make it work, it makes Steam **skip it
 cleanly**, which is all a keyless game ever needed.
@@ -1737,8 +1741,9 @@ is a cold-cache/early-inject problem and lumalinux (finder, post-login) "most
 likely doesn't need" the anti-hang; OST even ships with its anti-hang hook
 disabled. Confirmed live: the reconcile fired and Steam downloaded cleanly.
 
-**Verified live (2026-07-20, v0.16.15).** Game added mid-session, `no_restart`
-marker set:
+**Verified live (2026-07-20, v0.16.15).** Game added mid-session (at the time this
+was behind the since-removed `no_restart` opt-in marker; the feature is now
+default-ON with kill-switch `LUMA_NO_RECONCILE`):
 
     22:02:28  KeyStore watcher: keys.txt changed — reloaded (Size=24), reconcile armed
     22:02:33  LoadPackage[finder]: APPENDED 5 id(s) to PackageId=0 AppIdVec (+ the new depots)

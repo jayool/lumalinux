@@ -14,6 +14,14 @@
 # Added by whitelist_hash.py --steam-version; harmless to omit (the gate just
 # returns "unknown" for that build).
 #
+# A `# caps: shader=ok reconcile=moved` comment follows the same convention (also
+# ignored by lumalinux, text-scanned by LumaDeck): it records which NON-CRITICAL
+# hooks resolved on that build — `shader` = the per-game shader-cache skip,
+# `reconcile` = no-restart Add Game — so LumaDeck's update gate knows which
+# features a build would lose (`moved` = pattern didn't resolve; `ok` = healthy).
+# Added by whitelist_hash.py --caps. Hashes whitelisted before this feature have
+# no caps line — the gate treats that as "unknown", not "reduced".
+#
 # Hashes are the ubuntu12_32 / steamdeck_stable_ubuntu12 binary actually LOADED at
 # runtime (NOT linux32). watch-steam.yml validates + appends them automatically.
 SafeModeHashes:

@@ -9,10 +9,12 @@
 #
 # Appends the hash to SafeModeHashes (the flat list src/update.cpp reads) under
 # the current version group, preceded by a `# steam_version: <n>` COMMENT when
-# --steam-version is given. lumalinux ignores that comment; LumaDeck's
-# safe-to-update gate text-scans this file for `steam_version: <pin>` to answer
-# "is this build supported?", so the metadata lives next to its hash — one
-# section, no separate Builds sidecar. Text-based to preserve comments/formatting.
+# --steam-version is given, and a `# caps: <tokens>` comment when --caps is given
+# (e.g. `caps: shader=ok reconcile=moved` — which non-critical hooks resolved on
+# that build). lumalinux ignores both comments; LumaDeck's safe-to-update gate
+# text-scans this file for `steam_version: <pin>` and `caps:` to answer "is this
+# build supported, and what would it lose?", so the metadata lives next to its
+# hash — one section, no separate Builds sidecar. Text-based to preserve comments.
 #
 # Idempotent per section: re-running never duplicates an entry.
 #
