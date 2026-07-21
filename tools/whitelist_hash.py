@@ -24,10 +24,11 @@ import argparse
 import sys
 
 
-def _insert_into_safemode(lines, group, sha, steam_version, build_id, note):
+def _insert_into_safemode(lines, group, sha, steam_version, build_id, note, caps):
     """Append `  - <sha>` under SafeModeHashes[<group>], preceded by a
-    `# steam_version: <n>` comment (read by LumaDeck's text-scan gate; ignored by
-    lumalinux). Returns (ok, msg)."""
+    `# steam_version: <n>` comment and (when given) a `# caps: <tokens>` comment
+    (both read by LumaDeck's text-scan gate; ignored by lumalinux). Returns
+    (ok, msg)."""
     # locate the group key line: "  <group>:" (2-space indent, trailing colon)
     gi = None
     for i, l in enumerate(lines):
@@ -58,6 +59,8 @@ def _insert_into_safemode(lines, group, sha, steam_version, build_id, note):
         ins.append("%s%s" % (item_indent, meta))
     elif build_id:
         ins.append("%s# build %s" % (item_indent, build_id))
+    if caps:
+        ins.append("%s# caps: %s" % (item_indent, caps))
     if note:
         for nl in note.splitlines():
             ins.append("%s# %s" % (item_indent, nl))
@@ -73,6 +76,10 @@ def main():
     ap.add_argument("--note", default="")
     ap.add_argument("--steam-version", default="")
     ap.add_argument("--build-id", default="")
+    ap.add_argument("--caps", default="",
+                    help="per-build non-critical capability tokens, e.g. "
+                         "'shader=ok reconcile=moved' (from check_patterns caps_str). "
+                         "Written as a '# caps:' comment; read by LumaDeck's gate.")
     ap.add_argument("--updates", default="res/updates.yaml")
     ap.add_argument("--version-file", default="res/version.txt")
     args = ap.parse_args()
@@ -92,8 +99,8 @@ def main():
     if any(l.strip() == "- " + sha for l in lines):
         print("SafeModeHashes: hash already present.")
     else:
-        ok, msg = _insert_into_safemode(lines, group, sha,
-                                        args.steam_version, args.build_id, args.note)
+        ok, msg = _insert_into_safemode(lines, group, sha, args.steam_version,
+                                        args.build_id, args.note, args.caps)
         if not ok:
             print("ERROR: %s in %s" % (msg, args.updates), file=sys.stderr)
             return 1

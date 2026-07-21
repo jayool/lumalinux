@@ -46,9 +46,13 @@ import sys
 #
 #   CRITICAL    — must resolve to exactly ONE site or the hook can't install.
 #                 A miss/ambiguity here blocks the whitelist (A.2).
-#   NONCRITICAL — ShaderDepot: a miss only loses the per-game shader skip;
-#                 installs still work, so the hash can still be whitelisted, but
-#                 we still open an issue so it gets re-derived (per user request).
+#   NONCRITICAL — a miss loses an optional feature but installs still work, so
+#                 the hash can still be whitelisted; we open an issue + auto-derive
+#                 so it gets fixed. ShaderDepot (per-game shader skip) and Reconcile
+#                 (NotifyLicensesUpdated, the no-restart Add Game path — a miss only
+#                 costs a Steam restart, degrades cleanly) live here. Which of these
+#                 resolved on a build is recorded per-hash in updates.yaml (`caps:`)
+#                 so LumaDeck's update gate knows what a build would lose.
 #   DIAGNOSTIC  — never blocks, never opens an issue; reported for information
 #                 only. LoadPackage (opt-in, multi-match EXPECTED — 3 candidates,
 #                 runtime picks index 0) and BuildDep (disabled since SLSsteam
@@ -58,7 +62,17 @@ CRITICAL = {
     "kGmrcFunctionPattern":        "GMRC",
 }
 NONCRITICAL = {
-    "kShaderCacheDepotPattern": "ShaderDepot",
+    "kShaderCacheDepotPattern":    "ShaderDepot",
+    "kNotifyLicensesUpdatedPattern": "Reconcile",
+}
+# Short capability token per non-critical const, written into updates.yaml as a
+# `# caps: <token>=ok|moved ...` comment next to each whitelisted hash. LumaDeck
+# text-scans it to decide, per build, whether an update would lose a feature
+# (shader pre-cache skip / no-restart Add Game). `ok` = resolved uniquely on this
+# build; `moved` = the pattern didn't resolve (the feature degrades, non-blocking).
+CAP_TOKEN = {
+    "kShaderCacheDepotPattern":      "shader",
+    "kNotifyLicensesUpdatedPattern": "reconcile",
 }
 DIAGNOSTIC = {
     "kLoadPackagePattern": "LoadPackage",
@@ -227,7 +241,10 @@ def main():
         "hooks": {},          # name -> {label, status, count, rvas}
         "finder": {},         # anchor -> {status, ...}
         "blocking": [],       # display names of blocking failures
-        "noncritical_moved": [],
+        "noncritical_moved": [],        # display names of moved non-criticals
+        "noncritical_moved_consts": [], # patterns.hpp consts of the above (for --only)
+        "caps": {},           # cap token -> "ok" | "moved" (all non-criticals)
+        "caps_str": "",       # "shader=ok reconcile=moved" for the updates.yaml comment
         "verdict": None,
         "exit_code": None,
     }
@@ -253,10 +270,20 @@ def main():
         if record(const, label, "critical") != "UNIQUE":
             result["blocking"].append(label)
 
-    # 2) ShaderDepot — non-critical, but a miss opens an issue (still PR-able)
+    # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
+    # derive but still PR-able. Record per-hook capability (ok/moved) so the
+    # whitelist can carry it and LumaDeck knows what a build would lose.
     for const, label in NONCRITICAL.items():
-        if record(const, label, "noncritical") != "UNIQUE":
+        ok = record(const, label, "noncritical") == "UNIQUE"
+        token = CAP_TOKEN.get(const, label.lower())
+        result["caps"][token] = "ok" if ok else "moved"
+        if not ok:
             result["noncritical_moved"].append(label)
+            result["noncritical_moved_consts"].append(const)
+    # stable order: follow CAP_TOKEN declaration order
+    result["caps_str"] = " ".join(
+        "%s=%s" % (CAP_TOKEN[c], result["caps"][CAP_TOKEN[c]])
+        for c in NONCRITICAL if CAP_TOKEN.get(c) in result["caps"])
 
     # 3) LoadPackage — diagnostic-only, multi-match expected; never blocks
     for const, label in DIAGNOSTIC.items():
