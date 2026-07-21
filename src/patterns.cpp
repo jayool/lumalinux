@@ -117,6 +117,47 @@ uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
     return found;
 }
 
+// Like FindInSteamclient but requires a UNIQUE match: returns the address only if
+// the pattern matches EXACTLY ONE site, else 0. For NON-CRITICAL hooks that must
+// degrade to a clean no-op rather than risk hooking the WRONG function when a
+// Steam update makes the pattern ambiguous — FindInSteamclient takes the first
+// match, and a wrong first-match on a moved pattern could crash Steam. A 0 here
+// disables only that non-critical feature; installs are unaffected. Used by
+// ShaderDepot and NotifyLicensesUpdated (both non-load-bearing).
+uintptr_t FindUniqueInSteamclient(const char* pattern, const char* logName) {
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern(pattern);
+    if (parsed.bytes.empty()) {
+        Log::Error("Patterns: %s — empty/invalid pattern string", logName);
+        return 0;
+    }
+
+    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
+    const size_t patLen = parsed.bytes.size();
+    uintptr_t hit = 0;
+    size_t count = 0;
+    for (size_t i = 0; i + patLen <= r.size; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
+        }
+        if (match) {
+            if (++count == 1) hit = r.base + i;
+            else break;  // >1 -> ambiguous, stop
+        }
+    }
+    if (count != 1) {
+        Log::Warn("Patterns: %s — %zu match(es), need exactly 1; feature disabled "
+                  "(non-critical; installs unaffected)", logName, count);
+        return 0;
+    }
+    Log::Info("Patterns: %s found at 0x%lx (RVA 0x%lx)",
+              logName, (unsigned long)hit, (unsigned long)(hit - r.base));
+    return hit;
+}
+
 } // namespace
 
 namespace Patterns {
@@ -141,34 +182,8 @@ uintptr_t FindNotifyLicensesUpdatedFunction() {
     // UNIQUE-match required: this pattern is ported from moon and NOT re-verified
     // against the user's exact steamclient.so, so if it matches 0 or >1 places
     // we bail (the license reconcile then no-ops and the restart path is used).
-    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
-    if (!r.base) return 0;
-
-    auto parsed = ParsePattern(kNotifyLicensesUpdatedPattern);
-    if (parsed.bytes.empty()) return 0;
-
-    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
-    const size_t patLen = parsed.bytes.size();
-    uintptr_t hit = 0;
-    size_t count = 0;
-    for (size_t i = 0; i + patLen <= r.size; ++i) {
-        bool match = true;
-        for (size_t j = 0; j < patLen; ++j) {
-            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
-        }
-        if (match) {
-            if (++count == 1) hit = r.base + i;
-            else break;  // >1 -> ambiguous, stop
-        }
-    }
-    if (count != 1) {
-        Log::Warn("Patterns: NotifyLicensesUpdated — %zu match(es), need exactly 1; "
-                  "license reconcile disabled (restart path unaffected)", count);
-        return 0;
-    }
-    Log::Info("Patterns: NotifyLicensesUpdated found at 0x%lx (RVA 0x%lx)",
-              (unsigned long)hit, (unsigned long)(hit - r.base));
-    return hit;
+    return FindUniqueInSteamclient(kNotifyLicensesUpdatedPattern,
+                                   "NotifyLicensesUpdated");
 }
 
 uintptr_t FindDepotKeyFunction() {
@@ -184,8 +199,13 @@ uintptr_t FindGmrcFunction() {
 }
 
 uintptr_t FindShaderCacheDepotFunction() {
-    return FindInSteamclient(kShaderCacheDepotPattern,
-                             "GetShaderCacheDepot (per-game shader skip)");
+    // UNIQUE-match (not FindInSteamclient's first-match): if a Steam update makes
+    // this pattern ambiguous, hooking the first (possibly wrong) match could crash
+    // Steam. Non-critical, so bail to a clean no-op instead — the per-game shader
+    // skip is lost (keyless games regress to the §13.8 loop, DisableShaderCache is
+    // the global stop-gap), but installs are unaffected.
+    return FindUniqueInSteamclient(kShaderCacheDepotPattern,
+                                   "GetShaderCacheDepot (per-game shader skip)");
 }
 
 uintptr_t FindLoadPackageFunction() {
