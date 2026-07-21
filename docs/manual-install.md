@@ -69,8 +69,12 @@ change: `config.yaml`, `config.vdf`, and (when pre-existing) the `.acf`, the
 stplug-in `.lua`, and the `.depot` tracker. `keys.txt` is merged in place without
 a `.bak`.
 
-Restart Steam and press **Install** on the game; it downloads natively, with
-progress shown in the Steam library.
+Press **Install** on the game; it downloads natively, with progress shown in the
+Steam library. **No Steam restart needed** since v0.16.16: the license reconcile
+(method.md §8) refreshes ownership/appinfo live so the game appears and downloads
+right after it's added. (If the reconcile pattern is broken on your build it
+no-ops and you fall back to needing a restart — `LUMA_NO_RECONCILE` forces that
+old behaviour on purpose.)
 
 ## Pinning: auto-update vs frozen
 

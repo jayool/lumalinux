@@ -23,14 +23,19 @@ using NotifyFn = void (*)(void*);
 namespace LicenseReconcile {
 
 bool Enabled() {
+    // Default ON since v0.16.16 (no-restart promoted to default). KILL-SWITCH:
+    // set env LUMA_NO_RECONCILE=1 or drop a marker ~/.config/lumalinux/no_reconcile
+    // to force the old restart-based behaviour — e.g. if a Steam update ever
+    // breaks the pattern in a way the unique-match no-op guard doesn't catch, or
+    // for debugging. (The old opt-IN LUMA_NO_RESTART is gone; it's the default.)
     static const bool on = []() -> bool {
-        if (std::getenv("LUMA_NO_RESTART") != nullptr) return true;
+        if (std::getenv("LUMA_NO_RECONCILE") != nullptr) return false;
         if (const char* home = std::getenv("HOME")) {
-            std::string m = std::string(home) + "/.config/lumalinux/no_restart";
+            std::string m = std::string(home) + "/.config/lumalinux/no_reconcile";
             struct stat st;
-            if (::stat(m.c_str(), &st) == 0) return true;
+            if (::stat(m.c_str(), &st) == 0) return false;
         }
-        return false;
+        return true;
     }();
     return on;
 }
