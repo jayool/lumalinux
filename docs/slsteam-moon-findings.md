@@ -744,6 +744,138 @@ latent crash risks on our side.
 
 ---
 
+## Delta — 2026-07-22 (v2.8 + the 2026-07-21 Steam client update)
+
+Pass over `swwayps/slsteam-moon` since the 2026-07-10 Delta. Read via the public
+compare `.patch` (`30605f4…v2.8`) plus the two commits past the `v2.8` tag on the
+default branch (`slsteam-moon`) — ~14 commits, 2026-07-14 → 2026-07-22. Grouped by
+theme; the two that touch **lumalinux** are flagged ★, and the Steam-client
+pattern drift (D8) is the operational signal to act on.
+
+### D1 — GMRC "suppress work when providers offline" (`9abd0de`, 07-17) ★ upgrades M4
+
+moon now gates its **update checks** on the fetch circuit breaker
+(`ManifestFetch::areProvidersOffline()`): when a round trips all providers with
+only network/5xx errors it sets a global-offline flag and later calls return
+immediately without any HTTP; a detached thread re-probes every ~10 min. Pairs
+with the earlier per-GID 404 tracking (`362476d`) and alt-GID-gated fallback
+(`53ab675`) from the 07-10 Delta.
+
+**For lumalinux — this is the missing half of M4.** Verified 2026-07-22:
+`src/gmrc_store.hpp` already has the 3-provider cascade **with
+`manifest.steam.run` present** (the Part-1 gate-6 "add the endpoint" action is
+DONE) and per-call timeouts (15s/30s, first-good-answer short-circuit), but **no
+breaker**: every `GetCode` re-tries the whole cascade, so a dead provider can
+stall the hot path (`GetManifestRequestCode`) once per manifest. Action (upgraded
+from the Part-1 gate-6 note): add a **circuit breaker** (all-providers-network-fail
+→ fast `nullopt`, no HTTP) **+ a periodic re-probe**. 100% our own code, no
+SLSsteam overlap. Clearest single port from v2.8.
+
+### D2 — drop DLC without usable keys (`a72deb9`, 07-16) ★ verify on Deck
+
+moon filters `extended.listofdlc` in the provisioned appinfo to **drop DLC whose
+content depots have no usable key**, so Steam never schedules encrypted content it
+will reject (`appinfo_provision.cpp`, new `dlcids.hpp`).
+
+**For lumalinux/LumaDeck — the one case that may hit us.** We DO advertise DLC:
+`add_game_dlcs` (LumaDeck `slssteam_ops.py`) pulls the DLC list from the Store API
+and unlocks it (≤64 handled natively by SLSsteam, no config; >64 written to
+`DlcData:`), **without filtering by key**. `steamidra_lite` already *identifies*
+`dlcs_no_key` (L1407) but only for reporting. Likely structural protection: a
+depot only downloads if its key is in `keys.txt` and it is surfaced, so a keyless
+DLC usually never downloads. **Not traced end-to-end** — unverified whether a DLC
+that SLSsteam marks owned but whose depot lacks a key can still trigger a
+`missing decryption key` / 0-byte state. **Action: test on Deck** (a game with a
+content-DLC we ship no key for); if it misbehaves, add our own equivalent — don't
+advertise a DLC whose depot has no key.
+
+### D3 — appinfo-synthesis hardening (`0ce1910`, `803cd75`, `a25e1d1` = v2.8)
+
+Three commits tighten moon's appinfo synthesis (M5): don't synthesize an app
+without at least one **installable content depot** (`hasUsableContentDepot`),
+require that depot carry a **concrete manifest gid ≠ 0**, and **strip synthetic
+apps from the PICS changelist** so Steam's refresh doesn't re-query and clobber
+them mid-session (`usabledepot.hpp` new, `pics.cpp`, `CProtoBufMsgBase.hpp`).
+
+**Not portable — M5 territory.** lumalinux cannot synthesize appinfo (injecting
+depots SIGSEGVs; it only patches depots Steam already surfaced), and the synthesis
++ changelist filter live in SLSsteam's message/appinfo layer. Our path for
+stripped apps stays the `--token`/`AppTokens` flow. No action.
+
+### D4 — new feature: local parental-controls unlock (`c34fcea`, `e1cc9f3`, 07-16/18)
+
+New Block-A spoof: rewrite the parental-settings protobuf to strip Family-View
+restriction flags before Steam applies them; plus lifecycle hardening (mutex,
+invalid-mask guard). Brings **new byte patterns** for the settings receiver.
+
+**Not ours.** A client unlock = SLSsteam layer; vanilla SLSsteam doesn't ship it;
+the protobuf-rewrite point is the message layer lumalinux must not collide with.
+lumalinux touches nothing parental (verified). Product note only: a niche feature
+moon offers and LumaDeck doesn't.
+
+### D5 — manifest staging redesign: on-demand + BoundedExecutor (`bdcf1fa` + bound-staging, 07-16)
+
+moon moved manifest retrieval **off the PICS callback to on-demand** (triggered by
+the install planner), **disabled periodic prewarm by default**, added a
+`ManifestSelection` policy (exact / preferred-local / legacy, timeout-budgeted),
+and a `BoundedExecutor` thread pool so mass staging can't exhaust Steam's thread
+pool.
+
+**Not applicable — runtime vs offline model.** lumalinux has no runtime manifest
+staging or prewarm to bound: `steamidra_lite` pre-seeds the zip's `.manifest` files
+into `depotcache/` **before** Steam starts (sequential Python); the only hot-path
+manifest work is a single `GetCode` per manifest. Verified: no prewarm/stage/
+selection concept in `src/`. Nothing to port.
+
+### D6 — desktop-coverage refinement: backups out of XDG paths (07-14)
+
+Moves `.desktop` backups from an adjacent suffix to a central mirror dir so KDE's
+XDG autostart generator doesn't treat a backup as a second Steam launcher. Refines
+M7 (moon patches `.desktop`, not `steam.sh`).
+
+**Not ours.** We inject via `steam.sh` (headcrab's layer), touch no `.desktop`; our
+`.bak` files are config (`config.vdf/.yaml/.acf/.lua/keys.txt`) in config dirs,
+never in autostart paths, so the failure can't occur. headcrab note only.
+
+### D7 — notify: "re-add", not "restart" (`069c031`, 07-21) — convergence
+
+moon changed its incomplete-install error message from "restart Steam" to "re-add
+the game via LuaTools" (restarting doesn't fix half-written install data).
+**Convergence with our own change**: we just dropped "Restart Steam to see the
+game" → **"Done!"** on `doneRestartSteam` (the no-restart reconcile flow). We have
+no dedicated "incomplete install → re-add" message; worth one if we ever detect
+that state (0-byte / invalid config).
+
+### D8 — patterns adapted to the 2026-07-21 Steam client (`9d4380f`, 07-22) ★ Steam-update signal
+
+**A Steam client update landed 2026-07-21 and moved locators.** moon re-adapted
+(`patterns.cpp`, `ipcframe.hpp`): `RequestInternetServerList` alloc-size const
+`0x350→0x354` (masked out), `IClientAppManager::RunIPCFrame` pattern replaced, and
+the `IClientRemoteStorage` dispatch-tree median root drifted ~1.9M (outside the
+tolerance band) — now matched by three comparison-immediate fingerprints
+(`0x5DB4729A`, `0x7F3F5645`, `0x84692E78`) instead of root proximity.
+
+**Directly relevant to lumalinux** (same byte-pattern method over `steamclient.so`).
+None of the three moon fixed are lumalinux's own patterns, but the same client
+update can have moved ours (reconcile `NotifyLicensesUpdated`, DepotKey, GMRC,
+package-0, ShaderDepot). **Operational action (Steam-update workstream):** confirm
+the cron (`watch-steam.yml`) registered the 07-21 build and `check_patterns.py`
+still resolves all criticals; re-derive any that moved. Also reinforces **M1**
+(mask layout-constant bytes — exactly moon's `0x350→0x354` fix): masking those turns
+this drift class into a clean hash-bump instead of a re-derive.
+
+### Delta verdict
+
+Two ports worth doing, both 100% ours (no SLSsteam overlap):
+- **M4 circuit breaker + re-probe** (D1) — clearest win; the endpoint half is done.
+- **DLC-without-key handling** (D2) — pending a Deck test to confirm it's a real gap.
+
+Everything else is SLSsteam-layer (D3, D4), runtime-model-specific (D5),
+headcrab/`.desktop` (D6), or convergence (D7). D8 is not a moon port but the
+**Steam-update alarm**: audit our patterns against the 2026-07-21 build.
+
+---
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
