@@ -35,3 +35,8 @@ SafeModeHashes:
     - ada282ad710c9d80a1f23fc50278731e7f98db16570d5393e3ee8708f1bf9fe4
     # steam_version: 1782861641   (steamdeck_stable, CI-verified 2026-07-04)
     - fa20a21df061aad7a5d4f1e793385fcf593dcb677d0bb74f4d29ce62f2bd858e
+    # steam_version: 1784669098
+    # caps: shader=ok reconcile=ok
+    # auto-added by watch-steam.yml 2026-07-22: patterns verified by CI
+    # (Steam client version 1784669098). Live-install test on a Deck still recommended.
+    - dd3ca9f549224da3e5514fecd9887d3bf3a8a219ff123d50fe3f7b5af888af19
