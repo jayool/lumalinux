@@ -68,6 +68,25 @@ per-build release), **not** a lookup in `SupportedSteamVersions`. That array is
 a non-blocking, cosmetic (and drift-prone — it did not change in v2.6.2) layer;
 do not treat its contents as an authoritative supported-builds list.
 
+**The Linux `.so` is even more build-tolerant — it's RTTI-anchored, not
+offset-based.** The RVA→resolver timeline above is the *Windows* path
+(`src/platform/win/`, `steamclient64.dll` RVAs). The Linux hook
+(`src/platform/linux/vtable_hook.cpp`) never used offsets at all: it locates
+`steamclient.so` in memory via `/proc/self/maps`, finds the Itanium-ABI RTTI
+type-name string for the target class
+(`RTTI_NAME = "30CClientUnifiedServiceTransport"`), walks to its `typeinfo`,
+then scans for the vtable whose header is `[offset_to_top=0, typeinfo_ptr]` and
+swaps the function pointers. There is **no** hardcoded `steamclient` offset, **no**
+`SupportedSteamVersions` check, and **no** build comparison anywhere in the Linux
+path. Because it resolves the vtable by the C++ **class name** — a semantic
+identifier that survives recompilation, refactors, and offset moves — a normal
+Steam build update does not affect it. It breaks only on a *structural* change:
+Valve renaming the class, altering its vtable layout (add/remove/reorder virtual
+methods), or stripping RTTI (they don't). So on Linux the version lag is moot:
+the 2.6.1/2.6.2 work was Windows RVA/resolver plumbing that the RTTI-based `.so`
+does not need — CloudRedirect at 2.6.0 keeps resolving new builds by class name
+regardless.
+
 For a LumaDeck component-update design this means CloudRedirect does **not** fit
 the hash-allowlist model the way SLSsteam/lumalinux `updates.yaml` does (CR
 publishes no per-build hash list), and it does **not** need to: on Linux the
