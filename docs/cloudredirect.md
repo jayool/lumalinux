@@ -22,6 +22,60 @@ by side.
 > (constant-initialized before any constructor) and it builds the log path with a
 > local, not global, string.
 
+## How CloudRedirect tracks Steam builds (RVA → signature resolver)
+
+CloudRedirect used to be rigidly tied to a single Steam build, then stopped
+being so. This matters for any "is CR compatible with the build I run?" gate:
+the answer is **no longer** a lookup in a hardcoded list.
+
+Timeline, traced from the `SC_RVA_GLOBAL_ENGINE` constant in
+`src/common/steam_kv_injector.cpp` across release tags:
+
+| Release | `SC_RVA_GLOBAL_ENGINE` | What the release did |
+| --- | --- | --- |
+| v2.1.8 | `0x17A70E8` | hardcoded offset |
+| v2.1.9 | `0x17A70E8` (same) | that build didn't move the function |
+| v2.2.1 | `0x17CC738` (**changed**) | new build → **re-hardcode the offset by hand** |
+| **v2.2.2** | `0x17CC738` (same) | **added the resolver** (see below) |
+| v2.2.3 | `0x17CC738` (same) | "official support for 1782437068" **without touching the RVA** |
+| v2.6.2 | *(removed)* | **deleted the hardcoded RVAs entirely** |
+
+- **≤ v2.2.1 — per-build treadmill.** Supporting a new build meant hardcoding
+  new RVAs; when Steam moved a function (v2.2.1: `0x17A70E8`→`0x17CC738`) they
+  had to ship a release with the new numbers. This is the "requires an update
+  for every Steam client update" era.
+- **v2.2.2 — the pivot ("CR no longer requires an update for every Steam client
+  update").** They added a signature/RTTI scanner (`sig_scanner.cpp`,
+  `sc_resolver`) and routed every address through
+  `OvResolve(override, base, rva)` / `SC_RESOLVE(field, rva)` = **prefer the
+  signature-scanned address; fall back to the hardcoded RVA only if the scan
+  fails.** The version gate also became non-blocking (the patcher logs the
+  detected build and continues instead of refusing). RVAs stayed as a safety
+  net.
+- **v2.2.3 — proof it works.** "Official support for the June 26th update
+  `1782437068`" shipped with the RVA unchanged (`0x17CC738`) — the scanner
+  resolved the new build on its own. The only concrete change was adding the
+  build number to the cosmetic `SupportedSteamVersions` array.
+- **v2.6.2 — full migration.** Hardcoded RVAs deleted; the resolver is now
+  mandatory (`Configure()` / "resolver addresses required"), no fallback.
+
+**Consequence for compatibility reasoning.** From v2.2.2 on, CR resolves its
+hooks by signature at runtime — the same model SLSsteam and lumalinux already
+use. "Does CR version *C* support Steam build *X*?" is therefore a
+**signature-resolution** question (retrocompatible across builds; only breaks
+if Steam changes the *shape* of the code, which needs a signature update, not a
+per-build release), **not** a lookup in `SupportedSteamVersions`. That array is
+a non-blocking, cosmetic (and drift-prone — it did not change in v2.6.2) layer;
+do not treat its contents as an authoritative supported-builds list.
+
+For a LumaDeck component-update design this means CloudRedirect does **not** fit
+the hash-allowlist model the way SLSsteam/lumalinux `updates.yaml` does (CR
+publishes no per-build hash list), and it does **not** need to: on Linux the
+CloudRedirect Flatpak self-updates via `flatpak update` against its own OSTree
+remote (`checkForFlatpakUpdate` / `applyFlatpakUpdate` in `ui-linux/backend.cpp`),
+and the `.so` + Steam pin are curated upstream by Headcrab/Selectively11. The
+Linux release channel currently tops at **2.6.0**; 2.6.1/2.6.2 are Windows-only.
+
 ## Install order
 
 CloudRedirect goes in **before** lumalinux. lumalinux's installer detects
