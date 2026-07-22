@@ -150,10 +150,16 @@ jobs:
             --body-file pr_body.md
           # Auto-merge: a CLEAN / ShaderDepot-moved hash bump is a safe, review-free
           # DATA change (deployed .so self-heals on the fetched hash; no code change).
-          # Detach first so --delete-branch can also drop the local branch, then
-          # squash-merge. main is unprotected, so this merges without waiting on checks.
-          git checkout --detach
-          gh pr merge "$BR" --squash --delete-branch
+          # main is unprotected, so this squash-merges without waiting on checks.
+          # Merge WITHOUT --delete-branch, then drop the REMOTE branch explicitly.
+          # `gh pr merge --delete-branch` also deletes the LOCAL branch, which needs
+          # a current branch to switch to; the old code detached HEAD off "$BR"
+          # first so the local delete could run, but gh in detached HEAD then errors
+          # "could not determine current branch" AFTER a successful merge — failing
+          # the step (red run) on a job that actually worked. The local branch is
+          # throwaway on this ephemeral runner, so only the remote one needs cleanup.
+          gh pr merge "$BR" --squash
+          git push origin --delete "$BR" || true
           echo "merged=true" >> "$GITHUB_OUTPUT"
 
       # ── non-critical moved (2): try AUTO-DERIVATION first ────────────────
