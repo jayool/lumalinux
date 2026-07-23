@@ -841,8 +841,23 @@ codegen concreto de SLSsteam; el config flag ataca la **superficie soportada y
 estable**. Donde exista un knob de config equivalente, preferirlo al parcheo en
 memoria — sobrevive a refactors como el del decompiler sin tocar nada.
 
-**Pendiente de verificar (no en este cambio):** el OTRO parche en memoria,
-`sls_achievement_unblock` (repunta dos `call isSubscribed` en `SLSsteam.so`, §17),
-también depende del codegen de SLSsteam y el refactor del decompiler movió mucho
-código. Conviene comprobar que su ancla sigue casando contra `20260723102618` antes
-de asumir que las achievements nativas siguen activas.
+**El OTRO parche en memoria, `sls_achievement_unblock` (§17), SÍ sigue intacto —
+verificado al fuente contra `20260723102618`.** A diferencia del update-unblock (que
+murió por un revert intencional del mecanismo), el decompiler tocó cómo SLSsteam
+resuelve vtables de *steamclient*, no su lógica propia de achievements:
+- Los 5 símbolos que resuelve por `.symtab` persisten con nombres mangled idénticos:
+  `_ZN5CUser12isSubscribedEj`, `_ZN7CConfig12isAddedAppIdEj`, `g_config`,
+  `Achievements::sendAndRecvGetUserStats`, `...GetPlayerStats` (firmas sin cambio en
+  `src/feats/achievements.{cpp,hpp}`, `src/sdk/CUser.hpp`, `src/config.hpp`).
+- El guard que ancla `FindGuardCall` (`call isSubscribed; add esp,imm; test al,al;
+  jne`) sigue siendo **único por función** (una sola `isSubscribed(...)` early-return
+  en cada entry point, L105/L153). Los demás branches usan `test eax,eax` (`85 C0`) o
+  `cmp` contra constante, así que no crean un segundo match del `84 C0`.
+- `isSubscribed` es método no-inline (definido en su `.cpp`), sin LTO no se inlinea →
+  el `call` sobrevive y el símbolo se exporta.
+
+Lo único no confirmado es la forma de bytes compilada exacta (el `.so` del release da
+403 en el proxy; compilarlo no es reproducible), pero no hay razón estructural para
+que derive y el patrón deja el `imm8` del `add esp` libre. Confirmación práctica
+on-device: el log del parche (`SLS-ach: scoped the native-achievement guard…` vs
+`guard pattern not found exactly once`) y `LUMA_SLS_ACH_TRACE=1`.
