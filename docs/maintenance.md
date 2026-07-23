@@ -92,6 +92,27 @@ fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
 pattern failed (rare; read the `RTTI:` log lines first). You only re-derive
 DepotKey's pattern to refresh that fallback, using the indirect anchor below.
 
+> **Automated first (`watch-steam.yml`).** You rarely run the steps below by hand.
+> When a Steam update moves a **critical** hook, the daily monitor runs the same
+> Ghidra derivation and — if it produces a UNIQUE pattern that re-validates
+> **CLEAN** — opens a PR that already contains **everything**: the new
+> `src/patterns.hpp`, a bumped `res/version.txt` (a fresh `SafeModeHashes` group),
+> and this build's hash whitelisted under that new group. So when you see a
+> `fix(patterns): re-derived criticals + new group … (auto, needs release)` PR,
+> your job is just: **(1) live-install test on a Deck → (2) merge → (3) tag a
+> release.** The manual steps below are the fallback for when auto-derivation
+> can't produce a clean pattern (it opens a tracking issue instead).
+>
+> **The order is safe either way — you cannot create the release/updates.yaml
+> "fleco" by merging before releasing.** The release build publishes
+> `res/version.txt` as an asset (the group-id compiled into that `.so`), and
+> LumaDeck's update gate reads the *release's* `version.txt`, **not** `main`'s. So
+> even though the merged PR makes `main`'s `updates.yaml` advertise the new build
+> immediately, LumaDeck won't offer it until the matching release ships. Deployed
+> `.so`s are unaffected too: each keys on its **own compiled** group
+> (`src/update.cpp`: `clientHashMap[VERSION]`) and never sees the new group's hash,
+> so SafeMode keeps blocking that build — correctly — until the user updates.
+
 1. Grab the new `steamclient.so`:
    ```sh
    cp ~/.local/share/Steam/linux32/steamclient.so /tmp/
@@ -157,11 +178,25 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
    ninja
    ```
 
-5. **Bump `res/version.txt`** to a new timestamp (a real bump this time —
-   the pattern set changed) and start a fresh `SafeModeHashes:` group with
-   the verified hash(es) for the new binary. Tag a release; the CI workflow
-   uploads the rebuilt `.so` to the GitHub release. Users that re-run
-   `install.sh` (or LumaDeck's reinstall action) pick up the new binary.
+5. **`res/version.txt` + a fresh group** — *the auto PR already did this step*; on
+   the manual path, bump `res/version.txt` to a new timestamp (a real bump this
+   time — the pattern set changed) and start a new `SafeModeHashes:` group with the
+   verified hash(es) for the new binary:
+   ```sh
+   tools/whitelist_hash.py <sha256> --create-group --steam-version <ver> \
+       --caps "shader=ok reconcile=ok"
+   ```
+   Then **tag a release**: `build.yml` uploads the rebuilt `.so` **and
+   `res/version.txt`** to the GitHub release. That `version.txt` asset is the
+   group-id compiled into the `.so`, and LumaDeck's update gate reads it (from the
+   **release**, not `main`) to decide which builds the shipping binary can hook —
+   so never omit it. Users that re-run `install.sh` (or LumaDeck's reinstall
+   action) pick up the new binary.
+
+   > Only a **critical** move bumps the group (per `CMakeLists.txt`). A
+   > non-critical re-derive (ShaderDepot / Reconcile) keeps the **same** group —
+   > the build already works, so its hash stays whitelisted where it is, just with
+   > a `# caps:` note; that release does not bump `version.txt`.
 
 ### A.3 Manually re-derive an anchorless hook (DepotKey)
 
