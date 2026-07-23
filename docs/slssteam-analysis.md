@@ -625,3 +625,69 @@ Repaso semanal de `AceSLS/SLSsteam` desde `da97d11` (20260705, base de §7). Cam
 - **curl in-process reemplazado por `curl` externo** (`f62d97c`, 07-11). SLSsteam pasó de libcurl in-process a `fork`+`execve("/bin/curl")` porque en SteamOS `libssl.3.so` **crashea** al curlear ciertas URLs (certs rotos, causa poco clara). **Riesgo de la misma clase para lumalinux:** usamos libcurl in-process (`curl.cpp` dlopen, `gmrc_store`, `update.cpp`) contra HTTPS (`raw.githubusercontent.com/.../updates.yaml` al arrancar, `manifest.opensteamtool.com`, `manifest.steam.run`). No observado nunca con nuestras URLs, y el fix de SLSsteam (curl externo) es pesado, así que **solo vigilado, no accionado**. Si aparece un crash de arranque correlado con el fetch de `updates.yaml`, esta es la causa.
 - **Evolución del borrow de logros** (refina §7.3): optimizado con **protobufs** en vez de scrapear el HTML del perfil (`4f3e607`), **blacklist de perfiles fallidos por AppId** para acelerar cargas posteriores (`0d6b3a8`), `MaxSchemaTries` configurable (default 10; `0` = solo caché offline) (`4ab84f7`, `c063fb1`), opción de auto-update de schema (`6e8d357`), y refactor + checks en `achievements.cpp` (`c12234f`, `aa316c4`), que es nuestro objetivo de hook. Validamos `sls_achievement_unblock` on-device contra `d35a697`/20260711, así que los anclajes (símbolos + patrón del guard) **casan hoy**; un refactor futuro podría moverlos y el fail-safe lo cubre.
 - **SafeMode**: bumps de `res/updates.yaml` / `res/version.txt` (nuevos hashes de `steamclient.so`). Sin impacto salvo el co-gating de §3.
+
+### 7.5 Delta 2026-07-23 (VERSION `20260723102618`, HEAD `69594b9`) — el decompilador
+
+Cambio arquitectónico **gordo** desde §7.4. Verificado en el fuente (`raw.githubusercontent`
+@ `20260722152506`), no solo en las notas de release.
+
+- **★★ Añaden un DECOMPILADOR que reemplaza patterns y VFT-indexes hardcodeados**
+  (`2903ef8`, release `20260722152506`, 07-22). *"Add decompiler to replace lots of
+  patterns and hardcoded VFT Indexes, and hooks (Steamclient may take a few seconds
+  longer to start now). Huge refactors."* Nuevos ficheros `src/decompiler.{cpp,hpp}`
+  + `src/vftableinfo.{cpp,hpp}`. Qué hace (leído en `decompiler.hpp`/`.cpp`):
+  - `collectVFTables` **localiza las VFTables por el string RTTI del `typeInfo`**
+    (recorre `.data.rel.ro`, cruza typeinfos→vtables) — **la misma primitiva que el
+    `.so` de CloudRedirect en Linux y que nuestro `getTypeName` de §1.4/§15**.
+  - `parseInterfaceMapBase(interface)` → `map<string,unsigned>` que **resuelve los
+    índices de slot del vtable dinámicamente**, en vez de la tabla de VFT-indexes
+    hardcodeada que documentamos en §1.5 (`VFTHook`).
+  - `parseFunction`/`__parseFunction` caminan instrucciones (PIC thunks, `lea`
+    offsets, branches) vía `libmem` — análisis de código ligero, no pattern-match.
+
+  **Esto es exactamente la dirección que marcamos en §1.5 ("VFTHook + DetourHook…
+  la dirección de §15.4"), ahora automatizada por SLSsteam.** Y es la **tercera
+  convergencia** al mismo modelo: CloudRedirect (RVA→resolver), lumalinux (RTTI
+  puro §1.4/§15) y ahora SLSsteam (decompilador). El ecosistema entero está
+  abandonando offsets/índices/patterns hardcodeados por resolución dinámica RTTI.
+
+- **El rollout fue accidentado** (como el de CR 2.6.2): el refactor del
+  decompilador rompió cosas y hubo tres parches rápidos en ~18h:
+  - `fa8523f` (`20260722175657`): *"Workaround SteamOS getting stuck when loading
+    latest SLSsteam"* — el arranque del decompilador colgaba SteamOS.
+  - `4dd592c` (`20260723094105`): *"Fix decompiler branching decisions. DLC unlocks
+    should work properly again and crashes should be gone. Use real appId in more
+    interfaces than before for FakeAppIds"* — el seguimiento de branches del
+    decompilador rompió los unlocks de DLC y causaba crashes.
+  - `69594b9` (`20260723102618`, LATEST): *"Fix crash for apps that have an empty
+    parent."*
+
+- **Config nueva (07-14, `c69d502`, release `20260714131044`)** — relevante para el
+  eje de updates:
+  - **`ManifestIds`**: descargar versiones viejas + **bloquear updates en juegos
+    OWNED** (el `update-unblock` de §7.1 solo cubría unowned; esto cierra el hueco
+    de owned). Es el equivalente al `--pin` de moon (method.md §6).
+  - **`DepotBlacklist`**: bloquear que Steam baje ciertos depots (arregla p.ej. el
+    download de Saints Row IV en Proton).
+  - **Rework de `AppIds`**: ahora tiene en cuenta el **parent AppId** → puedes
+    black/whitelistear un juego entero por su AppId.
+  - Revierten el bloqueo de updates al método previo (solo unowned; owned →
+    `ManifestIds`). Fixes de shortcuts non-Steam y playtime de refunds.
+- **07-15 (`7d62c68`, `20260715200441`)**: fix de recursión infinita en exclusiones
+  (parent que referencia a su propio hijo como parent), **mirror jsdelivr para
+  `res/updates.yaml`** (segunda fuente del fichero que LumaDeck text-scanea), y
+  `curl --connect-timeout 15`.
+
+**Qué significa para nosotros:**
+1. **Valida nuestra dirección RTTI** (§1.4/§15) y la de §1.5 — SLSsteam llegó al
+   mismo sitio.
+2. **SLSsteam se vuelve más robusto a builds de Steam** (resuelve dinámicamente),
+   igual que CR. Su `SafeModeHashes`/`version.txt` **sigue existiendo** (el gate de
+   "puedo hookear esta `steamclient.so`" + lo que lee su updater — `update.cpp`
+   depende de `version.txt`, Makefile), pero el *hooking* de debajo ya no depende de
+   VFT-indexes fijos. Para el gate de LumaDeck **no cambia nada**: seguimos
+   consumiendo el `updates.yaml` de AceSLS como veredicto (decisión del eje-1), y el
+   group-id bumpeó a `20260722152506` con este refactor (co-gating §3).
+3. **Vigilancia**: el decompilador es nuevo y su rollout fue buggy (SteamOS colgado,
+   DLC roto, crashes). Si un usuario en SLSsteam muy reciente reporta cuelgue de
+   arranque o DLC que dejó de desbloquear, esta migración es la causa candidata.
