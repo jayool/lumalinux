@@ -28,6 +28,26 @@ on:
         options:
           - shaderdepot
           - criticals
+  # Auto-run when the auto-derivation MACHINERY changes, so a PR that breaks the
+  # watch-steam auto-heal chain is caught at review time — instead of silently,
+  # the day a real Steam update finally needs the auto-fix. A manual self-test
+  # nobody remembers to run is no safety net; this fires it exactly when the
+  # thing it protects is edited. On a PR there is no `inputs.target`, so the
+  # steps below fall through to the shaderdepot path (exit 2), which still
+  # exercises the full chain: fetch -> check_patterns detection -> Ghidra derive
+  # -> apply -> re-validate. Dispatch it manually with target=criticals to also
+  # cover the exit-3 / blocking_constants.py leg.
+  pull_request:
+    paths:
+      - 'tools/run_ghidra_derive.sh'
+      - 'tools/derive_patterns.py'
+      - 'tools/apply_derived_pattern.py'
+      - 'tools/check_patterns.py'
+      - 'tools/blocking_constants.py'
+      - 'tools/whitelist_hash.py'
+      - 'tools/fetch_steamclient.py'
+      - '.github/workflows/watch-steam.yml'
+      - '.github/workflows/watch-steam-selftest.yml'
 
 permissions:
   contents: read
