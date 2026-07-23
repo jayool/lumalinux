@@ -691,3 +691,89 @@ Cambio arquitectónico **gordo** desde §7.4. Verificado en el fuente (`raw.gith
 3. **Vigilancia**: el decompilador es nuevo y su rollout fue buggy (SteamOS colgado,
    DLC roto, crashes). Si un usuario en SLSsteam muy reciente reporta cuelgue de
    arranque o DLC que dejó de desbloquear, esta migración es la causa candidata.
+
+#### 7.5.1 El decompilador por dentro — desglose verificado en el fuente
+
+Leído completo en `src/decompiler.{cpp,hpp}` y `src/vftableinfo.{cpp,hpp}` @ tag
+`20260722152506`. No es un "decompilador" en el sentido clásico: es un **mini-motor
+de análisis estático que corre en runtime, al cargar**, cuyo único trabajo es
+responder una pregunta que antes estaba hardcodeada — *"¿en qué slot del vtable está
+`BLoggedOn`?"*. Antes ese número vivía fijo en el código (`VFTHook(idx=42)`); ahora
+lo **deriva solo en cada arranque**. Eso es lo que añade los "few seconds longer to
+start" de las notas.
+
+**El pipeline, 6 etapas:**
+
+1. **`parseHeader`** — abre el `steamclient.so` **desde disco con `fopen(mod.path,"r")`,
+   no desde memoria**. Deliberado: leer de memoria daría un binario ya
+   parcheado/hookeado. Parsea el ELF header (`Elf32_Ehdr`), los section headers en
+   `e_shoff`, y guarda cada sección en un map estático clave `"module::section"`
+   (`.rodata`, `.data.rel.ro`, string table).
+
+2. **`collectStrings`** — recorre `.rodata`/`.rodata.str` byte a byte con `getString`
+   (`std::isprint` hasta el null), guarda las strings imprimibles de ≥`MIN_STRING_SIZE`
+   (5) chars indexadas por dirección. Son las **etiquetas** que se usan en el paso 5.
+
+3. **`collectVFTables` — localización por RTTI, dos pasadas** *(la convergencia con
+   nosotros)*:
+   - **Pasada 1** sobre `.data.rel.ro` alineado a puntero: un puntero que apunta a un
+     string conocido = un `TypeInfo`. El nombre mangled es literal
+     (`30CClientUnifiedServiceTransport`, `14IClientUserMap`, …). El `TypeInfo`
+     queda en `addr - sizeof(ptr)`.
+   - **Pasada 2**: un puntero que apunta a un `TypeInfo` conocido = un vtable. Layout
+     Itanium C++ ABI: `[offset-to-top][typeinfo][fn0][fn1]…`; el vtable está en
+     `addr - sizeof(ptr)`. `VFTable::init` guarda dirección + puntero a typeInfo.
+   - Es **exactamente** `getTypeName` de lumalinux (§1.4/§15) y el `sc_resolver`
+     de CloudRedirect en Linux: RTTI typeinfo string → vtable.
+
+4. **`VFTable::analzye`** *(sic, typo del autor)* — lee punteros a función desde
+   `address + sizeof(lm_address_t)*2` (salta offset-to-top y typeinfo) hasta un
+   puntero null; cada uno se guarda como `offset + moduleBase`.
+
+5. **`parseInterfaceMapBase(interface)` — el truco de verdad**. Localizar el vtable
+   no basta: hace falta **qué slot es qué función**. Aquí está lo que SLSsteam hace y
+   nosotros no: por cada slot desensambla la función (`parseFunction`) y mira **qué
+   string conocido referencia**. Los métodos del client de Steam **referencian su
+   propio nombre como string** (logging/asserts). Así, si el slot `i` referencia
+   `"BLoggedOn"` → slot `i` = `BLoggedOn`. Devuelve `map<functionName, slotIndex>`.
+
+6. **`__parseFunction` — el walker de instrucciones** (vía `libmem` `LM_Disassemble`):
+   - Sigue saltos: `jmp` → continúa en el target; condicional → recursión; trackea
+     `branchesTaken` (`unordered_set`) para no colgarse en loops; para en `ret`.
+   - Maneja **PIC thunks** (x86 32-bit): para leer strings PIC el compilador emite
+     `call __x86.get_pc_thunk.bx; add ebx, off`. `isPICThunk` detecta el patrón
+     `call`→(`mov reg,[esp]`;`ret`), `getLeaOffset` reconstruye la base del GOT, y un
+     `lea reg,[ebx+off]` posterior se resuelve a un string conocido (cuenta la
+     referencia en el map `references`). — Es el mismo problema de thunks PIC que
+     documentamos en §1.3 (`fixPICThunkCall`), aquí resuelto para *leer* código en vez
+     de para *reparar* el trampolín.
+
+**Lo que resuelve así** — `vftableinfo.cpp` pide un índice solo cuando vale
+`NO_INDEX` (`0xFFFFFFFF`), cacheando por typeName en `tableMap`:
+- **9 interfaces**: `CCMInterface`, `CClientUnifiedServiceTransport`,
+  `CSteamMatchmakingServers`, `IClientApps`, `IClientAppManager`,
+  `IClientRemoteStorage`, `IClientUtils`, `IClientUser`, `IClientEngine`.
+- **~27 funciones** localizadas por nombre en vez de por índice fijo, entre ellas las
+  que nos tocan de cerca:
+  - *Transport*: `RecvPkt`, `SendAndRecv` (el mismo hook
+    `CClientUnifiedServiceTransport` que ataca CloudRedirect en Linux).
+  - *Ownership/licensing*: `BLoggedOn`, `BUpdateAppOwnershipTicket`,
+    `GetAppOwnershipTicketExtendedData`, `IsUserSubscribedAppInTicket`,
+    `RequiresLegacyCDKey`.
+  - *App manager (update-blocking)*: `GetUpdateInfo`, `InstallApp`, `UninstallApp`,
+    `GetAppInstallState`.
+  - *DLC*: `GetDLCCount`, `BGetDLCDataByIndex`, `BIsDlcEnabled`.
+
+**Por qué esto explica los tres hotfixes.** El punto frágil es el paso 6.
+`20260723094105` fue literalmente *"fix decompiler branching decisions"*: si el
+walker sigue mal una rama, o pierde el string del nombre (→ slot equivocado o
+`NO_INDEX`) o lee basura. De ahí DLC roto, crashes, y el cuelgue de SteamOS al cargar
+— todo es este análisis corriendo **en la máquina de cada usuario, en cada arranque**.
+
+**La diferencia de reparto de riesgo con lumalinux.** Resolvemos el vtable por RTTI
+**igual**, pero el **índice de slot lo llevamos precomputado en `patterns.hpp`**, y el
+**CI lo verifica contra el `steamclient.so` real antes de anunciar la build** en
+`updates.yaml` (co-gating §3, blindaje del fleco). SLSsteam lo deriva **en vivo, sin
+gate de CI** → cualquier fallo del walker le llega directo al usuario. Misma dirección
+técnica (RTTI), reparto de riesgo opuesto: ellos migraron de golpe y pagaron 3
+hotfixes en 24h; nosotros lo hicimos incremental y con verificación previa.
