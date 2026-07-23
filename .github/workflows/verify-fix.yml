@@ -1,18 +1,40 @@
-name: Verify Fix
+name: Runtime smoke test (loads lumalinux, checks hooks)
+
+# Manual runtime smoke test: build a fresh liblumalinux.so, load it into a real
+# Steam process against the CURRENT steamclient.so, and assert it LOADS, INSTALLS
+# ITS HOOKS, and doesn't crash.
+#
+# This is the ONLY test that actually RUNS the .so. build.yml only compiles, and
+# check_patterns.py only resolves statically — so a change that compiles and
+# resolves on paper but crashes or fails to hook at runtime (e.g. a bad memory
+# read in a new resolver — exactly the risk when DepotKey moved to
+# derive-by-signature in v0.16.18) is invisible to them. This starts the engine.
+#
+# vs the old "atexit crash harness" it replaces: same machinery (real Steam +
+# inject stack), but (1) it fetches the CURRENT steamclient.so instead of the
+# frozen June snapshot, and (2) it asserts "hooks installed + no crash" instead
+# of only counting shutdown SIGABRTs (that bug was designed out in 0.15.0).
+#
+# Manual only — it's heavy (fetches a steamclient, runs a real Steam a few
+# times). Run it before a release, or after touching hooking code (rtti.cpp,
+# hooks/, lmhook.cpp, main.cpp, patterns). Dispatch it on the branch/tag you want
+# to validate — it checks out the dispatched ref, so you can gate BEFORE merge.
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  verify:
+  smoke:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4   # dispatched ref (branch/tag/PR head) — validate BEFORE merge
+
+      - uses: actions/setup-python@v5
         with:
-          ref: main
+          python-version: '3.x'
 
       - name: Install 32-bit toolchain
         run: |
@@ -24,44 +46,55 @@ jobs:
       - name: Fetch libmem
         run: ./tools/fetch_libmem.sh
 
-      - name: Build liblumalinux.so with fix
+      - name: Build liblumalinux.so (SafeMode gate OFF)
+        # Default LUMA_NO_UPDATE (ON here) compiles OUT the hash gate, so the hooks
+        # install regardless of whether this steamclient's hash is whitelisted — we
+        # want to exercise the HOOK-INSTALL code, not the whitelist.
         run: |
-          mkdir -p build
-          cd build
+          mkdir -p build && cd build
           PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
           ninja -v
           file liblumalinux.so
 
-      - name: Download test deps from test-deps-v1
+      - name: Fetch the CURRENT steamclient.so
+        run: |
+          python3 tools/fetch_steamclient.py --output current-steamclient.so
+          echo "current steamclient.so:"; sha256sum current-steamclient.so
+
+      - name: Download test deps (inject libs + real Steam loader)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p deck-env
-          cd deck-env
+          mkdir -p deck-env && cd deck-env
           gh release download test-deps-v1 --repo jayool/lumalinux --pattern "*.tar.gz"
-          ls -lh
           mkdir -p sos harness steam-tree
           tar xzf sos_binaries.tar.gz -C sos
           tar xzf harness.tar.gz -C harness
           tar xzf steam_ubuntu12_32.tar.gz -C steam-tree
-          ls sos/
-          ls harness/
+
+      - name: Swap in the current steamclient.so
+        # The Steam tree is a frozen bootstrap; replace its steamclient.so with the
+        # freshly-fetched CURRENT one so lumalinux hooks TODAY's build. Valve keeps
+        # the bootstrap<->steamclient interface versioned, so an older bootstrap
+        # still maps a newer steamclient — which is all lumalinux needs to scan +
+        # hook. Overwrite every copy found (robust to tree layout).
+        run: |
+          n=0
+          while IFS= read -r sc; do
+            cp -f current-steamclient.so "$sc"; n=$((n+1)); echo "swapped: $sc"
+          done < <(find deck-env/steam-tree -name steamclient.so)
+          test "$n" -gt 0 || { echo "ERROR: no steamclient.so in the tree to swap"; exit 1; }
 
       - name: Set up fake HOME
         run: |
-          mkdir -p /tmp/fakehome/.local/share/SLSsteam
-          mkdir -p /tmp/fakehome/.local/share/CloudRedirect
-          mkdir -p /tmp/fakehome/.local/share/lumalinux
-          mkdir -p /tmp/fakehome/.config/SLSsteam
-          cp deck-env/sos/SLSsteam.so /tmp/fakehome/.local/share/SLSsteam/
-          cp deck-env/sos/library-inject.so /tmp/fakehome/.local/share/SLSsteam/
-          cp deck-env/sos/cloud_redirect.so /tmp/fakehome/.local/share/CloudRedirect/
-          # USE the FRESH liblumalinux.so from the build, not the old one
-          cp build/liblumalinux.so /tmp/fakehome/.local/share/lumalinux/
-          cp deck-env/harness/fix_atexit.so /tmp/fakehome/.local/share/lumalinux/
-          ls -la /tmp/fakehome/.local/share/lumalinux/
-          file /tmp/fakehome/.local/share/lumalinux/liblumalinux.so
-          
+          mkdir -p /tmp/fakehome/.local/share/SLSsteam /tmp/fakehome/.local/share/CloudRedirect \
+                   /tmp/fakehome/.local/share/lumalinux /tmp/fakehome/.config/SLSsteam \
+                   /tmp/fakehome/.cache/lumalinux
+          cp deck-env/sos/SLSsteam.so         /tmp/fakehome/.local/share/SLSsteam/
+          cp deck-env/sos/library-inject.so   /tmp/fakehome/.local/share/SLSsteam/
+          cp deck-env/sos/cloud_redirect.so   /tmp/fakehome/.local/share/CloudRedirect/
+          cp build/liblumalinux.so            /tmp/fakehome/.local/share/lumalinux/
+          cp deck-env/harness/fix_atexit.so   /tmp/fakehome/.local/share/lumalinux/
           cat > /tmp/fakehome/.config/SLSsteam/config.yaml <<'EOF'
           PlayNotOwnedGames: no
           SafeMode: no
@@ -72,58 +105,52 @@ jobs:
           AdditionalApps: []
           AppIds: []
           EOF
-
-          mkdir -p /tmp/fakehome/.steam
+          mkdir -p /tmp/fakehome/.steam /tmp/fakehome/.local/share/Steam
           ln -sf /tmp/fakehome/.local/share/Steam /tmp/fakehome/.steam/steam
-          mkdir -p /tmp/fakehome/.local/share/Steam
-          ln -sf $PWD/deck-env/steam-tree/ubuntu12_32 /tmp/fakehome/.local/share/Steam/ubuntu12_32
+          ln -sf "$PWD/deck-env/steam-tree/ubuntu12_32" /tmp/fakehome/.local/share/Steam/ubuntu12_32
 
-      - name: Run matrix
+      - name: Run the full stack against the current steamclient
         run: |
           cd deck-env/steam-tree/ubuntu12_32
-          set +e
           ulimit -c 0
-          N=30
           LIB_INJECT=/tmp/fakehome/.local/share/SLSsteam/library-inject.so
           SLS=/tmp/fakehome/.local/share/SLSsteam/SLSsteam.so
           CR=/tmp/fakehome/.local/share/CloudRedirect/cloud_redirect.so
           LUMA=/tmp/fakehome/.local/share/lumalinux/liblumalinux.so
-          
-          run_test() {
-            local name="$1"
-            local audit="$2"
-            local preload="$3"
-            local PASS=0 FAIL=0 SIGABRT=0 OTHER=0
-            for i in $(seq 1 $N); do
-              HOME=/tmp/fakehome LD_LIBRARY_PATH="/usr/lib32" \
-              LD_AUDIT="$audit" LD_PRELOAD="$preload" \
-                timeout 25 ./steam -nominidumps -nobreakpad > /dev/null 2>&1
-              EX=$?
-              if [ $EX -eq 0 ]; then PASS=$((PASS+1));
-              elif [ $EX -eq 134 ]; then FAIL=$((FAIL+1)); SIGABRT=$((SIGABRT+1));
-              else FAIL=$((FAIL+1)); OTHER=$((OTHER+1)); fi
-            done
-            echo "$name: PASS=$PASS FAIL=$FAIL (SIGABRT=$SIGABRT, OTHER=$OTHER)" | tee -a /tmp/results.txt
-          }
-          
-          echo "## Verify Fix Results (N=$N runs each)" > /tmp/results.txt
-          echo "" >> /tmp/results.txt
-          echo "### Control (no fix expected — old behavior)" >> /tmp/results.txt
-          run_test "SLSsteam + CR (no luma)             " "$LIB_INJECT:$SLS" "$CR"
-          
-          echo "" >> /tmp/results.txt
-          echo "### With FRESH liblumalinux.so (atexit fix)" >> /tmp/results.txt
-          run_test "SLSsteam + CR + FRESH luma          " "$LIB_INJECT:$SLS" "$LUMA:$CR"
-          run_test "SLSsteam + FRESH luma SOLO          " "$LIB_INJECT:$SLS" "$LUMA"
-          run_test "FRESH luma SOLO                     " "" "$LUMA"
-          
-          cat /tmp/results.txt >> $GITHUB_STEP_SUMMARY
+          rm -f /tmp/fakehome/.cache/lumalinux/lumalinux.log
+          set +e
+          crashes=0
+          for i in $(seq 1 5); do
+            HOME=/tmp/fakehome LD_LIBRARY_PATH="/usr/lib32" \
+            LD_AUDIT="$LIB_INJECT:$SLS" LD_PRELOAD="$LUMA:$CR" \
+              timeout 25 ./steam -nominidumps -nobreakpad > /dev/null 2>&1
+            ex=$?
+            echo "run $i exit=$ex"
+            [ "$ex" -eq 134 ] && crashes=$((crashes+1))
+          done
+          set -e
+          echo "crashes(SIGABRT)=$crashes"
+          echo "crashes=$crashes" >> "$GITHUB_ENV"
 
-      - name: Upload results
+      - name: Assert loaded + hooks installed + no crash
+        run: |
+          LOG=/tmp/fakehome/.cache/lumalinux/lumalinux.log
+          echo "── lumalinux log tail ──"
+          tail -50 "$LOG" 2>/dev/null || { echo "FAIL: no log — lumalinux never ran / steamclient.so never mapped"; exit 1; }
+          echo "────────────────────────"
+          # (1) reached the hook-install summary => it loaded AND mapped steamclient.so AND hooked
+          grep -aqE 'hooks active' "$LOG" \
+            || { echo "FAIL: no 'X/X hooks active' — lumalinux did not install its hooks against the current steamclient"; exit 1; }
+          # (2) the CRITICAL DepotKey hook installed (this is what v0.16.18 changed)
+          grep -aqE 'name=DepotKey .*outcome=installed' "$LOG" \
+            || { echo "FAIL: DepotKey did not install"; exit 1; }
+          # (3) no SIGABRT across the runs
+          test "${crashes:-1}" -eq 0 || { echo "FAIL: ${crashes} SIGABRT crash(es)"; exit 1; }
+          echo "PASS: lumalinux loaded, DepotKey + hooks installed against the CURRENT steamclient, no crash."
+
+      - name: Upload lumalinux log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: verify-results
-          path: /tmp/results.txt
-
-
+          name: smoke-lumalinux-log
+          path: /tmp/fakehome/.cache/lumalinux/lumalinux.log
