@@ -118,23 +118,25 @@ const uintptr_t* FindPointerValue(const std::vector<Range>& readable,
     return nullptr;
 }
 
-} // namespace
-
-namespace Rtti {
-
-uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
-    uintptr_t base = 0; size_t size = 0;
+// Walk RTTI for `mangledName`: type-name string -> type_info -> vtable. On
+// success sets `base`/`size` (the steamclient.so span) and `vtable` (pointing at
+// the first virtual fn pointer, index 0) and returns true. Shared by both public
+// resolvers so the fixed-slot and derive-by-signature paths use the exact same
+// anchor walk (incl. the .data.rel.ro relocation wait).
+bool FindTypeVtable(const char* mangledName, uintptr_t& base, size_t& size,
+                    void**& vtable) {
+    base = 0; size = 0; vtable = nullptr;
     std::vector<Range> readable;
     if (!MapSteamclient(base, size, readable) || readable.empty()) {
         Log::Warn("RTTI: steamclient.so not mapped / no readable ranges");
-        return 0;
+        return false;
     }
 
     const size_t nameLen = strlen(mangledName);
     const uint8_t* str = FindBytes(readable, mangledName, nameLen + 1);
     if (!str) {
         Log::Warn("RTTI: type-name '%s' not found in steamclient.so", mangledName);
-        return 0;
+        return false;
     }
     uintptr_t strAddr = reinterpret_cast<uintptr_t>(str);
     uintptr_t strVaddr = strAddr - base;  // pre-relocation file vaddr
@@ -142,7 +144,7 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
     const uintptr_t* nameField = FindPointerValue(readable, strAddr, strVaddr);
     if (!nameField) {
         Log::Warn("RTTI: type_info for '%s' not found", mangledName);
-        return 0;
+        return false;
     }
     // type_info begins one pointer slot before its name field.
     const uintptr_t* typeinfo = nameField - 1;
@@ -157,14 +159,13 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
         while (*slot0 != strAddr && waitMs < 30000) { usleep(50000); waitMs += 50; }
         if (*slot0 != strAddr) {
             Log::Warn("RTTI: relocations for '%s' did not complete in %dms", mangledName, waitMs);
-            return 0;
+            return false;
         }
         if (waitMs) Log::Info("RTTI: relocations for '%s' completed after %dms", mangledName, waitMs);
     }
 
     // vtable: Itanium header is [offset_to_top=0, type_info*]; the virtual fn
     // pointers start right after it.
-    void** vtable = nullptr;
     for (const auto& r : readable) {
         const uintptr_t* p = reinterpret_cast<const uintptr_t*>(
             (r.start + sizeof(uintptr_t) - 1) & ~(sizeof(uintptr_t) - 1));
@@ -181,8 +182,52 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
     if (!vtable) {
         Log::Warn("RTTI: vtable for '%s' not found (typeinfo=0x%lx)",
                   mangledName, (unsigned long)typeinfoAddr);
-        return 0;
+        return false;
     }
+    return true;
+}
+
+// Minimal "AA BB ?? .." matcher (same syntax as the k*Pattern literals), kept
+// local so rtti keeps its own memory-safety (CanReadMemory before dereferencing
+// a vtable target) and stays independent of the Patterns module. Returns the
+// matched byte length, or 0 on parse error / mismatch / unreadable target.
+size_t MatchSignature(uintptr_t addr, const char* sig) {
+    std::vector<uint8_t> bytes;
+    std::vector<bool> fixed;
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    };
+    for (const char* p = sig; *p; ) {
+        while (*p == ' ') ++p;
+        if (!*p) break;
+        if (p[0] == '?') { bytes.push_back(0); fixed.push_back(false); ++p; if (*p == '?') ++p; }
+        else {
+            int hi = hex(p[0]);
+            int lo = p[1] ? hex(p[1]) : -1;
+            if (hi < 0 || lo < 0) return 0;   // malformed pattern
+            bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
+            fixed.push_back(true);
+            p += 2;
+        }
+    }
+    if (bytes.empty()) return 0;
+    if (!CanReadMemory(reinterpret_cast<void*>(addr), bytes.size())) return 0;
+    const uint8_t* mem = reinterpret_cast<const uint8_t*>(addr);
+    for (size_t i = 0; i < bytes.size(); ++i)
+        if (fixed[i] && mem[i] != bytes[i]) return 0;
+    return bytes.size();
+}
+
+} // namespace
+
+namespace Rtti {
+
+uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
+    uintptr_t base = 0; size_t size = 0; void** vtable = nullptr;
+    if (!FindTypeVtable(mangledName, base, size, vtable)) return 0;
 
     if (!CanReadMemory(vtable, (slot + 1) * sizeof(void*))) {
         Log::Warn("RTTI: vtable for '%s' at %p but slot %d not readable",
@@ -201,6 +246,39 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
               mangledName, (void*)vtable, slot, (unsigned long)fn,
               (unsigned long)(fn - base));
     return fn;
+}
+
+uintptr_t ResolveVtableSlotBySignature(const char* mangledName,
+                                       const char* sigPattern,
+                                       int maxSlots, int* outSlot) {
+    uintptr_t base = 0; size_t size = 0; void** vtable = nullptr;
+    if (!FindTypeVtable(mangledName, base, size, vtable)) return 0;
+
+    uintptr_t hitFn = 0;
+    int hitSlot = -1;
+    int matches = 0;
+    for (int i = 0; i < maxSlots; ++i) {
+        // Bound the scan: stop the moment a slot pointer itself is unreadable
+        // (walked past the mapped vtable). Out-of-module / non-code entries are
+        // skipped, not fatal — only the accessor's prologue can match the sig.
+        if (!CanReadMemory(&vtable[i], sizeof(void*))) break;
+        uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[i]);
+        if (fn < base || fn >= base + size) continue;
+        if (MatchSignature(fn, sigPattern)) {
+            ++matches;
+            hitFn = fn;
+            hitSlot = i;
+            Log::Info("RTTI: '%s' slot %d -> 0x%lx (RVA 0x%lx) matches accessor signature",
+                      mangledName, i, (unsigned long)fn, (unsigned long)(fn - base));
+        }
+    }
+    if (matches != 1) {
+        Log::Warn("RTTI: '%s' signature scan matched %d slots (need exactly 1) — fail closed",
+                  mangledName, matches);
+        return 0;
+    }
+    if (outSlot) *outSlot = hitSlot;
+    return hitFn;
 }
 
 } // namespace Rtti

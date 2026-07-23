@@ -97,16 +97,21 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
 namespace Hooks::DepotKey {
 
 bool Install() {
-    // Resolve the LoadDepotDecryptionKey accessor two ways during the RTTI
-    // transition (RESEARCH §15, issue: DepotKey→RTTI):
-    //   - RTTI   : CConfigStore vtable slot 6 — update-resilient (keyed on the
-    //              class name + slot, not on volatile prologue bytes).
-    //   - pattern: kDepotKeyFnPattern — today's proven method, kept as fallback.
-    // Both were verified to resolve to the SAME address across builds
-    // (tools/experiment_rtti_depotkey.py). We prefer RTTI, but NEVER regress:
-    // on a disagreement we use the pattern (today's behaviour) and log loudly so
-    // a real Deck reports it before the pattern is eventually dropped.
-    uintptr_t rtti = Rtti::ResolveVtableSlot("12CConfigStore", 6);
+    // Resolve the LoadDepotDecryptionKey accessor two ways, and prefer RTTI
+    // (RESEARCH §15, issue #19):
+    //   - RTTI   : find CConfigStore's vtable by RTTI, then DERIVE the accessor's
+    //              slot by scanning the vtable for the slot whose prologue matches
+    //              kDepotKeyFnPattern. No hardcoded index (was slot 6), so a
+    //              vtable reorder is handled — the accessor is found wherever it
+    //              moved — instead of silently mis-resolving.
+    //   - pattern: kDepotKeyFnPattern scanned across .text — today's proven
+    //              method, kept as a fallback for when the RTTI walk itself fails
+    //              (e.g. .data.rel.ro relocations not yet applied at install).
+    // Both use the SAME signature, so they agree when both resolve; on the rare
+    // disagreement we use the pattern (no regression) and log loudly.
+    int derivedSlot = -1;
+    uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
+        "12CConfigStore", Patterns::kDepotKeyFnPattern, /*maxSlots=*/40, &derivedSlot);
     uintptr_t pat  = Patterns::FindDepotKeyFunction();
 
     uintptr_t target = 0;
@@ -145,8 +150,8 @@ bool Install() {
               "method=%s, trampoline=%p, %zu keys loaded)",
               (unsigned long)target, method, (void*)g_origFn, KeyStore::Size());
     uintptr_t base = Patterns::FindSteamclientBase();
-    Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx outcome=installed",
-              method, (unsigned long)target, (unsigned long)(base ? target - base : 0));
+    Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx rtti_slot=%d outcome=installed",
+              method, (unsigned long)target, (unsigned long)(base ? target - base : 0), derivedSlot);
     return true;
 }
 
