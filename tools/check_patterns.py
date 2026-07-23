@@ -30,7 +30,9 @@
 #                        ShaderDepot UNIQUE  -> A.1: PR the hash, no issue.
 #   2  NONCRITICAL_MOVED criticals + anchors OK but ShaderDepot moved
 #                        -> A.1: PR the hash AND open a ShaderDepot issue.
-#   3  BLOCKING          a critical pattern or a finder anchor failed
+#   3  BLOCKING          a critical pattern, a finder anchor, or the DepotKey
+#                        RTTI ground-truth (§15/#19: exactly one CConfigStore
+#                        vtable slot must match kDepotKeyFnPattern) failed
 #                        -> open an issue (A.2 / C); do NOT whitelist.
 #   1  usage / I/O / unparseable-binary error.
 import argparse
@@ -82,6 +84,17 @@ DIAGNOSTIC = {
     # for information only; re-promote to CRITICAL if BuildDep is re-enabled.
     "kBuildDepotDependencyPattern": "BuildDep",
 }
+
+# ── DepotKey RTTI ground-truth (§15, #19) ────────────────────────────────────
+# The runtime (Rtti::ResolveVtableSlotBySignature) no longer trusts a hardcoded
+# slot: it finds CConfigStore's vtable by RTTI, then DERIVES the accessor's slot
+# by matching kDepotKeyFnPattern inside the vtable. Mirror that walk here so the
+# cron confirms, per build, that the derivation resolves to EXACTLY ONE slot —
+# and records which (a change from 6 = Valve reordered the vtable; the runtime
+# handles it, but we want to see it). Zero or multiple => BLOCKING (the runtime
+# primary path can't resolve uniquely; do not whitelist).
+RTTI_DEPOTKEY = {"class": "12CConfigStore", "const": "kDepotKeyFnPattern",
+                 "label": "DepotKey", "max_slots": 40}
 
 # ── finder anchors (§13.5) — mirrored from package_zero_finder.cpp ────────────
 # (a) cache-access idiom, anchored on the 0xc58 tree-root offset of
@@ -216,6 +229,101 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+# ── DepotKey RTTI ground-truth (static mirror of Rtti::ResolveVtableSlotBySignature)
+
+def _load_sections(path):
+    """Parse ELF32 section headers into {name: (sh_addr, sh_offset, sh_size)}
+    plus the raw file bytes. Pure struct parsing — no pyelftools — to keep this
+    validator dependency-free like the rest of the file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if data[:4] != b"\x7fELF" or data[4] != 1:
+        raise ValueError("not an ELF32 object")
+    e_shoff = struct.unpack_from("<I", data, 0x20)[0]
+    e_shentsize = struct.unpack_from("<H", data, 0x2E)[0]
+    e_shnum = struct.unpack_from("<H", data, 0x30)[0]
+    e_shstrndx = struct.unpack_from("<H", data, 0x32)[0]
+    if not e_shoff or not e_shnum:
+        raise ValueError("no section headers")
+
+    def shdr(i):
+        o = e_shoff + i * e_shentsize
+        name, _typ, _flags, addr, off, size = struct.unpack_from("<IIIIII", data, o)
+        return name, addr, off, size
+
+    strtab_off = shdr(e_shstrndx)[2]
+    secs = {}
+    for i in range(e_shnum):
+        nmoff, addr, off, size = shdr(i)
+        end = data.index(b"\x00", strtab_off + nmoff)
+        nm = data[strtab_off + nmoff:end].decode("latin1")
+        secs[nm] = (addr, off, size)
+    return data, secs
+
+
+def rtti_derive_slot(path, mangled, patstr, max_slots=40):
+    """Walk RTTI for `mangled`: type-name string (.rodata) -> type_info ->
+    vtable (.data.rel.ro; i386 REL relocations store the addend = target vaddr
+    in-place, so the file already holds the vaddrs), then scan up to `max_slots`
+    slots and return [(slot_index, fn_rva), ...] for every slot whose target
+    function's prologue matches `patstr`. This is the exact invariant the runtime
+    derive-by-signature relies on. Returns (matches, note); matches is None on a
+    walk failure (vtable not locatable), with `note` explaining which step."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return None, "load:%s" % e
+    if ".rodata" not in secs or ".data.rel.ro" not in secs:
+        return None, "missing .rodata/.data.rel.ro"
+
+    ranges = [(a, o, s) for (a, o, s) in secs.values() if a and s]
+
+    def read_va(va, n):
+        for a, o, s in ranges:
+            if a <= va < a + s and va + n <= a + s:
+                return data[o + (va - a): o + (va - a) + n]
+        return b""
+
+    ro_a, ro_o, ro_s = secs[".rodata"]
+    i = data[ro_o:ro_o + ro_s].find(mangled.encode() + b"\x00")
+    if i < 0:
+        return None, "type-name not found"
+    name_va = ro_a + i
+
+    drr_a, drr_o, drr_s = secs[".data.rel.ro"]
+    drr = data[drr_o:drr_o + drr_s]
+    ti_field = None
+    for off in range(0, len(drr) - 4, 4):
+        if struct.unpack_from("<I", drr, off)[0] == name_va:
+            ti_field = drr_a + off
+            break
+    if ti_field is None:
+        return None, "type_info not found"
+    typeinfo_va = ti_field - 4
+
+    vt_hdr = None
+    for off in range(0, len(drr) - 8, 4):
+        if (struct.unpack_from("<I", drr, off)[0] == 0
+                and struct.unpack_from("<I", drr, off + 4)[0] == typeinfo_va):
+            vt_hdr = drr_a + off
+            break
+    if vt_hdr is None:
+        return None, "vtable not found"
+    vt_funcs = vt_hdr + 8
+
+    rx = pattern_to_regex(patstr)
+    matches = []
+    for k in range(max_slots):
+        fnb = read_va(vt_funcs + k * 4, 4)
+        if len(fnb) < 4:
+            break
+        fn = struct.unpack_from("<I", fnb, 0)[0]
+        prol = read_va(fn, 64)
+        if prol and rx.match(prol):
+            matches.append((k, fn))
+    return matches, "ok"
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -245,6 +353,7 @@ def main():
         "noncritical_moved_consts": [], # patterns.hpp consts of the above (for --only)
         "caps": {},           # cap token -> "ok" | "moved" (all non-criticals)
         "caps_str": "",       # "shader=ok reconcile=moved" for the updates.yaml comment
+        "rtti": {},           # DepotKey RTTI ground-truth (slot/rva/status)
         "verdict": None,
         "exit_code": None,
     }
@@ -269,6 +378,45 @@ def main():
     for const, label in CRITICAL.items():
         if record(const, label, "critical") != "UNIQUE":
             result["blocking"].append(label)
+
+    # 1b) DepotKey RTTI ground-truth — mirror Rtti::ResolveVtableSlotBySignature:
+    # find CConfigStore's vtable and confirm EXACTLY ONE slot's prologue matches
+    # kDepotKeyFnPattern (the runtime's primary resolution), recording the derived
+    # slot for reorder-drift detection. Zero / multiple / walk-failure => BLOCKING.
+    dk_pat = patterns.get(RTTI_DEPOTKEY["const"])
+    if dk_pat is None:
+        result["rtti"] = {"status": "PATTERN_MISSING_FROM_HPP"}
+        result["blocking"].append("DepotKey-RTTI:pattern-missing")
+    else:
+        matches, note = rtti_derive_slot(
+            args.steamclient, RTTI_DEPOTKEY["class"], dk_pat, RTTI_DEPOTKEY["max_slots"])
+        if matches is None:
+            result["rtti"] = {"status": "VTABLE_WALK_FAILED", "note": note}
+            result["blocking"].append("DepotKey-RTTI:walk-failed(%s)" % note)
+        elif len(matches) == 1:
+            slot, fn_rva = matches[0]
+            pat_rvas = result["hooks"].get(RTTI_DEPOTKEY["label"], {}).get("rvas", [])
+            result["rtti"] = {
+                "status": "UNIQUE",
+                "class": RTTI_DEPOTKEY["class"],
+                "slot": slot,
+                "rva": "0x%x" % fn_rva,
+                # When DepotKey's .text pattern is UNIQUE the two must agree by
+                # construction (same signature); record it as a corroboration.
+                "agrees_with_pattern": bool(pat_rvas) and pat_rvas[0] == ("0x%x" % fn_rva),
+            }
+        elif len(matches) == 0:
+            # Vtable found, but no slot's prologue matches — the accessor is no
+            # longer a CConfigStore virtual (or the pattern moved). BLOCKING.
+            result["rtti"] = {"status": "NO_SLOT_MATCH", "class": RTTI_DEPOTKEY["class"]}
+            result["blocking"].append("DepotKey-RTTI:no-slot-matches-pattern")
+        else:
+            result["rtti"] = {
+                "status": "AMBIGUOUS",
+                "class": RTTI_DEPOTKEY["class"],
+                "slots": [{"slot": s, "rva": "0x%x" % f} for s, f in matches],
+            }
+            result["blocking"].append("DepotKey-RTTI:ambiguous(%d slots)" % len(matches))
 
     # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
     # derive but still PR-able. Record per-hook capability (ok/moved) so the
@@ -341,6 +489,12 @@ def main():
     print("  %-12s %s" % ("cache_idiom", ci["status"]))
     gt = result["finder"]["gmrc_tail"]
     print("  %-12s %s (%d)" % ("gmrc_tail", gt["status"], gt["count"]))
+    rt = result.get("rtti", {})
+    if rt.get("status") == "UNIQUE":
+        print("  %-12s slot %d @ %s  (agrees-with-pattern=%s)"
+              % ("DepotKey-RTTI", rt["slot"], rt["rva"], rt["agrees_with_pattern"]))
+    elif rt:
+        print("  %-12s %s" % ("DepotKey-RTTI", rt.get("status")))
     print("")
     print("VERDICT: %s (exit %d)" % (result["verdict"], result["exit_code"]))
     if result["blocking"]:
