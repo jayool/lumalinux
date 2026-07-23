@@ -1559,6 +1559,35 @@ local licence → `isSubscribed=false` → the borrow runs → cheevos work. lum
 whole differentiator is the native path, so it loses the borrow.) The
 SLSsteam-side reading of the borrow flow is in docs/slssteam-analysis.md §7.3.
 
+**Resolving the apparent paradox — "SLSsteam fakes ownership, so why does its own
+guard see the game as owned?"** Two facts that look contradictory but aren't:
+
+1. **SLSsteam's `isSubscribed` deliberately reads REAL ownership, bypassing
+   SLSsteam's own faking.** SLSsteam *does* hook `CheckAppOwnership`
+   (`hkUser_CheckAppOwnership`) to fake ownership for `AdditionalApps` — but that
+   hook is the *outward* face it shows steamclient. SLSsteam's SDK
+   `CUser::checkAppOwnership` calls the **trampoline** (`.tramp.fn`, the original
+   un-hooked function), so `CUser::isSubscribed` answers "does the account *really*
+   hold a licence?", not "does our fake say so?". SLSsteam needs that honest check
+   internally (e.g. `fakeappid.cpp`: *only fake an app the user does not really
+   own*). So with **stock SLSsteam alone**, an `AdditionalApps` game reads
+   `isSubscribed = false` → the borrow runs → cheevos work with **no patch**. A pure
+   SLSsteam user never needs `sls_achievement_unblock`.
+
+2. **The LumaDeck stack injects the licence deep enough to fool even that honest
+   check.** For native Steam download to work, the app must sit in Steam's *real*
+   licence set — which is exactly what the **package-0 finder** does (seeds the AppId
+   into `PackageId=0`, the anonymous licence package) on top of the on-disk
+   `config.vdf`/`.acf` licence. Once the licence is genuinely in Steam's set, even the
+   trampoline `CheckAppOwnership` returns true, so `isSubscribed = true` and the guard
+   fires. Verified on-device: the guard trace logged `appid=1454400 sub=1 added=1`.
+
+So it is not SLSsteam blocking `AdditionalApps` achievements — it is **our own deep
+licence injection** (the price of the native-download model) making the game read as
+genuinely owned, which trips a guard that assumes owned ⇒ has a legit schema.
+`sls_achievement_unblock` reconciles the two by excluding `AdditionalApps` from the
+skip. This is why the patch is **LumaDeck-specific**, not an SLSsteam bug.
+
 ### 17.1 The scope we want: `isSubscribed && !isAddedAppId`
 
 A blunt NOP of the guard's `jne` would run the borrow for **genuinely owned**
