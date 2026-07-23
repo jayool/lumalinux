@@ -1,24 +1,26 @@
 name: Runtime smoke test (loads lumalinux, checks hooks)
 
 # Manual runtime smoke test: build a fresh liblumalinux.so, load it into a real
-# Steam process against the CURRENT steamclient.so, and assert it LOADS, INSTALLS
-# ITS HOOKS, and doesn't crash.
+# Steam process against the CURRENT steamclient.so + CURRENT SLSsteam/CloudRedirect,
+# and assert it LOADS, INSTALLS ITS HOOKS, and doesn't crash.
 #
 # This is the ONLY test that actually RUNS the .so. build.yml only compiles, and
 # check_patterns.py only resolves statically — so a change that compiles and
 # resolves on paper but crashes or fails to hook at runtime (e.g. a bad memory
-# read in a new resolver — exactly the risk when DepotKey moved to
-# derive-by-signature in v0.16.18) is invisible to them. This starts the engine.
+# read in a new resolver — the DepotKey derive-by-signature risk in v0.16.18) is
+# invisible to them. This starts the engine.
 #
-# vs the old "atexit crash harness" it replaces: same machinery (real Steam +
-# inject stack), but (1) it fetches the CURRENT steamclient.so instead of the
-# frozen June snapshot, and (2) it asserts "hooks installed + no crash" instead
-# of only counting shutdown SIGABRTs (that bug was designed out in 0.15.0).
+# Self-contained: it fetches EVERYTHING current at run time — the steamclient.so
+# (fetch_steamclient.py), SLSsteam + library-inject (AceSLS latest), and
+# CloudRedirect (linux-test) — and builds the fix_atexit shim inline. The only
+# thing it pulls from the test-deps-v1 release is the heavy real-Steam bootstrap
+# tree (steam_ubuntu12_32.tar.gz, a manual 329 MB asset). Replaces both the old
+# atexit-crash harness AND its build-testing-harness generator (whose sos/libs
+# artifacts went stale and were mostly unused).
 #
-# Manual only — it's heavy (fetches a steamclient, runs a real Steam a few
-# times). Run it before a release, or after touching hooking code (rtti.cpp,
-# hooks/, lmhook.cpp, main.cpp, patterns). Dispatch it on the branch/tag you want
-# to validate — it checks out the dispatched ref, so you can gate BEFORE merge.
+# Manual only — heavy. Run before a release, or after touching hooking code
+# (rtti.cpp, hooks/, lmhook.cpp, main.cpp, patterns). Checks out the dispatched
+# ref, so you can validate a branch/tag BEFORE merge.
 
 on:
   workflow_dispatch:
@@ -41,7 +43,7 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y gcc-multilib g++-multilib cmake ninja-build pkg-config \
-            libcurl4-openssl-dev:i386 libssl-dev:i386
+            libcurl4-openssl-dev:i386 libssl-dev:i386 p7zip-full wget
 
       - name: Fetch libmem
         run: ./tools/fetch_libmem.sh
@@ -61,23 +63,42 @@ jobs:
           python3 tools/fetch_steamclient.py --output current-steamclient.so
           echo "current steamclient.so:"; sha256sum current-steamclient.so
 
-      - name: Download test deps (inject libs + real Steam loader)
+      - name: Fetch CURRENT SLSsteam + CloudRedirect, build fix_atexit shim
+        run: |
+          mkdir -p sos && cd sos
+          # SLSsteam (latest release): SLSsteam.so + library-inject.so
+          TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" "https://github.com/AceSLS/SLSsteam/releases/latest")
+          TAG="${TAG##*/}"; echo "SLSsteam latest: $TAG"
+          wget -q "https://github.com/AceSLS/SLSsteam/releases/download/$TAG/SLSsteam-Any.7z" -O SLSsteam.7z
+          7z x -y SLSsteam.7z >/dev/null
+          cp bin/SLSsteam.so SLSsteam.so
+          cp bin/library-inject.so library-inject.so
+          # CloudRedirect (linux-test channel)
+          wget -q https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so -O cloud_redirect.so
+          # fix_atexit shim (forces a clean _exit at shutdown; harmless if unneeded)
+          cat > fix_atexit.c <<'EOF'
+          #include <stdlib.h>
+          #include <unistd.h>
+          static void e(void){_exit(0);}
+          __attribute__((constructor)) static void r(void){atexit(e);}
+          EOF
+          gcc -m32 -shared -fPIC -o fix_atexit.so fix_atexit.c
+          echo "fetched:"; ls -la SLSsteam.so library-inject.so cloud_redirect.so fix_atexit.so
+
+      - name: Download the real-Steam bootstrap tree (test-deps-v1)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p deck-env && cd deck-env
-          gh release download test-deps-v1 --repo jayool/lumalinux --pattern "*.tar.gz"
-          mkdir -p sos harness steam-tree
-          tar xzf sos_binaries.tar.gz -C sos
-          tar xzf harness.tar.gz -C harness
-          tar xzf steam_ubuntu12_32.tar.gz -C steam-tree
+          mkdir -p deck-env/steam-tree
+          gh release download test-deps-v1 --repo jayool/lumalinux \
+            --pattern "steam_ubuntu12_32.tar.gz" --dir deck-env
+          tar xzf deck-env/steam_ubuntu12_32.tar.gz -C deck-env/steam-tree
 
       - name: Swap in the current steamclient.so
-        # The Steam tree is a frozen bootstrap; replace its steamclient.so with the
-        # freshly-fetched CURRENT one so lumalinux hooks TODAY's build. Valve keeps
-        # the bootstrap<->steamclient interface versioned, so an older bootstrap
-        # still maps a newer steamclient — which is all lumalinux needs to scan +
-        # hook. Overwrite every copy found (robust to tree layout).
+        # Replace the frozen bootstrap's steamclient.so with the CURRENT one so
+        # lumalinux hooks TODAY's build. Valve keeps the bootstrap<->steamclient
+        # interface versioned, so an older bootstrap still maps a newer steamclient
+        # — all lumalinux needs to scan + hook. Overwrite every copy (robust to layout).
         run: |
           n=0
           while IFS= read -r sc; do
@@ -90,11 +111,11 @@ jobs:
           mkdir -p /tmp/fakehome/.local/share/SLSsteam /tmp/fakehome/.local/share/CloudRedirect \
                    /tmp/fakehome/.local/share/lumalinux /tmp/fakehome/.config/SLSsteam \
                    /tmp/fakehome/.cache/lumalinux
-          cp deck-env/sos/SLSsteam.so         /tmp/fakehome/.local/share/SLSsteam/
-          cp deck-env/sos/library-inject.so   /tmp/fakehome/.local/share/SLSsteam/
-          cp deck-env/sos/cloud_redirect.so   /tmp/fakehome/.local/share/CloudRedirect/
-          cp build/liblumalinux.so            /tmp/fakehome/.local/share/lumalinux/
-          cp deck-env/harness/fix_atexit.so   /tmp/fakehome/.local/share/lumalinux/
+          cp sos/SLSsteam.so        /tmp/fakehome/.local/share/SLSsteam/
+          cp sos/library-inject.so  /tmp/fakehome/.local/share/SLSsteam/
+          cp sos/cloud_redirect.so  /tmp/fakehome/.local/share/CloudRedirect/
+          cp build/liblumalinux.so  /tmp/fakehome/.local/share/lumalinux/
+          cp sos/fix_atexit.so      /tmp/fakehome/.local/share/lumalinux/
           cat > /tmp/fakehome/.config/SLSsteam/config.yaml <<'EOF'
           PlayNotOwnedGames: no
           SafeMode: no
@@ -138,13 +159,10 @@ jobs:
           echo "── lumalinux log tail ──"
           tail -50 "$LOG" 2>/dev/null || { echo "FAIL: no log — lumalinux never ran / steamclient.so never mapped"; exit 1; }
           echo "────────────────────────"
-          # (1) reached the hook-install summary => it loaded AND mapped steamclient.so AND hooked
           grep -aqE 'hooks active' "$LOG" \
             || { echo "FAIL: no 'X/X hooks active' — lumalinux did not install its hooks against the current steamclient"; exit 1; }
-          # (2) the CRITICAL DepotKey hook installed (this is what v0.16.18 changed)
           grep -aqE 'name=DepotKey .*outcome=installed' "$LOG" \
             || { echo "FAIL: DepotKey did not install"; exit 1; }
-          # (3) no SIGABRT across the runs
           test "${crashes:-1}" -eq 0 || { echo "FAIL: ${crashes} SIGABRT crash(es)"; exit 1; }
           echo "PASS: lumalinux loaded, DepotKey + hooks installed against the CURRENT steamclient, no crash."
 
