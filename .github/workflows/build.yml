@@ -76,6 +76,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: build/liblumalinux.so
+          # Ship res/version.txt alongside the .so: it is the SafeMode group-id
+          # (pattern-set version) compiled INTO this binary. LumaDeck reads it from
+          # the release (releases/latest/download/version.txt) to answer "which
+          # SafeModeHashes group does the shipping binary actually hook?" — so its
+          # update gate follows the released binary, not whatever newer group main
+          # may already carry ahead of a release. Without this the gate would offer
+          # a build the downloaded .so can't hook yet.
+          files: |
+            build/liblumalinux.so
+            res/version.txt
           generate_release_notes: true
           fail_on_unmatched_files: true

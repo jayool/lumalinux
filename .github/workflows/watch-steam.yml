@@ -378,8 +378,21 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BR"
-          git add src/patterns.hpp
-          git commit -m "fix(patterns): re-derive blocking critical hooks for client $SHORT"
+          # A moved CRITICAL hook needs a NEW pattern-set -> a new SafeMode group.
+          # Bump res/version.txt to a fresh group-id, create that group in
+          # res/updates.yaml, and whitelist this build's hash THERE. Safe to land
+          # ahead of the release because deployed .so's key on their OLD compiled
+          # group (src/update.cpp) and never see this hash (SafeMode keeps blocking,
+          # correct), and LumaDeck's gate reads the RELEASE's version.txt so it will
+          # not offer this build until the release compiled from these patterns ships.
+          NEW_GROUP=$(date -u +%Y%m%d%H%M%S)
+          echo "$NEW_GROUP" > res/version.txt
+          CAPS=$(python3 -c "import json;print(json.load(open('recheck.json')).get('caps_str',''))" 2>/dev/null || true)
+          python3 tools/whitelist_hash.py "$SHA" --create-group \
+            --steam-version "$VER" --caps "$CAPS" \
+            --note "critical patterns re-derived by watch-steam.yml $(date -u +%Y-%m-%d); takes effect in the release built from this PR"
+          git add src/patterns.hpp res/version.txt res/updates.yaml
+          git commit -m "fix(patterns): re-derive critical hooks + new SafeMode group $NEW_GROUP for client $SHORT"
           git push -u origin "$BR"
           {
             echo "Automated by \`watch-steam.yml\`. Steam client \`$VER\` (\`$SHORT\`) moved a"
@@ -387,16 +400,23 @@ jobs:
             echo "(\`derive_patterns.py\`), re-derived UNIQUE pattern(s), applied them to"
             echo "\`src/patterns.hpp\`, and \`check_patterns.py\` now reports **CLEAN**."
             echo
-            echo "**This is NOT whitelisted.** A broken critical means SafeMode must keep"
-            echo "blocking this build until a **rebuilt \`.so\` with these patterns ships** —"
-            echo "merging this PR alone is not enough, it needs a **release**. (\`updates.yaml\`"
-            echo "is intentionally untouched; the hash gets whitelisted by a normal release."
-            echo "or the next watch-steam run once the rebuilt client resolves cleanly.)"
+            echo "This PR carries the full bookkeeping: new patterns **and** a bumped"
+            echo "\`res/version.txt\` (new SafeMode group \`$NEW_GROUP\`) with this build whitelisted"
+            echo "under it. It still **needs a rebuild + release** — the new pattern-set only"
+            echo "takes effect in a \`.so\` compiled from this \`version.txt\`; merging alone does"
+            echo "not fix Decks."
+            echo
+            echo "**Safe to merge ahead of the release:** deployed \`.so\`s key on their own"
+            echo "compiled group, so they never see this hash (SafeMode keeps blocking, correct),"
+            echo "and LumaDeck reads the *release's* \`version.txt\`, so it won't offer this build"
+            echo "until the matching release ships."
             echo
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo "- New SafeMode group: \`$NEW_GROUP\`"
             echo
-            echo "A live-install test on a real Deck is **strongly** recommended before release."
+            echo "**Do:** live-install test on a Deck → merge → tag a release (bakes the new"
+            echo "\`version.txt\` into the \`.so\` and publishes it as a release asset)."
             echo
             echo '<details><summary>re-validation (check_patterns.py after applying)</summary>'
             echo
@@ -406,7 +426,7 @@ jobs:
             echo '</details>'
           } > pr_body_crit.md
           gh pr create --base main --head "$BR" \
-            --title "fix(patterns): re-derived critical hooks for client $SHORT (auto, needs release)" \
+            --title "fix(patterns): re-derived criticals + new group $NEW_GROUP for client $SHORT (auto, needs release)" \
             --body-file pr_body_crit.md
 
       # ── blocking (3) and auto-derive couldn't fix it: issue ──────────────

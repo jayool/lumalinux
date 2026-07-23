@@ -84,6 +84,11 @@ def main():
                          "Written as a '# caps:' comment; read by LumaDeck's gate.")
     ap.add_argument("--updates", default="res/updates.yaml")
     ap.add_argument("--version-file", default="res/version.txt")
+    ap.add_argument("--create-group", action="store_true",
+                    help="create the group header under SafeModeHashes if it does "
+                         "not exist yet (newest-first). Used by watch-steam.yml's "
+                         "critical-re-derive PR, which bumps res/version.txt to a "
+                         "brand-new group and whitelists the build there.")
     args = ap.parse_args()
 
     sha = args.sha256.strip().lower()
@@ -94,6 +99,21 @@ def main():
     group = open(args.version_file).read().strip()
     text = open(args.updates).read()
     lines = text.splitlines()
+
+    # --create-group: insert `  <group>:` right under `SafeModeHashes:` (newest
+    # first) when it is not present. The deployed .so keys on its own compiled
+    # group, so a fresh group is invisible to older binaries — safe to add ahead
+    # of the release that will compile against it.
+    if args.create_group and not any(
+            l.strip() == group + ":" and l.startswith("  ") for l in lines):
+        for i, l in enumerate(lines):
+            if l.rstrip() == "SafeModeHashes:":
+                lines[i + 1:i + 1] = ["  %s:" % group]
+                break
+        else:
+            print("ERROR: 'SafeModeHashes:' key not found in %s" % args.updates,
+                  file=sys.stderr)
+            return 1
 
     did = []
 
