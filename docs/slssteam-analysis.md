@@ -483,6 +483,13 @@ byte-pattern es una cinta de correr (punto 1) que el RTTI nos ahorra.
 
 ### 7.1 El bloqueo de updates, resuelto — `sls_update_unblock` (2026-07)
 
+> **⚠️ SUPERSEDED por §7.6 (v0.16.18, 2026-07-23).** Esta sección describe el parche
+> `sls_update_unblock` contra el mecanismo de bloqueo del **20260705**. SLSsteam lo
+> **revirtió** en `20260714131044` (vuelta al hook de `GetUpdateInfo` gated por
+> `DisableUpdates`), el parche quedó código muerto y se **retiró**. La contramedida
+> actual es el flag de config `DisableUpdates: no` que escribe LumaDeck. Ver §7.6.
+> Lo de abajo se conserva como registro histórico.
+
 El punto 2 de arriba (el detour de `GetAppStateInfo` que limpia los flags
 `APPSTATE_UPDATE_*`) rompe una feature concreta de LumaDeck: los juegos que
 gestiona van a `AdditionalApps`, y `shouldDisableUpdates(appId) =
@@ -777,3 +784,65 @@ walker sigue mal una rama, o pierde el string del nombre (→ slot equivocado o
 gate de CI** → cualquier fallo del walker le llega directo al usuario. Misma dirección
 técnica (RTTI), reparto de riesgo opuesto: ellos migraron de golpe y pagaron 3
 hotfixes en 24h; nosotros lo hicimos incremental y con verificación previa.
+
+### 7.6 El bloqueo de updates cambió de mecanismo — SLS-unblock retirado (v0.16.18)
+
+**Hallazgo (2026-07-23, verificado clonando `AceSLS/SLSsteam@20260723102618`).**
+El release `20260714131044` incluye *"Revert back to the previous method for
+blocking updates. Only works for unowned games, for owned ones use the ManifestIds
+config option"*. Eso **cambia el mecanismo que atacaba nuestro `sls_update_unblock`**.
+
+**Mecanismo viejo (20260705, el que documenta RESEARCH §16):** un clear inline de
+flags — `and dword [reg+off], 0xFFFFF8E5` (`~0x71A`) — que borraba los bits
+`APPSTATE_UPDATE_*`. Nuestro `SlsUpdateUnblock::Apply()` lo parcheaba a
+`0xFFFFFFFF` (no-op) en memoria.
+
+**Mecanismo nuevo (≥20260714):** un **hook de vtable sobre
+`IClientAppManager::GetUpdateInfo`** que devuelve `false` cuando
+`Apps::shouldDisableUpdates(appId)` es true (`src/hooks.cpp`, `src/feats/apps.cpp`):
+
+```cpp
+// hooks.cpp
+if (Apps::shouldDisableUpdates(appId)) return false;   // -> Steam ve "sin update"
+
+// apps.cpp
+bool Apps::shouldDisableUpdates(const AppId_t appId) {
+    if (!g_config.disableUpdates.get()) return false;              // <-- el config corta de raíz
+    return g_config.isAddedAppId(appId) || !g_pSteamEngine->getUser(0)->isSubscribed(appId);
+}
+```
+
+- `DisableUpdates` está **`yes` por defecto** (`config_default.hpp`, `config.cpp` default `true`).
+- Aplica a `isAddedAppId(appId) || !isSubscribed(appId)` → **exactamente los juegos que
+  gestiona LumaDeck** (AdditionalApps / unowned).
+- El `and …,0xFFFFF8E5` viejo **ya no existe en el binario** (grep de la máscara → cero).
+
+**Consecuencia y decisión:**
+1. `sls_update_unblock` quedó **código muerto** en cualquier SLSsteam ≥20260714: su
+   ancla desapareció, `Apply()` no-op, y lumalinux reportaba `SlsUpdateUnblock:
+   DISABLED` a perpetuidad (señal engañosa). **Retirado en v0.16.18** (borrados
+   `src/sls_update_unblock.{cpp,hpp}`, su include, su bloque en `main.cpp` y la
+   entrada en `CMakeLists.txt`). RESEARCH §16 se conserva como registro histórico de
+   la ingeniería inversa, marcado como SUPERSEDED.
+2. **La contramedida real ya existía y vive en LumaDeck, a nivel de config**:
+   `ensure_slssteam_flags()` escribe `DisableUpdates: no` en el `config.yaml` de
+   SLSsteam. Como el hook nuevo cortocircuita en `if (!disableUpdates) return false`,
+   el flag **anula el bloqueo entero** — es ABI-independiente, sobrevive a cada
+   recompilación de SLSsteam (incluido el refactor del decompiler §7.5), y SLSsteam
+   hot-reloadea el config. Se aplica en dos puntos:
+   - post-install (`installer.py`, en el mismo flujo que corre headcrab), y
+   - cada arranque del plugin (`main.py`, poll ~60s hasta que SLSsteam crea el config).
+3. **No hay ventana de regresión sin re-aplicar**: el único camino que regenera el
+   `config.yaml` es una reinstalación (que re-corre headcrab **y** `ensure_slssteam_flags`
+   en el mismo paso). SLSsteam no reescribe los settings del usuario una vez creados.
+
+**Lección de método:** el parche binario ataba nuestra funcionalidad a un patrón de
+codegen concreto de SLSsteam; el config flag ataca la **superficie soportada y
+estable**. Donde exista un knob de config equivalente, preferirlo al parcheo en
+memoria — sobrevive a refactors como el del decompiler sin tocar nada.
+
+**Pendiente de verificar (no en este cambio):** el OTRO parche en memoria,
+`sls_achievement_unblock` (repunta dos `call isSubscribed` en `SLSsteam.so`, §17),
+también depende del codegen de SLSsteam y el refactor del decompiler movió mucho
+código. Conviene comprobar que su ancla sigue casando contra `20260723102618` antes
+de asumir que las achievements nativas siguen activas.

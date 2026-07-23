@@ -323,18 +323,20 @@ So pinning vs unpinning is a per-depot policy choice in `keys.txt`: a non-zero
 gid pins (exact version, always decryptable); `gid=0` follows Valve (auto-update,
 at the cost of a future update possibly adding a depot/key you don't have).
 
-> **SLSsteam 20260705+ blocks this by default — lumalinux undoes it.** As of its
-> 2026-07-05 release, SLSsteam detours `IClientAppManager::GetAppStateInfo` and
-> clears the `APPSTATE_UPDATE_*` flags for every `AdditionalApps` game
+> **SLSsteam blocks this by default — the LumaDeck config flag undoes it.**
+> SLSsteam disables updates for every `AdditionalApps` / unowned game by default
 > (`shouldDisableUpdates = isAddedAppId || !isSubscribed`, and `isAddedAppId` is
-> permanently true for AdditionalApps entries — where LumaDeck puts its games). So
+> permanently true for AdditionalApps entries — where LumaDeck puts its games), so
 > the auto-update above never starts: the game shows "Update required" but doesn't
-> download. There is no config toggle, and every config workaround is worse
-> (`UseWhitelist` breaks unlock/DLC globally). lumalinux neutralises it at runtime
-> by flipping the single combined flag-clear instruction in the loaded
-> `SLSsteam.so` (`and …, 0xFFFFF8E5`) to a no-op (`and …, 0xFFFFFFFF`) —
-> `src/sls_update_unblock.cpp`; nothing else in SLSsteam changes. Validated with
-> Balatro on 2026-07-07 (RESEARCH §16, docs/slssteam-analysis.md §7.1).
+> download. Since its `20260714131044` release the enforcement is a vtable hook on
+> `IClientAppManager::GetUpdateInfo`, **gated by the `DisableUpdates` config
+> option**. LumaDeck neutralises it at the config level: `ensure_slssteam_flags()`
+> writes `DisableUpdates: no` into SLSsteam's `config.yaml` (on install and on every
+> plugin start), which makes `shouldDisableUpdates` return early and re-enables
+> updates for managed games. This replaced the old in-memory `sls_update_unblock`
+> patch, which targeted the different, now-reverted 20260705 mechanism (an inline
+> `and …, 0xFFFFF8E5` flag-clear) and was removed in v0.16.18 as dead code. See
+> `docs/slssteam-analysis.md` §7.6 (and §7.1 / RESEARCH §16 for the history).
 
 ### How an available update is detected
 

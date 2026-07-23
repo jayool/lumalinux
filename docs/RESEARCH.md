@@ -1412,6 +1412,18 @@ the layout shifted.
 
 ## 16. SLSsteam's update-block (20260705) and lumalinux's runtime unblock
 
+> **⚠️ SUPERSEDED / REMOVED (v0.16.18, 2026-07-23).** This section documents the
+> `sls_update_unblock` in-memory patch, which targeted the **20260705** update-block
+> mechanism (the inline `and …,0xFFFFF8E5` clear inside a `GetAppStateInfo` detour).
+> SLSsteam **reverted** that on `20260714131044`, going back to a vtable hook on
+> `IClientAppManager::GetUpdateInfo` gated by the `DisableUpdates` config option. The
+> instruction this patch anchored on no longer exists, so the patch became dead code
+> and was **removed** (`src/sls_update_unblock.{cpp,hpp}` deleted). The countermeasure
+> now lives in LumaDeck at the config level: `ensure_slssteam_flags()` writes
+> `DisableUpdates: no`, which short-circuits the new hook entirely. See
+> `docs/slssteam-analysis.md` §7.6 for the current mechanism. The reverse-engineering
+> below is kept as a historical record.
+
 **Context.** SLSsteam's 2026-07-05 release (`5c632dd`) replaced its old
 `GetUpdateInfo` VFT hook with a detour of `IClientAppManager::GetAppStateInfo`
 (`Apps::getAppStateInfo`) that, for any app where
@@ -1563,8 +1575,9 @@ in `AdditionalApps`, i.e. `CConfig::isAddedAppId(appId) == true`. Target predica
 
 ### 17.2 The patch — `sls_achievement_unblock.cpp`
 
-`SlsAchievementUnblock::Apply()` (called once from `InstallHooks`, alongside
-`sls_update_unblock` §16) does an in-memory redirect of SLSsteam.so:
+`SlsAchievementUnblock::Apply()` (called once from `InstallHooks`; it used to run
+alongside the since-removed `sls_update_unblock` §16) does an in-memory redirect of
+SLSsteam.so:
 
 1. **Resolve symbols** from the on-disk `SLSsteam.so` `.symtab` (SLSsteam ships
    un-stripped): `CUser::isSubscribed`, `CConfig::isAddedAppId`, the `g_config`
@@ -1662,9 +1675,10 @@ symbol resolution and `g_config` were all already validated correct on-device
 **Lesson (see also docs/maintenance.md §D):** any in-memory patch of *live,
 multithreaded* code must (a) keep the page executable across the write and (b)
 make the operand store atomic (a single naturally-aligned ≤8-byte store, or park
-the threads). `sls_update_unblock` (§16) writes a 4-byte immediate the same way; it
-collides far less (a rarely-hot app-state path, not a function steamclient calls at
-boot) so it never bit, but it carried the identical latent hazard — **v0.16.8 gave
+the threads). The since-removed `sls_update_unblock` (§16) wrote a 4-byte immediate
+the same way; it collided far less (a rarely-hot app-state path, not a function
+steamclient calls at boot) so it never bit, but it carried the identical latent
+hazard — **v0.16.8 gave
 it the same atomic, executable-window-preserving write.**
 
 ### 17.5 Switches & validation

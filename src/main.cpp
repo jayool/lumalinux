@@ -30,7 +30,6 @@
 #include "hooks/package_zero_finder.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "hooks/shader_depot_hook.hpp"
-#include "sls_update_unblock.hpp"
 #include "sls_achievement_unblock.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
@@ -256,24 +255,17 @@ void InstallHooks() {
         installed += "package-0 finder";
     }
 
-    // Coexistence patch: undo SLSsteam's 20260705 update-block (it clears
-    // APPSTATE_UPDATE_* for AdditionalApps / non-owned games, killing auto-update
-    // for everything LumaDeck manages). One in-memory 4-byte no-op on SLSsteam.so;
-    // re-applied every launch so it survives headcrab re-downloading the .so.
-    // Fail-safe: if SLSsteam isn't loaded or the anchor moved, it no-ops and
-    // updates just fall back to manual. See docs/slssteam-analysis.md.
-    if (std::getenv("LUMA_NO_SLS_UNBLOCK")) {
-        Status::RecordHook("SlsUpdateUnblock", Status::DISABLED);
-    } else if (SlsUpdateUnblock::Apply()) {
-        Status::RecordHook("SlsUpdateUnblock", Status::INSTALLED);
-        if (!installed.empty()) installed += ", ";
-        installed += "SLS-unblock";
-    } else {
-        // Not fatal — no SLSsteam, or anchor not found (safe degradation).
-        Status::RecordHook("SlsUpdateUnblock", Status::DISABLED);
-    }
+    // NOTE: the old "SLS-unblock" coexistence patch (a 4-byte no-op on
+    // SLSsteam.so's inline `AND ...,0xFFFFF8E5` update-flag clear) was REMOVED in
+    // v0.16.18. SLSsteam reverted that mechanism on 20260714131044: update-blocking
+    // is now a vtable hook on IClientAppManager::GetUpdateInfo gated by the
+    // `DisableUpdates` config option, so the instruction we anchored on no longer
+    // exists and the patch was dead code. The countermeasure now lives in
+    // LumaDeck, which writes `DisableUpdates: no` into SLSsteam's config.yaml on
+    // install and on every plugin start (ensure_slssteam_flags). See
+    // docs/slssteam-analysis.md §7.6.
 
-    // Coexistence patch #2: scope SLSsteam's native-achievement "legit app" guard
+    // Coexistence patch: scope SLSsteam's native-achievement "legit app" guard
     // so the schema borrow also fires for AdditionalApps (LumaDeck) games while
     // leaving genuinely-owned games untouched. Repoints two `call isSubscribed`
     // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check.

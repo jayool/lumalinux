@@ -6,9 +6,9 @@ Install** needs to download a game you configured locally, so installs go throug
 Steam itself with no external downloader.
 
 Designed to run **alongside SLSsteam** (never forking it). Its install-path hooks
-stay out of SLSsteam's way, and two small, reversible in-memory patches to
-`SLSsteam.so` additionally let LumaDeck games auto-update and earn native
-achievements. See [What it does](#what-it-does).
+stay out of SLSsteam's way, and one small, reversible in-memory patch to
+`SLSsteam.so` additionally lets LumaDeck games earn native achievements (auto-update
+is handled at the config level — see [What it does](#what-it-does)).
 
 > ⚠️ **Educational / research use only.** Use it with your own Steam account
 > and content. Do not redistribute Valve binaries. The author does not host or
@@ -99,14 +99,19 @@ Per-hook signatures and the finder internals are in
 
 SLSsteam owns the licensing layer (fakes ownership, PICS tokens,
 family-share/offline); lumalinux owns the install-path plumbing above, and the two
-stay orthogonal there. On top of that, lumalinux applies two surgical, reversible,
-fail-closed in-memory patches to `SLSsteam.so` so LumaDeck games behave like owned
+stay orthogonal there. On top of that, lumalinux applies one surgical, reversible,
+fail-closed in-memory patch to `SLSsteam.so` so LumaDeck games behave like owned
 ones (opt-out via env var):
 
 | Patch | What it does | Off with |
 |---|---|---|
-| **update-unblock** (`sls_update_unblock`) | Neutralises SLSsteam's `APPSTATE_UPDATE_*` clear so `AdditionalApps` games auto-update instead of stalling at "Update required" ([RESEARCH §16](docs/RESEARCH.md)). | `LUMA_NO_SLS_UNBLOCK=1` |
 | **native achievements** (`sls_achievement_unblock`) | Scopes SLSsteam's native-achievement schema borrow to `isSubscribed && !isAddedAppId`, so LumaDeck games earn native Steam achievements while genuinely-owned games stay untouched ([RESEARCH §17](docs/RESEARCH.md)). | `LUMA_NO_SLS_ACH_UNBLOCK=1` |
+
+> The old **update-unblock** (`sls_update_unblock`) patch was **removed in v0.16.18**:
+> SLSsteam reverted its update-block mechanism on `20260714131044`, so the
+> instruction it anchored on no longer exists. The countermeasure now lives in
+> LumaDeck, which writes `DisableUpdates: no` into SLSsteam's `config.yaml`. See
+> [slssteam-analysis §7.6](docs/slssteam-analysis.md).
 
 ## Usage
 
@@ -142,9 +147,9 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   unaffected.
 - `LUMA_NO_PKG0_FINDER=1`: disable the package-0 finder (the sole depot injector, on
   by default). `LUMA_PKG0_FINDER=diag` runs it log-only.
-- `LUMA_NO_SLS_UNBLOCK=1` / `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam
-  update-unblock / native-achievement patch. `LUMA_SLS_ACH_TRACE=1` traces the
-  achievement guard.
+- `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam native-achievement patch.
+  `LUMA_SLS_ACH_TRACE=1` traces the achievement guard. (The former
+  `LUMA_NO_SLS_UNBLOCK` was removed with the update-unblock patch in v0.16.18.)
 - `LUMA_LOADPKG_DEBUG=1`: install the diagnostic LoadPackage hook (off by default;
   logs `PackageId + AppIdVec`). `LUMA_LOADPKG_IDX=N` picks a candidate.
 
@@ -198,7 +203,8 @@ Exact anchor and namespace detail in [RESEARCH §5](docs/RESEARCH.md).
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,
-  the package-0 finder, and the two SLSsteam in-memory patches (§16, §17)
+  the package-0 finder, and the SLSsteam native-achievement patch (§17; the
+  removed update-unblock is §16)
 - [`docs/cloudredirect.md`](docs/cloudredirect.md): running beside CloudRedirect,
   and the `LD_PRELOAD` ordering
 - [`docs/maintenance.md`](docs/maintenance.md): fixing things after a Steam client
@@ -208,9 +214,12 @@ Exact anchor and namespace detail in [RESEARCH §5](docs/RESEARCH.md).
 
 - Hook design references **LumaCore** (Windows), reimplemented for Linux.
 - Runs alongside **SLSsteam** (ownership / licensing layer); **never forks it**.
-  Beyond coexisting, it applies two surgical, reversible in-memory patches to
-  `SLSsteam.so` (update-unblock §16, native achievements §17): no source fork, no
-  config change, each fail-closed and opt-out. The SafeMode hash-whitelist update
+  Beyond coexisting, it applies one surgical, reversible in-memory patch to
+  `SLSsteam.so` (native achievements §17): no source fork, fail-closed and opt-out.
+  (Update-unblocking used to be a second such patch, §16, but SLSsteam changed that
+  mechanism to a config-gated hook — LumaDeck now handles it via `DisableUpdates:
+  no` in `config.yaml`, so the patch was removed in v0.16.) The SafeMode
+  hash-whitelist update
   flow (`src/update.cpp`, `src/curl.cpp`, `src/sha256.cpp`, `src/globals.cpp`,
   `res/version.txt`, `res/updates.yaml`) was ported from SLSsteam (AGPL-3.0) with
   minimal adaptations; see the AGPL-3.0 header in each of those files. The full

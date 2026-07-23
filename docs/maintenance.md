@@ -17,7 +17,7 @@ to grep for, and what it tells you:
 | `Hook install: name=<HOOK> … outcome=pattern_miss` | A pattern moved — that hook can't install | **A.2** / **A.3** Re-derive patterns |
 | `PKG0_FINDER: cache-access idiom not found` or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the `LD_PRELOAD` block is gone | **B** SLSsteam launcher regenerated |
-| `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patches |
+| `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
 
 If install is broken but you can't tell which row from a single line, do this
 in order: B → A.1 → A.2/A.3 → C. They're listed by frequency: B and A.1 are
@@ -317,14 +317,19 @@ in the next release is sharper.
 
 ---
 
-## D) SLSsteam in-memory patches (update-unblock & native achievements)
+## D) SLSsteam in-memory patch (native achievements)
 
-lumalinux patches two things *inside* `SLSsteam.so` at startup — the only places
-it modifies SLSsteam rather than just coexisting with it: the update-clear
-(`sls_update_unblock`, RESEARCH §16) and the native-achievement guard
-(`sls_achievement_unblock`, RESEARCH §17). Both are **fail-closed** — if their
-anchor/symbols don't resolve exactly, they no-op and log a warning; the feature
-degrades (auto-update → manual; native cheevos → off) but Steam never crashes.
+lumalinux patches one thing *inside* `SLSsteam.so` at startup — the only place it
+modifies SLSsteam rather than just coexisting with it: the native-achievement guard
+(`sls_achievement_unblock`, RESEARCH §17). It is **fail-closed** — if its
+anchor/symbols don't resolve exactly, it no-ops and logs a warning; the feature
+degrades (native cheevos → off) but Steam never crashes.
+
+> There used to be a second patch, `sls_update_unblock` (RESEARCH §16), that
+> neutralised SLSsteam's update-clear. It was **removed in v0.16.18**: SLSsteam changed
+> that mechanism to a config-gated `GetUpdateInfo` hook (`20260714131044`), so the
+> instruction it anchored on is gone. Update-unblocking is now a LumaDeck config
+> concern (`DisableUpdates: no`). See `docs/slssteam-analysis.md` §7.6.
 
 **Native achievements silently off.** Grep `SLS-ach`:
 
@@ -339,7 +344,7 @@ degrades (auto-update → manual; native cheevos → off) but Steam never crashe
 
 **⚠️ Live-patching safety — learn from the v0.16.7 OOBE.** When you touch any code
 that writes into *live, multithreaded* SLSsteam/steamclient memory (`WriteRel32`,
-the update-unblock immediate write, any future in-memory patch), two rules are
+the achievement guard's `rel32` write, any future in-memory patch), two rules are
 non-negotiable:
 
 1. **Keep `PROT_EXEC` set during the write** — `mprotect(R|W|X)`, not `R|W`.
@@ -353,8 +358,9 @@ non-negotiable:
 Skipping either caused the v0.16.7 OOBE: a byte-wise, non-executable-window write
 of the achievement guard's `rel32` let a Steam thread read a half-written call
 target and jump to a garbage address → `SIGILL` → 5 fast exits → gamescope wiped
-`~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4.
-`sls_update_unblock`'s immediate write was hardened the same way in v0.16.8.
+`~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4. (The since-removed
+`sls_update_unblock`'s immediate write was hardened the same way in v0.16.8; the
+same discipline applies to any future in-memory patch.)
 
 ---
 
