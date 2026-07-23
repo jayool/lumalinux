@@ -1325,13 +1325,15 @@ update"). Worth copying where it fits, because lumalinux's byte-pattern hooks
 move on every Steam build (§8) and the SafeMode hash gate needs a per-build
 whitelist entry (v0.15).
 
-**Status (2026-07-06): DepotKey has adopted this.** It now resolves via
-`CConfigStore` vtable slot 6 at runtime (`src/rtti.cpp`), with the byte pattern
-kept as a validated fallback. Confirmed on build 1782861641 both statically (CI
-ground-truth) and at runtime on a live Steam (codespace, `method=rtti(agrees-with-pattern)`)
-— the codespace's 1782866176 was downgraded by headcrab to its pin 1782861641
-before the test, so this is one build in two environments, NOT two builds; a
-second-build confirmation is still pending. See §15.3. GMRC and BuildDep remain
+**Status: DepotKey has adopted this, and now DERIVES the slot.** It resolves via
+`CConfigStore`'s vtable at runtime (`src/rtti.cpp` `ResolveVtableSlotBySignature`),
+**deriving** the accessor's slot by matching `kDepotKeyFnPattern` inside the vtable
+— no hardcoded index (was slot 6). RTTI locates the vtable; the byte pattern
+identifies which slot is the accessor, so a vtable reorder is handled (the accessor
+is found wherever it moved) instead of silently mis-resolving. The pattern is kept
+as a fallback for RTTI-walk failure. The cron (`tools/check_patterns.py`) now mirrors
+this statically and confirms per build that exactly one slot matches (the automatic
+multi-build ground-truth #19 was blocked on — see §15.3). GMRC and BuildDep remain
 byte-pattern (§15.3 for why).
 
 ### 15.1 The technique
@@ -1360,7 +1362,7 @@ mimicking CR's `FindTransportVtable`):
 
 | Hook | Target RVA | Virtual? | Update-proof path |
 |---|---|---|---|
-| **DepotKey** | `0x1188300` | **YES — `CConfigStore` vtable slot 6** | RTTI → vtable → slot 6 |
+| **DepotKey** | `0x1188300` | **YES — `CConfigStore` vtable (slot 6 today)** | RTTI → vtable → slot DERIVED by `kDepotKeyFnPattern` (not hardcoded) |
 | **GMRC** | `0x1351890` | no (but it's a named RPC) | transport RTTI + dispatch by `ContentServerDirectory.GetManifestRequestCode#1` |
 | **BuildDep** | `0xfe1bf0` | no | none — stays pattern/string-anchored |
 | **ShaderDepot** | `0x102d9f0` | no | none — stays pattern (non-critical) |
@@ -1377,21 +1379,26 @@ Evidence:
 
 ### 15.3 What this buys, and the cost
 
-- **DepotKey → RTTI vtable — ✅ IMPLEMENTED (2026-07-06).** `src/rtti.cpp`
-  (mirrors CR's `FindVtableByRTTIName`, resolve-only) resolves `CConfigStore`
-  slot 6; `depot_key_hook.cpp` installs the existing detour (§4) there, with the
-  byte pattern kept as a fallback that never regresses (RTTI==pattern → use RTTI;
-  disagreement → use pattern + loud log). Validated on build 1782861641:
-  statically on CI (slot 6 == `kDepotKeyFnPattern` == RVA `0x1188300`) and at
-  runtime on a live Steam in the codespace (`method=rtti(agrees-with-pattern)`).
-  NOTE: the codespace Steam bootstrapped at 1782866176 but headcrab downgraded it
-  to its pin 1782861641 before the test — so this is the *same* build in two
-  environments (static file check + live runtime), not two builds. The live run
-  did exercise the runtime-only path the static check can't: the `.data.rel.ro`
-  relocation wait (from CR, 30 s cap) fired for 5.65 s. Still to do: a
-  second-build confirmation; the standalone slot-prologue sanity check (only
-  needed once the pattern is dropped); and dropping the pattern after more
-  `agrees-with-pattern` confirmations. Tracked in the DepotKey-RTTI issue.
+- **DepotKey → RTTI vtable, slot DERIVED by signature — ✅ IMPLEMENTED.**
+  `src/rtti.cpp` `ResolveVtableSlotBySignature` (built on the same
+  `FindVtableByRTTIName`-style walk as CR, resolve-only) finds `CConfigStore`'s
+  vtable, then scans it for the UNIQUE slot whose prologue matches
+  `kDepotKeyFnPattern` — no hardcoded index. `depot_key_hook.cpp` installs the
+  existing detour (§4) at the derived slot and logs `rtti_slot=` for drift
+  detection; the byte pattern is kept as a fallback (RTTI-walk failure, e.g.
+  relocations not yet applied) and IS the derivation signature. This drops the
+  hardcoded slot 6 (the last robustness gap of the fixed-index approach — §15.4)
+  and the CI-side gap: `tools/check_patterns.py` now walks the vtable statically
+  and BLOCKS the whitelist unless exactly one slot matches (zero/multiple/walk
+  failure → exit 3), so the RTTI primary path is verified per build, not just the
+  fallback. Because the cron fetches Valve's latest build (independent of
+  headcrab's client pin) and the check is static, every build now auto-accumulates
+  the ground-truth #19 was blocked on. Validated: derives slot 6 (`0x1188300`)
+  uniquely on builds f5eb8bd3 / 1782861641. Remaining in #19: dropping the pattern
+  entirely once enough builds confirm (but note §15.4 — the pattern doubles as the
+  slot-derivation signature, so "drop" here means "drop the hardcoded index", which
+  is now done; a bare RTTI with no signature could not tell which slot is the
+  generic accessor).
 - **GMRC → transport RPC (high value, high cost).** Hook the transport vtable
   and intercept by RPC name, injecting the response. Requires protobuf handling
   for `…GetManifestRequestCode_Request/Response` (CR has a whole `protobuf.cpp`).
@@ -1406,9 +1413,15 @@ Evidence:
 Vtable slot indices and RPC names are *much* more stable than byte patterns, not
 immune. Valve reordered the `IClient*::RunIPCFrame` virtuals on 2026-06-24 and
 SLSsteam had to bump (those are vtable-dispatched too). This trades "update every
-build" for "update rarely" — what CR advertises. A migrated hook should still
-validate at runtime (e.g. check the resolved slot's prologue) and fail closed if
-the layout shifted.
+build" for "update rarely" — what CR advertises. **DepotKey now closes even the
+reorder gap**: instead of trusting a fixed index it DERIVES the slot by matching
+the accessor's prologue signature inside the vtable (`ResolveVtableSlotBySignature`),
+so a reorder is *handled* — the accessor is found at its new slot — and a
+zero/multiple result fails closed. That is the "validate the resolved slot's
+prologue" this caveat used to only recommend, made the resolution itself. (A hook
+whose target self-names could instead derive the slot by that name, à la SLSsteam's
+decompiler; DepotKey's accessor is a generic KeyValues call with no distinctive
+string, so the prologue signature is the discriminant.)
 
 ## 16. SLSsteam's update-block (20260705) and lumalinux's runtime unblock
 
