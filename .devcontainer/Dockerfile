@@ -26,6 +26,11 @@ RUN printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.c
 #   - python + pip: necesarios para `pip install websockify`
 #   - Mesa SW + Vulkan SW + ICD loader: render por software (no hay GPU)
 #   - bubblewrap: setuid root en el siguiente RUN, ver justificacion abajo
+#   - networkmanager: el cliente de Steam ACTUAL detecta la red vía NetworkManager
+#       sobre el D-Bus del sistema. Sin NM el `SystemNetworkStore` de la UI de
+#       login peta (`RegisterForDeviceChanges is not a function`) y Steam se queda
+#       en "waiting for network connection" aunque IPv4 funcione. Se arranca en
+#       runtime (start-net.sh, generado por post-create) porque es un daemon.
 #   - steam: el cliente (multilib). Se instala aqui; se arranca en runtime.
 RUN pacman -Syu --noconfirm \
     base-devel git curl wget sudo nano vim less which \
@@ -36,6 +41,7 @@ RUN pacman -Syu --noconfirm \
     mesa lib32-mesa vulkan-swrast lib32-vulkan-swrast vulkan-mesa-layers \
     vulkan-icd-loader lib32-vulkan-icd-loader \
     lib32-curl lib32-openssl \
+    networkmanager \
     bubblewrap steam
 
 # bwrap setuid root. Arch moderno distribuye bubblewrap sin setuid porque

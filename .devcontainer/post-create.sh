@@ -53,6 +53,12 @@ export __GLX_VENDOR_LIBRARY_NAME=mesa
 export VK_LOADER_DRIVERS_DISABLE=nvidia*
 export PATH="\$HOME/.local/bin:\$PATH"
 
+# Steam's current client needs a system D-Bus + NetworkManager to believe there
+# is a network (this headless container has neither) or it hangs at "waiting for
+# network". start-net.sh brings that up (+ disables the broken IPv6). Idempotent,
+# so calling it here on every display start is safe and keeps the 4-command flow.
+[ -x "\$HOME/start-net.sh" ] && "\$HOME/start-net.sh" || true
+
 sudo mkdir -p /tmp/.X11-unix
 sudo chmod 1777 /tmp/.X11-unix
 
@@ -84,6 +90,47 @@ echo "Display listo. noVNC web root = $NOVNC_WEB"
 echo "Abre el puerto 6080 forwardeado y entra a /vnc.html"
 EOF
 chmod +x "$HOME/start-display.sh"
+
+# =============================================================================
+# Network bring-up for Steam's current client (start-net.sh).
+# The client detects the network via NetworkManager over the system D-Bus. This
+# headless container has neither, so the login UI's SystemNetworkStore JS-errors
+# (`SteamClient.System.Network.RegisterForDeviceChanges is not a function`) and
+# Steam sits at "waiting for network connection" forever — even though IPv4 works
+# (connectivity test OK, CM ports 27018/27020 reachable). Fix = provide:
+#   - a system D-Bus (socket absent by default),
+#   - NetworkManager (reports the interface as connected),
+#   - IPv6 OFF: Codespaces blackholes IPv6, so Steam's IPv6 probes/CM attempts
+#     time out; /proc/sys is ro but the container's SYS_ADMIN lets us remount rw.
+# Idempotent + non-fatal, so start-display.sh calls it before every Steam launch.
+# =============================================================================
+cat > "$HOME/start-net.sh" <<'NET'
+#!/usr/bin/env bash
+set +e
+
+# system D-Bus
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    sudo mkdir -p /run/dbus
+    sudo dbus-daemon --system --fork
+fi
+
+# NetworkManager (backgrounded so we never block even if it runs foreground)
+if ! pgrep -x NetworkManager >/dev/null 2>&1; then
+    sudo NetworkManager >/dev/null 2>&1 &
+    sleep 3
+fi
+
+# Disable the container's broken IPv6 (needs /proc/sys rw; SYS_ADMIN allows the remount)
+sudo mount -o remount,rw /proc/sys 2>/dev/null
+sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1
+
+echo "start-net: dbus=$([ -S /run/dbus/system_bus_socket ] && echo up || echo MISSING) NM=$(nmcli -t -f STATE general 2>/dev/null || echo '?') ipv6_disabled=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null)"
+exit 0
+NET
+chmod +x "$HOME/start-net.sh"
+
+# Bring it up now so a freshly-created codespace is ready before the first launch.
+"$HOME/start-net.sh" || true
 
 # =============================================================================
 # Clone LumaDeck (the plugin repo) so it's ready to build/deploy.
