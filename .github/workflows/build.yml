@@ -4,7 +4,18 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
+    # res/updates.yaml is fetched at runtime by the deployed .so (src/update.cpp),
+    # not embedded, so a hash-only bump (watch-steam) doesn't change the artifact —
+    # skip the rebuild. NOTE: applies to tag pushes too, but a v* release is never
+    # cut on an updates.yaml-only commit ("no rebuild, no release"), so it's safe.
+    paths-ignore:
+      - 'res/updates.yaml'
   pull_request:
+    # Same reasoning: skip Build on PRs that only touch res/updates.yaml (the
+    # watch-steam hash bumps). Pattern re-derive PRs touch src/patterns.hpp, so
+    # they still build. paths-ignore only skips when EVERY changed file matches.
+    paths-ignore:
+      - 'res/updates.yaml'
   workflow_dispatch:
 
 permissions:
