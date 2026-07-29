@@ -1478,6 +1478,43 @@ def main():
               f"Steam sigue el manifest actual de Valve (auto-update)")
     print()
 
+    # ── SLSsteam ManifestIds — el pin de versión VIVO ─────────────────────
+    # BuildDep (keys.txt, arriba) está desactivado desde SLSsteam 20260714, que
+    # se quedó con BuildDepotDependency y lee la versión de la sección
+    # ManifestIds del config.yaml. Así que re-homeamos el pin aquí:
+    #   --pin  → escribir los gids del build instalado en ManifestIds (fija esa
+    #            versión por el mecanismo que SLSsteam lee de verdad).
+    #   no-pin → quitar los content depots de este app de ManifestIds, para que
+    #            un re-install sin pin no deje un pin viejo colgado (vuelve a
+    #            seguir a Valve). Simétrico con --pin-installed / --unpin.
+    # Siempre read-merge-write: NUNCA reescribir la sección con solo este app,
+    # o borraríamos los pins de otros juegos.
+    try:
+        mids = _read_manifest_ids(args.sls_config)
+        if args.pin:
+            to_pin = {d: manifests[d] for d in depot_keys
+                      if d != app_id and manifests.get(d, 0)}
+            if to_pin:
+                mids.update(to_pin)
+                _write_manifest_ids(args.sls_config, mids)
+                print(f"  [+] ManifestIds (SLSsteam): pinneados {len(to_pin)} "
+                      f"depot(s) → {sorted(to_pin.items())}")
+            else:
+                print("  [!] --pin pero ningún content depot con gid≠0 → nada que "
+                      "pinear en ManifestIds.")
+        else:
+            content = set(_app_content_depots(args.luma_keys, app_id))
+            removed = [d for d in content if d in mids]
+            if removed:
+                for d in removed:
+                    del mids[d]
+                _write_manifest_ids(args.sls_config, mids)
+                print(f"  [+] ManifestIds (SLSsteam): quitados {len(removed)} "
+                      f"depot(s) (auto-update): {sorted(removed)}")
+    except Exception as exc:
+        print(f"  [!] no pude actualizar ManifestIds de SLSsteam: {exc}")
+    print()
+
     # ── config.vdf — siempre por defecto (--no-vdf para skipear) ──────────
     # SteaMidra Linux (sff/ui.py:process_lua_full) lo hace siempre. Steam consulta
     # config.vdf primero para depot keys; aunque lumalinux las sirve runtime via
