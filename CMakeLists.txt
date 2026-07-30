@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.16.19)
+project(lumalinux LANGUAGES C CXX VERSION 0.17.0)
 
 # Release builds override the version from the git tag so the binary's
 # self-reported version (status.json -> LUMALINUX_VERSION_STRING) always equals
