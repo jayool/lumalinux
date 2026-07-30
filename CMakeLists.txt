@@ -1,5 +1,28 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.16.18)
+project(lumalinux LANGUAGES C CXX VERSION 0.16.19)
+
+# Release builds override the version from the git tag so the binary's
+# self-reported version (status.json -> LUMALINUX_VERSION_STRING) always equals
+# the release tag. Without this the project() VERSION above can drift behind the
+# tag (it did at v0.16.19: tagged without bumping project()), and LumaDeck then
+# shows "update available" forever because the installed .so reports an older
+# version than the latest release tag it is compared against. CI passes
+# -DLUMALINUX_VERSION_OVERRIDE=<tag-without-v> on a v* tag build.
+if(LUMALINUX_VERSION_OVERRIDE)
+    set(lumalinux_VERSION "${LUMALINUX_VERSION_OVERRIDE}")
+    string(REPLACE "." ";" _luma_ver_parts "${LUMALINUX_VERSION_OVERRIDE}")
+    list(LENGTH _luma_ver_parts _luma_ver_n)
+    if(_luma_ver_n GREATER 0)
+        list(GET _luma_ver_parts 0 lumalinux_VERSION_MAJOR)
+    endif()
+    if(_luma_ver_n GREATER 1)
+        list(GET _luma_ver_parts 1 lumalinux_VERSION_MINOR)
+    endif()
+    if(_luma_ver_n GREATER 2)
+        list(GET _luma_ver_parts 2 lumalinux_VERSION_PATCH)
+    endif()
+    message(STATUS "lumalinux version overridden from tag: ${lumalinux_VERSION}")
+endif()
 
 # SafeMode VERSION (SLSsteam-style): the active group key in res/updates.yaml.
 # Bumped only when src/patterns.hpp changes (= a Steam update broke the prior

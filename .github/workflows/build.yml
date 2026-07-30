@@ -46,13 +46,21 @@ jobs:
         run: |
           mkdir -p build
           cd build
+          # On a v* tag build, pin the binary's version to the tag so its
+          # self-reported version (status.json) matches the release tag — else
+          # LumaDeck nags "update available" forever (see CMakeLists.txt).
+          VERSION_ARG=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION_ARG="-DLUMALINUX_VERSION_OVERRIDE=${GITHUB_REF#refs/tags/v}"
+          fi
           # -DLUMA_NO_UPDATE=OFF: ship releases WITH the SafeMode hash gate.
           # Safe to enable since 0.15.0 (no libcurl/libcrypto link — sha256 is
           # self-contained and curl is dlopen'd at runtime).
           cmake .. \
             -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DLUMA_NO_UPDATE=OFF
+            -DLUMA_NO_UPDATE=OFF \
+            $VERSION_ARG
 
       - name: Build
         run: |
