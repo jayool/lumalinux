@@ -1,0 +1,1458 @@
+# LuaTools.dll — string literals (UTF-16 + UTF-8)
+
+## URLs / endpoints / hosts
+  real.callServerMethod=function(p,m,a){return p==='luatools'?ltCall(p,m,a):realCall(p,m,a)};
+, DiscordUrl = 
+.luatools-dll-update-disabled
+/LuaTools;component/app.xaml
+/LuaTools;component/mainwindow.xaml
+/LuaTools;component/views/confirmoverlay.xaml
+/LuaTools;component/views/downloadview.xaml
+/LuaTools;component/views/dropzone.xaml
+/LuaTools;component/views/fixesview.xaml
+/LuaTools;component/views/homeview.xaml
+/LuaTools;component/views/manageview.xaml
+/LuaTools;component/views/modeview.xaml
+/LuaTools;component/views/onboardingview.xaml
+/LuaTools;component/views/pluginview.xaml
+/LuaTools;component/views/settingsview.xaml
+/api-list
+/api/denuvo/download?fix=
+/api/denuvo/fixes?appid=
+/api/denuvo/listings
+/api/dlc/generate?appid=
+/api/dlc/info?appid=
+/api/manifest/download?appid=
+/api/me/supporter-status
+/api/v1/manifest/
+/api/v1/status/
+/api/v1/user/stats?api_key=
+/auth/v1/authorize?provider=discord
+<html><head><meta charset="utf-8"><title>LuaTools</title>
+Add_Discord
+Add_Discordq
+Add_JoinDiscord
+Add_NeedsHubcapKey
+Add_NeedsHubcapKey_Tip
+CanEditHubcapKey
+CancelAddViaLuaTools
+DeleteLuaToolsForApp
+GetAddViaLuaToolsStatus
+GetLuaToolsAddStatus
+HTTP server listening on http://127.0.0.1:6767
+HasLuaToolsForApp
+HttpListener could not start on 127.0.0.1:6767 
+Hubcap download failed (
+HubcapIsKeyConfigured
+HubcapKeyInput
+HubcapKeyStatus
+HubcapKeyStatusColor
+HubcapStats
+HubcapStatsDisplay
+HubcapStatsPending
+HubcapStatsText
+HubcapUsagePercent
+IsRefreshingHubcapStats
+IsValidatingHubcapKey
+Loaded luatools.js ({Length} bytes)
+LuaTools
+LuaTools.dll
+LuaToolsGui
+LuaToolsGui.EnableTrayLock
+LuaToolsGui.RecheckUpdates
+LuaToolsGui.Resources.Strings
+LuaToolsGui.ShowWindow
+LuaToolsGui.SingleInstance
+Nav_SignInDiscord
+No Hubcap manifest is available for this app.
+PickLuaToolsAddSource
+Plugin_Err_NoLuatoolsJs
+Sadie (Hubcap)
+Settings_HubcapActive
+Settings_HubcapClear
+Settings_HubcapGetKey
+Settings_HubcapKey
+Settings_HubcapKeyBad
+Settings_HubcapKeyError
+Settings_HubcapKeyOk
+Settings_HubcapKeyOkExpiry
+Settings_HubcapKeyPlaceholder
+Settings_HubcapKey_Hint
+Settings_HubcapRefresh
+Settings_HubcapValidate
+Settings_Section_Hubcap
+Settings_SignInDiscord
+ShowHubcapStats
+Software\Classes\luatools
+Software\Classes\luatools\shell\open\command
+StartAddViaLuaToolsFromUrl
+StartLuaToolsAdd
+String(window.__LuaToolsReady === true)
+URL:LuaTools Protocol
+You can close this tab and return to LuaTools.
+Your Hubcap daily limit has been reached.
+Your Hubcap key is invalid or expired.
+discord(dot)gg/luatools
+http add urlacl url=http://127.0.0.1:6767/ user=Everyone
+http://
+http://127.0.0.1:
+http://127.0.0.1:6767
+http://127.0.0.1:6767/
+http://127.0.0.1:8080/json
+http://167.235.229.108
+http://167.235.229.108/<appid>
+http://167.235.229.108/check_apis
+http://167.235.229.108/check_apis?appid=
+http://167.235.229.108/donatekeys/send
+http://localhost:
+http://localhost:53789/callback
+https://
+https://analytics.lua.tools
+https://analytics.lua.tools/api/send
+https://api.github.com/
+https://api.github.com/repos/
+https://api.github.com/repos/Selectively11/CloudRedirect/releases/latest
+https://api.github.com/repos/atom0s/Steamless/releases/latest
+https://api.github.com/repos/madoiscool/LTSP/releases/latest
+https://api.steamcmd.net/v1/info/
+https://api.steampowered.com/ISteamApps/GetAppList/v2/
+https://applist.morrenus.xyz/
+https://cdn.cloudflare.steamstatic.com/steam/apps/
+https://db.lua.tools
+https://db.lua.tools/auth/v1/token?grant_type=pkce
+https://db.lua.tools/auth/v1/token?grant_type=refresh_token
+https://db.lua.tools/auth/v1/verify
+https://db.lua.tools/rest/v1/user_downloads?select=appid&downloaded_at=gte.
+https://discord.gg/RrukXPyv5b
+https://discord.gg/hMdv5dQhcN
+https://discord.gg/hubcapsmanifest
+https://discord.gg/luatools
+https://discord.gg/manifests
+https://gh.ddlc.top/
+https://ghfast.top/
+https://ghproxy.net/
+https://github.com/
+https://github.com/madoiscool/LuaTools
+https://github.com/mendy-tools/LuaTools
+https://hubcapmanifest.com
+https://lua.tools
+https://lua.tools/api/auth/code/redeem
+https://lua.tools/api/gh/
+https://objects.githubusercontent.com/
+https://raw.githubusercontent.com/
+https://raw.githubusercontent.com/jsnli/steamappidlist/master/data/hardware_appid.json
+https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip
+https://steamdb.info/app/
+https://steamdb.info/depot/
+https://store.steampowered.com/api/appdetails?appids=
+https://store.steampowered.com/api/featuredcategories
+https://store.steampowered.com/api/featuredcategories?cc=us&l=english
+https://store.steampowered.com/api/storesearch/
+https://store.steampowered.com/api/storesearch/?term=
+luatools
+luatools-icon.png
+luatools-plugin-
+luatools.disabled-by-luatools
+luatools.js
+luatools.js not found
+luatools://
+luatools_
+luatools_diff_
+luatools_drop_
+
+## all UTF-16 literals (>=6)
+          border:1px solid rgba(255,255,255,.08); border-radius:14px; }
+         display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+      if(--mx>0){setTimeout(ck,50)}else{delete pending[i];rv({success:true})}
+      if(r!==undefined){delete ready[i];if(r.e){rj(new Error(r.e))}else{rv(r.v)}return}
+      var r=ready[i];
+    ck();
+    function ck(){
+    var mx=100;
+  .card { text-align:center; padding:2.5rem 3rem; background:#14141c;
+  <h1>
+  body { background:#0b0b12; color:#e5e7eb; font-family:'Segoe UI',sans-serif;
+  h1 { font-size:1.3rem; margin:0 0 .5rem; color:
+  p { color:#9ca3af; font-size:.95rem; margin:0; }
+  pending[i]={method:m,args:a,ts:Date.now()};
+  real._pending=pending;
+  real._readyResponses=ready;
+  real.callServerMethod=function(p,m,a){return p==='luatools'?ltCall(p,m,a):realCall(p,m,a)};
+  return new Promise(function(rv,rj){
+  var i='_ltr_'+(++reqId);
+  var realCall=real.callServerMethod.bind(real);
+  window.Millennium=real;
+  window.Millennium={_pending:pending,_readyResponses:ready,callServerMethod:function(p,m,a){return ltCall(p,m,a)}};
+ "config/stplug-in"
+ -> downloading
+ / Unlimited
+ EXCEPTION: 
+ FastFetch: no downloadable source
+ Steam will restart.
+ attempting netsh reservation
+ body='
+ check your connection and try again.
+ close Steam and try again.
+ exited with code 
+ failed verification (sha256 mismatch).
+ fastFetch=
+ file(s) 
+ from GitHub or any mirror.
+ guest=
+ in any release.
+ is not the expected version 
+ needsKey=
+ no response from the browser.
+ please sign in again.
+ set it in Settings.
+ source='
+ sources=[
+ the fix didn't complete.
+ the update didn't apply.
+ try again.
+ using fallback sources
+ was not deployed 
+" "%1"
+" --minimized
+"installdir"
+"installdir"\s*"([^"]+)"
+"path"
+"path"\s*"([^"]+)"
+#22c55e
+#34d399
+#6b7280
+#9ca3af
+#a78bfa
+#f87171
+#f97316
+#fbbf24
+$1-- $2
+&base=
+&cc=us&l=english
+&code_challenge=
+&code_challenge_method=s256
+&game_name=
+&l=english&cc=US
+&redirect_to=
+&slot=
+&source=
+' -> BUSY, ignored
+' -> NO STATE (Start not called?)
+' -> ROW NOT FOUND. have=[
+' EXCEPTION: 
+' INSTALL ERROR: 
+' OK: 
+' canDownload=
+' parsed source='
+(function(){
+(function(r){var ks=Object.keys(window.Millennium._pending);for(var i=0;i<ks.length&&i<r.length;i++){var id=ks[i];window.Millennium._readyResponses[id]=r[i];delete window.Millennium._pending[id];}})(
+, "config/stplug-in"
+, AnyFailed = 
+, Api = 
+, ApiErrors = 
+, BytesRead = 
+, CliArgs = 
+, CliAssetName = 
+, Comment = 
+, Cts = 
+, CurrentApi = 
+, DepotCount = 
+, Depots = 
+, Description = 
+, DiscordUrl = 
+, DisplayName = 
+, DlcAppId = 
+, DlcCount = 
+, DlcIds = 
+, DllInstalled = 
+, DllMatches = 
+, Enabled = 
+, Entries = 
+, Error = 
+, Failed = 
+, FileName = 
+, FixedTag = 
+, Genres = 
+, HasChanges = 
+, HasKey = 
+, HeaderImage = 
+, HiddenUnlessFile = 
+, Image = 
+, InstalledPath = 
+, InstalledTag = 
+, IsActive = 
+, IsAdult = 
+, IsDlc = 
+, IsFree = 
+, IsShared = 
+, Kind = 
+, Language = 
+, LatestTag = 
+, LatestVersion = 
+, LaunchExes = 
+, Limit = 
+, Linux = 
+, Mac = 
+, ManifestCount = 
+, ManifestId = 
+, Meta = 
+, Metacritic = 
+, MillenniumPresent = 
+, Name = 
+, Offline = 
+, Os = 
+, Owner = 
+, PlaceFiles = 
+, Port8080Busy = 
+, RealName = 
+, ReleaseDate = 
+, ReleaseDateText = 
+, ReleaseYear = 
+, Removed = 
+, Repo = 
+, RequiresUserKey = 
+, Reviews = 
+, Size = 
+, Status = 
+, SteamDbUrl = 
+, Success = 
+, SuccessCode = 
+, SystemSourceName = 
+, SystemSourcePath = 
+, Tag = 
+, Title = 
+, Total = 
+, TotalBytes = 
+, Unchanged = 
+, UpdateAvailable = 
+, Url = 
+, VerifyFile = 
+, Windows = 
+, ZipAssetPattern = 
+,lock=
+--minimized
+--tray-locked
+.cef-enable-remote-debugging
+.corrupt
+.lua.disabled
+.luatools-dll-update-disabled
+.manifest
+.unpacked.exe
+/LuaTools;component/app.xaml
+/LuaTools;component/mainwindow.xaml
+/LuaTools;component/views/confirmoverlay.xaml
+/LuaTools;component/views/downloadview.xaml
+/LuaTools;component/views/dropzone.xaml
+/LuaTools;component/views/fixesview.xaml
+/LuaTools;component/views/homeview.xaml
+/LuaTools;component/views/manageview.xaml
+/LuaTools;component/views/modeview.xaml
+/LuaTools;component/views/onboardingview.xaml
+/LuaTools;component/views/pluginview.xaml
+/LuaTools;component/views/settingsview.xaml
+/add-source/
+/add-source/{appid}
+/add-status/
+/add-status/{appid}
+/add/{appid}
+/api-list
+/api/denuvo/download?fix=
+/api/denuvo/fixes?appid=
+/api/denuvo/listings
+/api/dlc/generate?appid=
+/api/dlc/info?appid=
+/api/manifest/download?appid=
+/api/me/supporter-status
+/api/v1/manifest/
+/api/v1/status/
+/api/v1/user/stats?api_key=
+/app/(\d+)
+/auth/v1/authorize?provider=discord
+/c mklink /j "
+/c rmdir "
+/c timeout /t 2 /nobreak >nul & start "" "
+/cancel/{appid}
+/capsule_sm_120.jpg
+/check-sources/{appid}
+/check-updates
+/download-status/{appid}
+/download/{appid}
+/games-database
+/has/{appid}
+/header.jpg
+/launch/
+/loaded-apps
+/open-url
+/open/fix/{appid}
+/open/settings
+/releases/latest
+/releases/tags/
+/releases?per_page=100
+/remove/{appid}
+/restart-steam
+/select,"
+/stfixer
+000004b0
+0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+0123456789abcdef
+1.2.6+04a0976c9ae35a99fd7200a70c544d8fa6f1469d
+1.2.6.0
+732ec27f2af650fe079f1c83b0bb0c712a322dc175f383504176724675ad2700
+820d782c-a434-424f-9f90-dee83dc6032e
+;base64,
+<!doctype html>
+</div></body></html>
+</style></head>
+<body><div class="card">
+<html><head><meta charset="utf-8"><title>LuaTools</title>
+<style>
+?api_key=
+@bot.lua.tools
+Accept
+Access-Control-Allow-Headers
+Access-Control-Allow-Methods
+Access-Control-Allow-Origin
+AccountStatus
+Add_AlreadyHaveFiles
+Add_Available
+Add_Checking
+Add_Checking$
+Add_Confirm_NoChanges
+Add_Confirm_NoChanges1
+Add_Confirm_Replace
+Add_Confirm_ReplaceY
+Add_Depots
+Add_Depotsi
+Add_Discord
+Add_Discordq
+Add_DlcHint
+Add_DlcHintz
+Add_Download
+Add_DownloadLua
+Add_Err_BaseGame
+Add_Err_Download
+Add_Err_Generate
+Add_Err_Generic
+Add_FastFetch
+Add_FastFetch_Hint
+Add_FastFetch_NoSource
+Add_FastFetch_Via
+Add_Featured_NewReleases
+Add_Featured_TopSellers
+Add_Fetch
+Add_Generating
+Add_JoinDiscord
+Add_Missing
+Add_NeedsHubcapKey
+Add_NeedsHubcapKey_Tip
+Add_NoKey
+Add_Released
+Add_RequiresOwnKey
+Add_Reveal
+Add_SearchPlaceholder
+Add_SignIn_Dlc
+Add_SignIn_Download
+Add_Status_AddedFetch
+Add_Status_AddedManifests
+Add_Status_Cancelled
+Add_Status_InstallFailed
+Add_Subtitle
+Add_Supporter
+Add_Title
+Add_Unlimited
+Added 
+Added = 
+AddedReleaseLabel
+Adult only
+ApiSource
+App Launch
+App not ready
+AppDepotInfo
+AppFilterData
+AppId = 
+ApplyRecommended
+Assembly Version
+AutoUpdateApps
+AvatarUrl
+Bahasa Indonesia
+BaseAppId = 
+Bearer
+BetterSteamTools
+BetterSteamTools Nightly
+BotBannerDismissed
+ButtonText
+C"L*T2[
+C:\fuckass\folder\that\shall\never\exist\die\millennium
+CEF cycle: {Message}
+CEF injector started
+CanDownload
+CanEditHubcapKey
+CanGenerateDlc
+CanGoNext
+CanGoPrev
+CanRedeemCode
+CanUninstall
+CanUseCloudRedirect
+CancelAddViaLuaTools
+Cancelled by user
+Cancelled.
+CheckApisForApp
+CheckForUpdatesNow
+CloudRedirect
+CloudRedirect (SteamTools Fix)
+CloudRedirect.exe
+CloudRedirectAddonState
+CloudRedirectCLI.exe
+CloudRedirectEnabled
+CloudRedirectInstalled
+CloudRedirectStatusText
+CloudRedirectToggleText
+CloudRedirectUnlocked
+CloudRedirectUpdateAvailable
+CodeError
+CodeInput
+Common_AppFallback
+Common_AppId
+Common_Loading
+Common_SearchPlaceholder
+CompanyName
+ConfirmNoChanges
+ConfirmTitle
+Confirm_Adding
+Confirm_OpenSteamDb
+Confirm_Removing
+Confirm_Replace
+Confirm_ReviewChanges
+Confirm_Shared
+Confirm_Skip
+Content-Range
+Content-Type
+ContentDepot
+Could not download 
+Couldn't find 
+Couldn't open the download: 
+Couldn't reach GitHub 
+Couldn't write 
+Couldn't write cloud_redirect.dll 
+Created by
+CurrentPage
+DecryptionKey
+DeleteLuaToolsForApp
+DepotRow
+Detail
+Details
+DetailsLoaded
+Deutsch
+DiffAdded
+DiffRemoved
+DiffRow
+DismissLoadedApps
+Display = 
+DisplayName
+DisplayName = 
+DlcComplete
+DlcInfo
+DllAsset = 
+DllNotInstalled
+DllOutOfDate
+DllStatus
+DonateKeys
+Download already in progress for this app
+Download failed (
+Download failed verification (sha256 mismatch).
+Download is missing: 
+DownloadState
+DownloadedFile
+Downloads
+DropDiffRow
+Drop_BrowseFiles
+Drop_Confirm_NoChanges
+Drop_Confirm_Replace
+Drop_Count_Luas
+Drop_Count_Manifests
+Drop_Hint
+Drop_Nothing
+Drop_NothingInstalled
+Drop_Picker_Filter
+Drop_Picker_Title
+Drop_Result_Failed
+Drop_Result_Installed
+Drop_Result_RestartApply
+Drop_Title
+EmptyMessage
+English
+EvaluateReturnAsync: CDP call failed: {Message}
+Failed to download 
+Failed to parse api.json: {Message}
+Failed to restart Steam
+Failed to start HTTP server on :6767
+Failed to start Steamless.
+Failed to start the fixer.
+FastFetch
+FeaturedItem
+FileDescription
+FilePath = 
+FileVersion
+FilterPendingText
+Fixes_Build
+Fixes_Count
+Fixes_Empty_None
+Fixes_Err_Load
+Fixes_Fix
+Fixes_Loading
+Fixes_Manifest
+Fixes_SignIn
+Fixes_SignInRequired
+Fixes_Title
+Fixes_Toast_CouldntApply
+Fixes_Toast_DownloadFailed
+Fixes_Toast_DownloadFailed_Body
+Fixes_Toast_FixApplied
+Fixes_Toast_FixApplied_Body
+Fixes_Toast_FixInstalled
+Fixes_Toast_FixInstalled_Restart
+Fixes_Toast_FixInstalled_Restarting
+Fixes_Toast_GameNotFound
+Fixes_Toast_GameNotFound_Body
+Fixes_Toast_InstallFailed
+Fixes_Toast_InstallFailed_Body
+Fixes_Toast_PartiallyApplied
+Fixes_Toast_PartiallyApplied_Body
+Fixes_Toast_Refreshed_Body
+Fixes_Toast_Refreshed_Title
+FooterStatus
+FrontendInstalled
+FrontendInstalled = 
+FrontendStatus
+GET, POST, OPTIONS
+GameCount
+GenerateProgress
+GenresText
+GetAddViaLuaToolsStatus
+GetApiList
+GetGamesDatabase
+GetIconDataUrl
+GetLuaToolsAddStatus
+HH:mm:ss.fff
+HTTP server listening on http://127.0.0.1:6767
+HardwareApp
+HasActiveFilters
+HasAdded
+HasDetails
+HasDiffAdded
+HasDiffRemoved
+HasDlcInfo
+HasFixTags
+HasInLua
+HasInstallResult
+HasItems
+HasLastDownload
+HasLuaToolsForApp
+HasMissing
+HasNewReleases
+HasPendingDetails
+HasRecent
+HasRemoved
+HasResult
+HasSources
+HasTopSellers
+HasUnknown
+Hide adult
+Home_BrowsingAsGuest
+Home_CheckingSteam
+Home_LastAdded
+Home_LuasOnBoard
+Home_ModeIs
+Home_NoModeSelected
+Home_PluginStatus
+Home_RecentlyAdded
+Home_SignedIn
+Home_SignedInAs
+Home_SteamDetected
+Home_SteamNotFound
+Home_ViewDetails
+Home_Welcome
+HttpListener could not start on 127.0.0.1:6767 
+Hubcap download failed (
+HubcapIsKeyConfigured
+HubcapKeyInput
+HubcapKeyStatus
+HubcapKeyStatusColor
+HubcapStats
+HubcapStatsDisplay
+HubcapStatsPending
+HubcapStatsText
+HubcapUsagePercent
+InLuaCount
+InLuaToggleLabel
+InstallButtonText
+InstallFailed
+InstallIsPrimary
+InstallPath
+InstallPlugin
+InstallResult
+InstallStatus
+Installed = 
+InstalledVersion
+InternalName
+Invalid URL
+IsActive
+IsBotProvisioned
+IsBusy
+IsChecking
+IsConfirming
+IsConfirmingOverwrite
+IsDetailOpen
+IsDownloading
+IsDragOver
+IsEmpty
+IsFilterPanelOpen
+IsGenerating
+IsGuest
+IsInLuaExpanded
+IsInstalled
+IsInstallingPlugin
+IsLoading
+IsLoadingFixes
+IsLocked
+IsMissingExpanded
+IsOpen
+IsProgressIndeterminate
+IsRealUser
+IsRedeemingCode
+IsRefreshingHubcapStats
+IsResultsOpen
+IsSearching
+IsSelected
+IsSelecting
+IsSignedIn
+IsSigningIn
+IsSteamOverridden
+IsSupporter
+IsUnknownExpanded
+IsValidatingHubcapKey
+Italiano
+JSON.stringify(Object.values(window.Millennium._pending||{}).map(function(r){return{m:r.method,a:JSON.stringify(r.args)}}))
+Lang_Changed_Body
+Lang_Changed_Restart
+Lang_Changed_Title
+Language
+LanguageOption
+LastDownload
+LatestVersion
+LegalCopyright
+Loaded luatools.js ({Length} bytes)
+Loaded {Count} API sources from api.json
+LoaderSlot
+Logger
+LoginRequiredMessage
+LuaContents
+LuaDiff
+LuaEntry
+LuaInstalled = 
+LuaTools
+LuaTools.dll
+LuaToolsGui
+LuaToolsGui.EnableTrayLock
+LuaToolsGui.RecheckUpdates
+LuaToolsGui.Resources.Strings
+LuaToolsGui.ShowWindow
+LuaToolsGui.SingleInstance
+MILLENNIUM__CONFIG_PATH
+MMM d, \'yy
+MSBAML
+Magyar
+Main_RestartSteam_Ask
+Manage_Action_CopyAppId
+Manage_Action_OpenInSteam
+Manage_Action_OpenStore
+Manage_Action_RemoveDrm
+Manage_Action_Reveal
+Manage_Action_Update
+Manage_Action_ViewDetails
+Manage_ActionsHeader
+Manage_Clear
+Manage_ClearFilters
+Manage_Content_AdultOnly
+Manage_Content_HideAdult
+Manage_CopyAppIdTip
+Manage_DeleteMany_Body
+Manage_DeleteMany_Title
+Manage_DeleteSelected
+Manage_DeleteThisLua
+Manage_Delete_Body
+Manage_Delete_Title
+Manage_Depot
+Manage_DepotError
+Manage_DlcName
+Manage_Empty_NoLuas
+Manage_Empty_NoMatch
+Manage_Empty_NoSteam
+Manage_FetchingDetails
+Manage_Filter_Content
+Manage_Filter_Genre
+Manage_Filter_Price
+Manage_Filter_SortBy
+Manage_Filter_Type
+Manage_Filter_Year
+Manage_Filters
+Manage_LoadingDepotInfo
+Manage_LoadingGames
+Manage_MissingHint
+Manage_Opt_Any
+Manage_Opt_Free
+Manage_Opt_Paid
+Manage_PageLabel
+Manage_PageSize_All
+Manage_Refresh
+Manage_RemoveFailed_Count
+Manage_RemoveFailed_File
+Manage_RemoveFailed_Named
+Manage_RemoveFailed_Title
+Manage_RestartSteam_Ask
+Manage_RestartSteam_Failed
+Manage_RestartSteam_Title
+Manage_ResultsPerPage
+Manage_Select
+Manage_SelectionLabel
+Manage_SharedDepot
+Manage_Sort_Metacritic
+Manage_Sort_MostReviewed
+Manage_Sort_NameAZ
+Manage_Sort_RecentlyAdded
+Manage_Sort_ReleaseNewest
+Manage_Steamless_Confirm_Body
+Manage_Steamless_Confirm_Title
+Manage_Steamless_Failed
+Manage_Steamless_NoInstall
+Manage_Steamless_Working
+Manage_Title
+Manage_Toast_NotFound_Body
+Manage_Toast_NotFound_Title
+Manage_Toast_Refreshed_Body
+Manage_Toast_Refreshed_Title
+Manage_Toast_Steamless_Done
+Manage_Toggle_InLua
+Manage_Toggle_Missing
+Manage_Toggle_Unknown
+Manage_UnknownHint
+Metacritic
+MillenniumCoexisting
+MinimizeToTray
+Missing
+MissingCount
+MissingToggleLabel
+Mode = 
+ModeDefinition
+ModeInstallResult
+ModeState
+ModeStatus
+Mode_Active
+Mode_Btn_Install
+Mode_Btn_Reinstall
+Mode_Btn_Switch
+Mode_Btn_Update
+Mode_Cancel
+Mode_CheckForUpdates
+Mode_Checking
+Mode_CloseSteamContinue
+Mode_CloudRedirectSupport
+Mode_CloudRedirect_AddonDesc
+Mode_CloudRedirect_Disable
+Mode_CloudRedirect_Enable
+Mode_CloudRedirect_LaunchFailed
+Mode_CloudRedirect_Locked
+Mode_CloudRedirect_Manage
+Mode_CloudRedirect_Status_Disabled
+Mode_CloudRedirect_Status_Enabled
+Mode_CloudRedirect_Status_NotInstalled
+Mode_CloudRedirect_Status_UpdateAvailable
+Mode_CloudRedirect_Toast_Disabled
+Mode_CloudRedirect_Toast_Enabled
+Mode_CloudRedirect_Toast_Updated
+Mode_Confirm_Body
+Mode_Confirm_Reinstall
+Mode_Confirm_Switch
+Mode_Desc_CloudRedirect
+Mode_Desc_OpenSteamTools
+Mode_Desc_OpenSteamToolsNightly
+Mode_Desc_SteamTools
+Mode_Experimental
+Mode_NotActive
+Mode_NotInstalled
+Mode_Recommended
+Mode_StatusUnavailable
+Mode_Subtitle
+Mode_Title
+Mode_Toast_InstallFailed
+Mode_Toast_InstallFailed_Body
+Mode_Toast_Updated
+Mode_Toast_Updated_Restarting
+Mode_Toast_Updated_Start
+Mode_UpToDate
+Mode_UpdateAvailable
+Most reviewed
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+Name (A
+Name = 
+Nav_Add
+Nav_Fixes
+Nav_Footer_Guest
+Nav_Footer_LoggedIn
+Nav_Home
+Nav_Manage
+Nav_Mode
+Nav_RestartSteam
+Nav_Settings
+Nav_SignInDiscord
+Nav_WaitingForBrowser
+Nederlands
+No Hubcap manifest is available for this app.
+No available source for this game.
+Not found
+Not signed in.
+NotBusy
+NotInstallingPlugin
+Nothing to cancel
+OPTIONS
+OST-Nightly
+Onboarding_Applying
+Onboarding_Go
+Onboarding_No
+Onboarding_Plugin_Detail
+Onboarding_Plugin_Title
+Onboarding_Recommended_Detail
+Onboarding_Recommended_Title
+Onboarding_SignIn_Blurb
+Onboarding_SignedIn
+Onboarding_Title
+Onboarding_Yes
+OpenExternalUrl
+OpenFix
+OpenSettings
+OpenSteam001
+OpenSteamTool
+OpenSteamTool-{version}-Release.zip
+OpenSteamTool.dll
+OriginalFilename
+PageLabel
+Patched = 
+PendingDetailsCount
+PickLuaToolsAddSource
+Please try again from the app.
+PluginAdd.Check appid=
+PluginAdd.Download appid=
+PluginAdd.Pick appid=
+PluginAdd.Start appid=
+PluginStatus
+PluginStatusColor
+PluginStatusText
+Plugin_About_Header
+Plugin_Badge_UpdateAvailable
+Plugin_Btn_CheckForUpdates
+Plugin_Btn_Install
+Plugin_Btn_Reinstall
+Plugin_Btn_Uninstall
+Plugin_Btn_Update
+Plugin_CardTitle
+Plugin_Checking
+Plugin_Confirm_RestartBody
+Plugin_Confirm_RestartCaption
+Plugin_Err_GithubUnreachable
+Plugin_Err_MissingAssets
+Plugin_Err_NoLuatoolsJs
+Plugin_Err_SteamNotFound
+Plugin_Err_VerifyFailed
+Plugin_Feature_AutoUpdate
+Plugin_Feature_Millennium
+Plugin_Feature_StoreButton
+Plugin_Footer
+Plugin_Millennium_Coexisting
+Plugin_Row_Frontend
+Plugin_Row_InstalledVersion
+Plugin_Row_LatestVersion
+Plugin_Row_Loader
+Plugin_Status_Installed
+Plugin_Status_NotInstalled
+Plugin_Status_OfflineCheck
+Plugin_Status_OutOfDate
+Plugin_Status_Port8080Busy
+Plugin_Status_UpToDate
+Plugin_Subtitle
+Plugin_Title
+Plugin_Toast_InstallFailed
+Plugin_Toast_Installed
+Plugin_Toast_Removed
+Plugin_Toast_Title
+Plugin_Toast_UninstallFailed
+Plugin_Toast_UpToDate
+Plugin_Toast_UpdateAvailable
+Plugin_Version_Offline
+Plugin_Version_Unknown
+Polski
+Portugu
+Prefer
+ProductName
+ProductVersion
+Progress
+REGEX_DEFAULT_MATCH_TIMEOUT
+ReadLoadedApps
+Recent
+Recently added
+Release
+Release date (newest)
+Release is missing 
+Release is missing cloud_redirect.dll.
+Release is missing the expected download.
+ReleaseLabel
+Released 
+Removed
+Request failed (
+RestartSteam
+ResultFailed
+ResultText
+Runtime.evaluate
+SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+SOFTWARE\Valve\Steam
+SOFTWARE\WOW6432Node\Valve\Steam
+Sadie (Hubcap)
+Sadie (Morrenus)
+SearchText
+SelectedContent
+SelectedCount
+SelectedFixTagId
+SelectedGame
+SelectedGenre
+SelectedLanguage
+SelectedPageSize
+SelectedPrice
+SelectedSort
+SelectedTagId
+SelectedTile
+SelectedType
+SelectedYear
+SelectionLabel
+Selectively11
+Selectively11/CloudRedirect
+Session expired 
+Session refresh failed (
+Session refresh returned an empty session.
+Settings_AutoUpdateApps
+Settings_AutoUpdateApps_Hint
+Settings_BotCode_Expired
+Settings_BotCode_Hint
+Settings_BotCode_Invalid
+Settings_BotCode_Placeholder
+Settings_BotCode_Redeem
+Settings_BotCode_ServerError
+Settings_BotLink_Body
+Settings_BotLink_Dismiss
+Settings_BotLink_Title
+Settings_BrowsingAsGuest
+Settings_Change
+Settings_ChooseSteamFolder
+Settings_DonateKeys
+Settings_DonateKeys_Hint
+Settings_GuestHint
+Settings_HubcapActive
+Settings_HubcapClear
+Settings_HubcapGetKey
+Settings_HubcapKey
+Settings_HubcapKeyBad
+Settings_HubcapKeyError
+Settings_HubcapKeyOk
+Settings_HubcapKeyOkExpiry
+Settings_HubcapKeyPlaceholder
+Settings_HubcapKey_Hint
+Settings_HubcapRefresh
+Settings_HubcapValidate
+Settings_Language
+Settings_Language_Hint
+Settings_Language_SystemDefault
+Settings_LoginRequired
+Settings_ManageKeyHintPrefix
+Settings_MinimizeToTray
+Settings_MinimizeToTray_Hint
+Settings_Open
+Settings_ResetToAuto
+Settings_Section_Account
+Settings_Section_Community
+Settings_Section_General
+Settings_Section_Hubcap
+Settings_Section_Install
+Settings_Section_Startup
+Settings_Section_Steam
+Settings_SignInDiscord
+Settings_SignOut
+Settings_StartWithWindows
+Settings_StartWithWindows_Hint
+Settings_SteamLocation
+Settings_SteamNotFound
+Settings_SteamSource_Auto
+Settings_SteamSource_Custom
+Settings_SteamSource_NotFound
+Settings_SteamWarning_NoExe
+Settings_Title
+ShowBotLinkBanner
+ShowCloudRedirectManage
+ShowCloudRedirectUpdate
+ShowFeatured
+ShowHubcapStats
+ShowItems
+ShowManage
+ShowPager
+ShowPluginInstall
+ShowUpToDate
+Sign-in failed
+Sign-in timed out 
+Sign-in was denied.
+SignInError
+Signed in!
+Skyflare
+Software\Classes\luatools
+Software\Classes\luatools\shell\open\command
+SourcesLoaded
+StandardUsage
+StartAddViaLuaToolsFromUrl
+StartLuaToolsAdd
+StartWithWindows
+StatsText
+Status = 
+StatusLine
+StatusText
+Steam location not found 
+SteamAppInfo
+SteamFound
+SteamPath
+SteamSource
+SteamStatus
+SteamTools
+SteamWarning
+Steamless.CLI.exe
+SteamlessResult
+String(window.__LuaToolsReady === true)
+StringFileInfo
+Success = 
+Svenska
+The download link was empty 
+Title = 
+Token exchange failed (
+Token exchange returned an empty session.
+TotalPages
+Translation
+Tray_Exit
+Tray_Open
+TwentyTwo Cloud
+Type = 
+U+`,a7b?c@tAzB~C
+UI action failed: {Message}
+URL Protocol
+URL:LuaTools Protocol
+Unknown
+UnknownCount
+UnknownToggleLabel
+UpdateAvailable
+Updating plugin 
+Used = 
+User-Agent
+VS_VERSION_INFO
+VarFileInfo
+Windows
+You can close this tab and return to LuaTools.
+Your Hubcap daily limit has been reached.
+Your Hubcap key is invalid or expired.
+["']\s*
+[/\\]+
+[cloud]
+\[\s*$
+\b(19|20)(\d{2})\b
+\b(19|20)\d{2}\b
+\s*["']
+\s*\(\d+\)\s*\S*\s*$
+] fastFetch=
+^(\s*)(setManifestid\s*\()
+^[a-zA-Z0-9]{64}$
+^\[[^\[].*\]
+^\[\s*
+^\d{1,10}$
+^\d{5,}$
+^\s*(\d+)
+^enabled\s*=
+^enabled\s*=\s*(\w+)
+^paths\s*=
+^smm_[0-9a-f]{96}$
+_fix.zip
+_launcher
+addappid
+addappid\s*\(\s*(\d+)\s*(?:,\s*\d+\s*(?:,\s*"([^"]*)")?)?\s*\)[ \t]*(?:--[ \t]*(.*?)[ \t]*)?$
+addtoken
+api.json
+api.json not found 
+apiName
+api_list
+apikey
+app.baml
+application/json
+application/json; charset=utf-8
+application/vnd.github+json
+applist
+appmanifest_
+atom0s/Steamless
+auth.dat
+available
+battleye
+bcrypt.dll
+bcrypt_real.dll
+be_service
+betakey
+bootstrap
+bugsplat
+cache.json
+cancelled
+cef_process
+cefprocess
+cloud_redirect.dll
+cloud_redirect.dll failed verification (sha256 mismatch).
+cloudredirect
+cmd.exe
+common
+config
+config.json
+config.vdf
+config/stplug-in
+content_descriptors
+count=exact
+covers
+crashhandler
+crashreport
+d MMM yyyy
+dbghelp.dll
+dbghelp_real.dll
+default
+depotcache
+depotfromapp
+depots
+description
+desktop.lua.tools
+details
+directx
+discord(dot)gg/luatools
+dlcappid
+dlclanguage
+dotnet
+downloading
+downloads
+dwmapi.dll
+dxsetup
+eFgJhNiRkVn^qbu
+easyanticheat
+enabled
+enabled = 
+enabledPlugins
+error_description
+es-419
+executable
+explorer.exe
+extended
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3NzYwMzkzNzYsImV4cCI6MTg5MzQ1NjAwMCwicm9sZSI6ImFub24iLCJpc3MiOiJzdXBhYmFzZSJ9.f_-K38u3odjltP-g_67FVmG32Vg-_-k-lNBvIaVUVBM
+failed
+fullgame
+function ltCall(p,m,a){
+genres
+header_image
+http add urlacl url=http://127.0.0.1:6767/ user=Everyone
+http://
+http://127.0.0.1:
+http://127.0.0.1:6767
+http://127.0.0.1:6767/
+http://127.0.0.1:8080/json
+http://167.235.229.108
+http://167.235.229.108/<appid>
+http://167.235.229.108/check_apis
+http://167.235.229.108/check_apis?appid=
+http://167.235.229.108/donatekeys/send
+http://localhost:
+http://localhost:53789/callback
+https://
+https://analytics.lua.tools
+https://analytics.lua.tools/api/send
+https://api.github.com/
+https://api.github.com/repos/
+https://api.github.com/repos/Selectively11/CloudRedirect/releases/latest
+https://api.github.com/repos/atom0s/Steamless/releases/latest
+https://api.github.com/repos/madoiscool/LTSP/releases/latest
+https://api.steamcmd.net/v1/info/
+https://api.steampowered.com/ISteamApps/GetAppList/v2/
+https://applist.morrenus.xyz/
+https://cdn.cloudflare.steamstatic.com/steam/apps/
+https://db.lua.tools
+https://db.lua.tools/auth/v1/token?grant_type=pkce
+https://db.lua.tools/auth/v1/token?grant_type=refresh_token
+https://db.lua.tools/auth/v1/verify
+https://db.lua.tools/rest/v1/user_downloads?select=appid&downloaded_at=gte.
+https://discord.gg/RrukXPyv5b
+https://discord.gg/hMdv5dQhcN
+https://discord.gg/hubcapsmanifest
+https://discord.gg/luatools
+https://discord.gg/manifests
+https://gh.ddlc.top/
+https://ghfast.top/
+https://ghproxy.net/
+https://github.com/
+https://github.com/madoiscool/LuaTools
+https://github.com/mendy-tools/LuaTools
+https://hubcapmanifest.com
+https://lua.tools
+https://lua.tools/api/auth/code/redeem
+https://lua.tools/api/gh/
+https://objects.githubusercontent.com/
+https://raw.githubusercontent.com/
+https://raw.githubusercontent.com/jsnli/steamappidlist/master/data/hardware_appid.json
+https://raw.githubusercontent.com/sushi-dev55-alt/sushitools-games-repo-alt/refs/heads/main/<appid>.zip
+https://steamdb.info/app/
+https://steamdb.info/depot/
+https://store.steampowered.com/api/appdetails?appids=
+https://store.steampowered.com/api/featuredcategories
+https://store.steampowered.com/api/featuredcategories?cc=us&l=english
+https://store.steampowered.com/api/storesearch/
+https://store.steampowered.com/api/storesearch/?term=
+icon.ico
+if(real&&typeof real.callServerMethod==='function'){
+image/png
+image/x-icon
+install
+installed.json
+is_free
+language
+launch
+libraryfolders.vdf
+listofdlc
+luatools
+luatools-icon.png
+luatools-plugin-
+luatools.disabled-by-luatools
+luatools.js
+luatools.js not found
+luatools://
+luatools_
+luatools_diff_
+luatools_drop_
+macosx
+madoiscool
+magiclink
+mainwindow.baml
+manage
+manifest
+manifests
+mendy-tools
+metacritic
+millennium
+millennium-polyfill.js
+millennium.dll
+no-exe
+no-install
+ol (Espa
+ol (Latinoam
+opensteamtool.toml
+oslist
+ownsdlc
+pack://application:,,,/icon.ico
+paths = ["config/stplug-in"]
+platforms
+plugin
+plugin-backend.log
+plugin.zip
+plugins
+plugins.enabledPlugins
+processing
+protocol_url.tmp
+psapi.dll
+public
+queued
+recommendations
+redist
+release_date
+result
+s (Brasil)
+s (Portugal)
+secretgoonpoon
+setManifestid
+setManifestid\s*\(\s*(\d+)\s*,\s*"(\d+)"
+setmanifestid
+settings.json
+silent/
+source
+source is required
+steam-applist.json
+steam.exe
+steam://nav/games/details/
+steam://store/
+steam_appid
+steamapps
+steamless
+steamless.zip
+steamwebhelper
+store.steampowered.com
+stplug-in
+success
+success_code
+text/html; charset=utf-8
+text/plain
+unavailable
+uninstall
+unknown
+var pending={},ready={},reqId=0;
+var real=window.Millennium;
+vc_redist
+vcredist
+verynotsusdllsthataredefnotstrelated
+views/confirmoverlay.baml
+views/downloadview.baml
+views/dropzone.baml
+views/fixesview.baml
+views/homeview.baml
+views/manageview.baml
+views/modeview.baml
+views/onboardingview.baml
+views/pluginview.baml
+views/settingsview.baml
+windows
+winmm.dll
+winmm_real.dll
+xinput1_4.dll
+xjyn|r}v
+yyyy-MM-dd
+yyyy-MM-dd'T'HH:mm:ss'Z'
+zh-Hans
+zh-Hant
+{"success":true}
+{version}
+{{ appid = {0}, name = {1} }}
+{{ auth_code = {0}, code_verifier = {1} }}
+{{ code = {0} }}
+{{ e = {0} }}
+{{ expression = {0}, returnByValue = {1} }}
+{{ id = {0}, method = {1}, params = {2} }}
+{{ name = {0}, available = {1}, url = {2} }}
+{{ name = {0}, displayName = {1}, status = {2}, available = {3}, canDownload = {4}, locked = {5}, needsKey = {6}, stats = {7}, downloading = {8}, progress = {9}, indeterminate = {10} }}
+{{ name = {0}, index = {1} }}
+{{ refresh_token = {0} }}
+{{ status = {0}, bytesRead = {1}, totalBytes = {2}, currentApi = {3}, apiErrors = {4}, error = {5}, installedPath = {6}, success = {7}, api = {8} }}
+{{ success = {0} }}
+{{ success = {0}, apis = {1} }}
+{{ success = {0}, appid = {1}, checking = {2}, fastFetch = {3}, sourcesLoaded = {4}, sources = {5}, installStatus = {6}, installFailed = {7}, error = {8}, installed = {9} }}
+{{ success = {0}, apps = {1} }}
+{{ success = {0}, checking = {1}, sourcesLoaded = {2}, sources = {3}, installed = {4} }}
+{{ success = {0}, dataUrl = {1} }}
+{{ success = {0}, deleted = {1}, count = {2} }}
+{{ success = {0}, error = {1} }}
+{{ success = {0}, error = {1}, results = {2} }}
+{{ success = {0}, exists = {1} }}
+{{ success = {0}, message = {1} }}
+{{ success = {0}, results = {1} }}
+{{ success = {0}, state = {1} }}
+{{ type = {0}, payload = {1} }}
+{{ type = {0}, token_hash = {1} }}
+{{ v = {0} }}
+{{ website = {0}, hostname = {1}, url = {2}, title = {3} }}
+}else{
