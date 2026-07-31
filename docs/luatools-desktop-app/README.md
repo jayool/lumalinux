@@ -18,6 +18,7 @@ lua.tools, applies fixes, unlocks DLC, injects the plugin, etc.
 | `LuaTools.exe`, `LuaTools.deps.json` | Host + dependency manifest. |
 | `LuaTools-1.2.6-types-methods.txt` | Every type (473) + methods, from metadata (dnfile). |
 | `LuaTools-1.2.6-strings.txt` | All string literals (1458), incl. every URL/endpoint. |
+| `LuaTools-1.2.6-IL-disassembly.txt` | **Full IL disassembly** of all 461 types / 3527 methods (dnfile + dncil), with `ldstr` strings, `call`/`newobj` targets and field accesses resolved. Not C#, but the complete instruction-level logic. |
 
 ## Full C# decompile
 
@@ -41,6 +42,15 @@ The type map + strings below already reveal the behaviour without decompiling.
   `GithubProxy`, `HubcapService`, `SteamDepotInfo`, `HttpServerService`,
   `PluginInstallerService`, `PluginAddService`, `ProtocolService`,
   `ProxiedFileDownloader`, `CoverCache`, `SteamAppListCache`.
+
+- **The fixes flow** (`LuaToolsApiClient`, decompiled to IL — see the IL dump):
+  - `GetDenuvoFixesAsync` → `GET /api/denuvo/fixes?appid=<id>` (the catalogue)
+  - `GetDenuvoListingsAsync` → `GET /api/denuvo/listings`
+  - `DownloadDenuvoAsync` → `/api/denuvo/download?fix=<fix>&slot=<slot>` → returns a URL →
+    `DownloadFromUrlAsync` (fails with "The download link was empty — try again.")
+  - `DownloadManifestAsync` → `/api/manifest/download?appid=<id>&source=<src>&game_name=<name>.zip`
+  - `GenerateDlcAsync` → `/api/dlc/generate?appid=<id>&base=<base>&game_name=<name>.lua`
+  - `GetDlcInfoAsync` → `/api/dlc/info?appid=<id>&base=<base>`
 
 - **lua.tools API surface** (base host built at runtime; paths from the strings):
   - `/api/denuvo/fixes?appid=` — fixes catalogue for an appid
