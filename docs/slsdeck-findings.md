@@ -9,6 +9,13 @@ files (the repo is outside this session's GitHub scope, so no API/clone —
 (`get_diagnostics`, the full `_run_install`/`_run_headcrab_shimmed` installer,
 the pin helpers) were mapped but not read line-by-line — flagged where relevant.*
 
+> **Update 2026-08-02.** LumaDeck now implements **netsock** (per-game
+> SteamNetworkingSockets fix) plus a full native online route (FakeAppId 480 +
+> netsock, in a dedicated Online Fixes tab) — so the netsock gap this doc flagged
+> against SLSDeck (§4, §6.2, §7) is **closed**. The only borrowable idea still open
+> is the **gamescope `sessions.d` injection** (§6.1), which is a headcrab-layer
+> change.
+
 This is the **"pelada" (stripped) build** — `plugin.json`: *"add games via
 slsteam-moon, apply game fixes (ryuu + perondepot), manifest version pinning.
 **No hypervisor/Denuvo**."* A separate "heavy" build (root + a "decky hypervisor"
@@ -121,8 +128,9 @@ session. **Client downgrade** for "Steam too new" is headcrab shimmed
 | Cloud saves | CloudRedirect (Selectively11) | CloudRedirect (Selectively11) — same |
 | Fixes | Crack/Bypass + Online (our sources) | Ryuu + **perondepot** (by name) |
 | DLC | `add_game_dlcs` (≤64 native / >64 config) | same |
-| Their extras | — | **netsock** (multiplayer FakeAppId), **badges**, Denuvo detection, template sources |
-| Our extras | ShaderDepot skip, Goldberg, Steamless, achievements, self-update, no-restart | — |
+| Their extras | — | **badges**, Denuvo detection, template sources |
+| Our extras | ShaderDepot skip, Goldberg, Steamless, achievements, self-update, no-restart, **netsock + native online (480+netsock) routing** | — |
+| netsock (SNS multiplayer) | **yes** (2026-08-02: Online Fixes tab + native route) | yes |
 
 **Verdict:** LumaDeck is stronger on **product engineering** — robustness to
 Steam updates (SafeMode + cron; our patterns held where moon had to re-adapt),
@@ -166,9 +174,10 @@ SteamTools/SLSsteam→Decky tree, not parent-child.
    injection point**. It is **headcrab's layer** (lumalinux is only the payload
    `steam.sh`/the wrapper preloads), so the borrow is an upstream headcrab note,
    not a lumalinux change.
-2. **netsock (`steamnetsock-patch`)** — a per-game SteamNetworkingSockets fix for
-   FakeAppId multiplayer. LumaDeck has no equivalent; low-priority product idea
-   if users hit online-play breakage on FakeAppId titles.
+2. ~~**netsock (`steamnetsock-patch`)**~~ — **DONE (2026-08-02).** Implemented in
+   LumaDeck as the native online route (FakeAppId 480 + netsock launch option),
+   applied alongside online fixes and via a dedicated Online Fixes tab, with an
+   anti-cheat hard stop. See `LumaDeck/FIXES_MAP.md` → "Online multiplayer".
 3. **`perondepot`** as an additional **online-fix source** (matched by name), and
    **Morrenus** as an additional manifest provider — both are just endpoints, no
    architecture change.
@@ -180,8 +189,9 @@ Nothing here touches lumalinux's own hooks — it's all plugin/headcrab layer.
 SLSDeck (pelada) is a **competent but thin frontend for slsteam-moon**: it does
 the ownership write (`AdditionalApps`) + `.lua` keys for moon, and leans on moon
 for everything hard. It is **not a LumaDeck copy** — convergent ecosystem design.
-LumaDeck leads on robustness, no-restart, and maturity; SLSDeck's two genuinely
-useful ideas for us are the **gamescope injection** (M7) and **netsock**. The
+LumaDeck leads on robustness, no-restart, and maturity; SLSDeck's one still-open
+useful idea for us is the **gamescope injection** (M7) — **netsock is now done
+(2026-08-02)**. The
 announced "heavy" build (root + hypervisor + Denuvo) is the only place they aim
 higher, at a real cost in risk — and it isn't in this repo.
 
