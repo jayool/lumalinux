@@ -1,5 +1,5 @@
 {
-  "name": "Steam validation env (CachyOS)",
+  "name": "Steam validation env — port testing (multi-distro)",
   "build": { "dockerfile": "Dockerfile" },
   "remoteUser": "codespace",
   "updateRemoteUserUID": true,
@@ -10,7 +10,7 @@
       "onAutoForward": "openPreview"
     }
   },
-  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postCreateCommand": "bash .devcontainer/port-testing/post-create.sh",
   "runArgs": [
     "--cap-add=SYS_PTRACE",
     "--cap-add=SYS_ADMIN",
