@@ -31,19 +31,23 @@ RUN pacman-key --init \
  && pacman -Sy --noconfirm --needed archlinux-keyring curl tar gawk
 
 # ---------------------------------------------------------------------------
-# 2) Add the CachyOS optimized repositories. `cachyos-repo.sh --install` is
-#    NON-interactive (verified against CachyOS/cachyos-repo-add-script: no
-#    read/tty prompts, requires root, --install is the default action): it
-#    detects the ISA level via /lib/ld-linux-x86-64.so.2, recv+lsigns the CachyOS
-#    key from keyserver.ubuntu.com, `pacman -U`s the keyring/mirrorlists/patched
-#    pacman, and prepends the cachyos* repos above Arch's in /etc/pacman.conf.
-#    Needs open internet incl. the keyserver — Codespaces has it. If it fails,
-#    it's almost always a transient keyserver/mirror hiccup: rebuild, or try a
-#    mirror (https://mirror.cachyos.org is canonical; see the wiki for alternates).
+# 2) Add the CachyOS optimized repositories. cachyos-repo.sh has no shell
+#    read/tty prompts, BUT its internal `pacman -U` runs WITHOUT --noconfirm, so
+#    pacman itself throws its own "Proceed with installation? [Y/n]" — which, in
+#    a TTY-less Docker build, hits EOF and aborts (exit 1) and the whole image
+#    build fails. Two guards make it non-interactive:
+#      * sed --noconfirm into the script's pacman calls (the real fix), and
+#      * pipe `yes` as a belt-and-suspenders for any other prompt pacman raises.
+#    The script recv+lsigns the CachyOS key from keyserver.ubuntu.com, installs
+#    the keyring/mirrorlists/patched pacman, detects the ISA level via
+#    /lib/ld-linux-x86-64.so.2, and prepends the cachyos* repos in pacman.conf.
+#    Needs open internet incl. the keyserver — Codespaces has it. A failure here
+#    is usually a transient keyserver/mirror hiccup: rebuild.
 # ---------------------------------------------------------------------------
 RUN curl -fsSL -O https://mirror.cachyos.org/cachyos-repo.tar.xz \
  && tar xf cachyos-repo.tar.xz \
- && ( cd cachyos-repo && ./cachyos-repo.sh --install ) \
+ && sed -i 's/pacman -U /pacman -U --noconfirm /g; s/pacman -S /pacman -S --noconfirm /g' cachyos-repo/cachyos-repo.sh \
+ && ( cd cachyos-repo && yes | ./cachyos-repo.sh --install ) \
  && rm -rf cachyos-repo cachyos-repo.tar.xz
 
 # ---------------------------------------------------------------------------
