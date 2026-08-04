@@ -27,6 +27,8 @@ fi
 # 3) Install the validator.
 cp "$HERE/validate-port.sh" "$HOME/validate-port.sh"
 chmod +x "$HOME/validate-port.sh"
+cp "$HERE/verify-setup.sh" "$HOME/verify-setup.sh"
+chmod +x "$HOME/verify-setup.sh"
 
 # The shared post-create writes ~/README.dev.md describing an "Arch" base; this
 # env is genuine CachyOS. Drop a note so that's not confusing.
@@ -46,6 +48,8 @@ EOF
 echo
 echo "=============================================================="
 echo " CachyOS port-testing env ready (real CachyOS userland)."
+echo "   Verify the setup provisioned correctly:"
+echo "     ~/verify-setup.sh"
 echo "   Run the port validation (no Game Mode needed):"
 echo "     ~/validate-port.sh"
 echo "   Full live flow (real Steam + inject): ~/finish-setup.sh"
