@@ -8,10 +8,17 @@
 # DIFFERENT build), just Valve's public client CDN.
 #
 # CHANNEL (important): defaults to the STEAMDECK_STABLE manifest, because that is
-# the client a real Steam Deck loads. The generic steam_client_ubuntu12 (desktop
-# Linux) is a DIFFERENT build with a different hash — validating it silently
-# whitelisted the wrong client for every Deck user. Override with
-# LUMA_STEAM_MANIFEST (see MANIFEST_NAME below).
+# the client a real Steam Deck loads and is the authoritative source for what to
+# whitelist. The generic steam_client_ubuntu12 (desktop Linux) is a SEPARATE
+# manifest with its own version number and release cadence — so at any given
+# moment the two channels can point at different builds. Historically their
+# steamclient.so hashes also differed; for current builds (since ~Jan 2026) the
+# two channels resolve to a BYTE-IDENTICAL steamclient.so (SLSsteam's upstream
+# whitelist annotates one hash as `ubuntu12_32 & steamdeck_stable`). Defaulting
+# to steamdeck_stable is still correct: it tracks exactly what Decks run rather
+# than depending on the channels staying converged. Override with
+# LUMA_STEAM_MANIFEST (see MANIFEST_NAME below) — e.g. the CachyOS/desktop port
+# validator points it at the generic channel to prove the binary matches.
 #
 # How the client is distributed (same path SteamDB / the Headcrab downgrader use):
 #   1. GET https://media.steampowered.com/client/<MANIFEST_NAME>
@@ -46,12 +53,15 @@ import zipfile
 
 CDN = "https://media.steampowered.com/client/"
 # A Steam Deck loads the steamdeck_stable channel, NOT the generic desktop-Linux
-# steam_client_ubuntu12 — they are DIFFERENT builds with different steamclient.so
-# hashes (headcrab pins via the steamdeck manifests too). watch-steam exists to
+# steam_client_ubuntu12. These are SEPARATE manifests with independent version
+# numbers, so they can point at different builds at any moment (headcrab pins via
+# the steamdeck manifests too). For current builds the steamclient.so they
+# resolve to is byte-identical across channels, but watch-steam exists to
 # validate what real Decks actually run, so default to the steamdeck_stable
-# manifest. Earlier this read steam_client_ubuntu12 and silently validated the
-# wrong client for every Deck user. Override via LUMA_STEAM_MANIFEST for the
-# generic ("steam_client_ubuntu12") or beta ("steam_client_steamdeck_publicbeta_ubuntu12").
+# manifest rather than assuming the channels stay converged. Earlier this read
+# steam_client_ubuntu12 and silently validated the wrong client for every Deck
+# user. Override via LUMA_STEAM_MANIFEST for the generic ("steam_client_ubuntu12",
+# used by the port validator) or beta ("steam_client_steamdeck_publicbeta_ubuntu12").
 MANIFEST_NAME = os.environ.get("LUMA_STEAM_MANIFEST", "steam_client_steamdeck_stable_ubuntu12")
 MANIFEST_URL = CDN + MANIFEST_NAME
 UA = "Mozilla/5.0 (X11; Linux x86_64) lumalinux-watch-steam/1.0"
