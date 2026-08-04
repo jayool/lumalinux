@@ -28,9 +28,24 @@ fi
 cp "$HERE/validate-port.sh" "$HOME/validate-port.sh"
 chmod +x "$HOME/validate-port.sh"
 
+# The shared post-create writes ~/README.dev.md describing an "Arch" base; this
+# env is genuine CachyOS. Drop a note so that's not confusing.
+cat >> "$HOME/README.dev.md" <<'EOF'
+
+---
+## NOTE: this is the CachyOS port-testing env (not Arch)
+
+Base = **real CachyOS userland** (CachyOS optimized repos, `ID=cachyos`, and the
+real `gamescope-session-cachyos` session scripts when the package installed).
+Everything else — Steam, headless display/noVNC, Decky, the build/deploy scripts
+— works exactly like the Arch env. What a container still can't do: run the
+gamescope Game Mode compositor (no GPU/seat). The desktop-mode downgrade +
+steam.sh behaviour (issue #31's primary symptom) IS reproducible here.
+EOF
+
 echo
 echo "=============================================================="
-echo " port-testing env ready."
+echo " CachyOS port-testing env ready (real CachyOS userland)."
 echo "   Run the port validation (no Game Mode needed):"
 echo "     ~/validate-port.sh"
 echo "   Full live flow (real Steam + inject): ~/finish-setup.sh"
