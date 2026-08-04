@@ -333,6 +333,58 @@ y ejecuta comandos escritos ahí (`echo "install|<appid>|<library>" > /tmp/SLSst
 hot-reloadable. lumalinux no expone control en runtime; si hiciera falta (p.ej.
 "recarga keys ahora"), este es un patrón mínimo y sin dependencias.
 
+### 4.3 Completar `config.yaml` — headcrab **y** LumaDeck (coexistencia) [2026-08]
+
+Contexto del problema: SLSsteam escribe su config completo **solo cuando el
+fichero NO existe** (`createFile()` es create-if-missing, no migra un fichero ya
+existente), pero **valida al cargar** y toastea `"Missing key(s)"` cuando al
+config en disco le faltan claves que la versión en curso espera. Un config que
+precede a claves nuevas de SLSsteam se queda incompleto para siempre y avisa en
+cada arranque; reinstalar no lo arregla (el fichero existe → SLSsteam no lo
+reescribe).
+
+Desde 2026-08 hay **dos** actores rellenando ese config, y conviene saber que
+**coexisten sin pisarse**:
+
+- **headcrab** (`updateSLSsteamConfig`, commit `fe3f6ba` — el "headcrab updates
+  configs now" del Discord de SLSsteam). Toma como referencia el
+  `res/config.yaml` que viene **dentro de la descarga de SLSsteam** que acaba de
+  extraer, y **reescribe** el fichero en el orden de esa plantilla: conserva **tus
+  valores** para claves existentes, añade defaults para las nuevas, valida con
+  `DisableFamilyShareLock:` y deja backup `config.yaml.headcrab-<fecha>`. Corre
+  **solo en su flujo de install/update** (incluye el "Fix in Desktop" de LumaDeck
+  y el install de lumalinux).
+
+- **LumaDeck** (`slssteam_schema.complete_slssteam_config`). Referencia el
+  **`config_default.hpp`** de SLSsteam (la autoridad real contra la que valida),
+  **fetch en vivo** de master + snapshot bundleado de fallback. Es **append-only**:
+  conserva el fichero **byte a byte** y solo **añade al final** las claves que
+  faltan. Corre en el **reconcile de arranque** + operaciones de dependencias.
+
+Frontera / por qué se mantienen los dos:
+
+1. **Timing distinto.** headcrab completa solo al instalar/actualizar; LumaDeck en
+   cada arranque → cubre el hueco en que el config se queda incompleto sin volver
+   a pasar headcrab (SLSsteam se autoactualiza, aparece una clave upstream nueva).
+2. **Referencia distinta.** LumaDeck usa `config_default.hpp` (lo que SLSsteam
+   valida), así que ve claves nuevas antes de que estén en un `res/config.yaml`
+   publicado; headcrab usa el config del release que baja.
+3. **Destructividad distinta — el punto clave.** headcrab **reescribe** iterando
+   su plantilla: cualquier clave top-level que tengas y que **no** esté en su
+   plantilla **se pierde** (p.ej. una que LumaDeck añadió desde un
+   `config_default.hpp` más nuevo que el release de headcrab). El append-only de
+   LumaDeck **nunca pierde nada** y **la reañade** en el siguiente arranque. O
+   sea, juntos son **auto-curativos**.
+
+Efectos cosméticos (inofensivos): el layout **oscila** según quién corrió último
+(headcrab reordena al orden canónico y tira el header "keys added by LumaDeck";
+LumaDeck reañade al final bajo ese header), y los backups `config.yaml.headcrab-*`
+se acumulan. Los **valores** quedan intactos en ambos sentidos.
+
+Veredicto: **no es redundante**. La completación de LumaDeck es la red de
+seguridad de arranque, con la referencia más precisa y la única de las dos que no
+puede perder claves. Se quedan las dos.
+
 ---
 
 ## 5. Mapa de coexistencia — los conjuntos de hooks son **disjuntos** (la sección que importa)
