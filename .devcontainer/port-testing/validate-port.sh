@@ -57,23 +57,45 @@ then ok "real_user resolves the Steam-owner (jayo), not uid 1000"
 else bad "real_user resolution wrong for a non-1000 user"; fi
 
 echo "== 2) core cold-check (DESKTOP client) =="
+# 2a) PATTERNS must resolve on the real desktop steamclient.so — the load-bearing
+#     hook check. fetch_steamclient can only get the CURRENT (live-latest) client,
+#     not an arbitrary pinned build, so we validate patterns against that.
 SO="/tmp/desktop_steamclient.so"
 if LUMA_STEAM_MANIFEST=steam_client_ubuntu12 \
      python3 "$LUMALINUX/tools/fetch_steamclient.py" --output "$SO" >/tmp/vp-fetch.log 2>&1; then
     SHA="$(sha256sum "$SO" | awk '{print $1}')"
-    echo "  desktop steam_client_ubuntu12 steamclient.so sha256=$SHA"
-    if grep -qi "$SHA" "$LUMALINUX/res/updates.yaml"; then
-        ok "hash IS whitelisted in res/updates.yaml — SafeMode gate PASSES on desktop client"
-    else
-        bad "hash NOT in res/updates.yaml — SafeMode would block on this build (whitelist it)"
-    fi
+    echo "  live desktop steam_client_ubuntu12 steamclient.so sha256=$SHA"
     python3 "$LUMALINUX/tools/check_patterns.py" "$SO" --hpp "$LUMALINUX/src/patterns.hpp" >/tmp/vp-pat.log 2>&1
     case $? in
-      0) ok "check_patterns: CLEAN — all hooks resolve on the desktop client" ;;
+      0) ok "check_patterns: CLEAN — ALL hooks resolve on the (live) desktop client" ;;
       2) ok "check_patterns: criticals OK (only ShaderDepot moved — non-critical)" ;;
       3) bad "check_patterns: BLOCKING — a critical pattern failed (tail /tmp/vp-pat.log)"; tail -6 /tmp/vp-pat.log ;;
       *) bad "check_patterns: error (tail /tmp/vp-pat.log)"; tail -6 /tmp/vp-pat.log ;;
     esac
+
+    # 2b) HASH gate: satisfied by the build Headcrab DOWNGRADES to, NOT the live
+    #     client. So the meaningful check is "is Headcrab's pinned build
+    #     whitelisted?" (LumaDeck's own update gate text-scans res/updates.yaml for
+    #     `steam_version: <pin>`). Reading the live client's hash and demanding it
+    #     be whitelisted tests CI cadence, not whether the port works.
+    PIN="$(curl -fsSL https://raw.githubusercontent.com/Deadboy666/h3adcr-b/main/headcrab.sh 2>/dev/null \
+            | grep -oE 'HeadcrabCompatibleClientVer=[0-9]+' | head -1 | cut -d= -f2)"
+    if [ -n "$PIN" ] && grep -qE "steam_version:[[:space:]]*$PIN" "$LUMALINUX/res/updates.yaml"; then
+        ok "SafeMode gate: Headcrab-pinned build $PIN IS whitelisted — gate PASSES after downgrade"
+    elif [ -n "$PIN" ]; then
+        bad "Headcrab pin $PIN not in res/updates.yaml (whitelist lags the pin — append it)"
+    else
+        bad "could not read Headcrab's pin (headcrab.sh fetch failed)"
+    fi
+
+    # Info only — is the live-latest build already whitelisted? Never a blocker.
+    if grep -qi "$SHA" "$LUMALINUX/res/updates.yaml"; then
+        echo "  ℹ️  live-latest desktop build is already whitelisted too."
+    else
+        echo "  ℹ️  live-latest build not yet whitelisted — EXPECTED when Steam updated since the last"
+        echo "      whitelist bump. NOT a blocker: Headcrab downgrades to the pinned build ($PIN),"
+        echo "      and check_patterns above shows the hooks match even this newer build."
+    fi
 else
     bad "could not download the desktop steamclient.so (Steam CDN needs open internet)"
     echo "     tail /tmp/vp-fetch.log:"; tail -4 /tmp/vp-fetch.log
