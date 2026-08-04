@@ -178,6 +178,22 @@ def parse_shared_depots(lua_text):
     return {int(x) for x in _ADDAPPID_ANY_RE.findall(region)}
 
 
+# Static fallback to the dynamic `-- SHARED DEPOTS` detection above: the depots of
+# app 228980 "Steamworks Common Redistributables" (VC++, DirectX, .NET, XNA, PhysX,
+# OpenAL, …) that every account owns and that must ALWAYS auto-update — pinning them
+# to an old manifest is pointless and can churn/re-download. parse_shared_depots only
+# catches these when the .lua carries a `-- SHARED DEPOTS` header (Hubcap does;
+# LuaTools/FreeTP .luas often don't), so they'd otherwise slip through as content
+# depots and get pinned. Mirrors LumaCore's kAutoUpdateDepots (228980 range only; its
+# lone 220211 left out until identified). Belt-and-suspenders — never pins a known
+# redist regardless of .lua format.
+_KNOWN_REDIST_DEPOTS = {
+    228981, 228982, 228983, 228984, 228985, 228986, 228987, 228988, 228989, 228990,
+    229000, 229001, 229002, 229003, 229004, 229005, 229006, 229007,
+    229010, 229011, 229012, 229020, 229030, 229031, 229032, 229033,
+}
+
+
 _MANIFEST_NAME_RE = re.compile(r"^(\d+)_(\d+)\.manifest$")
 
 # Steam manifest binary format magic numbers (Source SDK / SteamKit)
@@ -458,9 +474,12 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
             app_id_key_from_lua = key
             continue
         # NO-PIN (default): gid/size = 0 → BuildDep passthrough → auto-update.
-        # PIN: usa el gid/size del zip → BuildDep congela esa versión.
-        gid = manifests.get(did, 0) if pin else 0
-        size = manifest_sizes.get(did, 0) if pin else 0
+        # PIN: usa el gid/size del zip → BuildDep congela esa versión — EXCEPTO los
+        # redistribuibles compartidos (228980), que nunca se pinean aunque pin=True
+        # (siempre auto-update). Fallback estático a `-- SHARED DEPOTS`.
+        pin_this = pin and did not in _KNOWN_REDIST_DEPOTS
+        gid = manifests.get(did, 0) if pin_this else 0
+        size = manifest_sizes.get(did, 0) if pin_this else 0
         new_entry = ("ext", app_id, gid, size, key)
         if did not in existing:
             existing[did] = new_entry
@@ -1253,8 +1272,12 @@ def run_pin_installed(args):
         sys.exit(f"ERROR: sin InstalledDepots en appmanifest_{app_id}.acf "
                  f"(¿el juego está instalado?). Sin versión instalada no hay nada que pinear.")
     content = _app_content_depots(args.luma_keys, app_id)
+    # Never pin the shared redistributables (228980) — they must always auto-update.
+    # They can land in keys.txt as content depots when the .lua lacks a
+    # `-- SHARED DEPOTS` header, so exclude them here too (mirrors the zip-based pin).
     to_pin = {did: installed[did][0] for did in content
-              if did in installed and installed[did][0]}
+              if did in installed and installed[did][0]
+              and did not in _KNOWN_REDIST_DEPOTS}
     if not to_pin:
         sys.exit(f"ERROR: ningún content depot de {app_id} (keys.txt) coincide con "
                  f"InstalledDepots {sorted(installed)}. ¿Se desplegó con steamidra_lite?")
@@ -1492,8 +1515,12 @@ def main():
     try:
         mids = _read_manifest_ids(args.sls_config)
         if args.pin:
+            # Shared redistributables (228980) never get pinned — they must always
+            # auto-update. Excluded here too (this ManifestIds write is the LIVE pin;
+            # keys.txt/BuildDep above is disabled since SLSsteam 20260714).
             to_pin = {d: manifests[d] for d in depot_keys
-                      if d != app_id and manifests.get(d, 0)}
+                      if d != app_id and manifests.get(d, 0)
+                      and d not in _KNOWN_REDIST_DEPOTS}
             if to_pin:
                 mids.update(to_pin)
                 _write_manifest_ids(args.sls_config, mids)
