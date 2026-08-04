@@ -19,6 +19,30 @@ have() { command -v "$1" >/dev/null 2>&1; }
 LUMADECK="${LUMADECK:-$HOME/LumaDeck}"
 PORT_BRANCH="${LUMADECK_PORT_BRANCH:-claude/cachyos-support}"
 
+# Guard: are we even in the CachyOS port-testing env, or did the codespace get
+# created from the ROOT Arch devcontainer by mistake? The root env is plain Arch
+# with none of the port-testing extras, and its tell is unmistakable: ID=arch +
+# no cachyos repos + no ~/validate-port.sh. Call it out loudly so a wrong-config
+# create doesn't read as "CachyOS build broken".
+_ID="$(. /etc/os-release 2>/dev/null; echo "$ID")"
+if [ "$_ID" != "cachyos" ] && ! grep -qE '^\[cachyos' /etc/pacman.conf 2>/dev/null && [ ! -e "$HOME/validate-port.sh" ]; then
+    echo "=============================================================="
+    echo "  ⛔ WRONG ENVIRONMENT — this is the ROOT Arch devcontainer,"
+    echo "     NOT the CachyOS port-testing one."
+    echo
+    echo "  The CachyOS Dockerfile never ran (ID=$_ID, no [cachyos*] repos,"
+    echo "  no ~/validate-port.sh). Codespaces defaults to the root config."
+    echo
+    echo "  FIX: create the codespace selecting the right configuration —"
+    echo "    GitHub -> <> Code -> Codespaces -> ... -> \"New with options…\""
+    echo "    -> Dev container configuration:"
+    echo "         \"CachyOS env — port testing (real CachyOS userland)\""
+    echo "    (Rebuild does NOT switch configs; create a new one with options.)"
+    echo "=============================================================="
+    echo "  (Running the full check anyway for completeness:)"
+    echo
+fi
+
 echo "== A) CachyOS identity & repos (the whole point of this env) =="
 ID="$(. /etc/os-release 2>/dev/null; echo "$ID")"
 [ "$ID" = "cachyos" ] && ok "/etc/os-release ID=cachyos" || bad "ID='$ID' (expected cachyos)"
