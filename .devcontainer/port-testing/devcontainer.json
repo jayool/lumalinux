@@ -1,5 +1,5 @@
 {
-  "name": "CachyOS env — port testing (real CachyOS userland)",
+  "name": "Steam validation env (CachyOS)",
   "build": { "dockerfile": "Dockerfile" },
   "remoteUser": "codespace",
   "updateRemoteUserUID": true,

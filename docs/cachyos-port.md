@@ -5,8 +5,10 @@
 > core does **not** need porting — the work here was small and mostly
 > confirmation + doc fixes, and it is **done** (items 1–3 below). The core
 > cold-check ran **CLEAN** against the pinned-build desktop-channel
-> `steamclient.so`, confirming the "identical binary" claim for the exact build
-> Headcrab pins.
+> `steamclient.so`, and — stronger — on **2026-08-04 lumalinux loaded `3/3 hooks
+> active` LIVE on a genuine CachyOS install** (real CachyOS userland devcontainer,
+> headless Steam), confirming the core works on CachyOS in practice, not just by
+> the identical-binary argument.
 
 ## Why the core doesn't move
 

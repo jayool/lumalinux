@@ -36,7 +36,7 @@ if [ "$_ID" != "cachyos" ] && ! grep -qE '^\[cachyos' /etc/pacman.conf 2>/dev/nu
     echo "  FIX: create the codespace selecting the right configuration —"
     echo "    GitHub -> <> Code -> Codespaces -> ... -> \"New with options…\""
     echo "    -> Dev container configuration:"
-    echo "         \"CachyOS env — port testing (real CachyOS userland)\""
+    echo "         \"Steam validation env (CachyOS)\""
     echo "    (Rebuild does NOT switch configs; create a new one with options.)"
     echo "=============================================================="
     echo "  (Running the full check anyway for completeness:)"
