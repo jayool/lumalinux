@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, claude/steam-update-gating]   # TEMP (test build): build the v0.18.0-test.1 prerelease from this branch — do NOT merge this trigger to main
     tags: ['v*']
     # res/updates.yaml is fetched at runtime by the deployed .so (src/update.cpp),
     # not embedded, so a hash-only bump (watch-steam) doesn't change the artifact —
@@ -52,6 +52,10 @@ jobs:
           VERSION_ARG=""
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             VERSION_ARG="-DLUMALINUX_VERSION_OVERRIDE=${GITHUB_REF#refs/tags/v}"
+          elif [[ "${GITHUB_REF_NAME}" == "claude/steam-update-gating" ]]; then
+            # TEMP (test build): pin the binary to the prerelease version so
+            # status.json self-reports 0.18.0-test.1.
+            VERSION_ARG="-DLUMALINUX_VERSION_OVERRIDE=0.18.0-test.1"
           fi
           # -DLUMA_NO_UPDATE=OFF: ship releases WITH the SafeMode hash gate.
           # Safe to enable since 0.15.0 (no libcurl/libcrypto link — sha256 is
@@ -92,9 +96,14 @@ jobs:
             tools/ghidra_find_gmrc.py
 
       - name: Create release on tag
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref_name == 'claude/steam-update-gating'
         uses: softprops/action-gh-release@v2
         with:
+          # Tag push: normal (named after the tag). Test-branch push: publish the
+          # fixed v0.18.0-test.1 PRERELEASE.
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.18.0-test.1' }}
+          prerelease: ${{ github.ref_type != 'tag' || contains(github.ref_name, '-') }}
+          target_commitish: ${{ github.sha }}
           # Ship res/version.txt alongside the .so: it is the SafeMode group-id
           # (pattern-set version) compiled INTO this binary. LumaDeck reads it from
           # the release (releases/latest/download/version.txt) to answer "which
