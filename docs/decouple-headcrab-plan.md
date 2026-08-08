@@ -144,11 +144,20 @@ retirará `install.sh` cuando esté probado.
   plugin; no es necesario.)
 - **Hueco que queda (respecto a headcrab):** rutas de **Steam-como-Flatpak**
   (`setup.sh` es solo Steam nativo; la Deck es nativo, así que no urge).
-- **WS1.2 — PENDIENTE:** **guardian systemd** de re-afirmación (re-parchear tras
-  cada update de Steam que regenere `.desktop`), el **fail-safe anti-brick** (moon
-  M3: cliente-cambiado + crash → arranque vanilla), y —solo para distros mutables—
-  el wrap del launcher del sistema (`/usr/bin/steam`). En SteamOS/Deck (inmutable)
-  moon **salta** ese wrap; Game Mode se cubre con el PATH drop-in (ya en WS1.1).
+- **WS1.2 — HECHO (pendiente de prueba en Deck):** al estilo moon.
+  - **Fail-safe anti-brick** dentro del wrapper: cuenta boots que crashean al
+    arranque (dump `crash_*.dmp` en los primeros 180s), latchea arranque
+    **vanilla** al 3er fallo — o al **1º si el `steamclient.so` cambió** desde el
+    último boot limpio (update = causa casi segura). Auto-clear cuando cambia el
+    payload (updateas la stack). Probado: inyecta normal / va vanilla latcheado.
+  - **Guardian systemd `--user`**: `.path` (vigila los dirs de `.desktop`) +
+    `.timer` (reconcilia cada 5min) + `.service` (oneshot → `ensure-desktop-
+    coverage.sh --guardian`). El wrapper además lo kickea en cada launch. Cobertura
+    extraída a `ensure-desktop-coverage.sh` (compartida install/guardian). Probado:
+    genera y habilita los units; apply idempotente; uninstall restaura.
+  - Wrap del launcher del sistema (`/usr/bin/steam`): **no** — en SteamOS/Deck
+    (inmutable) moon lo salta; Game Mode va por el PATH drop-in. Solo haría falta
+    en Linux escritorio mutable (baja prioridad).
 - **La única incógnita real a validar en Deck (WS5):** que la sesión gamescope de
   Game Mode herede el PATH del rc y resuelva `steam` por PATH (no por ruta
   absoluta). Es el "open borrow" que marcaban nuestros docs; moon se apoya en esto.
