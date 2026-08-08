@@ -168,7 +168,15 @@ edit_slssteam_config() {
     sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
     # We bundle CloudRedirect, so enable it (the old LumaDeck flow set this too).
     sed -i "s/^DisableCloud:.*/DisableCloud: no/" "$cfg"
-    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications/DisableCloud=no; SafeMode left as-is — no freno)."
+    # SLSsteam's default DisableUpdates: yes blocks auto-updates for the unowned
+    # (AdditionalApps) games — but LumaDeck lets those update. Flip it to no, like
+    # LumaDeck's _set_disableupdates_no.
+    if grep -q '^DisableUpdates:' "$cfg"; then
+        sed -i "s/^DisableUpdates:.*/DisableUpdates: no/" "$cfg"
+    else
+        printf 'DisableUpdates: no\n' >> "$cfg"
+    fi
+    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates=no; SafeMode left as-is — no freno)."
 }
 
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
