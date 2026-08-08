@@ -56,6 +56,7 @@ LL_SO_NAME="liblumalinux.so"
 LL_SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/download/${LL_SO_NAME}}"
 SLS_7Z_URL="${SLSSTEAM_7Z_URL:-https://github.com/AceSLS/SLSsteam/releases/latest/download/SLSsteam-Any.7z}"
 CR_URL="${CLOUDREDIRECT_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so}"
+CR_CLI_URL="${CLOUDREDIRECT_CLI_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect_cli}"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
 NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
@@ -90,6 +91,82 @@ first_cmd() { local c; for c in "$@"; do command -v "$c" 2>/dev/null && return 0
 # No ELF/arch verification of the downloads: headcrab doesn't do it, and it
 # wrongly rejects legitimate files (e.g. netsock is 64-bit). We download and
 # install, exactly like headcrab (minus the downgrade/freeze).
+
+# Install runtime deps per distro — headcrab's preinstallchecks + RemoveArchPkg.
+# Best-effort: warn on failure, never abort (headcrab doesn't either).
+install_os_deps() {
+    local id="" like=""
+    if [[ -r /etc/os-release ]]; then . /etc/os-release 2>/dev/null || true; id="${ID:-}"; like="${ID_LIKE:-}"; fi
+    case " $id $like " in
+        *" arch "*|*" cachyos "*)
+            command -v pacman &>/dev/null || return 0
+            local pkgs=(wget curl grep awk sed 7zip flatpak) need=() p
+            for p in "${pkgs[@]}"; do pacman -Qs "$p" &>/dev/null || need+=("$p"); done
+            if [[ ${#need[@]} -gt 0 ]]; then
+                info "Installing deps: ${need[*]}"
+                sudo pacman -S --noconfirm "${need[@]}" || warn "dependency install failed (continuing)."
+            fi
+            local sys; sys="$(pacman -Qq 2>/dev/null | grep -E '^slssteam(-git)?$' || true)"
+            [[ -n "$sys" ]] && { info "Removing system SLSsteam package: $sys"; sudo pacman -Rns --noconfirm $sys || true; }
+            ;;
+        *" debian "*|*" ubuntu "*)
+            command -v apt-get &>/dev/null || return 0
+            local pk="libcurl4"; apt-cache search --names-only '^libcurl4t64$' 2>/dev/null | grep -q libcurl4t64 && pk="libcurl4t64"
+            dpkg --print-foreign-architectures 2>/dev/null | grep -q i386 || { sudo dpkg --add-architecture i386; sudo apt-get update >/dev/null 2>&1 || true; }
+            sudo apt-get install -y "${pk}:i386" >/dev/null 2>&1 || warn "libcurl i386 install failed (continuing)."
+            ;;
+        *)
+            if [[ " $id " == *" void "* ]] && command -v xbps-install &>/dev/null; then
+                sudo xbps-install -y wget curl grep gawk sed 7zip flatpak 2>/dev/null || warn "void deps install failed (continuing)."
+            fi
+            ;;
+    esac
+}
+
+# Merge the SLSsteam config template into an existing config, preserving the
+# user's values and only ADDING new template keys. Faithful port of headcrab's
+# updateSLSsteamConfig. $1 = template, $2 = existing config.
+merge_slssteam_config() {
+    local template="$1" config_file="$2" merged
+    [[ -f "$template" && -f "$config_file" ]] || return 0
+    grep -q '^DisableFamilyShareLock:' "$template" || { warn "SLSsteam config template invalid — skipping merge."; return 0; }
+    merged="$(mktemp "${config_file}.tmp.XXXXXX")" || return 0
+    if awk '
+        NR == FNR {
+            if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*:/) { key=$0; sub(/:.*/,"",key); current=key; present[key]=1; saved[key]=$0 ORS; next }
+            if (current != "" && $0 ~ /^[[:space:]]+/) { saved[current]=saved[current] $0 ORS }
+            next
+        }
+        /^[A-Za-z_][A-Za-z0-9_]*:/ {
+            key=$0; sub(/:.*/,"",key); printf "%s", prefix; prefix=""
+            if (key in present) { printf "%s", saved[key]; use_template=0 } else { print; use_template=1 }
+            have_key=1; next
+        }
+        have_key && /^[[:space:]]+/ { if (use_template) print; next }
+        { prefix=prefix $0 ORS }
+        END { printf "%s", prefix }
+    ' "$config_file" "$template" > "$merged"; then
+        if grep -q '^DisableFamilyShareLock:' "$merged" && ! cmp -s "$config_file" "$merged"; then
+            cp -a "$config_file" "${config_file}.lumalinux.bak" 2>/dev/null || true
+            mv -f "$merged" "$config_file"; ok "Merged SLSsteam config (new keys added, your values kept)."
+        else
+            rm -f "$merged"
+        fi
+    else
+        rm -f "$merged"; warn "SLSsteam config merge failed — leaving existing config."
+    fi
+}
+
+# headcrab's editconfig, MINUS SafeMode. headcrab sets SafeMode: yes, but that is
+# the update "freno" this project removes (it's advisory now — steam-update-gating).
+# PlayNotOwnedGames is core (treat non-owned as owned); the notify flags are UX.
+edit_slssteam_config() {
+    local cfg="$1"; [[ -f "$cfg" ]] || return 0
+    sed -i "s/^PlayNotOwnedGames:.*/PlayNotOwnedGames: yes/" "$cfg"
+    sed -i "s/^NotifyInit:.*/NotifyInit: yes/" "$cfg"
+    sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
+    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications; SafeMode left as-is — no freno)."
+}
 
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
 install_cloudredirect_app() {
@@ -337,6 +414,8 @@ if [[ "${1:-}" == "--uninstall" ]]; then
     exit 0
 fi
 
+install_os_deps
+
 SEVENZIP="$(first_cmd 7z 7za 7zr || true)"
 [[ -n "$SEVENZIP" ]] || die "7z is required to extract SLSsteam-Any.7z (install p7zip / 7zip)."
 
@@ -361,16 +440,30 @@ if [[ -f "${TMP_DIR}/sls/bin/library-inject.so" ]]; then
 else
     warn "library-inject.so not in the archive — the wrapper will load SLSsteam.so alone."
 fi
-if [[ ! -f "${SLS_CFG_DIR}/config.yaml" && -f "${TMP_DIR}/sls/res/config.yaml" ]]; then
-    install -m 0644 "${TMP_DIR}/sls/res/config.yaml" "${SLS_CFG_DIR}/config.yaml"
-    ok "Seeded ${SLS_CFG_DIR}/config.yaml (default)"
+# Config: seed from the template if absent, else merge (preserving your values);
+# then apply headcrab's functional settings (minus SafeMode — the freno).
+if [[ -f "${TMP_DIR}/sls/res/config.yaml" ]]; then
+    if [[ ! -f "${SLS_CFG_DIR}/config.yaml" ]]; then
+        install -m 0644 "${TMP_DIR}/sls/res/config.yaml" "${SLS_CFG_DIR}/config.yaml"
+        ok "Seeded ${SLS_CFG_DIR}/config.yaml (default)"
+    else
+        merge_slssteam_config "${TMP_DIR}/sls/res/config.yaml" "${SLS_CFG_DIR}/config.yaml"
+    fi
 fi
+edit_slssteam_config "${SLS_CFG_DIR}/config.yaml"
 
 # CloudRedirect .so (inert until a provider is signed in) + GUI app.
 info "Downloading CloudRedirect..."
 if curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL"; then
     install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
     ok "Deployed ${CR_DIR}/cloud_redirect.so"
+    # cloud_redirect_cli — headcrab fetches this alongside the .so (crinstall).
+    if curl -fL -o "${CR_DIR}/cloud_redirect_cli" "$CR_CLI_URL" 2>/dev/null; then
+        chmod 0755 "${CR_DIR}/cloud_redirect_cli"
+        ok "Deployed ${CR_DIR}/cloud_redirect_cli"
+    else
+        warn "cloud_redirect_cli download failed (non-fatal)."
+    fi
 else
     warn "CloudRedirect download failed — continuing without it (cloud saves stay off)."
 fi
