@@ -121,6 +121,7 @@ install_os_deps() {
             fi
             ;;
     esac
+    return 0   # never let a best-effort branch's exit status abort setup.sh (set -e)
 }
 
 # Merge the SLSsteam config template into an existing config, preserving the
