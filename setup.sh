@@ -12,8 +12,9 @@
 #   1. Fetches SLSsteam.so + library-inject.so (AceSLS/SLSsteam release, .7z),
 #      cloud_redirect.so (Selectively11), liblumalinux.so (this repo), and the
 #      netsock.so online-route lib (yesyes0649/steamnetsock-patch).
-#   2. Installs the CloudRedirect GUI app (flatpak) for provider sign-in
-#      (best-effort; skip with LUMA_SKIP_CR_APP=1).
+#   2. Installs the .NET 9 runtime (Steamless needs it; LumaDeck did this too) and
+#      the CloudRedirect GUI app (flatpak) for provider sign-in. Both best-effort;
+#      skip with LUMA_SKIP_DOTNET=1 / LUMA_SKIP_CR_APP=1.
 #   3. Writes a wrapper at ~/.local/share/SLSsteam/path/steam that exports
 #      LD_AUDIT (SLSsteam) + LD_PRELOAD (CloudRedirect + lumalinux), guards
 #      against a boot crash-loop (fail-safe), and execs the real Steam.
@@ -177,6 +178,34 @@ edit_slssteam_config() {
         printf 'DisableUpdates: no\n' >> "$cfg"
     fi
     ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates=no; SafeMode left as-is — no freno)."
+}
+
+# .NET 9 runtime — Steamless (Denuvo/DRM strip) needs it. headcrab does NOT install
+# it; LumaDeck does (dotnet.py). Microsoft's own installer. Best-effort/skippable
+# (LUMA_SKIP_DOTNET=1); never aborts.
+install_dotnet9() {
+    [[ "${LUMA_SKIP_DOTNET:-0}" == "1" ]] && { info "Skipping .NET 9 (LUMA_SKIP_DOTNET=1)."; return 0; }
+    local root="$HOME/.dotnet" cand
+    for cand in "$root/dotnet" "$(command -v dotnet 2>/dev/null || true)"; do
+        [[ -n "$cand" && -x "$cand" ]] || continue
+        if DOTNET_ROOT="$(dirname "$cand")" "$cand" --list-runtimes 2>/dev/null | grep -q "Microsoft.NETCore.App 9."; then
+            ok ".NET 9 runtime already present."; return 0
+        fi
+    done
+    info "Installing .NET 9 runtime (Steamless needs it)..."
+    mkdir -p "$root"
+    local script="$root/dotnet-install.sh"
+    if curl -fsSL -o "$script" "https://dot.net/v1/dotnet-install.sh"; then
+        chmod +x "$script"
+        if DOTNET_ROOT="$root" HOME="$HOME" "$script" --channel 9.0 --runtime dotnet --install-dir "$root" >/dev/null 2>&1; then
+            ok "Deployed .NET 9 runtime to $root"
+        else
+            warn ".NET 9 install failed — Steamless (Denuvo) fixes unavailable until retried."
+        fi
+    else
+        warn ".NET 9 installer download failed (non-fatal)."
+    fi
+    return 0
 }
 
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
@@ -514,6 +543,9 @@ for tool in "${RUNTIME_TOOLS[@]}"; do
         && chmod 0755 "${TOOLS_DIR}/${tool}" && ok "Deployed ${TOOLS_DIR}/${tool}" \
         || die "Failed to download ${TOOLS_BASE_URL}/${tool}"
 done
+
+# .NET 9 runtime (Steamless) — LumaDeck installs this during deps; headcrab doesn't.
+install_dotnet9
 
 # ── write the wrapper (with the crash-loop fail-safe) ──────────────────────
 # Single-quoted heredoc: everything expands at Steam-launch time, not now.
