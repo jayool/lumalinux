@@ -126,11 +126,16 @@ testeable sin romper el flujo actual; WS2 apuntará LumaDeck a `setup.sh` y WS3
 retirará `install.sh` cuando esté probado.
 
 **Estado:**
-- **WS1.1 — HECHO (pendiente de prueba en Deck):** `setup.sh` — fetch de las 3
-  `.so` + escritura del wrapper + cobertura Desktop (`.desktop` Exec + autostart
-  override) + uninstall. Sintaxis verificada (`bash -n`, `sh -n` del wrapper);
-  lógica de reescritura de `.desktop` probada. **No probado**: fetch/extract 7z y
-  carga real en Steam (requiere Deck — WS5).
+- **WS1.1 — HECHO (pendiente de prueba en Deck):** `setup.sh` — fetch de las 4
+  `.so` (SLSsteam + library-inject + CloudRedirect + lumalinux + **netsock**) +
+  instalación de la **app Flatpak de CloudRedirect** (best-effort, saltable con
+  `LUMA_SKIP_CR_APP=1`) + escritura del wrapper + cobertura Desktop (`.desktop`
+  Exec + autostart override) + uninstall. Sintaxis verificada (`bash -n`, `sh -n`
+  del wrapper); lógica de reescritura de `.desktop` probada. **No probado**:
+  fetch/extract 7z, install flatpak y carga real en Steam (requiere Deck — WS5).
+- **Huecos que quedan (respecto a headcrab):** el `7z` como dependencia (mejor
+  extraer desde LumaDeck en Python que exigirlo/instalarlo — SteamOS es de solo
+  lectura); rutas de **Steam-como-Flatpak** (`setup.sh` es solo Steam nativo).
 - **WS1.2 — PENDIENTE:** cobertura de **Game Mode / gamescope** (la vía crítica de
   la Deck, no es un `.desktop`), wrap del launcher del sistema (`/usr/bin/steam`),
   guardian systemd de re-afirmación, y el fail-safe anti-brick (moon M3).

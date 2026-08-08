@@ -10,11 +10,14 @@
 #
 # What it does:
 #   1. Fetches SLSsteam.so + library-inject.so (AceSLS/SLSsteam release, .7z),
-#      cloud_redirect.so (Selectively11), and liblumalinux.so (this repo).
-#   2. Writes a wrapper at ~/.local/share/SLSsteam/path/steam that exports
+#      cloud_redirect.so (Selectively11), liblumalinux.so (this repo), and the
+#      netsock.so online-route lib (yesyes0649/steamnetsock-patch).
+#   2. Installs the CloudRedirect GUI app (flatpak) for provider sign-in
+#      (best-effort; skip with LUMA_SKIP_CR_APP=1).
+#   3. Writes a wrapper at ~/.local/share/SLSsteam/path/steam that exports
 #      LD_AUDIT (SLSsteam) + LD_PRELOAD (CloudRedirect + lumalinux) and execs
 #      the real Steam.
-#   3. Points the Steam .desktop entries (Desktop-mode launch) at the wrapper.
+#   4. Points the Steam .desktop entries (Desktop-mode launch) at the wrapper.
 #
 # No root required. Coverage in this version is Desktop-mode (.desktop entries +
 # autostart). Game Mode / gamescope coverage, a systemd re-assert guardian, and
@@ -48,6 +51,19 @@ LL_SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/downlo
 SLS_7Z_URL="${SLSSTEAM_7Z_URL:-https://github.com/AceSLS/SLSsteam/releases/latest/download/SLSsteam-Any.7z}"
 CR_URL="${CLOUDREDIRECT_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so}"
 
+# netsock (native SteamNetworkingSockets online route). LumaDeck's Online Fixes
+# consume this .so from ~/.config/SLSsteam/tools/netsock/netsock.so — it must be
+# on disk or per-game netsock fixes fail ("run Install Dependencies first").
+NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
+NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
+
+# CloudRedirect GUI app (flatpak). The .so does the redirect at runtime, but
+# signing into a cloud-save provider is GUI-only inside this flatpak.
+CR_FLATPAK_ID="org.cloudredirect.CloudRedirect"
+CR_FLATPAK_RUNTIME="${CR_FLATPAK_RUNTIME:-org.kde.Platform//6.10}"
+CR_FLATPAKREPO="https://raw.githubusercontent.com/Selectively11/CloudRedirect/refs/heads/gh-pages/cloudredirect.flatpakrepo"
+FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
+
 RUNTIME_TOOLS=( steamidra_lite.py vdf_inject_keys.py )
 TOOLS_BASE_URL="https://raw.githubusercontent.com/${REPO}/main/tools"
 
@@ -74,6 +90,28 @@ verify_i386_so() {
     if command -v file &>/dev/null; then
         file "$f" | grep -qE "ELF 32-bit.*Intel (80386|i386)" \
             || die "$name is not a 32-bit i386 ELF shared object. Aborting."
+    fi
+}
+
+# Install the CloudRedirect GUI app via flatpak. Best-effort: it is heavy (pulls
+# the KDE runtime), skippable with LUMA_SKIP_CR_APP=1, and never fatal — the .so
+# already redirects at runtime; only the provider sign-in needs this GUI.
+install_cloudredirect_app() {
+    [[ "${LUMA_SKIP_CR_APP:-0}" == "1" ]] && { info "Skipping CloudRedirect app (LUMA_SKIP_CR_APP=1)."; return 0; }
+    if ! command -v flatpak &>/dev/null; then
+        warn "flatpak not found — skipping CloudRedirect app (sign-in GUI). Cloud saves stay off until it is installed."
+        return 0
+    fi
+    info "Installing CloudRedirect app (flatpak; may pull the KDE runtime)..."
+    flatpak remote-add --user --if-not-exists cloudredirect "$CR_FLATPAKREPO" 2>/dev/null || true
+    flatpak remote-add --user --if-not-exists flathub "$FLATHUB_REPO" 2>/dev/null || true
+    if flatpak install --user -y --noninteractive flathub "$CR_FLATPAK_RUNTIME" 2>/dev/null \
+       && flatpak install --user -y --noninteractive --reinstall "$CR_FLATPAK_ID" 2>/dev/null; then
+        command -v update-desktop-database &>/dev/null \
+            && update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
+        ok "CloudRedirect app installed (sign into your provider from Desktop)."
+    else
+        warn "CloudRedirect app install failed (network/runtime) — the .so still works; sign-in GUI unavailable until installed."
     fi
 }
 
@@ -159,6 +197,21 @@ if curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL"; then
     ok "Deployed ${CR_DIR}/cloud_redirect.so"
 else
     warn "CloudRedirect download failed — continuing without it (cloud saves stay off)."
+fi
+
+# CloudRedirect GUI app (flatpak) — for provider sign-in. Best-effort/skippable.
+install_cloudredirect_app
+
+# netsock (native online route) — required on disk for LumaDeck's per-game
+# netsock fixes; headcrab used to be the only thing that fetched it.
+info "Downloading netsock..."
+mkdir -p "$NETSOCK_DIR"
+if curl -fL --progress-bar -o "${TMP_DIR}/netsock.so" "$NETSOCK_SO_URL"; then
+    verify_i386_so "${TMP_DIR}/netsock.so" "netsock.so"
+    install -m 0755 "${TMP_DIR}/netsock.so" "${NETSOCK_DIR}/netsock.so"
+    ok "Deployed ${NETSOCK_DIR}/netsock.so"
+else
+    warn "netsock download failed — per-game online (netsock) fixes will be unavailable."
 fi
 
 # lumalinux.so.
