@@ -133,9 +133,13 @@ retirará `install.sh` cuando esté probado.
   Exec + autostart override) + uninstall. Sintaxis verificada (`bash -n`, `sh -n`
   del wrapper); lógica de reescritura de `.desktop` probada. **No probado**:
   fetch/extract 7z, install flatpak y carga real en Steam (requiere Deck — WS5).
-- **Huecos que quedan (respecto a headcrab):** el `7z` como dependencia (mejor
-  extraer desde LumaDeck en Python que exigirlo/instalarlo — SteamOS es de solo
-  lectura); rutas de **Steam-como-Flatpak** (`setup.sh` es solo Steam nativo).
+- **`7z` es dependencia asumida, no un problema.** Es el único formato `.7z` del
+  flujo (el `SLSsteam-Any.7z`); los fixes de luatools son `.zip` (Python `zipfile`,
+  `fixes.py`). headcrab ya asume `7z`, así que `setup.sh` lo exige y aborta claro si
+  falta. (Opcional a futuro: extraer con `py7zr` desde LumaDeck para el path del
+  plugin; no es necesario.)
+- **Hueco que queda (respecto a headcrab):** rutas de **Steam-como-Flatpak**
+  (`setup.sh` es solo Steam nativo; la Deck es nativo, así que no urge).
 - **WS1.2 — PENDIENTE:** cobertura de **Game Mode / gamescope** (la vía crítica de
   la Deck, no es un `.desktop`), wrap del launcher del sistema (`/usr/bin/steam`),
   guardian systemd de re-afirmación, y el fail-safe anti-brick (moon M3).
