@@ -17,11 +17,15 @@
 #   3. Writes a wrapper at ~/.local/share/SLSsteam/path/steam that exports
 #      LD_AUDIT (SLSsteam) + LD_PRELOAD (CloudRedirect + lumalinux) and execs
 #      the real Steam.
-#   4. Points the Steam .desktop entries (Desktop-mode launch) at the wrapper.
+#   4. Points the Steam .desktop entries (steam / steam-jupiter / bazzite-steam)
+#      at the wrapper — Desktop-mode launch.
+#   5. Adds a PATH drop-in (wrapper dir first on PATH via the shell rc files) —
+#      the Game Mode / gamescope launch resolves `steam` from PATH.
 #
-# No root required. Coverage in this version is Desktop-mode (.desktop entries +
-# autostart). Game Mode / gamescope coverage, a systemd re-assert guardian, and
-# the crash fail-safe are follow-ups (WS1.2) — see decouple-headcrab-plan.md.
+# No root required. Desktop mode is covered by the patched .desktop entries; Game
+# Mode by the PATH drop-in (efficacy on gamescope boot is the one real-Deck test,
+# see decouple-headcrab-plan.md WS5). Still follow-ups (WS1.2): a systemd re-assert
+# guardian and the crash fail-safe. Steam-as-Flatpak paths are not handled.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
@@ -151,9 +155,48 @@ restore_desktop_entries() {
     [[ "$restored" -eq 1 ]] || info "No patched .desktop entries found."
 }
 
+# PATH drop-in — put the wrapper dir first on PATH via the shell rc files. This is
+# what covers the SteamOS **Game Mode / gamescope** launch, which resolves `steam`
+# from PATH rather than from a clicked .desktop. Idempotent + removable.
+# (Efficacy on Game Mode boot is the one thing that needs a real-Deck test: it
+# assumes the gamescope session inherits this PATH and resolves steam via PATH.)
+PATH_MARK_BEGIN="# >>> lumalinux wrapper PATH >>> (managed by setup.sh)"
+PATH_MARK_END="# <<< lumalinux wrapper PATH <<<"
+PATH_LINE='export PATH="$HOME/.local/share/SLSsteam/path:$PATH"'
+
+install_path_dropin() {
+    local rc found=0
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+        [[ -f "$rc" ]] || continue
+        found=1
+        if grep -qF "$PATH_MARK_BEGIN" "$rc" 2>/dev/null; then
+            info "PATH drop-in already in $(basename "$rc")"
+        else
+            printf '\n%s\n%s\n%s\n' "$PATH_MARK_BEGIN" "$PATH_LINE" "$PATH_MARK_END" >> "$rc"
+            ok "Added wrapper to PATH in $(basename "$rc")"
+        fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+        printf '%s\n%s\n%s\n' "$PATH_MARK_BEGIN" "$PATH_LINE" "$PATH_MARK_END" > "$HOME/.bashrc"
+        ok "Created ~/.bashrc with wrapper PATH"
+    fi
+}
+
+remove_path_dropin() {
+    local rc
+    for rc in "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.profile"; do
+        [[ -f "$rc" ]] || continue
+        if grep -qF "$PATH_MARK_BEGIN" "$rc" 2>/dev/null; then
+            sed -i "/^# >>> lumalinux wrapper PATH >>>/,/^# <<< lumalinux wrapper PATH <<</d" "$rc"
+            ok "Removed PATH drop-in from $(basename "$rc")"
+        fi
+    done
+}
+
 if [[ "${1:-}" == "--uninstall" ]]; then
     info "Uninstalling lumalinux wrapper stack..."
     restore_desktop_entries
+    remove_path_dropin
     [[ -f "$WRAPPER" ]] && { rm -f "$WRAPPER"; ok "Removed $WRAPPER"; }
     [[ -d "$WRAPPER_DIR" ]] && rmdir "$WRAPPER_DIR" 2>/dev/null || true
     info "Kept the .so's, SLSsteam/lumalinux config, and keys.txt (delete manually if desired)."
@@ -328,22 +371,27 @@ USER_APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 USER_AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 mkdir -p "$USER_APPS" "$USER_AUTOSTART"
 
-# Rewrite an existing, writable .desktop in place.
+# Steam launcher basenames we rewrite: generic + SteamOS Game Mode
+# (steam-jupiter) + Bazzite (bazzite-steam). Matched on the Exec= program token,
+# so an Exec whose ARGS merely mention "steam" is left alone.
+_LAUNCHER_RE='^(steam|steam-jupiter|bazzite-steam)$'
+
+# Rewrite the Exec= program token to the wrapper on a writable .desktop, keeping
+# args. Only backs up + tags if a real launcher line was actually rewritten.
 patch_desktop_inplace() {
-    local f="$1"
+    local f="$1" out
     grep -qF "$DT_TAG" "$f" 2>/dev/null && { info "Already wrapped: $f"; return 0; }
-    grep -qE '^Exec=.*steam' "$f" 2>/dev/null || return 0
-    cp -f "$f" "${f}.lumalinux.bak"
-    # Replace the program token on every Exec= line with the wrapper, keeping args.
-    awk -v w="$WRAPPER" -v tag="$DT_TAG" '
+    out="$(awk -v w="$WRAPPER" -v re="$_LAUNCHER_RE" '
+        function bn(p){ sub(/.*\//,"",p); return p }
         /^Exec=/ {
-            # split "Exec=<cmd> <args...>"; drop <cmd>, prepend wrapper.
-            rest=$0; sub(/^Exec=[^ ]*/, "", rest);
-            print "Exec=" w rest; next
+            cmd=$0; sub(/^Exec=/,"",cmd); prog=cmd; sub(/ .*/,"",prog)
+            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=" w rest; changed=1; next }
         }
         { print }
-        END { print tag }
-    ' "$f" > "${f}.tmp" && mv -f "${f}.tmp" "$f"
+        END { exit (changed ? 0 : 3) }
+    ' "$f")" || return 0   # exit 3 -> no steam launcher line here -> skip
+    cp -f "$f" "${f}.lumalinux.bak"
+    printf '%s\n%s\n' "$out" "$DT_TAG" > "$f"
     ok "Wrapped $f"
 }
 
@@ -351,8 +399,12 @@ patch_desktop_inplace() {
 create_override_shadow() {
     local src="$1" dest="$2"
     [[ -f "$dest" ]] && return 0   # a real/user entry already there; leave it to patch_desktop_inplace
-    awk -v w="$WRAPPER" -v tag="$DT_TAG" '
-        /^Exec=/ { rest=$0; sub(/^Exec=[^ ]*/, "", rest); print "Exec=" w rest; next }
+    awk -v w="$WRAPPER" -v tag="$DT_TAG" -v re="$_LAUNCHER_RE" '
+        function bn(p){ sub(/.*\//,"",p); return p }
+        /^Exec=/ {
+            cmd=$0; sub(/^Exec=/,"",cmd); prog=cmd; sub(/ .*/,"",prog)
+            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=" w rest; next }
+        }
         { print }
         END { print "# lumalinux-override-shadow"; print tag }
     ' "$src" > "$dest"
@@ -381,6 +433,11 @@ shopt -u nullglob
 
 [[ "$covered" -eq 1 ]] || warn "No steam .desktop entries found to wrap — is Steam installed?"
 
-ok "Done. Restart Steam (from Desktop mode) to load the stack via the wrapper."
+# PATH drop-in — the Game Mode / gamescope coverage layer.
+install_path_dropin
+
+ok "Done. Restart Steam to load the stack via the wrapper."
 info "On startup, look for the toast: 'lumalinux: vX.Y.Z loaded - N/N hooks active'."
-warn "Game Mode / gamescope coverage is NOT handled yet (WS1.2) — test in Desktop first."
+info "Desktop mode: covered by the patched .desktop entries."
+warn "Game Mode: covered by the PATH drop-in — VERIFY on a real Deck that gamescope"
+warn "picks up the wrapper (log in to Desktop once so the shell rc files take effect)."

@@ -129,10 +129,14 @@ retirará `install.sh` cuando esté probado.
 - **WS1.1 — HECHO (pendiente de prueba en Deck):** `setup.sh` — fetch de las 4
   `.so` (SLSsteam + library-inject + CloudRedirect + lumalinux + **netsock**) +
   instalación de la **app Flatpak de CloudRedirect** (best-effort, saltable con
-  `LUMA_SKIP_CR_APP=1`) + escritura del wrapper + cobertura Desktop (`.desktop`
-  Exec + autostart override) + uninstall. Sintaxis verificada (`bash -n`, `sh -n`
-  del wrapper); lógica de reescritura de `.desktop` probada. **No probado**:
-  fetch/extract 7z, install flatpak y carga real en Steam (requiere Deck — WS5).
+  `LUMA_SKIP_CR_APP=1`) + escritura del wrapper + cobertura **Desktop**
+  (`.desktop` Exec de `steam`/`steam-jupiter`/`bazzite-steam` + autostart
+  override) + cobertura **Game Mode** (PATH drop-in en `.bashrc`/`.zshrc`/
+  `.profile`, el modelo de moon) + uninstall (revierte todo, incl. el PATH).
+  Sintaxis verificada (`bash -n`, `sh -n` del wrapper); lógica de reescritura de
+  `.desktop` probada (reescribe `steam-jupiter`, ignora Exec que solo menciona
+  "steam" en args). **No probado**: fetch/extract 7z, install flatpak, y la
+  eficacia del PATH drop-in sobre el arranque de Game Mode (requiere Deck — WS5).
 - **`7z` es dependencia asumida, no un problema.** Es el único formato `.7z` del
   flujo (el `SLSsteam-Any.7z`); los fixes de luatools son `.zip` (Python `zipfile`,
   `fixes.py`). headcrab ya asume `7z`, así que `setup.sh` lo exige y aborta claro si
@@ -140,9 +144,14 @@ retirará `install.sh` cuando esté probado.
   plugin; no es necesario.)
 - **Hueco que queda (respecto a headcrab):** rutas de **Steam-como-Flatpak**
   (`setup.sh` es solo Steam nativo; la Deck es nativo, así que no urge).
-- **WS1.2 — PENDIENTE:** cobertura de **Game Mode / gamescope** (la vía crítica de
-  la Deck, no es un `.desktop`), wrap del launcher del sistema (`/usr/bin/steam`),
-  guardian systemd de re-afirmación, y el fail-safe anti-brick (moon M3).
+- **WS1.2 — PENDIENTE:** **guardian systemd** de re-afirmación (re-parchear tras
+  cada update de Steam que regenere `.desktop`), el **fail-safe anti-brick** (moon
+  M3: cliente-cambiado + crash → arranque vanilla), y —solo para distros mutables—
+  el wrap del launcher del sistema (`/usr/bin/steam`). En SteamOS/Deck (inmutable)
+  moon **salta** ese wrap; Game Mode se cubre con el PATH drop-in (ya en WS1.1).
+- **La única incógnita real a validar en Deck (WS5):** que la sesión gamescope de
+  Game Mode herede el PATH del rc y resuelva `steam` por PATH (no por ruta
+  absoluta). Es el "open borrow" que marcaban nuestros docs; moon se apoya en esto.
 
 **Fuentes de descarga confirmadas** (verificadas 2026-08-08):
 - SLSsteam + `library-inject.so`: `SLSsteam-Any.7z` de
