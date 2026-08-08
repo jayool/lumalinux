@@ -95,6 +95,17 @@ verify_i386_so() {
     fi
 }
 
+# Non-fatal ELF-class check for BEST-EFFORT components (never aborts the install).
+# $2 = i386 (loaded into the 32-bit Steam client) | x86-64 (per-game injection).
+elf_class_ok() {
+    command -v file &>/dev/null || return 0   # no `file` -> can't check, assume ok
+    case "$2" in
+        i386)   file -b "$1" | grep -qE "ELF 32-bit.*Intel (80386|i386)" && return 0 ;;
+        x86-64) file -b "$1" | grep -qE "ELF 64-bit.*x86-64" && return 0 ;;
+    esac
+    return 1
+}
+
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
 install_cloudredirect_app() {
     [[ "${LUMA_SKIP_CR_APP:-0}" == "1" ]] && { info "Skipping CloudRedirect app (LUMA_SKIP_CR_APP=1)."; return 0; }
@@ -374,9 +385,12 @@ fi
 # CloudRedirect .so (inert until a provider is signed in) + GUI app.
 info "Downloading CloudRedirect..."
 if curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL"; then
-    verify_i386_so "${TMP_DIR}/cloud_redirect.so" "cloud_redirect.so"
-    install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
-    ok "Deployed ${CR_DIR}/cloud_redirect.so"
+    if elf_class_ok "${TMP_DIR}/cloud_redirect.so" i386; then
+        install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
+        ok "Deployed ${CR_DIR}/cloud_redirect.so"
+    else
+        warn "cloud_redirect.so is not a 32-bit i386 ELF — skipping (cloud saves stay off)."
+    fi
 else
     warn "CloudRedirect download failed — continuing without it (cloud saves stay off)."
 fi
@@ -386,9 +400,14 @@ install_cloudredirect_app
 info "Downloading netsock..."
 mkdir -p "$NETSOCK_DIR"
 if curl -fL --progress-bar -o "${TMP_DIR}/netsock.so" "$NETSOCK_SO_URL"; then
-    verify_i386_so "${TMP_DIR}/netsock.so" "netsock.so"
-    install -m 0755 "${TMP_DIR}/netsock.so" "${NETSOCK_DIR}/netsock.so"
-    ok "Deployed ${NETSOCK_DIR}/netsock.so"
+    # netsock is a per-GAME injection (games are 64-bit), so it is x86-64, NOT the
+    # i386 of the Steam-client libs. Best-effort: never abort the whole install.
+    if elf_class_ok "${TMP_DIR}/netsock.so" x86-64; then
+        install -m 0755 "${TMP_DIR}/netsock.so" "${NETSOCK_DIR}/netsock.so"
+        ok "Deployed ${NETSOCK_DIR}/netsock.so (64-bit; per-game online route)"
+    else
+        warn "netsock.so is not a 64-bit x86-64 ELF — skipping (per-game online fixes unavailable)."
+    fi
 else
     warn "netsock download failed — per-game online (netsock) fixes will be unavailable."
 fi
