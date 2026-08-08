@@ -19,6 +19,12 @@ set -euo pipefail
 
 PATH_DIR="${HOME}/.local/share/SLSsteam/path"
 LOG="${HOME}/deck-canary.log"
+# Game Mode launches Steam via steam-launcher.service (systemd user unit), which
+# does NOT source shell rc files — so the PATH drop-in misses it. A systemd drop-in
+# is the right interposition point. This canary drop-in only sets a harmless env var
+# + logs that the service fired, to confirm the mechanism before injecting for real.
+SD_DROPIN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/steam-launcher.service.d"
+SD_DROPIN="${SD_DROPIN_DIR}/zz-lumalinux-canary.conf"
 # Launcher names Game Mode / Desktop might use. The shim is installed as each.
 NAMES=(steam steam-jupiter steam-jupiter-stable bazzite-steam)
 RC_FILES=("${HOME}/.bashrc" "${HOME}/.bash_profile" "${HOME}/.profile" "${HOME}/.zshrc")
@@ -32,8 +38,35 @@ ok(){   printf "${c_o}[+]${c_r} %s\n" "$*"; }
 warn(){ printf "${c_w}[!]${c_r} %s\n" "$*" >&2; }
 
 # ── revert ──────────────────────────────────────────────────────────────────
+# ── systemd drop-in canary (Game Mode) ─────────────────────────────────────
+if [[ "${1:-}" == "--systemd" ]]; then
+    info "Installing systemd drop-in canary for steam-launcher.service (Game Mode)..."
+    mkdir -p "$SD_DROPIN_DIR"
+    cat > "$SD_DROPIN" <<'CONF'
+# deck-canary systemd drop-in (managed by deck-canary.sh — safe to delete).
+# Confirms the Game Mode launcher (steam-launcher.service) picks up a drop-in.
+[Service]
+Environment=LUMA_GAMEMODE_CANARY=1
+ExecStartPre=/bin/sh -c 'echo "GAMEMODE-CANARY steam-launcher fired at $(date) LUMA=$LUMA_GAMEMODE_CANARY session=$XDG_SESSION_TYPE" >> $HOME/deck-canary.log'
+CONF
+    systemctl --user daemon-reload 2>/dev/null || true
+    ok "Drop-in written: $SD_DROPIN"
+    echo
+    info "Now: reboot to Game Mode, let Steam start, then back in Desktop:"
+    info "  cat ~/deck-canary.log"
+    info "  - a 'GAMEMODE-CANARY steam-launcher fired ... LUMA=1' line"
+    info "    => the drop-in reaches Game Mode's launcher; LD_AUDIT/LD_PRELOAD would too."
+    info "Undo:  bash ~/deck-canary.sh --revert"
+    exit 0
+fi
+
 if [[ "${1:-}" == "--revert" ]]; then
     info "Reverting deck-canary..."
+    if [[ -f "$SD_DROPIN" ]]; then
+        rm -f "$SD_DROPIN"; rmdir "$SD_DROPIN_DIR" 2>/dev/null || true
+        systemctl --user daemon-reload 2>/dev/null || true
+        ok "Removed systemd drop-in $SD_DROPIN"
+    fi
     for n in "${NAMES[@]}"; do
         if [[ -e "${PATH_DIR}/${n}" ]] && head -3 "${PATH_DIR}/${n}" 2>/dev/null | grep -q "deck-canary shim"; then
             rm -f "${PATH_DIR}/${n}"; ok "Removed shim ${PATH_DIR}/${n}"
