@@ -117,10 +117,41 @@ LumaDeck/backend/downgrade.py  (NUEVO, opt-in, break-glass)
 
 ## 4. Workstreams
 
-### WS1 — lumalinux: `install.sh` se vuelve el instalador por wrapper *(núcleo)*
+### WS1 — lumalinux: instalador por wrapper self-contained *(núcleo)*
 
-Aquí se muda la inyección. `lumalinux/install.sh` ya existe y ya es el payload,
-así que le damos la propiedad de toda la colocación (modelo moon `setup.sh`).
+Aquí se muda la inyección. **Decisión de implementación:** en vez de reescribir
+`install.sh` (que sigue en uso, depende de headcrab), se crea un script **nuevo
+`setup.sh`** self-contained que coexiste con `install.sh`. Así WS1 es aditivo y
+testeable sin romper el flujo actual; WS2 apuntará LumaDeck a `setup.sh` y WS3
+retirará `install.sh` cuando esté probado.
+
+**Estado:**
+- **WS1.1 — HECHO (pendiente de prueba en Deck):** `setup.sh` — fetch de las 3
+  `.so` + escritura del wrapper + cobertura Desktop (`.desktop` Exec + autostart
+  override) + uninstall. Sintaxis verificada (`bash -n`, `sh -n` del wrapper);
+  lógica de reescritura de `.desktop` probada. **No probado**: fetch/extract 7z y
+  carga real en Steam (requiere Deck — WS5).
+- **WS1.2 — PENDIENTE:** cobertura de **Game Mode / gamescope** (la vía crítica de
+  la Deck, no es un `.desktop`), wrap del launcher del sistema (`/usr/bin/steam`),
+  guardian systemd de re-afirmación, y el fail-safe anti-brick (moon M3).
+
+**Fuentes de descarga confirmadas** (verificadas 2026-08-08):
+- SLSsteam + `library-inject.so`: `SLSsteam-Any.7z` de
+  `AceSLS/SLSsteam/releases/latest/download/` → `bin/{SLSsteam,library-inject}.so`
+  + `res/config.yaml`. **Requiere `7z`.**
+- CloudRedirect: `Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so`
+- lumalinux: `jayool/lumalinux/releases/latest/download/liblumalinux.so`
+- Rutas: SLSsteam `~/.local/share/SLSsteam/`, config `~/.config/SLSsteam/config.yaml`,
+  CR `~/.local/share/CloudRedirect/`, wrapper `~/.local/share/SLSsteam/path/steam`.
+
+**Caveat de coexistencia (honesto):** en una instalación ya parcheada por headcrab,
+el `steam.sh` de headcrab reexporta su propio `LD_AUDIT` y gana sobre el del
+wrapper — degrada al flujo actual (inofensivo). El comportamiento limpio del
+wrapper se valida en instalación vanilla/secundaria (WS5).
+
+---
+
+#### Diseño de referencia (mantengo la descripción original)
 
 Tareas:
 1. **Fetch** de las `.so` a rutas canónicas:
