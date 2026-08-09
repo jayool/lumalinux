@@ -231,6 +231,44 @@ neutralize_steam_sh() {
     return 0
 }
 
+# Sweep orphaned headcrab artefacts on a device migrating from the old
+# headcrab + install.sh system. headcrab is decoupled now, so these are DEAD:
+# the functional bits (SLSsteam/CR/lumalinux .so, config.yaml, netsock, the
+# wrapper) are reinstalled/overwritten by this script and steam.sh is cleaned by
+# neutralize_steam_sh — this only removes the leftover clutter, by EXACT path,
+# no wildcards over shared dirs. Best-effort; never aborts; a no-op on a clean
+# install (nothing matches).
+#
+# Deliberately NOT swept, to avoid breaking a half-migrated launch:
+#   * <steamroot>/client.sh  — a de-injected headcrab steam.sh may still `source`
+#     it; removing it could break launch until Steam re-extracts a vanilla
+#     steam.sh. Harmless to leave.
+#   * <steamroot>/package/*.manifest — Steam owns that directory.
+sweep_headcrab_leftovers() {
+    local removed=0 p b
+    for p in \
+        "$HOME/.headcrab" \
+        "$HOME/.local/share/applications/headcrab.desktop" \
+        "$HOME/.local/share/icons/hicolor/48x48/apps/headcrab.png" \
+        "$SLS_CFG_DIR/.headcrabd" \
+        "$SLS_DIR/path/steam.bak"; do
+        [[ -e "$p" ]] || continue
+        rm -rf "$p" 2>/dev/null && { info "Swept headcrab leftover: $p"; removed=1; }
+    done
+    # Timestamped SLSsteam config backups headcrab leaves (exact prefix).
+    for b in "$SLS_CFG_DIR"/config.yaml.headcrab-*; do
+        [[ -e "$b" ]] || continue
+        rm -f "$b" 2>/dev/null && { info "Swept headcrab leftover: $b"; removed=1; }
+    done
+    # Refresh the menu so the dead headcrab entry actually disappears.
+    if [[ "$removed" == 1 ]]; then
+        command -v update-desktop-database >/dev/null 2>&1 \
+            && update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+        ok "Cleaned up old headcrab leftovers."
+    fi
+    return 0
+}
+
 # .NET 9 runtime — Steamless (Denuvo/DRM strip) needs it. headcrab does NOT install
 # it; LumaDeck does (dotnet.py). Microsoft's own installer. Best-effort/skippable
 # (LUMA_SKIP_DOTNET=1); never aborts.
@@ -850,8 +888,10 @@ install_gamemode_dropin
 # Migration safety: with the wrapper + coverage now in place, strip any leftover
 # headcrab/old-lumalinux injection from steam.sh so the wrapper is the sole
 # injector (no double injection, and the crash-loop vanilla fall-back really is
-# vanilla). No-op on a clean install.
+# vanilla), then sweep the dead headcrab clutter (menu entry, tools, markers,
+# backups). Both no-ops on a clean install.
 neutralize_steam_sh
+sweep_headcrab_leftovers
 
 ok "Done. Restart Steam to load the stack."
 info "On startup, look for the toast: 'lumalinux: vX.Y.Z loaded - N/N hooks active'."
