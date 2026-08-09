@@ -404,11 +404,44 @@ install_path_dropin() {
     fi
 }
 
+# Resolve the (possibly localized) Desktop dir — SteamOS keeps ~/Desktop but
+# other distros/locales may differ; honor xdg-user-dir when present.
+_desktop_dir() {
+    local d; d="$(xdg-user-dir DESKTOP 2>/dev/null || true)"
+    [[ -n "$d" && -d "$d" ]] && { printf '%s' "$d"; return; }
+    printf '%s' "$HOME/Desktop"
+}
+
+# ~/Desktop/steam.desktop: on SteamOS the Desktop icon is a SYMLINK to the SYSTEM
+# entry (/usr/share/applications/steam.desktop), opened by PATH (not by desktop-id),
+# so the ~/.local/share/applications shadow does NOT cover it — double-clicking the
+# icon launches vanilla Steam with no injection (verified on-device). Re-point it at
+# our wrapped shadow. Only when a wrapped shadow exists and the icon isn't already
+# pointing there; backs up the original (symlink or file) once so --uninstall can
+# restore it.
+cover_desktop_shortcut() {
+    local ddir desk shadow bak
+    ddir="$(_desktop_dir)"; [[ -d "$ddir" ]] || return 0
+    shopt -s nullglob
+    for desk in "$ddir/"*steam*.desktop; do
+        shadow="$USER_APPS/$(basename "$desk")"
+        [[ -f "$shadow" ]] && grep -qF "$DT_TAG" "$shadow" 2>/dev/null || continue
+        [[ "$(readlink -f "$desk" 2>/dev/null)" == "$(readlink -f "$shadow" 2>/dev/null)" ]] && continue
+        bak="${desk}.lumalinux.bak"
+        [[ -e "$bak" ]] || cp -P "$desk" "$bak" 2>/dev/null || true
+        ln -sfn "$shadow" "$desk"
+        log "[+] Re-pointed Desktop icon $desk -> wrapper shadow"
+    done
+    shopt -u nullglob
+}
+
 restore_desktop_entries() {
-    local f bak
+    local f bak ddir
+    ddir="$(_desktop_dir)"
     shopt -s nullglob
     for bak in "$USER_APPS/"*steam*.desktop.lumalinux.bak \
-               "$USER_AUTOSTART/"*steam*.desktop.lumalinux.bak; do
+               "$USER_AUTOSTART/"*steam*.desktop.lumalinux.bak \
+               "$ddir/"*steam*.desktop.lumalinux.bak; do
         f="${bak%.lumalinux.bak}"; mv -f "$bak" "$f"; log "[+] Restored $f"
     done
     for f in "$USER_APPS/"*steam*.desktop "$USER_AUTOSTART/"*steam*.desktop; do
@@ -449,6 +482,7 @@ done
 [[ -f /etc/xdg/autostart/steam.desktop ]] \
     && create_override_shadow /etc/xdg/autostart/steam.desktop "$USER_AUTOSTART/steam.desktop"
 shopt -u nullglob
+cover_desktop_shortcut
 install_path_dropin
 log "[+] Coverage reconciled."
 ENSURE
@@ -492,6 +526,7 @@ PathChanged=%h/.local/share/applications
 PathChanged=/usr/share/applications
 PathChanged=%h/.config/autostart
 PathChanged=/etc/xdg/autostart
+PathChanged=%h/Desktop
 Unit=${GUARD_SERVICE}
 
 [Install]
