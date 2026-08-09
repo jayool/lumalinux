@@ -1,56 +1,51 @@
 #!/usr/bin/env bash
 # lumalinux — Steam client downgrade + pin (break-recovery escape-hatch).
 #
-# A faithful port of headcrab's `clientdowngrade` (prepdowngrade + overideupdate)
+# A faithful port of headcrab's CURRENT downgrade (prepdowngrade + overideupdate),
 # and NOTHING else. It aligns the Steam CLIENT down to a supported build and pins
 # it there, so the injection stack (whose byte patterns broke under a Steam major
 # update) hooks again. It does NOT run headcrab, does NOT replace steam.sh, and
 # does NOT reinstall SLSsteam/CloudRedirect/netsock/lumalinux — that is setup.sh's
 # job (the wrapper model). Running only the downgrade is what avoids the double
-# injection that a full headcrab run would cause (its steam.sh carries INJECT_SLS/
+# injection a full headcrab run would cause (its steam.sh carries INJECT_SLS/
 # INJECT_CR, which fights our wrapper).
 #
-# Mechanism (identical to headcrab, same closed depot binaries, same flags):
-#   1. fetch dgsc (local depot server) + dlm (package downloader) from
-#      h3adcr-b-modul3s, same as headcrab
-#   2. clear $STEAM/package, fetch sources.txt + the target client manifest
-#   3. dlm  --input-file sources.txt --max-concurrent 16   → download old packages
-#   4. write steam.cfg pin (BootStrapperInhibitAll / ForceSelfUpdate)
-#   5. dgsc --port 1666 --silent &                         → serve them locally
-#   6. relaunch Steam: -forcesteamupdate -forcepackagedownload
-#      -overridepackageurl http://localhost:1666/ -exitsteam  (SLSsteam-audited,
-#      like headcrab's export_sls, when SLSsteam is present)
+# MECHANISM — the MIRROR approach headcrab actually uses (verified against the live
+# headcrab.sh, Deadboy666/h3adcr-b@abacab0). Steam downloads the target client
+# packages DIRECTLY from headcrab's package mirror; the old dlm/dgsc local-proxy
+# depot (localhost:1666) is DEAD — commented out (`#dlm` / `#dgsc`) in headcrab
+# itself "for a while" — so it is gone here too.
+#   1. download the target client manifest (deck/linux) into $STEAM/package
+#   2. write steam.cfg pin (BootStrapperInhibitAll / BootStrapperForceSelfUpdate)
+#   3. relaunch Steam headless, SLSsteam-audited (headcrab's export_sls):
+#        LD_AUDIT=<library-inject>:<SLSsteam> steam \
+#          -forcesteamupdate -forcepackagedownload \
+#          -overridepackageurl https://headcrab.bifrosthub.ru/client-stable -exitsteam
 #
 # Must run in Desktop (Steam has to be killed and relaunched headless). No root.
 #
 # !!! ON-DEVICE VERIFICATION REQUIRED !!!
-# A Steam client depot downgrade cannot be exercised in CI / a codespace. The dgsc
-# invocation is reconstructed from headcrab's (defined but inline-commented, run as
-# a persistent service there); confirm the exact flow on a real Steam Deck before
-# relying on it. Everything is guarded so a failure leaves Steam runnable.
+# A Steam client depot downgrade cannot be exercised in CI / a codespace, and this
+# environment's egress proxy BLOCKS headcrab.bifrosthub.ru, so the mirror cannot be
+# reached or validated here at all. Confirm on a real Steam Deck that the mirror
+# serves the packages and the client lands on the pinned build before relying on
+# this. The manifest is fetched+verified BEFORE package/ is touched, so a network
+# failure aborts with Steam left intact.
 #
-# Env overrides (all optional): DGSC_URL DLM_URL SOURCES_URL DECK_MANIFEST_URL
-#   LINUX_MANIFEST_URL DOWNGRADE_URL STEAM_DIR_OVERRIDE
+# Env overrides (all optional): DOWNGRADE_URL DECK_MANIFEST_URL LINUX_MANIFEST_URL
+#   STEAM_DIR_OVERRIDE
 
 set -uo pipefail
 
-# ── config (URLs mirror headcrab's, overridable) ─────────────────────────────
-DGSC_URL="${DGSC_URL:-https://github.com/Deadboy666/h3adcr-b-modul3s/raw/refs/heads/main/dgsc}"
-DLM_URL="${DLM_URL:-https://github.com/Deadboy666/h3adcr-b-modul3s/raw/refs/heads/main/dlm}"
-# stable-sources.txt, NOT the old sources.txt: headcrab moved its Sources pin to
-# stable-sources.txt (Deadboy666/h3adcr-b@abacab0, the /client-stable tier). The
-# old sources.txt still exists and is currently identical, but headcrab no longer
-# maintains it — once the pin advances, stable-sources.txt + the client manifest
-# move together while sources.txt goes stale, which would fetch a package set that
-# doesn't match the target manifest. Track the file headcrab actually updates.
-SOURCES_URL="${SOURCES_URL:-https://raw.githubusercontent.com/Deadboy666/h3adcr-b-modul3s/refs/heads/main/stable-sources.txt}"
+# ── config (mirror + manifests match headcrab's, overridable) ────────────────
+# The package mirror Steam is pointed at (headcrab's Headcrab_Downgrade_URL, the
+# /client-stable tier — one cycle behind /client-latest). Override to a local
+# depot URL if you ever resurrect the dlm/dgsc path, or to a different tier.
+DOWNGRADE_URL="${DOWNGRADE_URL:-https://headcrab.bifrosthub.ru/client-stable}"
 DECK_MANIFEST_URL="${DECK_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12}"
 LINUX_MANIFEST_URL="${LINUX_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12}"
-DOWNGRADE_URL="${DOWNGRADE_URL:-http://localhost:1666/}"
-DGSC_PORT="${DGSC_PORT:-1666}"
 
 SLS_DIR="${HOME}/.local/share/SLSsteam"
-DG_DIR="${HOME}/.local/share/lumalinux/downgrade"   # our own cache dir for dgsc/dlm
 FLATPAK_STEAM_DIR="${HOME}/.var/app/com.valvesoftware.Steam/.steam/steam"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -84,7 +79,7 @@ is_steamos() {
 
 # Resolve the REAL native steam binary, SKIPPING our injection wrapper
 # ($SLS_DIR/path/steam) — the downgrade relaunch must not go through the wrapper
-# (its guard would override our explicit -overridepackageurl LD_AUDIT). Mirrors
+# (its guard would override our explicit -overridepackageurl / LD_AUDIT). Mirrors
 # the wrapper's own real-steam resolution.
 resolve_real_steam() {
     local self="$SLS_DIR/path/steam" d c IFS=:
@@ -123,52 +118,49 @@ STEAM_DIR="$(resolve_steam_dir)" || die "Steam install dir not found"
 PKG_DIR="${STEAM_DIR}/package"
 STEAM_CFG="${STEAM_DIR}/steam.cfg"
 info "Steam dir: $STEAM_DIR"
-[[ -d "$PKG_DIR" ]] || mkdir -p "$PKG_DIR"
+
+# Pick the manifest for this platform (Deck vs generic Linux). Both saved with the
+# .manifest extension — the name Steam reads, and the one headcrab's own version
+# check greps for (its linux branch writes it without the extension, a headcrab
+# bug; we stay consistent with the reader).
+if is_steamos; then
+    info "SteamOS/Deck detected — deck client manifest."
+    MANIFEST_URL="$DECK_MANIFEST_URL"; MANIFEST_NAME="steam_client_steamdeck_stable_ubuntu12.manifest"
+else
+    info "Generic Linux — linux client manifest."
+    MANIFEST_URL="$LINUX_MANIFEST_URL"; MANIFEST_NAME="steam_client_ubuntu12.manifest"
+fi
+
+# 1. Fetch the target manifest to a temp and verify it BEFORE touching package/,
+#    so a network failure aborts with Steam completely intact (nothing cleared,
+#    no pin written, no relaunch).
+info "Downloading target client manifest..."
+TMP_MANIFEST="$(mktemp)"
+trap 'rm -f "$TMP_MANIFEST" 2>/dev/null || true' EXIT
+fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+[[ -s "$TMP_MANIFEST" ]] || die "manifest is empty — Steam left untouched"
+grep -q '"version"' "$TMP_MANIFEST" || die "manifest looks invalid (no \"version\" line) — Steam left untouched"
 
 # Steam must be off for a client downgrade (it rewrites package/).
 info "Stopping Steam..."
-killall steam        >/dev/null 2>&1 || true
+killall steam          >/dev/null 2>&1 || true
 killall steamwebhelper >/dev/null 2>&1 || true
-killall dgsc         >/dev/null 2>&1 || true
+killall dgsc           >/dev/null 2>&1 || true   # kill any leftover local depot from the old approach
 sleep 2
 
-# 1. depot binaries (same source/flags as headcrab), cached in DG_DIR.
-mkdir -p "$DG_DIR"
-if [[ ! -x "$DG_DIR/dgsc" ]]; then info "Downloading dgsc..."; fetch "$DGSC_URL" "$DG_DIR/dgsc" || die "dgsc download failed"; chmod +x "$DG_DIR/dgsc"; else ok "dgsc cached."; fi
-if [[ ! -x "$DG_DIR/dlm"  ]]; then info "Downloading dlm...";  fetch "$DLM_URL"  "$DG_DIR/dlm"  || die "dlm download failed";  chmod +x "$DG_DIR/dlm";  else ok "dlm cached.";  fi
-
-# 2. prep: clear the package dir, fetch sources.txt + the target client manifest.
+# 2. Prep package dir: clear it and drop the verified manifest in (this is what
+#    tells Steam which build to pull from the mirror).
 info "Preparing package dir..."
+[[ -d "$PKG_DIR" ]] || mkdir -p "$PKG_DIR"
 rm -f "$PKG_DIR"/* 2>/dev/null || true
-fetch "$SOURCES_URL" "$PKG_DIR/sources.txt" || die "sources.txt download failed"
-if is_steamos; then
-    info "SteamOS/Deck detected — deck client manifest."
-    fetch "$DECK_MANIFEST_URL" "$PKG_DIR/steam_client_steamdeck_stable_ubuntu12.manifest" \
-        || die "deck manifest download failed"
-else
-    # .manifest extension, symmetric with the deck path and matching Steam's real
-    # installed name (steam_client_ubuntu12.manifest). headcrab's linux branch
-    # omits it, but the deck branch keeps it; the Deck is our primary target and
-    # the consistent name is the safer choice for a depot lookup by filename.
-    info "Generic Linux — linux client manifest."
-    fetch "$LINUX_MANIFEST_URL" "$PKG_DIR/steam_client_ubuntu12.manifest" || die "linux manifest download failed"
-fi
+mv -f "$TMP_MANIFEST" "$PKG_DIR/$MANIFEST_NAME" || die "could not place manifest in $PKG_DIR"
+trap - EXIT
 
-# 3. dlm: fetch the old client packages into the package dir. FATAL on failure:
-#    step 2 already cleared package/, so proceeding with an empty depot would
-#    relaunch Steam against a local server serving nothing AND leave a pinned,
-#    package-less client. Aborting here (before the pin + relaunch) leaves Steam
-#    with an empty package/ but NO pin, so its own bootstrapper re-downloads the
-#    client on the next normal launch — recoverable.
-info "Fetching client packages (dlm)..."
-( cd "$PKG_DIR" && "$DG_DIR/dlm" --input-file sources.txt --max-concurrent 16 ) \
-    || die "dlm failed to fetch the client packages — aborting before the pin/relaunch so Steam can self-recover"
-
-# 4. pin: write steam.cfg so Steam holds the downgraded build (createsteamcfg port).
-#    Update-in-place: replace any existing BootStrapper* lines, keep the rest.
-#    Capture the kept lines and re-emit with printf '%s\n' so the block ALWAYS ends
-#    in a newline before the appended keys — otherwise a steam.cfg whose last line
-#    lacked a trailing newline would glue "…=1BootStrapperInhibitAll=enable".
+# 3. Pin: write steam.cfg so Steam holds the downgraded build (createsteamcfg
+#    port). Update-in-place: replace any existing BootStrapper* lines, keep the
+#    rest. Capture the kept lines and re-emit with printf '%s\n' so the block
+#    ALWAYS ends in a newline before the appended keys — otherwise a steam.cfg
+#    whose last line lacked a trailing newline would glue the keys onto it.
 info "Writing Steam-update pin (steam.cfg)..."
 _kept=""
 if [[ -f "$STEAM_CFG" ]]; then
@@ -181,15 +173,11 @@ fi
 } > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
 ok "Pin written at $STEAM_CFG"
 
-# 5. dgsc: serve the local depot on :PORT (background), like headcrab's dgsc().
-info "Starting local depot server (dgsc :$DGSC_PORT)..."
-( cd "$PKG_DIR" && "$DG_DIR/dgsc" --port "$DGSC_PORT" --silent ) &
-DGSC_PID=$!
-sleep 2
-
-# 6. relaunch Steam headless to pull the old packages from the local depot.
-#    SLSsteam-audited when present (headcrab's export_sls); vanilla otherwise —
-#    the client downgrade is Steam's native bootstrapper doing the work.
+# 4. Relaunch Steam headless to pull the target packages from the MIRROR. This is
+#    headcrab's overideupdate, verbatim mechanism: SLSsteam-audited (export_sls)
+#    when present; vanilla otherwise (the downgrade is Steam's own bootstrapper).
+#    Best-effort like headcrab (it runs the same command &>/dev/null) — we cannot
+#    reliably detect mid-download failure from here.
 LD_AUDIT_ARG=""
 if [[ -f "$SLS_DIR/SLSsteam.so" ]]; then
     if [[ -f "$SLS_DIR/library-inject.so" ]]; then
@@ -198,7 +186,8 @@ if [[ -f "$SLS_DIR/SLSsteam.so" ]]; then
         LD_AUDIT_ARG="$SLS_DIR/SLSsteam.so"
     fi
 fi
-info "Relaunching Steam to apply the downgrade (headless)..."
+info "Relaunching Steam to apply the downgrade from the mirror (headless)..."
+info "  mirror: $DOWNGRADE_URL"
 if [[ -n "$LD_AUDIT_ARG" ]]; then
     LD_AUDIT="$LD_AUDIT_ARG" steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
@@ -206,10 +195,6 @@ else
     steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
-
-# 7. cleanup: stop the depot server.
-kill "$DGSC_PID" >/dev/null 2>&1 || true
-killall dgsc >/dev/null 2>&1 || true
 
 ok "Downgrade + pin applied. Steam is held at the supported build."
 info "Next: setup.sh re-establishes the wrapper; the QAM offers the update once the stack supports a newer build."
