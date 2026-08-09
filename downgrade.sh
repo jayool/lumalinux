@@ -37,7 +37,13 @@ set -uo pipefail
 # ── config (URLs mirror headcrab's, overridable) ─────────────────────────────
 DGSC_URL="${DGSC_URL:-https://github.com/Deadboy666/h3adcr-b-modul3s/raw/refs/heads/main/dgsc}"
 DLM_URL="${DLM_URL:-https://github.com/Deadboy666/h3adcr-b-modul3s/raw/refs/heads/main/dlm}"
-SOURCES_URL="${SOURCES_URL:-https://raw.githubusercontent.com/Deadboy666/h3adcr-b-modul3s/refs/heads/main/sources.txt}"
+# stable-sources.txt, NOT the old sources.txt: headcrab moved its Sources pin to
+# stable-sources.txt (Deadboy666/h3adcr-b@abacab0, the /client-stable tier). The
+# old sources.txt still exists and is currently identical, but headcrab no longer
+# maintains it — once the pin advances, stable-sources.txt + the client manifest
+# move together while sources.txt goes stale, which would fetch a package set that
+# doesn't match the target manifest. Track the file headcrab actually updates.
+SOURCES_URL="${SOURCES_URL:-https://raw.githubusercontent.com/Deadboy666/h3adcr-b-modul3s/refs/heads/main/stable-sources.txt}"
 DECK_MANIFEST_URL="${DECK_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12}"
 LINUX_MANIFEST_URL="${LINUX_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12}"
 DOWNGRADE_URL="${DOWNGRADE_URL:-http://localhost:1666/}"
