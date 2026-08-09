@@ -18,10 +18,13 @@
 #   3. Writes a wrapper at ~/.local/share/SLSsteam/path/steam that exports
 #      LD_AUDIT (SLSsteam) + LD_PRELOAD (CloudRedirect + lumalinux), guards
 #      against a boot crash-loop (fail-safe), and execs the real Steam.
-#   4. Points the Steam launchers (steam / steam-jupiter / bazzite-steam) at the
-#      wrapper (Desktop mode) and puts the wrapper dir first on PATH (Game Mode).
-#   5. Installs a systemd --user guardian that re-asserts coverage after Steam
-#      updates regenerate the .desktop entries.
+#   4. Desktop mode: points the Steam launchers (steam / steam-jupiter /
+#      bazzite-steam) .desktop Exec at the wrapper (+ PATH drop-in for terminals).
+#   5. Game Mode: a systemd drop-in on steam-launcher.service routes it through a
+#      Game Mode launcher — the PATH drop-in does NOT reach Game Mode (verified
+#      on-device). The wrapper and that launcher share ONE crash-loop fail-safe
+#      (auto-vanilla on a startup crash), so a bad Steam update can never brick
+#      Game Mode. Plus a systemd guardian that re-asserts .desktop coverage.
 #
 # No root required. Desktop mode → patched .desktop; Game Mode → PATH drop-in
 # (efficacy on gamescope boot is the one real-Deck test, see plan WS5). Not
@@ -75,6 +78,11 @@ GUARD_SERVICE="lumalinux-desktop-guardian.service"
 GUARD_PATH_UNIT="lumalinux-desktop-guardian.path"
 GUARD_TIMER="lumalinux-desktop-guardian.timer"
 GUARD_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
+# Shared fail-safe library + Game Mode launcher + its systemd drop-in.
+GUARD_LIB="${SLS_DIR}/lumalinux-guard.sh"
+GM_LAUNCHER="${SLS_DIR}/lumalinux-steam-launcher"
+GM_DROPIN_DIR="${SYSTEMD_USER_DIR}/steam-launcher.service.d"
+GM_DROPIN="${GM_DROPIN_DIR}/lumalinux.conf"
 
 # ── helpers ────────────────────────────────────────────────────────────────
 c_info='\e[0;36m'; c_ok='\e[0;32m'; c_warn='\e[0;33m'; c_err='\e[0;31m'; c_rst='\e[0m'
@@ -435,17 +443,176 @@ remove_guardian_units() {
     ok "Guardian removed."
 }
 
+# ── crash-loop fail-safe (shared by Desktop wrapper + Game Mode launcher) ──
+# The guard library holds the whole fail-safe (crash-dump detection, latch,
+# auto-vanilla) so both launch paths use ONE implementation. The Desktop wrapper
+# sources it; the Game Mode launcher (below) sources it too.
+write_guard_lib() {
+    mkdir -p "$SLS_DIR"
+    cat > "$GUARD_LIB" <<'GUARD'
+#!/bin/sh
+# lumalinux crash-loop fail-safe (managed by setup.sh — do not edit).
+# Caller sets $STEAM_BIN then calls: luma_guard_run "$@"  — which either execs
+# $STEAM_BIN vanilla (if crash-looping / safe mode latched) or exports the
+# injection env (LD_AUDIT=SLSsteam, LD_PRELOAD=CloudRedirect+lumalinux) and
+# returns. Vanilla unsets both, disabling the whole stack at once. Best-effort:
+# any probe failing degrades to "proceed", never latches by accident.
+SLS_DIR="$HOME/.local/share/SLSsteam"
+CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
+LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
+GDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
+G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
+G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
+G_CLIENT_LAST="$GDIR/last_client"; G_CLIENT_GOOD="$GDIR/good_client"; G_LOG="$GDIR/guard.log"
+: "${LUMA_GUARD_MAX_FAILS:=3}"; : "${LUMA_GUARD_STARTUP_SECS:=180}"; : "${LUMA_GUARD_DUMPS_DIR:=/tmp/dumps}"
+
+g_log()    { printf '%s %s\n' "$(date '+%F %T' 2>/dev/null)" "$1" >> "$G_LOG" 2>/dev/null || true; }
+g_notify() { command -v notify-send >/dev/null 2>&1 && notify-send -u normal -t 10000 "Steam recovery mode" "$1" >/dev/null 2>&1 || true; }
+g_int()    { _v="$(cat "$1" 2>/dev/null)"; case "$_v" in ''|*[!0-9]*) printf 0 ;; *) printf '%s' "$_v" ;; esac; }
+g_client_fp() {
+    for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
+        _c="$_r/ubuntu12_32/steamclient.so"
+        [ -e "$_c" ] && { stat -c '%s:%Y' "$_c" 2>/dev/null || stat -f '%z:%m' "$_c" 2>/dev/null || printf '?'; return 0; }
+    done; printf ''
+}
+g_fingerprint() {
+    for _f in "$SLS_DIR/SLSsteam.so" "$CR_SO" "$LL_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
+        if [ -e "$_f" ]; then stat -c '%s:%Y' "$_f" 2>/dev/null || stat -f '%z:%m' "$_f" 2>/dev/null || printf '?'; else printf -- '-'; fi
+        printf '|'
+    done
+}
+g_startup_crash() {
+    [ -d "$LUMA_GUARD_DUMPS_DIR" ] || return 1
+    case "$2" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$2" -gt 0 ] || return 1
+    _ref="$GDIR/.crash_win_ref"
+    touch -d "@$(( $2 + LUMA_GUARD_STARTUP_SECS ))" "$_ref" 2>/dev/null || { rm -f "$_ref" 2>/dev/null; return 1; }
+    _hit="$(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name 'crash_*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null | head -n1)"
+    rm -f "$_ref" 2>/dev/null
+    [ -n "$_hit" ]
+}
+luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$STEAM_BIN" "$@"; }
+luma_set_injection_env() {
+    for _p in "$CR_SO" "$LL_SO"; do [ -f "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
+    [ -n "${LD_PRELOAD:-}" ] && export LD_PRELOAD
+    if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+        for _e in /usr/lib/extest/libextest.so /usr/lib64/extest/libextest.so \
+                  /usr/lib/x86_64-linux-gnu/extest/libextest.so; do
+            [ -f "$_e" ] && { export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$_e"; break; }
+        done
+    fi
+    if [ -f "$SLS_DIR/library-inject.so" ]; then
+        export LD_AUDIT="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
+    else
+        export LD_AUDIT="$SLS_DIR/SLSsteam.so"
+    fi
+}
+luma_guard_run() {
+    mkdir -p "$GDIR" 2>/dev/null || true
+    _cur_fp="$(g_fingerprint)"
+    if [ -f "$G_SAFE" ]; then
+        if [ "$(cat "$G_FP" 2>/dev/null)" = "$_cur_fp" ]; then
+            g_log "safe mode active -> launching Steam vanilla ($STEAM_BIN)"; luma_exec_vanilla "$@"
+        fi
+        g_log "payload changed since latch -> clearing safe mode, retrying injection"
+        rm -f "$G_SAFE" "$G_FP" "$G_COUNT" "$G_LAST" 2>/dev/null || true
+    fi
+    _fails="$(g_int "$G_COUNT")"; _client_cur="$(g_client_fp)"; _client_changed=0
+    if [ -f "$G_LAST" ]; then
+        _then="$(stat -c %Y "$G_LAST" 2>/dev/null || stat -f %m "$G_LAST" 2>/dev/null || echo 0)"
+        if g_startup_crash "$G_LAST" "$_then"; then
+            _fails=$(( _fails + 1 ))
+            _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"; _good="$(cat "$G_CLIENT_GOOD" 2>/dev/null || true)"
+            if [ -n "$_good" ] && [ "$_prev" != "$_good" ]; then
+                _client_changed=1; g_log "steamclient.so changed since last clean boot -> first crash = compat break"
+            fi
+            g_log "previous boot crashed at startup -> fail ${_fails}/${LUMA_GUARD_MAX_FAILS}"
+        else
+            [ "$_fails" -ne 0 ] && g_log "previous boot ok -> reset fail count"
+            _fails=0
+            _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"
+            [ -n "$_prev" ] && printf '%s' "$_prev" > "$G_CLIENT_GOOD" 2>/dev/null || true
+        fi
+    fi
+    printf '%s' "$_fails" > "$G_COUNT" 2>/dev/null || true
+    if [ "$_fails" -ge "$LUMA_GUARD_MAX_FAILS" ] || { [ "$_client_changed" = 1 ] && [ "$_fails" -ge 1 ]; }; then
+        g_log "latching safe mode (fails=${_fails} client_changed=${_client_changed}) -> vanilla ($STEAM_BIN)"
+        printf '%s' "$_cur_fp" > "$G_FP" 2>/dev/null || true
+        : > "$G_SAFE" 2>/dev/null || true
+        for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
+            [ -f "$_r/appcache/appinfo.vdf" ] && rm -f "$_r/appcache/appinfo.vdf" 2>/dev/null && g_log "removed $_r/appcache/appinfo.vdf"
+        done
+        g_notify "lumalinux is paused because Steam failed to start after a recent update. Steam is running normally — update the stack to re-enable it."
+        luma_exec_vanilla "$@"
+    fi
+    : > "$G_LAST" 2>/dev/null || true
+    printf '%s' "$_client_cur" > "$G_CLIENT_LAST" 2>/dev/null || true
+    luma_set_injection_env
+}
+GUARD
+    chmod 0644 "$GUARD_LIB"
+    return 0
+}
+
+# Game Mode launcher — wraps SteamOS's steam-launcher (run by steam-launcher.service)
+# with the SAME fail-safe + injection as the Desktop wrapper. Reached via a systemd
+# drop-in (below), because Game Mode does NOT go through PATH or .desktop.
+write_gamemode_launcher() {
+    mkdir -p "$SLS_DIR"
+    cat > "$GM_LAUNCHER" <<'GML'
+#!/bin/sh
+# lumalinux Game Mode launcher (managed by setup.sh — do not edit).
+STEAM_BIN="/usr/lib/steamos/steam-launcher"
+[ -x "$STEAM_BIN" ] || STEAM_BIN="$(command -v steam-launcher 2>/dev/null || echo /usr/lib/steamos/steam-launcher)"
+. "$HOME/.local/share/SLSsteam/lumalinux-guard.sh"
+luma_guard_run "$@"          # execs vanilla if crash-looping, else sets injection env
+exec "$STEAM_BIN" "$@"
+GML
+    chmod 0755 "$GM_LAUNCHER"
+    return 0
+}
+
+# systemd drop-in that routes steam-launcher.service (Game Mode) through our
+# launcher. ExecStart= resets the unit's ExecStart, then points it at ours; all
+# other directives (ExecStartPre tracker, ExecStop, ...) are preserved.
+install_gamemode_dropin() {
+    if ! have_user_systemd; then
+        warn "No systemd --user session — Game Mode drop-in not installed (Desktop coverage still active)."
+        return 0
+    fi
+    mkdir -p "$GM_DROPIN_DIR"
+    cat > "$GM_DROPIN" <<EOF
+# lumalinux Game Mode injection (managed by setup.sh — safe to delete)
+[Service]
+ExecStart=
+ExecStart=%h/.local/share/SLSsteam/lumalinux-steam-launcher
+EOF
+    systemctl --user daemon-reload 2>/dev/null || true
+    ok "Game Mode injection installed (steam-launcher.service drop-in, via fail-safe)."
+    return 0
+}
+remove_gamemode_dropin() {
+    have_user_systemd || return 0
+    if [[ -f "$GM_DROPIN" ]]; then
+        rm -f "$GM_DROPIN"; rmdir "$GM_DROPIN_DIR" 2>/dev/null || true
+        systemctl --user daemon-reload 2>/dev/null || true
+        ok "Removed Game Mode drop-in."
+    fi
+    return 0
+}
+
 # ── dependency check ───────────────────────────────────────────────────────
 command -v curl &>/dev/null || die "curl is required."
 
 # ── uninstall ──────────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--uninstall" ]]; then
     info "Uninstalling lumalinux wrapper stack..."
+    remove_gamemode_dropin
     remove_guardian_units
     if [[ -x "$ENSURE_SCRIPT" ]]; then
         "$ENSURE_SCRIPT" --uninstall || true
     fi
-    rm -f "$ENSURE_SCRIPT" 2>/dev/null || true
+    rm -f "$ENSURE_SCRIPT" "$GUARD_LIB" "$GM_LAUNCHER" 2>/dev/null || true
     [[ -f "$WRAPPER" ]] && { rm -f "$WRAPPER"; ok "Removed $WRAPPER"; }
     [[ -d "$WRAPPER_DIR" ]] && rmdir "$WRAPPER_DIR" 2>/dev/null || true
     rm -rf "$GUARD_STATE_DIR" 2>/dev/null || true
@@ -583,133 +750,34 @@ else
 fi
 [ -n "$STEAM_BIN" ] || { echo "lumalinux wrapper: real steam binary not found" >&2; exit 1; }
 
-# exec the real Steam completely vanilla (no injection) — used by the fail-safe.
-exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$STEAM_BIN" "$@"; }
+# Fail-safe (crash-loop protection) + injection env — shared with Game Mode.
+. "$SLS_DIR/lumalinux-guard.sh"
+luma_guard_run "$@"          # execs vanilla if crash-looping, else sets injection env
 
-# ── crash-loop fail-safe (Game Mode boot protection) ───────────────────────
-# If the injected stack goes incompatible with a freshly-updated Steam and
-# crashes at startup, a gamescope Game Mode session relaunches Steam forever and
-# the user can never reach Desktop to update. This guard counts boots that
-# crashed at startup (Steam wrote a crash_*.dmp within the first few minutes) and
-# latches a vanilla launch past a threshold. A crash on a client that CHANGED
-# since the last clean boot latches on the FIRST crash (a fresh client is the
-# near-certain cause). Keyed off a real crash dump, never a merely-short session
-# (Game Mode<->Desktop switches / self-update restarts / quick quits don't dump).
-# Best-effort throughout: any probe failing degrades to "ok", never latches by
-# accident. Auto-clears once the payload changes (user updated the stack).
-GDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
-mkdir -p "$GDIR" 2>/dev/null || true
-G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
-G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
-G_CLIENT_LAST="$GDIR/last_client"; G_CLIENT_GOOD="$GDIR/good_client"; G_LOG="$GDIR/guard.log"
-: "${LUMA_GUARD_MAX_FAILS:=3}"; : "${LUMA_GUARD_STARTUP_SECS:=180}"; : "${LUMA_GUARD_DUMPS_DIR:=/tmp/dumps}"
-
-g_log() { printf '%s %s\n' "$(date '+%F %T' 2>/dev/null)" "$1" >> "$G_LOG" 2>/dev/null || true; }
-g_notify() { command -v notify-send >/dev/null 2>&1 && notify-send -u normal -t 10000 "Steam recovery mode" "$1" >/dev/null 2>&1 || true; }
-g_int() { _v="$(cat "$1" 2>/dev/null)"; case "$_v" in ''|*[!0-9]*) printf 0 ;; *) printf '%s' "$_v" ;; esac; }
-g_client_fp() {
-    for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
-        _c="$_r/ubuntu12_32/steamclient.so"
-        [ -e "$_c" ] && { stat -c '%s:%Y' "$_c" 2>/dev/null || stat -f '%z:%m' "$_c" 2>/dev/null || printf '?'; return 0; }
-    done; printf ''
-}
-g_fingerprint() {
-    for _f in "$SLS_DIR/SLSsteam.so" "$CR_SO" "$LL_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
-        if [ -e "$_f" ]; then stat -c '%s:%Y' "$_f" 2>/dev/null || stat -f '%z:%m' "$_f" 2>/dev/null || printf '?'; else printf -- '-'; fi
-        printf '|'
-    done
-}
-g_startup_crash() {   # $1 = ref marker (boot start), $2 = boot start epoch
-    [ -d "$LUMA_GUARD_DUMPS_DIR" ] || return 1
-    case "$2" in ''|*[!0-9]*) return 1 ;; esac
-    [ "$2" -gt 0 ] || return 1
-    _ref="$GDIR/.crash_win_ref"
-    touch -d "@$(( $2 + LUMA_GUARD_STARTUP_SECS ))" "$_ref" 2>/dev/null || { rm -f "$_ref" 2>/dev/null; return 1; }
-    _hit="$(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name 'crash_*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null | head -n1)"
-    rm -f "$_ref" 2>/dev/null
-    [ -n "$_hit" ]
-}
-
-G_CUR_FP="$(g_fingerprint)"
-# Already latched? Stay vanilla until the payload changes.
-if [ -f "$G_SAFE" ]; then
-    if [ "$(cat "$G_FP" 2>/dev/null)" = "$G_CUR_FP" ]; then
-        g_log "safe mode active -> launching Steam vanilla"; exec_vanilla "$@"
-    fi
-    g_log "payload changed since latch -> clearing safe mode, retrying injection"
-    rm -f "$G_SAFE" "$G_FP" "$G_COUNT" "$G_LAST" 2>/dev/null || true
-fi
-# Assess the PREVIOUS boot.
-G_FAILS="$(g_int "$G_COUNT")"; G_CLIENT_CUR="$(g_client_fp)"; g_client_changed=0
-if [ -f "$G_LAST" ]; then
-    _then="$(stat -c %Y "$G_LAST" 2>/dev/null || stat -f %m "$G_LAST" 2>/dev/null || echo 0)"
-    if g_startup_crash "$G_LAST" "$_then"; then
-        G_FAILS=$(( G_FAILS + 1 ))
-        _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"; _good="$(cat "$G_CLIENT_GOOD" 2>/dev/null || true)"
-        if [ -n "$_good" ] && [ "$_prev" != "$_good" ]; then
-            g_client_changed=1; g_log "steamclient.so changed since last clean boot -> first crash = compat break"
-        fi
-        g_log "previous boot crashed at startup -> fail ${G_FAILS}/${LUMA_GUARD_MAX_FAILS}"
-    else
-        [ "$G_FAILS" -ne 0 ] && g_log "previous boot ok -> reset fail count"
-        G_FAILS=0
-        _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"
-        [ -n "$_prev" ] && printf '%s' "$_prev" > "$G_CLIENT_GOOD" 2>/dev/null || true
-    fi
-fi
-printf '%s' "$G_FAILS" > "$G_COUNT" 2>/dev/null || true
-if [ "$G_FAILS" -ge "$LUMA_GUARD_MAX_FAILS" ] || { [ "$g_client_changed" = 1 ] && [ "$G_FAILS" -ge 1 ]; }; then
-    g_log "latching safe mode (fails=${G_FAILS} client_changed=${g_client_changed}) -> vanilla"
-    printf '%s' "$G_CUR_FP" > "$G_FP" 2>/dev/null || true
-    : > "$G_SAFE" 2>/dev/null || true
-    for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
-        [ -f "$_r/appcache/appinfo.vdf" ] && rm -f "$_r/appcache/appinfo.vdf" 2>/dev/null && g_log "removed $_r/appcache/appinfo.vdf"
-    done
-    g_notify "lumalinux is paused because Steam failed to start after a recent update. Steam is running normally — update the stack to re-enable it."
-    exec_vanilla "$@"
-fi
-# Mark the start of THIS boot + record the client it is about to run.
-: > "$G_LAST" 2>/dev/null || true
-printf '%s' "$G_CLIENT_CUR" > "$G_CLIENT_LAST" 2>/dev/null || true
-
-# ── injection env ──────────────────────────────────────────────────────────
-# CloudRedirect + lumalinux via LD_PRELOAD.
-for _p in "$CR_SO" "$LL_SO"; do
-    [ -f "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"
-done
-[ -n "${LD_PRELOAD:-}" ] && export LD_PRELOAD
-# Steam Input on Wayland: replicate the distro launcher's libextest preload.
-if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
-    for _e in /usr/lib/extest/libextest.so /usr/lib64/extest/libextest.so \
-              /usr/lib/x86_64-linux-gnu/extest/libextest.so; do
-        [ -f "$_e" ] && { export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$_e"; break; }
-    done
-fi
-# SLSsteam via LD_AUDIT (library-inject.so first if present).
-if [ -f "$SLS_DIR/library-inject.so" ]; then
-    export LD_AUDIT="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
-else
-    export LD_AUDIT="$SLS_DIR/SLSsteam.so"
-fi
-
-# Best-effort: kick the guardian so coverage re-asserts even without the .path event.
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user start lumalinux-desktop-guardian.service >/dev/null 2>&1 &
-fi
+# Re-assert .desktop coverage on each launch (best-effort; Desktop path only).
+command -v systemctl >/dev/null 2>&1 && systemctl --user start lumalinux-desktop-guardian.service >/dev/null 2>&1 &
 
 exec "$STEAM_BIN" "$@"
 WRAP
 chmod 0755 "$WRAPPER"
-ok "Wrapper written (with crash-loop fail-safe)."
+ok "Wrapper written."
 
-# ── coverage + guardian ────────────────────────────────────────────────────
+# ── fail-safe library + coverage + guardian ────────────────────────────────
+write_guard_lib
+ok "Fail-safe library written at $GUARD_LIB"
 write_ensure_script
 ok "Coverage helper written at $ENSURE_SCRIPT"
 WRAPPER="$WRAPPER" "$ENSURE_SCRIPT" --user
 install_guardian_units
 
-ok "Done. Restart Steam to load the stack via the wrapper."
+# Game Mode coverage: the systemd drop-in on steam-launcher.service (the PATH
+# drop-in does NOT reach Game Mode — verified on-device). Routed through the
+# fail-safe so a bad update can't crash-loop Game Mode into a brick.
+write_gamemode_launcher
+ok "Game Mode launcher written at $GM_LAUNCHER"
+install_gamemode_dropin
+
+ok "Done. Restart Steam to load the stack."
 info "On startup, look for the toast: 'lumalinux: vX.Y.Z loaded - N/N hooks active'."
-info "Desktop mode: covered by the patched .desktop entries + the guardian."
-warn "Game Mode: covered by the PATH drop-in — VERIFY on a real Deck that gamescope"
-warn "picks up the wrapper (log in to Desktop once so the shell rc files take effect)."
+info "Desktop mode: patched .desktop entries + guardian."
+info "Game Mode: steam-launcher.service drop-in (via the crash-loop fail-safe)."
