@@ -167,8 +167,13 @@ merge_slssteam_config() {
     fi
 }
 
-# headcrab's editconfig, MINUS SafeMode. headcrab sets SafeMode: yes, but that is
-# the update "freno" this project removes (it's advisory now — steam-update-gating).
+# headcrab's editconfig, but SafeMode: no instead of headcrab's yes. headcrab's
+# SafeMode: yes is the update "freno" this project removes; SafeMode: no lets
+# SLSsteam hook fresh Steam builds so the wrapper tolerates updates (matches
+# LumaDeck's _set_safemode_no + main.cpp's advisory hash check). We set it
+# explicitly rather than "leave as-is" so a STANDALONE `curl|bash setup.sh`
+# migrating from a headcrab config (SafeMode: yes on disk) also loses the freno —
+# LumaDeck flips it via ensure_slssteam_flags, but standalone users don't get that.
 # PlayNotOwnedGames is core (treat non-owned as owned); the notify flags are UX.
 edit_slssteam_config() {
     local cfg="$1"; [[ -f "$cfg" ]] || return 0
@@ -177,6 +182,12 @@ edit_slssteam_config() {
     sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
     # We bundle CloudRedirect, so enable it (the old LumaDeck flow set this too).
     sed -i "s/^DisableCloud:.*/DisableCloud: no/" "$cfg"
+    # SafeMode: no — never leave a migrated headcrab "yes" in place (the freno).
+    if grep -q '^SafeMode:' "$cfg"; then
+        sed -i "s/^SafeMode:.*/SafeMode: no/" "$cfg"
+    else
+        printf 'SafeMode: no\n' >> "$cfg"
+    fi
     # SLSsteam's default DisableUpdates: yes blocks auto-updates for the unowned
     # (AdditionalApps) games — but LumaDeck lets those update. Flip it to no, like
     # LumaDeck's _set_disableupdates_no.
@@ -185,7 +196,39 @@ edit_slssteam_config() {
     else
         printf 'DisableUpdates: no\n' >> "$cfg"
     fi
-    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates=no; SafeMode left as-is — no freno)."
+    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates/SafeMode=no)."
+}
+
+# Neutralize any residual headcrab/old-lumalinux injection baked into steam.sh so
+# the WRAPPER is the sole injector. headcrab REPLACES steam.sh with a copy that
+# exports INJECT_SLS/INJECT_CR; on a device migrating from a prior headcrab install
+# that block survives (Steam only re-extracts steam.sh on a size-drift self-update,
+# which the break-recovery pin suppresses) and would (a) double-inject / lose the
+# library-inject-first order and (b) defeat the crash-loop vanilla fall-back — the
+# child steam.sh re-injects even when the guard launches Steam with `env -u
+# LD_AUDIT -u LD_PRELOAD`. Best-effort; a clean vanilla steam.sh carries none of
+# these lines, so this is a no-op there. Backs up once before editing.
+neutralize_steam_sh() {
+    local r sh bak
+    for r in "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.steam/root" \
+             "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
+        sh="$r/steam.sh"
+        [[ -f "$sh" ]] || continue
+        grep -qE 'INJECT_SLS|INJECT_CR|SLSsteam\.so|library-inject\.so|cloud_redirect\.so|liblumalinux\.so|lumalinux launcher patch' "$sh" 2>/dev/null || continue
+        bak="$sh.lumalinux.pre-wrapper.bak"
+        [[ -e "$bak" ]] || cp -f "$sh" "$bak" 2>/dev/null || true
+        chmod u+w "$sh" 2>/dev/null || true
+        sed -i -E \
+            -e '/# >>> lumalinux launcher patch/d' \
+            -e '/# <<< lumalinux/d' \
+            -e '/INJECT_SLS/d' \
+            -e '/INJECT_CR/d' \
+            -e '/LD_AUDIT=.*(SLSsteam|library-inject)\.so/d' \
+            -e '/LD_PRELOAD=.*(cloud_redirect|liblumalinux)\.so/d' \
+            "$sh" 2>/dev/null \
+          && info "Neutralized residual steam.sh injection at $sh (backup: $bak)" || true
+    done
+    return 0
 }
 
 # .NET 9 runtime — Steamless (Denuvo/DRM strip) needs it. headcrab does NOT install
@@ -252,7 +295,7 @@ set -euo pipefail
 
 WRAPPER="${WRAPPER:-$HOME/.local/share/SLSsteam/path/steam}"
 DT_TAG="X-LumaLinux-Wrapped=1"
-_LAUNCHER_RE='^(steam|steam-jupiter|bazzite-steam)$'
+_LAUNCHER_RE='^(steam|steam-jupiter(-stable)?|bazzite-steam)$'
 USER_APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 USER_AUTOSTART="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 PATH_MARK_BEGIN="# >>> lumalinux wrapper PATH >>> (managed by setup.sh)"
@@ -275,7 +318,7 @@ patch_desktop_inplace() {
         function bn(p){ sub(/.*\//,"",p); return p }
         /^Exec=/ {
             cmd=$0; sub(/^Exec=/,"",cmd); prog=cmd; sub(/ .*/,"",prog)
-            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=" w rest; changed=1; next }
+            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=env LUMA_STEAM_BIN=" prog " " w rest; changed=1; next }
         }
         { print }
         END { exit (changed ? 0 : 3) }
@@ -288,16 +331,24 @@ patch_desktop_inplace() {
 create_override_shadow() {
     local src="$1" dest="$2"
     [[ -f "$dest" ]] && return 0
-    awk -v w="$WRAPPER" -v tag="$DT_TAG" -v re="$_LAUNCHER_RE" '
+    # Only write the shadow if an Exec line actually matched a launcher: awk exits
+    # 3 (and we discard the half-written dest) otherwise, so we never leave a
+    # tagged-but-UNWRAPPED shadow — that would (a) shadow the real system entry
+    # with a non-injecting copy and (b) make LumaDeck's _wrapper_desktop_coverage
+    # report coverage where none exists.
+    if awk -v w="$WRAPPER" -v tag="$DT_TAG" -v re="$_LAUNCHER_RE" '
         function bn(p){ sub(/.*\//,"",p); return p }
         /^Exec=/ {
             cmd=$0; sub(/^Exec=/,"",cmd); prog=cmd; sub(/ .*/,"",prog)
-            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=" w rest; next }
+            if (bn(prog) ~ re) { rest=cmd; sub(/^[^ ]*/,"",rest); print "Exec=env LUMA_STEAM_BIN=" prog " " w rest; changed=1; next }
         }
         { print }
-        END { print "# lumalinux-override-shadow"; print tag }
-    ' "$src" > "$dest"
-    log "[+] Created override $dest (shadows $src)"
+        END { if (changed) { print "# lumalinux-override-shadow"; print tag } else { exit 3 } }
+    ' "$src" > "$dest"; then
+        log "[+] Created override $dest (shadows $src)"
+    else
+        rm -f "$dest"
+    fi
 }
 
 install_path_dropin() {
@@ -527,11 +578,19 @@ luma_guard_run() {
                 _client_changed=1; g_log "steamclient.so changed since last clean boot -> first crash = compat break"
             fi
             g_log "previous boot crashed at startup -> fail ${_fails}/${LUMA_GUARD_MAX_FAILS}"
-        else
+        elif [ -d "$LUMA_GUARD_DUMPS_DIR" ]; then
+            # Only treat "no crash dump" as a clean boot when the dumps dir EXISTS
+            # (so the absence of a dump is real evidence). If the dir is absent we
+            # are blind — a non-dumping crash (OOM/hang/breakpad-off) must NOT be
+            # read as success: do nothing (leave the counter, and crucially do NOT
+            # promote a possibly-bad steamclient.so to the known-good baseline,
+            # which would defeat the "client changed -> latch on first crash" path).
             [ "$_fails" -ne 0 ] && g_log "previous boot ok -> reset fail count"
             _fails=0
             _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"
             [ -n "$_prev" ] && printf '%s' "$_prev" > "$G_CLIENT_GOOD" 2>/dev/null || true
+        else
+            g_log "no dumps dir -> cannot assess previous boot; leaving fail/good state unchanged"
         fi
     fi
     printf '%s' "$_fails" > "$G_COUNT" 2>/dev/null || true
@@ -728,17 +787,28 @@ SLS_DIR="$HOME/.local/share/SLSsteam"
 CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
 LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
 
-# Resolve the REAL steam binary, skipping this wrapper.
+# Resolve the REAL steam binary, skipping this wrapper. The patched .desktop
+# entries pass LUMA_STEAM_BIN=<original launcher> (steam / steam-jupiter-stable /
+# bazzite-steam) so we exec the SAME launcher that was wrapped, not always plain
+# `steam` — losing that would drop e.g. jupiter/Deck-specific setup.
 _self="$HOME/.local/share/SLSsteam/path/steam"
+_is_self() { [ "$(readlink -f "$1" 2>/dev/null)" = "$(readlink -f "$_self" 2>/dev/null)" ]; }
 STEAM_BIN=""
-if [ -n "${LUMA_STEAM_BIN:-}" ] && [ -x "${LUMA_STEAM_BIN}" ]; then
-    STEAM_BIN="$LUMA_STEAM_BIN"
-else
+if [ -n "${LUMA_STEAM_BIN:-}" ]; then
+    # Accept a full path as-is, or resolve a bare launcher name via PATH; never
+    # accept ourselves (the PATH drop-in puts the wrapper dir first).
+    case "$LUMA_STEAM_BIN" in
+        */*) _cand="$LUMA_STEAM_BIN" ;;
+        *)   _cand="$(command -v "$LUMA_STEAM_BIN" 2>/dev/null || true)" ;;
+    esac
+    if [ -n "$_cand" ] && [ -x "$_cand" ] && ! _is_self "$_cand"; then STEAM_BIN="$_cand"; fi
+fi
+if [ -z "$STEAM_BIN" ]; then
     _old_ifs="$IFS"; IFS=:
     for _d in $PATH; do
         _c="$_d/steam"
         [ -x "$_c" ] || continue
-        [ "$(readlink -f "$_c" 2>/dev/null)" = "$(readlink -f "$_self" 2>/dev/null)" ] && continue
+        _is_self "$_c" && continue
         STEAM_BIN="$_c"; break
     done
     IFS="$_old_ifs"
@@ -776,6 +846,12 @@ install_guardian_units
 write_gamemode_launcher
 ok "Game Mode launcher written at $GM_LAUNCHER"
 install_gamemode_dropin
+
+# Migration safety: with the wrapper + coverage now in place, strip any leftover
+# headcrab/old-lumalinux injection from steam.sh so the wrapper is the sole
+# injector (no double injection, and the crash-loop vanilla fall-back really is
+# vanilla). No-op on a clean install.
+neutralize_steam_sh
 
 ok "Done. Restart Steam to load the stack."
 info "On startup, look for the toast: 'lumalinux: vX.Y.Z loaded - N/N hooks active'."

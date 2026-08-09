@@ -140,23 +140,37 @@ if is_steamos; then
     fetch "$DECK_MANIFEST_URL" "$PKG_DIR/steam_client_steamdeck_stable_ubuntu12.manifest" \
         || die "deck manifest download failed"
 else
+    # .manifest extension, symmetric with the deck path and matching Steam's real
+    # installed name (steam_client_ubuntu12.manifest). headcrab's linux branch
+    # omits it, but the deck branch keeps it; the Deck is our primary target and
+    # the consistent name is the safer choice for a depot lookup by filename.
     info "Generic Linux — linux client manifest."
-    fetch "$LINUX_MANIFEST_URL" "$PKG_DIR/steam_client_ubuntu12" || die "linux manifest download failed"
+    fetch "$LINUX_MANIFEST_URL" "$PKG_DIR/steam_client_ubuntu12.manifest" || die "linux manifest download failed"
 fi
 
-# 3. dlm: fetch the old client packages into the package dir.
+# 3. dlm: fetch the old client packages into the package dir. FATAL on failure:
+#    step 2 already cleared package/, so proceeding with an empty depot would
+#    relaunch Steam against a local server serving nothing AND leave a pinned,
+#    package-less client. Aborting here (before the pin + relaunch) leaves Steam
+#    with an empty package/ but NO pin, so its own bootstrapper re-downloads the
+#    client on the next normal launch — recoverable.
 info "Fetching client packages (dlm)..."
 ( cd "$PKG_DIR" && "$DG_DIR/dlm" --input-file sources.txt --max-concurrent 16 ) \
-    || warn "dlm returned non-zero (continuing — dgsc may still serve cached packages)"
+    || die "dlm failed to fetch the client packages — aborting before the pin/relaunch so Steam can self-recover"
 
 # 4. pin: write steam.cfg so Steam holds the downgraded build (createsteamcfg port).
 #    Update-in-place: replace any existing BootStrapper* lines, keep the rest.
+#    Capture the kept lines and re-emit with printf '%s\n' so the block ALWAYS ends
+#    in a newline before the appended keys — otherwise a steam.cfg whose last line
+#    lacked a trailing newline would glue "…=1BootStrapperInhibitAll=enable".
 info "Writing Steam-update pin (steam.cfg)..."
+_kept=""
+if [[ -f "$STEAM_CFG" ]]; then
+    cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
+    _kept="$(grep -viE '^[[:space:]]*BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=' "$STEAM_CFG" 2>/dev/null || true)"
+fi
 {
-    if [[ -f "$STEAM_CFG" ]]; then
-        cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
-        grep -viE '^[[:space:]]*BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=' "$STEAM_CFG" 2>/dev/null || true
-    fi
+    [[ -n "$_kept" ]] && printf '%s\n' "$_kept"
     printf 'BootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
 } > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
 ok "Pin written at $STEAM_CFG"
