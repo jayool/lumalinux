@@ -655,7 +655,11 @@ g_startup_crash() {
     [ "$2" -gt 0 ] || return 1
     _ref="$GDIR/.crash_win_ref"
     touch -d "@$(( $2 + LUMA_GUARD_STARTUP_SECS ))" "$_ref" 2>/dev/null || { rm -f "$_ref" 2>/dev/null; return 1; }
-    _hit="$(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name 'crash_*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null | head -n1)"
+    # Match ANY minidump, not just crash_*.dmp: Steam also writes assert_*.dmp for
+    # assertion-failure crashes (and the time window already scopes this to dumps
+    # created right after a launch), so a bad-inject crash-loop via an assertion is
+    # caught too — otherwise the anti-brick fail-safe would miss it.
+    _hit="$(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name '*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null | head -n1)"
     rm -f "$_ref" 2>/dev/null
     [ -n "$_hit" ]
 }
