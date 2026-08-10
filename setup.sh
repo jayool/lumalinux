@@ -133,9 +133,13 @@ install_os_deps() {
     return 0   # never let a best-effort branch's exit status abort setup.sh (set -e)
 }
 
-# Merge the SLSsteam config template into an existing config, preserving the
-# user's values and only ADDING new template keys. Faithful port of headcrab's
-# updateSLSsteamConfig. $1 = template, $2 = existing config.
+# Reconcile an existing SLSsteam config against the current template. The OUTPUT
+# follows the TEMPLATE's key set: keys present in both keep the USER's value
+# (AdditionalApps AppIDs, ManifestIds, flag choices, …), template-only keys are
+# added with their default, and keys NOT in the current template — options SLSsteam
+# has since removed, e.g. PlayNotOwnedGames — are DROPPED. So the config always
+# tracks SLSsteam's current schema while preserving user data. $1 = template,
+# $2 = existing config.
 merge_slssteam_config() {
     local template="$1" config_file="$2" merged
     [[ -f "$template" && -f "$config_file" ]] || return 0
@@ -168,30 +172,24 @@ merge_slssteam_config() {
 }
 
 # Flip SLSsteam's config values to what the wrapper stack needs. FLIP-IN-PLACE
-# ONLY — every key we set already exists in SLSsteam's default config, so a bare
-# sed always matches; we deliberately NEVER append a key. If something isn't in
-# SLSsteam's default we don't want it (SLSsteam's compiled default applies), and
-# the plugin's schema-completion (slssteam_schema) re-adds only keys SLSsteam
-# itself ships. What we flip and why:
+# ONLY — every key we set exists in SLSsteam's current default config (which the
+# seed/merge above always produces), so a bare sed always matches; we never append
+# a key. Deprecated keys (e.g. PlayNotOwnedGames, removed in SLSsteam 20260707) are
+# already GONE here — the template-based merge drops anything not in the current
+# template — so there is nothing to handle for them. What we flip and why:
 #   SafeMode: no        — undo headcrab's update "freno" (also SLSsteam's own default;
 #                          lets it hook fresh Steam builds, matches main.cpp advisory hash)
 #   DisableCloud: no    — we bundle CloudRedirect, so cloud stays on
 #   DisableUpdates: no  — AdditionalApps (unowned) games must be allowed to update
 #   NotifyInit/Notifications: yes — UX toasts
-#   PlayNotOwnedGames: no — DEPRECATED (SLSsteam removed it in 20260707). LumaDeck
-#                          unlocks per-game via AdditionalApps, not this global flag.
-#                          If an older SLSsteam still carries headcrab's forced `yes`,
-#                          flip it to `no`; on current SLSsteam the key is absent and
-#                          this sed is a harmless no-op (we never add it back).
 edit_slssteam_config() {
     local cfg="$1"; [[ -f "$cfg" ]] || return 0
-    sed -i "s/^PlayNotOwnedGames:.*/PlayNotOwnedGames: no/" "$cfg"
     sed -i "s/^NotifyInit:.*/NotifyInit: yes/" "$cfg"
     sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
     sed -i "s/^DisableCloud:.*/DisableCloud: no/" "$cfg"
     sed -i "s/^SafeMode:.*/SafeMode: no/" "$cfg"
     sed -i "s/^DisableUpdates:.*/DisableUpdates: no/" "$cfg"
-    ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes; PlayNotOwnedGames flipped to no if present)."
+    ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes)."
 }
 
 # Restore a clean steam.sh so the WRAPPER is the sole injector, handling the two
