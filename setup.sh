@@ -199,21 +199,72 @@ edit_slssteam_config() {
     ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates/SafeMode=no)."
 }
 
-# Neutralize any residual headcrab/old-lumalinux injection baked into steam.sh so
-# the WRAPPER is the sole injector. headcrab REPLACES steam.sh with a copy that
-# exports INJECT_SLS/INJECT_CR; on a device migrating from a prior headcrab install
-# that block survives (Steam only re-extracts steam.sh on a size-drift self-update,
-# which the break-recovery pin suppresses) and would (a) double-inject / lose the
-# library-inject-first order and (b) defeat the crash-loop vanilla fall-back — the
-# child steam.sh re-injects even when the guard launches Steam with `env -u
-# LD_AUDIT -u LD_PRELOAD`. Best-effort; a clean vanilla steam.sh carries none of
-# these lines, so this is a no-op there. Backs up once before editing.
+# Restore a clean steam.sh so the WRAPPER is the sole injector, handling the two
+# ways the old world touched steam.sh:
+#   * headcrab REPLACED steam.sh with its own launcher (toast + GameLauncher +
+#     inject). Stripping the inject line alone leaves that launcher (and its "The
+#     Headcrab Approaches" toast) running every launch — so we RESTORE vanilla
+#     instead: from the untouched Valve steam.sh headcrab keeps alongside as
+#     client.sh, else fetched from Valve, else (last resort) line-stripped.
+#   * the old lumalinux install.sh ADDED a marked block to a vanilla steam.sh —
+#     there the base file is vanilla, so stripping the block restores it.
+# On a device migrating from headcrab the stale block/launcher would otherwise
+# (a) double-inject / lose the library-inject-first order and (b) defeat the
+# crash-loop vanilla fall-back. Best-effort; a clean vanilla steam.sh is a no-op.
+# steam.sh is regenerable (Steam re-extracts it), so this is low-risk.
+# Markers that identify headcrab's OWN steam.sh. headcrab does NOT add a block to
+# a vanilla steam.sh — it REPLACES steam.sh with a custom launcher (a "The Headcrab
+# Approaches" notify-send toast, a GameLauncher/CheckClientInfo wrapper, then
+# `source $STEAM_CLIENT`). So stripping the inject line alone leaves that launcher —
+# and its toast — running on every Steam start. It must be RESTORED to vanilla.
+_HEADCRAB_STEAMSH_RE='Headcrab|h3adcr|CheckClientInfo'
+
 neutralize_steam_sh() {
-    local r sh bak
+    local r sh bak client vanilla_url tmp
+    vanilla_url="${VANILLA_STEAM_SH_URL:-https://raw.githubusercontent.com/SteamDatabase/SteamTracking/master/ClientExtracted/steam.sh}"
     for r in "$HOME/.local/share/Steam" "$HOME/.steam/steam" "$HOME/.steam/root" \
              "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
         sh="$r/steam.sh"
         [[ -f "$sh" ]] || continue
+
+        if grep -qE "$_HEADCRAB_STEAMSH_RE" "$sh" 2>/dev/null; then
+            # headcrab's OWN launcher → RESTORE a clean vanilla steam.sh (do NOT
+            # edit in place; that leaves headcrab's toast/GameLauncher behind).
+            bak="$sh.headcrab.bak"
+            [[ -e "$bak" ]] || cp -f "$sh" "$bak" 2>/dev/null || true
+            chmod u+w "$sh" 2>/dev/null || true
+            client="$r/client.sh"
+            if [[ -f "$client" ]] && ! grep -qE "$_HEADCRAB_STEAMSH_RE" "$client" 2>/dev/null; then
+                # headcrab keeps the untouched Valve steam.sh alongside as client.sh.
+                cp -f "$client" "$sh" 2>/dev/null \
+                    && { chmod 0755 "$sh" 2>/dev/null || true; info "Restored vanilla steam.sh from client.sh at $sh (was headcrab's launcher)"; } \
+                    || warn "Could not restore steam.sh from client.sh at $sh"
+            else
+                # No usable client.sh — fetch Valve's steam.sh. (Verify it's vanilla
+                # and non-empty before swapping.)
+                tmp="$sh.vanilla.tmp"
+                if { command -v curl >/dev/null 2>&1 && curl -fsSL "$vanilla_url" -o "$tmp" 2>/dev/null \
+                     || command -v wget >/dev/null 2>&1 && wget -qO "$tmp" "$vanilla_url" 2>/dev/null; } \
+                   && [[ -s "$tmp" ]] && ! grep -qE "$_HEADCRAB_STEAMSH_RE" "$tmp" 2>/dev/null; then
+                    mv -f "$tmp" "$sh"; chmod 0755 "$sh" 2>/dev/null || true
+                    info "Restored vanilla steam.sh from Valve source at $sh (no usable client.sh)"
+                else
+                    rm -f "$tmp" 2>/dev/null || true
+                    # Last resort: strip the inject + toast lines so it at least
+                    # stops double-injecting and toasting; Steam re-extracts a clean
+                    # steam.sh on its next size-drift check anyway.
+                    sed -i -E -e '/INJECT_SLS/d' -e '/INJECT_CR/d' -e '/notify-send.*h3adcr/d' \
+                        -e '/LD_AUDIT=.*(SLSsteam|library-inject)\.so/d' \
+                        -e '/LD_PRELOAD=.*(cloud_redirect|liblumalinux)\.so/d' "$sh" 2>/dev/null || true
+                    warn "No vanilla source for $sh — stripped inject+toast (Steam will re-extract a clean steam.sh)"
+                fi
+            fi
+            continue
+        fi
+
+        # NOT headcrab's launcher: a vanilla steam.sh that the old lumalinux
+        # install.sh patched with a marked block (or a stray injection line).
+        # Here the base file IS vanilla, so stripping the block restores it.
         grep -qE 'INJECT_SLS|INJECT_CR|SLSsteam\.so|library-inject\.so|cloud_redirect\.so|liblumalinux\.so|lumalinux launcher patch' "$sh" 2>/dev/null || continue
         bak="$sh.lumalinux.pre-wrapper.bak"
         [[ -e "$bak" ]] || cp -f "$sh" "$bak" 2>/dev/null || true
