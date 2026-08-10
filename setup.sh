@@ -167,36 +167,31 @@ merge_slssteam_config() {
     fi
 }
 
-# headcrab's editconfig, but SafeMode: no instead of headcrab's yes. headcrab's
-# SafeMode: yes is the update "freno" this project removes; SafeMode: no lets
-# SLSsteam hook fresh Steam builds so the wrapper tolerates updates (matches
-# LumaDeck's _set_safemode_no + main.cpp's advisory hash check). We set it
-# explicitly rather than "leave as-is" so a STANDALONE `curl|bash setup.sh`
-# migrating from a headcrab config (SafeMode: yes on disk) also loses the freno —
-# LumaDeck flips it via ensure_slssteam_flags, but standalone users don't get that.
-# PlayNotOwnedGames is core (treat non-owned as owned); the notify flags are UX.
+# Flip SLSsteam's config values to what the wrapper stack needs. FLIP-IN-PLACE
+# ONLY — every key we set already exists in SLSsteam's default config, so a bare
+# sed always matches; we deliberately NEVER append a key. If something isn't in
+# SLSsteam's default we don't want it (SLSsteam's compiled default applies), and
+# the plugin's schema-completion (slssteam_schema) re-adds only keys SLSsteam
+# itself ships. What we flip and why:
+#   SafeMode: no        — undo headcrab's update "freno" (also SLSsteam's own default;
+#                          lets it hook fresh Steam builds, matches main.cpp advisory hash)
+#   DisableCloud: no    — we bundle CloudRedirect, so cloud stays on
+#   DisableUpdates: no  — AdditionalApps (unowned) games must be allowed to update
+#   NotifyInit/Notifications: yes — UX toasts
+#   PlayNotOwnedGames: no — DEPRECATED (SLSsteam removed it in 20260707). LumaDeck
+#                          unlocks per-game via AdditionalApps, not this global flag.
+#                          If an older SLSsteam still carries headcrab's forced `yes`,
+#                          flip it to `no`; on current SLSsteam the key is absent and
+#                          this sed is a harmless no-op (we never add it back).
 edit_slssteam_config() {
     local cfg="$1"; [[ -f "$cfg" ]] || return 0
-    sed -i "s/^PlayNotOwnedGames:.*/PlayNotOwnedGames: yes/" "$cfg"
+    sed -i "s/^PlayNotOwnedGames:.*/PlayNotOwnedGames: no/" "$cfg"
     sed -i "s/^NotifyInit:.*/NotifyInit: yes/" "$cfg"
     sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
-    # We bundle CloudRedirect, so enable it (the old LumaDeck flow set this too).
     sed -i "s/^DisableCloud:.*/DisableCloud: no/" "$cfg"
-    # SafeMode: no — never leave a migrated headcrab "yes" in place (the freno).
-    if grep -q '^SafeMode:' "$cfg"; then
-        sed -i "s/^SafeMode:.*/SafeMode: no/" "$cfg"
-    else
-        printf 'SafeMode: no\n' >> "$cfg"
-    fi
-    # SLSsteam's default DisableUpdates: yes blocks auto-updates for the unowned
-    # (AdditionalApps) games — but LumaDeck lets those update. Flip it to no, like
-    # LumaDeck's _set_disableupdates_no.
-    if grep -q '^DisableUpdates:' "$cfg"; then
-        sed -i "s/^DisableUpdates:.*/DisableUpdates: no/" "$cfg"
-    else
-        printf 'DisableUpdates: no\n' >> "$cfg"
-    fi
-    ok "Applied SLSsteam config (PlayNotOwnedGames/NotifyInit/Notifications=yes, DisableCloud/DisableUpdates/SafeMode=no)."
+    sed -i "s/^SafeMode:.*/SafeMode: no/" "$cfg"
+    sed -i "s/^DisableUpdates:.*/DisableUpdates: no/" "$cfg"
+    ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes; PlayNotOwnedGames flipped to no if present)."
 }
 
 # Restore a clean steam.sh so the WRAPPER is the sole injector, handling the two
@@ -870,20 +865,23 @@ if [[ -f "${TMP_DIR}/sls/res/config.yaml" ]]; then
 fi
 edit_slssteam_config "${SLS_CFG_DIR}/config.yaml"
 
-# CloudRedirect .so (inert until a provider is signed in) + GUI app.
+# CloudRedirect .so — a CORE part of the stack: we ship with cloud enabled
+# (DisableCloud: no), so a failed download is fatal, not a shrug. Leaving cloud ON
+# without CloudRedirect present is an incoherent state, so we abort like any other
+# core component (SLSsteam.so / lumalinux.so) rather than ship it broken. The cli
+# helper and the sign-in GUI app stay best-effort (CR is inert until a provider
+# signs in, and those are only needed at that point).
 info "Downloading CloudRedirect..."
-if curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL"; then
-    install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
-    ok "Deployed ${CR_DIR}/cloud_redirect.so"
-    # cloud_redirect_cli — headcrab fetches this alongside the .so (crinstall).
-    if curl -fL -o "${CR_DIR}/cloud_redirect_cli" "$CR_CLI_URL" 2>/dev/null; then
-        chmod 0755 "${CR_DIR}/cloud_redirect_cli"
-        ok "Deployed ${CR_DIR}/cloud_redirect_cli"
-    else
-        warn "cloud_redirect_cli download failed (non-fatal)."
-    fi
+curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL" \
+    || die "Failed to download CloudRedirect ($CR_URL) — it ships with the stack and cloud is enabled; aborting rather than leaving cloud on without it."
+install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
+ok "Deployed ${CR_DIR}/cloud_redirect.so"
+# cloud_redirect_cli — headcrab fetches this alongside the .so (crinstall).
+if curl -fL -o "${CR_DIR}/cloud_redirect_cli" "$CR_CLI_URL" 2>/dev/null; then
+    chmod 0755 "${CR_DIR}/cloud_redirect_cli"
+    ok "Deployed ${CR_DIR}/cloud_redirect_cli"
 else
-    warn "CloudRedirect download failed — continuing without it (cloud saves stay off)."
+    warn "cloud_redirect_cli download failed (non-fatal)."
 fi
 install_cloudredirect_app
 
