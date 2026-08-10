@@ -164,7 +164,9 @@ trap - EXIT
 info "Writing Steam-update pin (steam.cfg)..."
 _kept=""
 if [[ -f "$STEAM_CFG" ]]; then
-    cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
+    # Back up the PRISTINE steam.cfg once — a re-run must not overwrite it with the
+    # already-pinned version (that would destroy the only clean copy).
+    [[ -e "${STEAM_CFG}.lumadeck.bak" ]] || cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
     _kept="$(grep -viE '^[[:space:]]*BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=' "$STEAM_CFG" 2>/dev/null || true)"
 fi
 {
