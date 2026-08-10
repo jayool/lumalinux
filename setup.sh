@@ -830,6 +830,27 @@ if [[ -f "${TMP_DIR}/sls/bin/library-inject.so" ]]; then
 else
     warn "library-inject.so not in the archive — the wrapper will load SLSsteam.so alone."
 fi
+
+# Record the installed SLSsteam version so LumaDeck can detect updates. SLSsteam
+# embeds its version (a build timestamp) ONLY inside the compiled .so and writes
+# nothing readable to disk — unlike lumalinux, whose injected .so drops a
+# status.json with its version. So we capture the release tag we just pulled from
+# /releases/latest/ (its tag IS that timestamp) and stash it where the plugin's
+# get_sls_version() reads it. Best-effort: on API failure we write nothing (the
+# plugin then reports "no update", the safe default). Skipped when a custom
+# SLSSTEAM_7Z_URL is set, since the AceSLS 'latest' tag would not describe it.
+if [[ -z "${SLSSTEAM_7Z_URL:-}" ]]; then
+    _sls_tag="$(curl -fsSL "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest" 2>/dev/null \
+        | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')"
+    if [[ -n "$_sls_tag" ]]; then
+        printf '%s\n' "$_sls_tag" > "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null \
+            && ok "Recorded SLSsteam version: $_sls_tag" \
+            || warn "Could not write SLSsteam version file (update detection will be skipped)."
+    else
+        info "Could not resolve SLSsteam release tag — update detection will be skipped."
+    fi
+fi
+
 # Config: seed from the template if absent, else merge (preserving your values);
 # then apply headcrab's functional settings (minus SafeMode — the freno).
 if [[ -f "${TMP_DIR}/sls/res/config.yaml" ]]; then
