@@ -840,16 +840,16 @@ fi
 # plugin then reports "no update", the safe default). Skipped when a custom
 # SLSSTEAM_7Z_URL is set, since the AceSLS 'latest' tag would not describe it.
 if [[ -z "${SLSSTEAM_7Z_URL:-}" ]]; then
-    # The whole script runs under `set -euo pipefail`, so a command substitution
-    # whose pipeline returns non-zero would ABORT setup.sh mid-install. That must
-    # never happen for a best-effort version stamp: the API can rate-limit/fail,
-    # and even on success `grep -m1` closes the pipe early → curl gets SIGPIPE →
-    # pipefail makes the pipeline non-zero. So capture the JSON first (|| true),
-    # then parse the captured string (|| true) — a failure degrades to an empty
-    # tag (handled below), it never kills the install.
-    _sls_json="$(curl -fsSL "https://api.github.com/repos/AceSLS/SLSsteam/releases/latest" 2>/dev/null || true)"
-    _sls_tag="$(printf '%s' "$_sls_json" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' || true)"
-    if [[ -n "$_sls_tag" ]]; then
+    # Resolve the release tag the SAME way headcrab does: follow the /releases/latest
+    # redirect and read the FINAL url (.../releases/tag/<tag>), then strip to the tag
+    # with pure shell. This deliberately avoids api.github.com (rate-limited) and has
+    # no pipe (so no SIGPIPE under `set -o pipefail`). `|| true` keeps a network
+    # failure from aborting the install; the guards below reject a non-redirect
+    # (offline → url still ends in "latest") so we never record a bogus tag.
+    _sls_tag="$(curl -sSL --connect-timeout 15 --max-time 30 -o /dev/null \
+        -w '%{url_effective}' "https://github.com/AceSLS/SLSsteam/releases/latest" 2>/dev/null || true)"
+    _sls_tag="${_sls_tag##*/}"
+    if [[ -n "$_sls_tag" && "$_sls_tag" != "latest" ]]; then
         printf '%s\n' "$_sls_tag" > "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null \
             && ok "Recorded SLSsteam version: $_sls_tag" \
             || warn "Could not write SLSsteam version file (update detection will be skipped)."
