@@ -161,17 +161,24 @@ trap - EXIT
 #    rest. Capture the kept lines and re-emit with printf '%s\n' so the block
 #    ALWAYS ends in a newline before the appended keys — otherwise a steam.cfg
 #    whose last line lacked a trailing newline would glue the keys onto it.
+#
+#    Stamp our own pin with a `# lumalinux` signature line. That line is how the
+#    LumaDeck side tells OUR pin (an active break-recovery downgrade, to be lifted
+#    only once the ecosystem catches up) from a FOREIGN one (headcrab's, written on
+#    every install) — a foreign pin is lifted on sight during migration. Steam
+#    ignores non-key lines in steam.cfg, so the signature is inert. Filter any prior
+#    signature out of the kept lines so re-runs don't stack duplicates.
 info "Writing Steam-update pin (steam.cfg)..."
 _kept=""
 if [[ -f "$STEAM_CFG" ]]; then
     # Back up the PRISTINE steam.cfg once — a re-run must not overwrite it with the
     # already-pinned version (that would destroy the only clean copy).
     [[ -e "${STEAM_CFG}.lumadeck.bak" ]] || cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
-    _kept="$(grep -viE '^[[:space:]]*BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=' "$STEAM_CFG" 2>/dev/null || true)"
+    _kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
 fi
 {
     [[ -n "$_kept" ]] && printf '%s\n' "$_kept"
-    printf 'BootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
+    printf '# lumalinux\nBootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
 } > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
 ok "Pin written at $STEAM_CFG"
 
