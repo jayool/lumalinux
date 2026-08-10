@@ -121,7 +121,7 @@ install_os_deps() {
         *" debian "*|*" ubuntu "*)
             command -v apt-get &>/dev/null || return 0
             local pk="libcurl4"; apt-cache search --names-only '^libcurl4t64$' 2>/dev/null | grep -q libcurl4t64 && pk="libcurl4t64"
-            dpkg --print-foreign-architectures 2>/dev/null | grep -q i386 || { sudo dpkg --add-architecture i386; sudo apt-get update >/dev/null 2>&1 || true; }
+            dpkg --print-foreign-architectures 2>/dev/null | grep -q i386 || { sudo dpkg --add-architecture i386 || true; sudo apt-get update >/dev/null 2>&1 || true; }
             sudo apt-get install -y "${pk}:i386" >/dev/null 2>&1 || warn "libcurl i386 install failed (continuing)."
             ;;
         *)
@@ -919,7 +919,7 @@ mkdir -p "$TOOLS_DIR"
 for tool in "${RUNTIME_TOOLS[@]}"; do
     curl -fsSL -o "${TOOLS_DIR}/${tool}" "${TOOLS_BASE_URL}/${tool}" \
         && chmod 0755 "${TOOLS_DIR}/${tool}" && ok "Deployed ${TOOLS_DIR}/${tool}" \
-        || die "Failed to download ${TOOLS_BASE_URL}/${tool}"
+        || warn "Failed to download ${TOOLS_BASE_URL}/${tool} (continuing; runtime helper, not needed for injection)."
 done
 
 # .NET 9 runtime (Steamless) — LumaDeck installs this during deps; headcrab doesn't.
