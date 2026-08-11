@@ -200,19 +200,51 @@ extra: verify `vtable[slot]` == this address and fencepost matches.)
 
 1. **CI emit** (`check_patterns --emit-rvas`) — populate `res/rvas/<hash>.yaml`
    for new builds. No runtime change; pure data. **DONE.**
-2. **`vaddr_xlate` C++** + unit test mirroring `tools/xlate_vaddr.py`.
+2. **`vaddr_xlate` C++** + unit test mirroring `tools/xlate_vaddr.py`. **DONE.**
 3. **`rva_feed` C++** + wire ONE hook (DepotKey) RVA-first with pattern fallback;
-   validate on-device (`method=rva target=…` matches the pattern target).
-4. Extend to GMRC / BuildDep / ShaderDepot.
-5. (Optional) `depotkey_vtable` cross-check + feed signing.
+   validate on-device (`method=rva target=…` matches the pattern target). **DONE.**
+4. Extend to GMRC / BuildDep / ShaderDepot / Reconcile. **DONE** — all five hooks
+   resolve RVA-first; end-to-end fetch (real HTTPS, `LUMA_RVAS_URL`-overridable
+   base, disk cache) validated live: `RvaFeed: loaded 4 hook RVA(s)` + `method=rva`.
+5. (Optional) `depotkey_vtable` cross-check + feed signing. **Signing: DECLINED
+   for now** — see §14.
 
 Each phase is independently shippable and fails closed to today's behavior.
 
-## 13. Open questions
+## 13. Resolved questions
 
-- Backfill `res/rvas/` for already-whitelisted hashes, or new builds only?
-- Fetch each `res/rvas/<hash>.yaml` on demand (one small file per Deck, like
-  steam-monitor) vs. bundle them — on-demand keeps the per-boot download tiny.
-- Emit RVAs in `.text`-relative form or image-base-0 file vaddr? File vaddr keeps
-  it aligned with `check_patterns`/`experiment_rtti_depotkey` reporting; `xlate`
-  handles it.
+- **Backfill** `res/rvas/` for already-whitelisted hashes? **No** — new builds only.
+  The baked byte-pattern fallback already covers in-circulation builds; backfill
+  buys little for the maintenance cost.
+- Fetch each `res/rvas/<hash>.yaml` on demand (one small file per Deck) vs. bundle:
+  **on demand**, keeps the per-boot download tiny.
+- Emit RVAs as image-base-0 **file vaddr** (aligned with `check_patterns`
+  reporting; `xlate` translates at runtime).
+
+## 14. Feed signing — decision: DECLINED (revisit only for untrusted mirrors)
+
+Signing the feed (Ed25519 detached sig + embedded pubkey) was considered and
+**deliberately NOT adopted**, for reasons that stay true until the fetch topology
+changes:
+
+- **Signing does not move the trust root — it is still GitHub.** Users get the
+  `.so` (and thus the embedded pubkey) from `jayool/lumalinux` releases, and the
+  feed from the same repo. An attacker who can poison the feed via a repo/account
+  compromise can equally ship a malicious `.so` with a malicious pubkey. A **CI-held
+  key** therefore adds almost nothing (same owner, same root). Only an **offline
+  key** would help — and that breaks the cron automation that is the whole point.
+- **TLS already covers the everyday threat** (passive network MITM of the raw URL).
+- **A forged RVA is not RCE.** The runtime already bounds it: `VaddrXlate::ToRuntime`
+  must translate and `inSteamclientExec` requires the target to land in the
+  TLS-delivered steamclient.so `.text`. Worst case is a hook at the wrong Valve
+  function → malfunction/crash, and a rejected feed falls back to byte patterns.
+- The SafeMode gate is **self-validating**: the hash is computed locally from the
+  real steamclient.so, so a forged `updates.yaml` can only add/remove hashes →
+  "the tool breaks", recoverable, not catastrophic.
+
+**Revisit when** the feed gains a mirror we do NOT control (as the GMRC code
+cascade already has non-GitHub endpoints), or carries a payload with higher stakes
+than a `.text`-bounded RVA. It is a clean, non-blocking add at that point:
+`res/rvas/<hash>.yaml.sig` + a vendored Ed25519 verify (TweetNaCl-style, no
+libcrypto — keeps the reaper-safe property) + a 32-byte pubkey in a header. Fail
+closed: bad/absent signature ⇒ ignore the feed ⇒ byte patterns.
