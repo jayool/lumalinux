@@ -299,7 +299,20 @@ FAILS=0
 while [ "$(cat "$STATE" 2>/dev/null)" = "gamescope" ]; do
     log "lanzando steam gamepadui"
     T0=$SECONDS
-    steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1
+    # Ruta REAL del Deck: Game Mode va por steam-launcher.service -> (nuestro
+    # systemd drop-in) -> GM_LAUNCHER (guard + wrapper) -> real steam-launcher.
+    # El codespace no tiene systemd --user, asi que replicamos ESA cadena: si
+    # lumalinux instalo su GM_LAUNCHER (post-migracion), lanzamos por el, de modo
+    # que Game Mode pasa por el guard + wrapper e inyecta AUTOMATICO en cada
+    # relanzamiento (como en la consola). Si no existe (pre-migracion / stack
+    # viejo), steam normal. GM_LAUNCHER hace `exec /usr/lib/steamos/steam-launcher`
+    # (stubeado mas abajo) -> steam gamepadui.
+    GM_L="$HOME/.local/share/SLSsteam/lumalinux-steam-launcher"
+    if [ -x "$GM_L" ]; then
+        "$GM_L" >>/tmp/steam.log 2>&1
+    else
+        steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1
+    fi
     RC=$?
     DUR=$((SECONDS - T0))
     [ "$(cat "$STATE" 2>/dev/null)" != "gamescope" ] && break
@@ -370,6 +383,18 @@ esac
 exit 0
 RO
 sudo chmod 755 /usr/bin/steamos-readonly
+
+# /usr/lib/steamos/steam-launcher: en la Deck es el binario que gamescope-session
+# arranca (via steam-launcher.service) para meter Steam en Game Mode, y sobre el
+# que lumalinux instala su systemd drop-in. Aqui no existe, pero GM_LAUNCHER hace
+# `exec /usr/lib/steamos/steam-launcher`, asi que lo stubeamos para que lance el
+# Steam del codespace en gamepadui. Con esto la cadena post-migracion
+# supervisor -> GM_LAUNCHER -> guard -> wrapper -> steam-launcher -> steam queda
+# igual que en la consola (ver el supervisor arriba).
+sudo install -Dm755 /dev/stdin /usr/lib/steamos/steam-launcher <<'SL'
+#!/bin/sh
+exec steam -gamepadui -no-cef-sandbox "$@"
+SL
 
 # Plasma sin bloqueo de pantalla: en un display headless el lock solo molesta
 # (y no hay logind que gestione el unlock).
