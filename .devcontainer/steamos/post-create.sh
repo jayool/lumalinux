@@ -219,21 +219,21 @@ stop_plasma() {
     log "stop_plasma done (kwin=$(pgrep -x kwin_x11 >/dev/null 2>&1 && echo VIVO || echo muerto) plasmashell=$(pgrep -x plasmashell >/dev/null 2>&1 && echo VIVO || echo muerto))"
 }
 
-start_steam_gamepadui() {
-    log "lanzando steam gamepadui"
-    ( steam -gamepadui -no-cef-sandbox >/tmp/steam.log 2>&1 & )
+# Game Mode = el supervisor (emula gamescope-session): relanza Steam si muere.
+# El estado de sesion en /tmp/lumadev-session decide si el supervisor sigue.
+start_gamemode() {
+    echo gamescope > /tmp/lumadev-session
+    ( nohup setsid /usr/local/lib/lumadev/gamemode-supervisor.sh </dev/null >>/tmp/session-select.log 2>&1 & )
     sleep 8
-    if ! pgrep -x steam >/dev/null 2>&1; then
-        log "steam no sobrevivio al arranque, reintento (mira /tmp/steam.log)"
-        ( steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1 & )
-        sleep 8
-    fi
-    log "start_steam done (steam=$(pgrep -x steam >/dev/null 2>&1 && echo arrancado || echo MUERTO))"
+    log "start_gamemode done (steam=$(pgrep -x steam >/dev/null 2>&1 && echo arrancado || echo 'aun no — sigue al supervisor en este log'))"
 }
 
 log "target=$TARGET"
 case "$TARGET" in
 plasma)
+    # Estado ANTES de matar Steam: el supervisor consulta /tmp/lumadev-session
+    # al morir su Steam; si ya dice plasma, se retira en vez de resucitarlo.
+    echo plasma > /tmp/lumadev-session
     stop_steam
     stop_plasma   # por si quedo una sesion anterior a medias
     # openbox (el WM que levanta start-display.sh para Steam) impide a kwin
@@ -256,7 +256,7 @@ gamescope)
     # para focus/stacking, igual que en el env base).
     pgrep -x openbox >/dev/null 2>&1 || ( openbox >/dev/null 2>&1 & )
     # Decky (PluginLoader) sigue corriendo; se re-inyecta cuando el CEF vuelve.
-    start_steam_gamepadui
+    start_gamemode
     ;;
 *)
     log "target desconocido: $TARGET"
@@ -265,6 +265,62 @@ gamescope)
 esac
 SWITCH
 sudo chmod 755 /usr/local/lib/lumadev/session-switch.sh
+
+sudo tee /usr/local/lib/lumadev/gamemode-supervisor.sh >/dev/null <<'SUPER'
+#!/usr/bin/env bash
+# Emula la supervision de Steam que hace gamescope-session en la Deck: relanza
+# Steam cada vez que muere, mientras la "sesion" (/tmp/lumadev-session) siga
+# siendo gamescope. LumaDeck cuenta con este comportamiento: su restart_steam()
+# hace solo `steam -shutdown` ("Game Mode auto-restarts it"), y el final del
+# Quick Install reinicia igual — sin supervisor, cualquier restart desde el QAM
+# deja la pantalla en negro.
+set +e
+STATE=/tmp/lumadev-session
+PIDFILE=/tmp/lumadev-supervisor.pid
+
+# Un solo supervisor vivo.
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
+    exit 0
+fi
+echo $$ > "$PIDFILE"
+
+export DISPLAY=:1
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+export LIBGL_ALWAYS_SOFTWARE=1
+export __GLX_VENDOR_LIBRARY_NAME=mesa
+export VK_LOADER_DRIVERS_DISABLE='nvidia*'
+export PATH="$HOME/.local/bin:$PATH"
+
+log() { echo "$(date '+%T') [supervisor $$] $*" >> /tmp/session-select.log; }
+
+log "arranca (session=$(cat "$STATE" 2>/dev/null))"
+FAILS=0
+while [ "$(cat "$STATE" 2>/dev/null)" = "gamescope" ]; do
+    log "lanzando steam gamepadui"
+    T0=$SECONDS
+    steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1
+    RC=$?
+    DUR=$((SECONDS - T0))
+    [ "$(cat "$STATE" 2>/dev/null)" != "gamescope" ] && break
+    # Guardia anti crash-loop: 5 muertes seguidas en <15s = algo roto de verdad
+    # (en la Deck real gamescope-session tambien corta el bucle).
+    if [ "$DUR" -lt 15 ]; then
+        FAILS=$((FAILS+1))
+        if [ "$FAILS" -ge 5 ]; then
+            log "steam muere en bucle (rc=$RC, ${DUR}s); paro — mira /tmp/steam.log"
+            break
+        fi
+    else
+        FAILS=0
+    fi
+    log "steam salio (rc=$RC, ${DUR}s); relanzo en 2s (como gamescope-session)"
+    sleep 2
+done
+rm -f "$PIDFILE"
+log "termina (session=$(cat "$STATE" 2>/dev/null))"
+SUPER
+sudo chmod 755 /usr/local/lib/lumadev/gamemode-supervisor.sh
 
 sudo tee /usr/bin/steamos-session-select >/dev/null <<'SEL'
 #!/usr/bin/env bash
@@ -352,22 +408,18 @@ KWINRC
 # =============================================================================
 cat > "$HOME/start-gamemode.sh" <<'GM'
 #!/usr/bin/env bash
-# Arranca Steam en gamepadui sobre :1. Es la misma UI que Game Mode en la Deck
-# (sin gamescope: la UI es CEF puro y arranca igual). El QAM donde vive
-# Decky/LumaDeck se abre con el boton de acceso rapido de la barra inferior.
+# Arranca Game Mode: Steam en gamepadui sobre :1 BAJO EL SUPERVISOR que emula
+# gamescope-session (si Steam muere o algo hace `steam -shutdown` — el boton
+# Restart Steam de LumaDeck, el final del Quick Install — se relanza solo,
+# como en la Deck). El QAM donde vive Decky/LumaDeck se abre con el boton de
+# acceso rapido de la barra inferior.
 set -e
-export DISPLAY=:1
-export LIBGL_ALWAYS_SOFTWARE=1
-export __GLX_VENDOR_LIBRARY_NAME=mesa
-export VK_LOADER_DRIVERS_DISABLE='nvidia*'
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-export PATH="$HOME/.local/bin:$PATH"
-
 [ -x "$HOME/start-net.sh" ] && "$HOME/start-net.sh" || true
 
-( steam -gamepadui -no-cef-sandbox >/tmp/steam.log 2>&1 & )
-echo "Steam gamepadui arrancando (log /tmp/steam.log). Mirala en noVNC (:6080)."
+echo gamescope > /tmp/lumadev-session
+( nohup setsid /usr/local/lib/lumadev/gamemode-supervisor.sh </dev/null >>/tmp/session-select.log 2>&1 & )
+echo "Steam gamepadui arrancando bajo el supervisor. Mirala en noVNC (:6080)."
+echo "Logs: /tmp/steam.log (Steam) y /tmp/session-select.log (supervisor)."
 GM
 chmod +x "$HOME/start-gamemode.sh"
 
@@ -687,8 +739,12 @@ en Plasma, como en la Deck. Diagnóstico: `cat ~/lh.json` ·
     rutas de `deck`, gamepadui/QAM, Plasma ejecutando el autostart XDG,
     konsole --hold, los payloads del hand-off, Decky.
   - **Emulado**: `steamos-session-select` (el switch es process-level sobre
-    :1, no sddm/logind) y `steamos-readonly` (no-op). La fontanería interna
-    de sesión de la Deck (gamescope real, logind, timings) NO se reproduce.
+    :1, no sddm/logind), `steamos-readonly` (no-op) y la **supervisión de
+    Steam de gamescope-session**: un supervisor relanza Steam cuando muere
+    en "sesión" gamescope, así que `steam -shutdown` (el Restart Steam de
+    LumaDeck, el final del Quick Install) se comporta como en la Deck. La
+    fontanería interna de sesión (gamescope real, logind, timings) NO se
+    reproduce.
   - **Imposible aquí**: kernel neptune, GPU/gamescope DRM, mandos físicos,
     inmutabilidad real del rootfs.
 
