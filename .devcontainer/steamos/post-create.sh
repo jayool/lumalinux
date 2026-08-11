@@ -180,9 +180,11 @@ stop_plasma() {
     # sesion Plasma. Lista explicita para no llevarnos nada mas por delante
     # (Decky, x11vnc y websockify tienen que sobrevivir al switch).
     for p in plasmashell kwin_x11 startplasma-x11 ksmserver kded6 kded5 \
-             kglobalacceld kactivitymanagerd xembedsniproxy kaccess; do
+             kglobalacceld kactivitymanagerd xembedsniproxy kaccess \
+             ksplashqml; do
         pkill -x "$p" 2>/dev/null
     done
+    pkill -f 'plasma[-_]session' 2>/dev/null
     pkill -f 'polkit-kde-authentication' 2>/dev/null
     sleep 1
 }
@@ -264,6 +266,29 @@ cat > "$HOME/.config/kscreenlockerrc" <<'KLOCK'
 Autolock=false
 LockOnResume=false
 KLOCK
+
+# Plasma 6 arranca la sesion via systemd de usuario por defecto
+# (`systemctl --user start plasma-workspace-x11.target`). En el contenedor no
+# hay systemd, asi que se queda en el splash para siempre y el autostart (el
+# konsole del hand-off) nunca corre. systemdBoot=false fuerza el arranque
+# clasico (plasma-session lanza los autostart directamente).
+cat > "$HOME/.config/startkderc" <<'KDERC'
+[General]
+systemdBoot=false
+KDERC
+
+# Sin splash: sobre Xvfb solo estorba (y si algo cuelga, tapa lo que hay debajo).
+cat > "$HOME/.config/ksplashrc" <<'KSPLASH'
+[KSplash]
+Theme=None
+Engine=none
+KSPLASH
+
+# Sin compositor: kwin con GL sobre llvmpipe va lento y no aporta nada aqui.
+cat > "$HOME/.config/kwinrc" <<'KWINRC'
+[Compositing]
+Enabled=false
+KWINRC
 
 # =============================================================================
 # start-gamemode.sh — Steam en gamepadui (la UI de Game Mode real de la Deck).
