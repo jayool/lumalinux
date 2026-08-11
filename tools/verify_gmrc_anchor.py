@@ -22,7 +22,12 @@ import struct
 import sys
 
 DEFAULT_STR = "ContentServerDirectory.GetManifestRequestCode#1"
-EXPECTED_GMRC_RVA = 0x12c3bd0  # patterns.hpp; only a sanity hint, not enforced
+# src/patterns.hpp kGmrcFunctionPattern — the current byte-pattern locator.
+# We scan for it on the SAME binary and check it lands on the xref-derived entry
+# (ground-truth validation, #13 Part 1 step 5), instead of comparing to a stale
+# per-build RVA constant.
+GMRC_PATTERN = ("E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 "
+                "81 EC 10 01 00 00 8B 7D 08 8B 4D 20")
 
 
 def die(msg):
@@ -119,6 +124,34 @@ def scan_lea_sites(text, taddr, disp):
     return sites
 
 
+def parse_pattern(pat):
+    vals, mask = [], []
+    for tok in pat.split():
+        if tok == "??":
+            vals.append(0); mask.append(0)
+        else:
+            vals.append(int(tok, 16)); mask.append(0xFF)
+    return bytes(vals), bytes(mask)
+
+
+def scan_pattern(text, taddr, pat):
+    vals, mask = parse_pattern(pat)
+    m = len(vals)
+    hits = []
+    n = len(text)
+    i = 0
+    while i <= n - m:
+        ok = True
+        for j in range(m):
+            if mask[j] and text[i + j] != vals[j]:
+                ok = False
+                break
+        if ok:
+            hits.append(taddr + i)      # match start = function entry (E8 preamble)
+        i += 1
+    return hits
+
+
 def walk_back_to_prologue(text, taddr, site_va, max_back=0x4000):
     # Nearest preceding PIC preamble (`E8 rel32; add reg,imm32`) = function entry.
     off = site_va - taddr
@@ -186,6 +219,13 @@ def main():
             if entry:
                 all_entries.setdefault(entry, []).append(site)
 
+    # Ground-truth: does the current byte pattern resolve to the SAME entry on
+    # THIS binary? (#13 Part 1 step 5 — validate the xref against the sig.)
+    if needle == DEFAULT_STR:
+        pat_hits = scan_pattern(tbytes, taddr, GMRC_PATTERN)
+    else:
+        pat_hits = None  # pattern only meaningful for the real GMRC anchor
+
     print("\n" + "=" * 64)
     n = len(all_entries)
     if n == 0:
@@ -194,10 +234,23 @@ def main():
     elif n == 1:
         entry = next(iter(all_entries))
         print("RESULT: CLEAN — job-name referenced from exactly 1 function.")
-        print("        function entry RVA = 0x%x" % entry)
-        near = abs(entry - EXPECTED_GMRC_RVA) <= 0x40
-        print("        expected GMRC getter ~0x%x  ->  %s"
-              % (EXPECTED_GMRC_RVA, "MATCH" if near else "differs (verify!)"))
+        print("        xref-derived function entry RVA = 0x%x" % entry)
+        if pat_hits is not None:
+            print("        byte-pattern (kGmrcFunctionPattern) matches: %d" % len(pat_hits))
+            if len(pat_hits) == 1 and pat_hits[0] == entry:
+                print("        GROUND-TRUTH VALIDATED: xref entry == pattern entry (0x%x)."
+                      % entry)
+                print("        -> xref and sig agree on this build. #13 Part 1 GO.")
+            elif len(pat_hits) == 1:
+                print("        pattern entry = 0x%x  (xref = 0x%x)  -> MISMATCH, investigate!"
+                      % (pat_hits[0], entry))
+            elif len(pat_hits) == 0:
+                print("        pattern does NOT match on this (newer) build — this is")
+                print("        exactly the fragility the xref rescues. Cross-validate on")
+                print("        a build where the sig still resolves before shipping.")
+            else:
+                print("        pattern matched %d sites (non-unique): %s"
+                      % (len(pat_hits), ", ".join("0x%x" % h for h in pat_hits)))
         print("        -> #13 Part 1 anchor precondition SATISFIED.")
     else:
         print("RESULT: AMBIGUOUS — referenced from %d functions:" % n)
