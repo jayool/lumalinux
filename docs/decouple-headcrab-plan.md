@@ -1,9 +1,24 @@
 # Plan — desacoplar LumaDeck de headcrab (inyección por wrapper)
 
-*Fecha: 2026-08-08. Secuela de `docs/slsteam-moon-findings.md` (M7, M3) y
-`docs/method.md` (las 6 gates). Estado: **plan, nada implementado**. Cruza dos
-repos: `jayool/lumalinux` (el instalador/wrapper) y `jayool/LumaDeck` (el
-backend Decky). Rama de trabajo: `claude/lumalinux-lumadeck-context-qv82xl`.*
+*Fecha original: 2026-08-08. Última actualización: 2026-08-11. Secuela de
+`docs/slsteam-moon-findings.md` (M7, M3) y `docs/method.md` (las 6 gates). Cruza
+dos repos: `jayool/lumalinux` (el instalador/wrapper) y `jayool/LumaDeck` (el
+backend Decky). Rama de trabajo: `claude/steam-update-gating`.*
+
+> **Estado: IMPLEMENTADO y validado en Deck.** Este doc nació como plan; ahora es
+> el registro de lo ejecutado. Resumen por workstream:
+>
+> | WS | Qué era | Estado |
+> |---|---|---|
+> | **WS1** | instalador por wrapper self-contained (`setup.sh`) | ✅ hecho, validado en Deck |
+> | **WS2** | recablear LumaDeck a `setup.sh` (fuera headcrab de la ruta feliz) | ✅ hecho |
+> | **WS3** | freeze/pin/handoff | ⚠️ **divergió** — ver §WS3: el freeze **se conservó** y se hizo *origin-based*, NO se borró |
+> | **WS4** | downgrade escape-hatch | ✅ hecho **como `lumalinux/downgrade.sh` (shell)**, no como `downgrade.py` |
+> | **WS5** | pruebas en Deck | ✅ hecho (migración desde headcrab + instalación limpia validadas) |
+>
+> Dependencia de headcrab que queda: **solo datos** (el pin `HeadcrabCompatibleClientVer`
+> + `sources.txt`), en la ruta rara de downgrade. Decoplarlo del todo es lumalinux#26.
+> §1 y §2 se conservan como el diagnóstico/racional *previo al cambio*.
 
 ---
 
@@ -19,10 +34,13 @@ rescate. Borrar la maquinaria de freeze/pin/handoff.
 
 ---
 
-## 1. Diagnóstico (estado actual, verificado en código)
+## 1. Diagnóstico (estado PREVIO al cambio, verificado en código)
 
-**Toda operación mutante funnelea por headcrab.** Puntos de invocación reales
-(`LumaDeck/backend/installer.py` salvo indicado):
+> Histórico: así estaba antes de WS2. Hoy la ruta feliz ya no toca headcrab —
+> `installer.py` corre `lumalinux/setup.sh` (ver §WS2). Se conserva como racional.
+
+**Toda operación mutante funneleaba por headcrab.** Puntos de invocación de
+entonces (`LumaDeck/backend/installer.py` salvo indicado):
 
 | Operación | Entrypoint | Qué corre |
 |---|---|---|
@@ -96,21 +114,33 @@ coexistencia.
 
 ## 3. Arquitectura destino
 
+> **Realizado.** El instalador por wrapper es un script **NUEVO `setup.sh`** (no
+> se reescribió `install.sh`; ver la decisión en §WS1). `install.sh` es el
+> instalador **legacy** dependiente de headcrab, que sigue en el repo pero fuera
+> de la ruta feliz. El downgrade se realizó como **`lumalinux/downgrade.sh`
+> (shell)**, no como un `downgrade.py` en LumaDeck.
+
 ```
-lumalinux/install.sh  (equivalente a moon setup.sh — self-contained)
+lumalinux/setup.sh  (NUEVO — equivalente a moon setup.sh, self-contained)
    ├─ fetch:   SLSsteam.so + library-inject.so (AceSLS/SLSsteam releases)
-   │           cloud_redirect.so (release CR)
-   │           lumalinux.so (jayool/lumalinux releases — ya lo hace)
+   │           cloud_redirect.so (+ cli) (release CR), netsock (fix.so)
+   │           lumalinux.so (jayool/lumalinux releases)
+   ├─ config:  seed/merge config.yaml (template-based) + edit in-place
+   │           (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notif=yes)
+   ├─ version: graba el tag de release de SLSsteam en .slssteam.version
    ├─ wrapper: ~/.local/share/SLSsteam/path/steam  (inyecta las 3 .so)
-   ├─ cobertura: parchea .desktop Exec + wrap launcher sistema + autostart
+   ├─ cobertura: parchea .desktop Exec + PATH drop-in Game Mode + autostart
    ├─ guardian: re-afirma cobertura tras updates de Steam
-   └─ uninstall: restaura .desktop/launcher, borra wrapper
+   ├─ migración: neutraliza el steam.sh de headcrab + barre sus leftovers
+   └─ uninstall: restaura .desktop/launcher/PATH, borra wrapper
+
+lumalinux/install.sh  (LEGACY — instalador dependiente de headcrab; en desuso)
 
 LumaDeck/backend/installer.py
-   └─ install / quick / repair  →  corre install.sh  (CERO headcrab)
+   └─ install / quick / repair  →  install_via_setup() corre setup.sh (CERO headcrab)
 
-LumaDeck/backend/downgrade.py  (NUEVO, opt-in, break-glass)
-   └─ reproduce el downgrade con piezas nuestras, leyendo datos de Deadboy
+lumalinux/downgrade.sh  (escape-hatch de rescate; reproduce el downgrade con
+   piezas nuestras, leyendo datos de Deadboy — invocado por desktop_handoff)
 ```
 
 ---
@@ -126,17 +156,22 @@ testeable sin romper el flujo actual; WS2 apuntará LumaDeck a `setup.sh` y WS3
 retirará `install.sh` cuando esté probado.
 
 **Estado:**
-- **WS1.1 — HECHO (pendiente de prueba en Deck):** `setup.sh` — fetch de las 4
+- **WS1.1 — HECHO y validado en Deck:** `setup.sh` — fetch de las 4
   `.so` (SLSsteam + library-inject + CloudRedirect + lumalinux + **netsock**) +
   instalación de la **app Flatpak de CloudRedirect** (best-effort, saltable con
   `LUMA_SKIP_CR_APP=1`) + escritura del wrapper + cobertura **Desktop**
   (`.desktop` Exec de `steam`/`steam-jupiter`/`bazzite-steam` + autostart
   override) + cobertura **Game Mode** (PATH drop-in en `.bashrc`/`.zshrc`/
   `.profile`, el modelo de moon) + uninstall (revierte todo, incl. el PATH).
-  Sintaxis verificada (`bash -n`, `sh -n` del wrapper); lógica de reescritura de
-  `.desktop` probada (reescribe `steam-jupiter`, ignora Exec que solo menciona
-  "steam" en args). **No probado**: fetch/extract 7z, install flatpak, y la
-  eficacia del PATH drop-in sobre el arranque de Game Mode (requiere Deck — WS5).
+  Validado end-to-end en Deck real: instalación limpia (4 `.so` mapeadas en el
+  cliente 32-bit, `status.json` con hooks activos) y **migración desde headcrab**
+  (steam.sh restaurado a vanilla, Game Mode arranca por el drop-in).
+  Añadidos respecto al diseño original: **config template-based** (seed/merge +
+  edit in-place de SafeMode/DisableCloud/DisableUpdates/NotifyInit/Notifications),
+  **grabado de la versión de SLSsteam** en `~/.config/SLSsteam/.slssteam.version`
+  (tag de release vía el truco de redirect de `releases/latest`; lo lee LumaDeck
+  para detectar updates de SLSsteam), y **migración** (`neutralize_steam_sh` +
+  `sweep_headcrab_leftovers`).
 - **`7z` es dependencia asumida, no un problema.** Es el único formato `.7z` del
   flujo (el `SLSsteam-Any.7z`); los fixes de luatools son `.zip` (Python `zipfile`,
   `fixes.py`). headcrab ya asume `7z`, así que `setup.sh` lo exige y aborta claro si
@@ -144,12 +179,13 @@ retirará `install.sh` cuando esté probado.
   plugin; no es necesario.)
 - **Hueco que queda (respecto a headcrab):** rutas de **Steam-como-Flatpak**
   (`setup.sh` es solo Steam nativo; la Deck es nativo, así que no urge).
-- **WS1.2 — HECHO (pendiente de prueba en Deck):** al estilo moon.
+- **WS1.2 — HECHO y validado en Deck:** al estilo moon.
   - **Fail-safe anti-brick** dentro del wrapper: cuenta boots que crashean al
-    arranque (dump `crash_*.dmp` en los primeros 180s), latchea arranque
-    **vanilla** al 3er fallo — o al **1º si el `steamclient.so` cambió** desde el
-    último boot limpio (update = causa casi segura). Auto-clear cuando cambia el
-    payload (updateas la stack). Probado: inyecta normal / va vanilla latcheado.
+    arranque (cualquier dump `*.dmp` en los primeros 180s — no solo `crash_*.dmp`;
+    también los `assert_*.dmp`), latchea arranque **vanilla** al 3er fallo — o al
+    **1º si el `steamclient.so` cambió** desde el último boot limpio (update = causa
+    casi segura). Auto-clear cuando cambia el payload (updateas la stack). Probado:
+    inyecta normal / va vanilla latcheado.
   - **Guardian systemd `--user`**: `.path` (vigila los dirs de `.desktop`) +
     `.timer` (reconcilia cada 5min) + `.service` (oneshot → `ensure-desktop-
     coverage.sh --guardian`). El wrapper además lo kickea en cada launch. Cobertura
@@ -158,9 +194,9 @@ retirará `install.sh` cuando esté probado.
   - Wrap del launcher del sistema (`/usr/bin/steam`): **no** — en SteamOS/Deck
     (inmutable) moon lo salta; Game Mode va por el PATH drop-in. Solo haría falta
     en Linux escritorio mutable (baja prioridad).
-- **La única incógnita real a validar en Deck (WS5):** que la sesión gamescope de
+- **La incógnita que quedaba (RESUELTA en Deck, WS5):** que la sesión gamescope de
   Game Mode herede el PATH del rc y resuelva `steam` por PATH (no por ruta
-  absoluta). Es el "open borrow" que marcaban nuestros docs; moon se apoya en esto.
+  absoluta). Confirmado: Game Mode arranca por el drop-in tras la migración.
 
 **Fuentes de descarga confirmadas** (verificadas 2026-08-08):
 - SLSsteam + `library-inject.so`: `SLSsteam-Any.7z` de
@@ -224,23 +260,38 @@ LD_PRELOAD, **jamás en LD_AUDIT** (heap corruption, doc moon).
 4. `check_dependencies`: la semántica de `injection_missing` cambia a "cobertura
    del wrapper perdida" en vez de "steam.sh perdió su bloque".
 
-### WS3 — LumaDeck: borrar la maquinaria de freeze/pin/handoff
+### WS3 — freeze/pin/handoff — ⚠️ DIVERGIÓ del plan
 
-- **Borrar `steam_freeze.py`** (152 L) — sin freeze en el modelo de update libre.
-- **Borrar/encoger `desktop_handoff.py`** (363 L) — el enrutado del downgrade se
-  va; conservar solo el slice de hand-off a Desktop para el sign-in del proveedor
-  de CloudRedirect (que es GUI-only) si sigue haciendo falta.
-- **Encoger `headcrab_compat.py`** (307 L) → un `downgrade_pin.py` mínimo que solo
-  lee el pin + la lista de sources como **datos** para WS4; quitar el gating de
-  "empuja al usuario a Desktop para downgrade" en install/repair (ya no downgradean).
-- `update_checks.py` / `components.py`: quitar la lógica "¿este update de Steam
-  rompe el pin?"; conservar los update-checks de `.so`/lumalinux.
-- Quitar el patch `suppress-freeze` (ya no hay headcrab que parchear).
+**El plan original pedía BORRAR el freeze; NO se hizo.** La idea era "en el modelo
+de update libre no hay freeze; el crash-guard lo sustituye". El crash-guard SÍ se
+portó (WS1.2), pero el freeze **se conservó** — como escape-hatch legítimo de un
+downgrade de rescate activo — y se rediseñó para que **no** re-acople al usuario a
+headcrab. Estado real de cada fichero:
 
-### WS4 — LumaDeck: downgrade como escape-hatch fino (`downgrade.py`, NUEVO)
+- **`steam_freeze.py` (150 L) — CONSERVADO, hecho *origin-based*.** No se borró.
+  El problema que forzó el rediseño: headcrab escribe `steam.cfg` en **toda**
+  instalación (no solo en downgrades), así que un migrante llega "congelado" sin
+  haber roto nada; y el gate viejo (`target > current`) nunca lo levantaba porque
+  el pin de headcrab == nuestro `target` heredado. Solución: nuestro
+  `downgrade.sh` firma su pin con una línea `# lumalinux` en `steam.cfg`;
+  `maybe_lift_freeze` **levanta en el acto** cualquier freeze **sin** esa firma
+  (ajeno = headcrab), y solo aplica el gate de recovery a **nuestro** pin firmado.
+  Así todo migrante se auto-descongela en el próximo `setup.sh`.
+- **`desktop_handoff.py` (385 L) — CONSERVADO.** Sigue enrutando el hand-off a
+  Desktop para el downgrade de rescate (`downgrade.sh`) y el sign-in de CR.
+- **`headcrab_compat.py` (307 L) — CONSERVADO** (no se encogió a `downgrade_pin.py`).
+  Sigue leyendo el pin/target + sources como datos. Decoplar el `target` de
+  headcrab es trabajo aparte: **lumalinux#26**.
+- `update_checks.py` / `components.py`: conservan los update-checks de
+  `.so`/lumalinux/SLSsteam; los gates de update por-build se **quitaron** del
+  frontend (los componentes actualizan libres del build de Steam).
 
-Reproducir el mecanismo con piezas nuestras, leyendo datos de Deadboy. El
-mecanismo NO es magia de headcrab (verificado leyendo `headcrab.sh`):
+### WS4 — downgrade como escape-hatch fino — ✅ HECHO como `lumalinux/downgrade.sh`
+
+**Realizado como script shell `lumalinux/downgrade.sh`** (invocado por
+`desktop_handoff.py` en el hand-off a Desktop), no como un `downgrade.py` en
+LumaDeck. El mecanismo reproduce el de headcrab con piezas nuestras, leyendo datos
+de Deadboy. NO es magia de headcrab (verificado leyendo `headcrab.sh`):
 
 1. Leer el pin `HeadcrabCompatibleClientVer` + fetch `sources.txt` de
    `Deadboy666/h3adcr-b-modul3s` (**solo datos**).
@@ -251,8 +302,10 @@ mecanismo NO es magia de headcrab (verificado leyendo `headcrab.sh`):
    URLs que Steam pide (reemplaza el binario `dgsc`).
 4. Correr el downgrade con el **flag propio de Steam**:
    `steam -forcesteamupdate -forcepackagedownload -overridepackageurl http://localhost:1666/ -exitsteam`.
-5. *(Opcional)* escribir `steam.cfg` para fijar el build — **el único sitio donde
-   un freeze es legítimo ahora**.
+5. escribir `steam.cfg` para fijar el build — **el único sitio donde un freeze es
+   legítimo ahora** — firmado con una línea `# lumalinux` para que
+   `steam_freeze.py` lo distinga de un freeze ajeno (headcrab) y lo mantenga hasta
+   que el ecosistema alcance el pin (ver §WS3).
 6. **Gate**: ofrecerlo solo cuando la inyección esté rota en un build no
    reconocido **y** lumalinux/SLSsteam no estén listos (cruzar con `updates.yaml`).
    Break-glass, opt-in, en Desktop.
@@ -262,16 +315,17 @@ manda a `-overridepackageurl` (para confirmar que un `http.server` estático bas
 o si `dgsc` hace algo especial). Hasta verificarlo, WS4 puede seguir usando los
 binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 
-### WS5 — Pruebas en la Deck (seguridad)
+### WS5 — Pruebas en la Deck (seguridad) — ✅ HECHO
 
-- Probar el install por wrapper en una instalación **secundaria/desechable** antes
-  de tocar la instalación viva del usuario.
-- Verificar: cargan las 3 `.so` (SLSsteam por LD_AUDIT; CR + lumalinux mapeadas en
-  el proceso); Game Mode + Desktop + autostart pasan todos por el wrapper; un update
-  de Steam simulado (regenerar `.desktop`) → el guardian re-cubre.
-- Verificar que un juego no-owned sigue descargando (las 6 gates siguen abriendo).
-- Verificar que uninstall restaura limpio.
-- Solo tras verde en secundaria: migrar la instalación viva.
+- Validado en codespace Arch limpio (instalación de cero) **y** en Deck real
+  (migración desde headcrab + instalación limpia).
+- Verificado: cargan las 4 `.so` (SLSsteam por LD_AUDIT; CR + lumalinux + netsock
+  mapeadas en el proceso 32-bit); Game Mode arranca por el PATH drop-in; `steam.sh`
+  restaurado a vanilla; `status.json` con hooks activos y `blocked=null`.
+- Verificado el ciclo de juego: un no-owned descarga (las 6 gates abren); el
+  race de descarga (#38) se auto-cura vía re-check de Steam.
+- Pendiente único: ejercitar el downgrade/mirror una vez (no se puede forzar sin
+  que Steam rompa de verdad).
 
 ---
 
@@ -282,7 +336,8 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 2. **WS5** — probar WS1 en secundaria.
 3. **WS2** (recablear LumaDeck a `install.sh`), manteniendo la ruta headcrab como
    fallback tras un flag durante una release.
-4. **WS3** (borrar maquinaria) una vez WS2 probado.
+4. **WS3** una vez WS2 probado — *ejecutado con divergencia*: el freeze no se
+   borró sino que se hizo origin-based (ver §WS3).
 5. **WS4** (downgrade escape-hatch) — independiente, cuando sea; menor urgencia
    (rara vez dispara).
 
@@ -313,18 +368,20 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 ## 8. Ficheros tocados (referencia)
 
 **lumalinux**
-- `install.sh` — mayor: instalador por wrapper (fetch + wrapper + cobertura + uninstall)
-- *(nuevos)* helper de cobertura (`scripts/ensure-desktop-coverage.sh`), plantilla
-  del wrapper, unit del guardian (`slsteam-desktop-guardian.{path,service}`)
+- `setup.sh` — **NUEVO**: instalador por wrapper (fetch + config + versión SLSsteam
+  + wrapper + cobertura + guardian + migración + uninstall)
+- `downgrade.sh` — **NUEVO**: escape-hatch de downgrade (shell), firma el pin
+- `install.sh` — LEGACY (headcrab), en desuso, no borrado
+- guardian + helper de cobertura + plantilla del wrapper (incrustados en `setup.sh`)
 
 **LumaDeck** (`backend/`)
-- `installer.py` — reescribir `install_dependencies`, quitar patches headcrab
-- `steam_freeze.py` — **BORRAR**
-- `desktop_handoff.py` — **BORRAR o encoger** (conservar solo sign-in CR si aplica)
-- `headcrab_compat.py` — encoger → `downgrade_pin.py` (solo lee pin + sources)
-- `downgrade.py` — **NUEVO** (escape-hatch)
+- `installer.py` — `install_via_setup()` corre `setup.sh`; fuera los patches headcrab
+- `steam_freeze.py` — **CONSERVADO**, hecho *origin-based* (firma `# lumalinux`)
+- `desktop_handoff.py` — **CONSERVADO** (enruta el downgrade + sign-in CR)
+- `headcrab_compat.py` — **CONSERVADO** (lee pin/target + sources; #26 lo decoplará)
+- `slssteam_config.py` — lee `.slssteam.version` para detectar updates de SLSsteam
 - `components.py`, `update_checks.py`, `paths.py`, `slssteam_ops.py`, `main.py`,
-  `quick_install_cli.py` — ajustar referencias
+  `quick_install_cli.py` — ajustadas referencias; gates de update por-build quitados
 
 ---
 
@@ -336,5 +393,7 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
   (`clientdowngrade` = `prepdowngrade` + `overideupdate`; `dlm`/`dgsc`/`sources.txt`
   de `h3adcr-b-modul3s`; chunks desde `client-update.fastly.steamstatic.com`).
 - Las 6 gates que deben seguir abriendo: `docs/method.md`.
-- Inyección actual (a sustituir): `lumalinux/src/main.cpp:58`; `LumaDeck/backend/
-  installer.py:121-253` (`_HEADCRAB_PATCHES`), `backend/paths.py` (`injection_missing`).
+- Inyección: sustituida por el wrapper (`lumalinux/setup.sh`). El viejo modelo era
+  el `LD_PRELOAD` en `steam.sh` (`src/main.cpp`) parcheado por `_HEADCRAB_PATCHES`
+  en `installer.py` — ya retirado de la ruta feliz. `backend/paths.py`
+  (`injection_missing`) ahora modela "cobertura del wrapper perdida".
