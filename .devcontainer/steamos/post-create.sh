@@ -284,9 +284,16 @@ case "${1:-}" in
         ;;
 esac
 echo "$(date '+%F %T') uid=$(id -u) arg='${1:-}' -> $TARGET" >>"$LOG" 2>/dev/null
-# setsid + </dev/null: el switch tiene que sobrevivir a la muerte del proceso
-# que lo llamo (el konsole del hand-off muere cuando el switch mata Plasma).
-setsid /usr/local/lib/lumadev/session-switch.sh "$TARGET" </dev/null >>"$LOG" 2>&1 &
+# nohup + setsid + </dev/null: el switch tiene que sobrevivir a la muerte del
+# proceso que lo llamo. El caso critico es el hand-off: el script que corre en
+# konsole es el LIDER DE SESION de su pty y termina justo despues de llamarnos;
+# al morir un lider de sesion el kernel manda SIGHUP al grupo foreground de la
+# pty, y el hijo sigue en ese grupo hasta completar su setsid() — una carrera
+# que lo mataba antes de ejecutar nada. nohup pone SIGHUP a ignorado ANTES del
+# exec (y eso sobrevive al exec), asi que la carrera ya no puede matarlo. El
+# sleep da ademas tiempo a que el setsid() se complete con el caller aun vivo.
+nohup setsid /usr/local/lib/lumadev/session-switch.sh "$TARGET" </dev/null >>"$LOG" 2>&1 &
+sleep 0.3
 exit 0
 SEL
 sudo chmod 755 /usr/bin/steamos-session-select
