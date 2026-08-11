@@ -73,6 +73,7 @@ set(LUMA_SOURCES
     src/license_reconcile.cpp
     src/patterns.cpp
     src/rtti.cpp
+    src/gmrc_xref.cpp
     src/sls_achievement_unblock.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp

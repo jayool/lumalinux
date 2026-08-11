@@ -1,4 +1,5 @@
 #include "patterns.hpp"
+#include "gmrc_xref.hpp"
 #include "log.hpp"
 
 #include <cstring>
@@ -195,7 +196,40 @@ uintptr_t FindBuildDepotDependencyFunction() {
 }
 
 uintptr_t FindGmrcFunction() {
-    return FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
+    // Byte pattern stays PRIMARY (it's the path the CI check / SafeMode gate
+    // validate per build). The job-name string-xref (#13 Part 1) is computed too
+    // and used only to RESCUE a pattern miss — a rebuild that reshuffles the
+    // getter's prologue but leaves the function intact breaks the pattern while
+    // the xref still resolves. When both resolve we log DRIFT if they disagree
+    // (telemetry toward flipping the preference once a CI xref-gate lands). This
+    // ordering means the xref can only help, never regress GMRC location.
+    uintptr_t viaPattern =
+        FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
+    uintptr_t viaXref = GmrcXref::FindGmrcFunction();
+
+    if (viaPattern) {
+        if (viaXref && viaXref != viaPattern) {
+            Log::Warn("GMRC locate: DRIFT method=pattern target=0x%lx xref=0x%lx "
+                      "(disagree) — using pattern; investigate the anchor",
+                      (unsigned long)viaPattern, (unsigned long)viaXref);
+        } else if (viaXref) {
+            Log::Info("GMRC locate: method=pattern target=0x%lx (xref agrees, drift=0)",
+                      (unsigned long)viaPattern);
+        } else {
+            Log::Info("GMRC locate: method=pattern target=0x%lx (xref unavailable)",
+                      (unsigned long)viaPattern);
+        }
+        return viaPattern;
+    }
+
+    if (viaXref) {
+        Log::Warn("GMRC locate: method=xref target=0x%lx — byte pattern MISSED "
+                  "(Steam likely reshuffled the prologue); xref rescued the hook",
+                  (unsigned long)viaXref);
+        return viaXref;
+    }
+
+    return 0;
 }
 
 uintptr_t FindShaderCacheDepotFunction() {
