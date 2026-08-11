@@ -236,8 +236,16 @@ neutralize_steam_sh() {
                 # No usable client.sh — fetch Valve's steam.sh. (Verify it's vanilla
                 # and non-empty before swapping.)
                 tmp="$sh.vanilla.tmp"
-                if { command -v curl >/dev/null 2>&1 && curl -fsSL "$vanilla_url" -o "$tmp" 2>/dev/null \
-                     || command -v wget >/dev/null 2>&1 && wget -qO "$tmp" "$vanilla_url" 2>/dev/null; } \
+                # Each downloader is wrapped in its own { } so this reads as
+                # (curl-block) || (wget-block). Without the inner braces, bash's
+                # equal-precedence left-assoc &&/|| parse it as
+                # ((curlAvail && curlDL) || wgetAvail) && wgetDL — which forces
+                # wget to run and succeed in EVERY case, so a curl-only Deck (no
+                # wget, and pacman can't add it on the read-only rootfs) fails the
+                # vanilla restore even after curl already fetched it, and falls to
+                # the lossy sed strip below.
+                if { { command -v curl >/dev/null 2>&1 && curl -fsSL "$vanilla_url" -o "$tmp" 2>/dev/null; } \
+                     || { command -v wget >/dev/null 2>&1 && wget -qO "$tmp" "$vanilla_url" 2>/dev/null; } ; } \
                    && [[ -s "$tmp" ]] && ! grep -qE "$_HEADCRAB_STEAMSH_RE" "$tmp" 2>/dev/null; then
                     mv -f "$tmp" "$sh"; chmod 0755 "$sh" 2>/dev/null || true
                     info "Restored vanilla steam.sh from Valve source at $sh (no usable client.sh)"
