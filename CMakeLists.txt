@@ -46,6 +46,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32 -D_GLIBCXX_USE_CXX11_ABI=0")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m32")
 set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} -m32")
 
+# Fail the LINK on any undefined symbol instead of shipping a .so that only
+# breaks when LD_PRELOAD'd into Steam (as a conditionally-excluded source once
+# did — the empty-log "Steam won't start" bug). liblumalinux.so is self-contained
+# (all deps statically linked or dlopen-lazy), so it must have zero undefined
+# symbols; this catches "forgot to compile a source" / typo'd symbol at build.
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

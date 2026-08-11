@@ -1,5 +1,6 @@
 #include "shader_depot_hook.hpp"
 #include "../patterns.hpp"
+#include "../rva_feed.hpp"
 #include "../key_store.hpp"
 #include "../gmrc_store.hpp"
 #include "../lmhook.hpp"
@@ -90,21 +91,24 @@ uint32_t HookFn(void* appinfo) {
 namespace Hooks::ShaderDepot {
 
 bool Install() {
-    uintptr_t target = Patterns::FindShaderCacheDepotFunction();
+    // RVA feed first (prologue-independent), else the unique-match byte pattern.
+    const char* method = "rva";
+    uintptr_t target = RvaFeed::Resolve("ShaderDepot");
+    if (!target) { method = "pattern"; target = Patterns::FindShaderCacheDepotFunction(); }
     if (!target) {
-        Log::Warn("ShaderDepot hook: GetShaderCacheDepot pattern not found — "
+        Log::Warn("ShaderDepot hook: GetShaderCacheDepot not found — "
                   "per-game shader skip not installed (non-fatal; keyless shader "
                   "pre-cache will behave as before — fall back to the global "
                   "DisableShaderCache if it loops). See RESEARCH §13.9.");
-        Log::Warn("Hook install: name=ShaderDepot method=pattern outcome=pattern_miss");
+        Log::Warn("Hook install: name=ShaderDepot method=%s outcome=miss", method);
         return false;
     }
     void* tramp = nullptr;
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("ShaderDepot hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
-        Log::Warn("Hook install: name=ShaderDepot method=pattern target=0x%lx outcome=hook_install_failed",
-                  (unsigned long)target);
+        Log::Warn("Hook install: name=ShaderDepot method=%s target=0x%lx outcome=hook_install_failed",
+                  method, (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<ShaderDepotFn>(tramp);
@@ -112,8 +116,8 @@ bool Install() {
     Log::Info("ShaderDepot hook: INSTALLED (per-game shader skip, target=0x%lx, "
               "trampoline=%p)", (unsigned long)target, (void*)g_origFn);
     uintptr_t base = Patterns::FindSteamclientBase();
-    Log::Info("Hook install: name=ShaderDepot method=pattern target=0x%lx rva=0x%lx outcome=installed",
-              (unsigned long)target, (unsigned long)(base ? target - base : 0));
+    Log::Info("Hook install: name=ShaderDepot method=%s target=0x%lx rva=0x%lx outcome=installed",
+              method, (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 

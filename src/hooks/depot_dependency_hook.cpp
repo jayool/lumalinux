@@ -1,5 +1,6 @@
 #include "depot_dependency_hook.hpp"
 #include "../patterns.hpp"
+#include "../rva_feed.hpp"
 #include "../key_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
@@ -147,10 +148,13 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
 namespace Hooks::DepotDependency {
 
 bool Install() {
-    uintptr_t target = Patterns::FindBuildDepotDependencyFunction();
+    // RVA feed first (prologue-independent), else the byte pattern.
+    const char* method = "rva";
+    uintptr_t target = RvaFeed::Resolve("BuildDep");
+    if (!target) { method = "pattern"; target = Patterns::FindBuildDepotDependencyFunction(); }
     if (!target) {
         Log::Error("DepotDependency hook: cannot install — target not found");
-        Log::Warn("Hook install: name=BuildDep method=pattern outcome=pattern_miss");
+        Log::Warn("Hook install: name=BuildDep method=%s outcome=miss", method);
         return false;
     }
 
@@ -158,8 +162,8 @@ bool Install() {
     if (!LmHook::Install(target, reinterpret_cast<void*>(&HookFn), &tramp)) {
         Log::Error("DepotDependency hook: LmHook::Install failed (target=0x%lx)",
                    (unsigned long)target);
-        Log::Warn("Hook install: name=BuildDep method=pattern target=0x%lx outcome=hook_install_failed",
-                  (unsigned long)target);
+        Log::Warn("Hook install: name=BuildDep method=%s target=0x%lx outcome=hook_install_failed",
+                  method, (unsigned long)target);
         return false;
     }
     g_origFn = reinterpret_cast<BuildDepotDependencyFn>(tramp);
@@ -167,8 +171,8 @@ bool Install() {
     Log::Info("DepotDependency hook: INSTALLED (target=0x%lx, trampoline=%p)",
               (unsigned long)target, (void*)g_origFn);
     uintptr_t base = Patterns::FindSteamclientBase();
-    Log::Info("Hook install: name=BuildDep method=pattern target=0x%lx rva=0x%lx outcome=installed",
-              (unsigned long)target, (unsigned long)(base ? target - base : 0));
+    Log::Info("Hook install: name=BuildDep method=%s target=0x%lx rva=0x%lx outcome=installed",
+              method, (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
 
