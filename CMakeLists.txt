@@ -87,6 +87,7 @@ set(LUMA_SOURCES
     src/globals.cpp
     src/status.cpp
     src/curl.cpp
+    src/sha256.cpp
 )
 
 # SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so).
@@ -115,11 +116,15 @@ set(LUMA_SOURCES
 # (manifest.opensteamtool.com, manifest.steam.run) — so it must be present even
 # in LUMA_NO_UPDATE builds. curl.cpp is dlopen-lazy with ZERO link cost (no
 # NEEDED entry), so compiling it always is free and keeps the reaper-safe
-# property intact. Only sha256.cpp/update.cpp (the actual SafeMode gate) stay
-# gated below.
+# property intact. sha256.cpp is ALSO unconditional now (in LUMA_SOURCES above):
+# the RVA feed (src/rva_feed.cpp) hashes steamclient.so via Utils::getFileSHA256
+# to key res/rvas/<hash>.yaml, so it must be present even in LUMA_NO_UPDATE builds
+# — otherwise the .so has an undefined symbol and fails to load. It is a self-
+# contained SHA-256 (no libcrypto), so compiling it always is free. Only
+# update.cpp (the actual SafeMode gate) stays gated below.
 option(LUMA_NO_UPDATE "Build without the SafeMode update-check (no hash gate)" ON)
 if(NOT LUMA_NO_UPDATE)
-    list(APPEND LUMA_SOURCES src/sha256.cpp src/update.cpp)
+    list(APPEND LUMA_SOURCES src/update.cpp)
 endif()
 
 add_library(lumalinux SHARED ${LUMA_SOURCES})
