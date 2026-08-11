@@ -295,7 +295,12 @@ sweep_headcrab_leftovers() {
         "$HOME/.local/share/applications/headcrab.desktop" \
         "$HOME/.local/share/icons/hicolor/48x48/apps/headcrab.png" \
         "$SLS_CFG_DIR/.headcrabd" \
-        "$SLS_DIR/path/steam.bak"; do
+        "$SLS_DIR/path/steam.bak" \
+        "$CR_DIR/cloud_redirect_lib"; do
+        # cloud_redirect_lib is headcrab's name for the CloudRedirect CLI; we ship
+        # it as cloud_redirect_cli, so its file is never overwritten and lingers as
+        # a dead duplicate after migration. Verified orphaned in a real headcrab->
+        # wrapper migration. Exact path, only removes headcrab's stale name.
         [[ -e "$p" ]] || continue
         rm -rf "$p" 2>/dev/null && { info "Swept headcrab leftover: $p"; removed=1; }
     done
