@@ -13,9 +13,10 @@ stack. For the *why* behind every step see [`method.md`](method.md) §6 and
 
 ## Prerequisites
 
-- Native Steam + SLSsteam (via enter-the-wired/Headcrab) + lumalinux installed
-  via `install.sh` (so `steam.sh` carries the `LD_PRELOAD` patch). Confirm with a
-  toast `lumalinux … N/N hooks active` and `~/.cache/lumalinux/lumalinux.log`
+- Native Steam + SLSsteam + lumalinux installed via the **wrapper model**
+  (`setup.sh`, or LumaDeck's Quick Install), so the stack loads through the wrapper
+  at `~/.local/share/SLSsteam/path/steam` and `steam.sh` stays vanilla. Confirm with
+  a toast `lumalinux … N/N hooks active` and `~/.cache/lumalinux/lumalinux.log`
   showing `3/3 hooks active` + `PKG0_FINDER: HIT`.
 - A Hubcap `.zip` for the game (the **current** version) and **one old
   `.manifest`** per content depot you want to start from. The old manifests come

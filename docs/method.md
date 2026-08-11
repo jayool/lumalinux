@@ -114,7 +114,11 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 6. Write a clean `.acf` stub so Steam shows **Install** (not "No internet").
 
 **Phase 1 — Steam start (hooks load):**
-7. `steam.sh` exports `LD_AUDIT=…SLSsteam.so` and `LD_PRELOAD=…liblumalinux.so`.
+7. The **wrapper** at `~/.local/share/SLSsteam/path/steam` exports
+   `LD_AUDIT=…library-inject.so:SLSsteam.so` and
+   `LD_PRELOAD=…cloud_redirect.so:liblumalinux.so`, then `exec`s the real Steam.
+   (Pre-migration these were baked into `steam.sh`; now `steam.sh` stays vanilla and
+   the wrapper is the injection point — see `decouple-headcrab-plan.md`.)
 8. **SLSsteam** clears **gates 1 + 2**: its **ownership spoof**
    (`CheckAppOwnership`) makes the game appear owned (Install button) and lets
    Steam fetch its appinfo through the normal handshake. (`sendPICSInfoRequest`
@@ -156,7 +160,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 
 | Gate / concern | **lumalinux** (Linux) | **LumaCore + SteaMidra** (Windows) | **SteamTools / OpenSteamTool** (Windows) |
 |---|---|---|---|
-| **Injection** | `LD_PRELOAD` in `steam.sh` (added by Headcrab) | `dwmapi.dll` proxy → `LumaCore.dll` → copies `steamclient64.dll` to `bin\lcoverlay.dll` and hooks the copy | `dwmapi.dll`+`xinput1_4.dll`+`OpenSteamTool.dll` proxies; hooks `steamclient64.dll` + `steamui.dll` |
+| **Injection** | `LD_AUDIT`+`LD_PRELOAD` from the wrapper at `~/.local/share/SLSsteam/path/steam` (`setup.sh`; `steam.sh` stays vanilla) | `dwmapi.dll` proxy → `LumaCore.dll` → copies `steamclient64.dll` to `bin\lcoverlay.dll` and hooks the copy | `dwmapi.dll`+`xinput1_4.dll`+`OpenSteamTool.dll` proxies; hooks `steamclient64.dll` + `steamui.dll` |
 | **1+2 Ownership / PICS** | **SLSsteam** (separate, `LD_AUDIT`): `CheckAppOwnership` + subscribed apps (these open the appinfo); optional PICS access-token attach (secondary, LumaDeck writes none) | **LumaCore itself**: `PackagePatch::CheckAppOwnership` patch, forged AppTicket/ETicket (`CmdUser`/`IPCBus`, for Denuvo), `SteamCapture::NotifyLicenseChanged` (in-memory licence inject, no restart) | Forged AppTicket/ETicket, ConfigStore ticket reuse, SteamStub vuln |
 | **3 Depot surfacing** | package-0 **finder** (active cache walk, §13) | `PackagePatch::LoadPackage` (hook, injects appids into Package 0's `AppIdVec`) | KeyValues / manifest patching |
 | **4 Manifest pinning** | **SLSsteam** `ManifestIds` (since v0.16.10; lumalinux's BuildDep hook disabled, SLSsteam owns `BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (hook) | manifest patching |

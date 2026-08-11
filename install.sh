@@ -17,7 +17,12 @@ set -euo pipefail
 # ── config ────────────────────────────────────────────────────────────────
 REPO="jayool/lumalinux"
 SO_NAME="liblumalinux.so"
-SO_URL="https://github.com/${REPO}/releases/latest/download/${SO_NAME}"
+# Default: the latest stable release. Override with LUMALINUX_SO_URL to install a
+# specific build (e.g. a -test prerelease asset) without touching what "latest"
+# resolves to — used for reversible self-testing:
+#   LUMALINUX_SO_URL=https://github.com/jayool/lumalinux/releases/download/vX-test.1/liblumalinux.so \
+#     curl -fsSL .../install.sh | bash
+SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/download/${SO_NAME}}"
 
 INSTALL_DIR="${HOME}/.local/share/lumalinux"
 KEYS_DIR="${HOME}/.config/lumalinux"

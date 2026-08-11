@@ -16,7 +16,7 @@ to grep for, and what it tells you:
 | `SafeMode` mismatch / `Curl Res` + the hash isn't whitelisted | Steam shipped a new `steamclient.so`; patterns probably still match | **A.1** Hash bump |
 | `Hook install: name=<HOOK> … outcome=pattern_miss` | A pattern moved — that hook can't install | **A.2** / **A.3** Re-derive patterns |
 | `PKG0_FINDER: cache-access idiom not found` or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
-| No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the `LD_PRELOAD` block is gone | **B** SLSsteam launcher regenerated |
+| No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
 
 If install is broken but you can't tell which row from a single line, do this
@@ -61,9 +61,15 @@ How it works (`src/update.cpp`, `res/updates.yaml`, `res/version.txt`):
 
 Maintainer fix:
 
-1. Get the new `steamclient.so` (from your Deck or from a user log):
+1. Get the new `steamclient.so` **hash** — the one lumalinux itself computed, so
+   there's no ambiguity about which binary. lumalinux hashes the `steamclient.so`
+   actually LOADED into the client — the `ubuntu12_32` / `steamdeck_stable_ubuntu12`
+   one, **not** `linux32` (which is a different binary with a different hash and is
+   never what SafeMode checks). Easiest is straight from the log:
    ```sh
-   sha256sum ~/.local/share/Steam/linux32/steamclient.so
+   grep 'steamclient.so hash is' ~/.cache/lumalinux/lumalinux.log | tail -1
+   # or by hand, the loaded 32-bit client (NOT linux32):
+   sha256sum ~/.local/share/Steam/ubuntu12_32/steamclient.so
    ```
 
 2. Verify the existing patterns still cover that binary by running the
@@ -113,9 +119,11 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
 > (`src/update.cpp`: `clientHashMap[VERSION]`) and never sees the new group's hash,
 > so SafeMode keeps blocking that build — correctly — until the user updates.
 
-1. Grab the new `steamclient.so`:
+1. Grab the new `steamclient.so` — the loaded `ubuntu12_32` /
+   `steamdeck_stable_ubuntu12` binary (the one lumalinux hooks and hashes), **not**
+   `linux32`:
    ```sh
-   cp ~/.local/share/Steam/linux32/steamclient.so /tmp/
+   cp ~/.local/share/Steam/ubuntu12_32/steamclient.so /tmp/
    ```
 
 2. Re-derive using the Ghidra postScript (RESEARCH §8.1):
@@ -190,7 +198,7 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
    `res/version.txt`** to the GitHub release. That `version.txt` asset is the
    group-id compiled into the `.so`, and LumaDeck's update gate reads it (from the
    **release**, not `main`) to decide which builds the shipping binary can hook —
-   so never omit it. Users that re-run `install.sh` (or LumaDeck's reinstall
+   so never omit it. Users that re-run `setup.sh` (or LumaDeck's reinstall
    action) pick up the new binary.
 
    > Only a **critical** move bumps the group (per `CMakeLists.txt`). A
@@ -224,30 +232,46 @@ and revisit only if you need the diagnostic.
 
 ---
 
-## B) SLSsteam launcher regenerated (no lumalinux banner at all)
+## B) Wrapper not reached (no lumalinux banner at all)
 
 **Symptom**: Steam starts with no `lumalinux v… preinit (…)` banner in the
 log from that session. Toast doesn't show up either. lumalinux isn't being
 loaded at all.
 
-**Cause**: **SLSsteam** is the piece that actually does ownership / licensing
-work; it ships with its own updater called **Headcrab** (the
-`h3adcr-b-modul3s` repo, installed by `enter-the-wired`). When Headcrab
-runs, it **regenerates** `~/.local/share/Steam/steam.sh` from a fresh
-upstream copy. The `LD_PRELOAD=…liblumalinux.so` block that lumalinux's
-`install.sh` had inserted goes with it. The deployed `.so`, the `keys.txt`,
-and SLSsteam itself are untouched — only the launcher wrapper is.
+**Cause**: injection comes from the **wrapper** at
+`~/.local/share/SLSsteam/path/steam` (`setup.sh`'s model). "No banner" means Steam
+launched **without going through the wrapper**. Two ways that happens:
 
-**Fix**: re-run lumalinux's installer to re-insert the block.
+1. **Coverage lost.** A Steam self-update (or a DE/desktop change) regenerated a
+   `*steam*.desktop`, or the Game Mode PATH drop-in isn't in effect, so the launch
+   resolved the real Steam instead of the wrapper. The systemd `--user` guardian
+   re-affirms coverage on a timer + on `.desktop` changes; if it isn't running (or a
+   brand-new launch path appeared) coverage can lapse.
+2. **The crash-loop fail-safe latched vanilla — on purpose.** The wrapper counts
+   startup crashes (`*.dmp` in the first 180 s) and boots **vanilla** (no injection)
+   after the 3rd — or the 1st if `steamclient.so` changed since the last clean boot
+   (an update is the usual trigger). This is the anti-brick net: a bad Steam update
+   that breaks the byte patterns runs *without* unlock instead of crash-looping. So
+   "no banner right after a Steam update" often means the fail-safe did its job and
+   the real problem is a pattern break (**case A**). The latch **auto-clears when the
+   payload changes** — i.e. when you reinstall/update the stack.
+
+**Fix**: re-run the installer (idempotent — re-fetches the `.so`s, rewrites the
+wrapper, re-affirms coverage, and clears the vanilla latch):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
 ```
 
-> This happens on every Headcrab Updater run. Until upstream Headcrab grows
-> a hook point for third-party `LD_PRELOAD` additions (or until LumaDeck's
-> "Install / Reinstall Dependencies" action wraps both Headcrab and
-> lumalinux's installer in sequence), the re-run is manual.
+or, in LumaDeck, **Settings → Dependencies → Install / Reapply lumalinux**. If the
+banner still doesn't appear next boot, the launch path genuinely isn't hitting the
+wrapper — check the guardian is active
+(`systemctl --user status slsteam-desktop-guardian.path`) and that Game Mode inherits
+the PATH drop-in. If the banner appears but hooks then fail, it wasn't B — go to A.
+
+> In the old model this row meant "Headcrab regenerated `steam.sh` and dropped
+> lumalinux's `LD_PRELOAD` block". That can't happen now: `steam.sh` is left vanilla
+> and the wrapper is the injection point (see `docs/decouple-headcrab-plan.md`).
 
 ---
 
@@ -366,7 +390,8 @@ same discipline applies to any future in-memory patch.)
 
 ## TL;DR — which fix to try, in order
 
-1. **No banner in the log** → B (re-run `install.sh`).
+1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
+   or the crash-loop fail-safe latched vanilla → the real issue is usually A).
 2. **`SafeMode` mismatch but `verify-fix` is green** → A.1 (hash bump in
    `updates.yaml`, no rebuild).
 3. **`outcome=pattern_miss` on DepotKey/GMRC** → A.2 / A.3

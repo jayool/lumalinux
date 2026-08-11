@@ -5,9 +5,14 @@
 > manual (desktop, no plugin) flow and the tool's full CLI, for driving
 > lumalinux directly with Hubcap-style zips.
 
-Prerequisites: SLSsteam installed and its Headcrab-patched `steam.sh` in place,
-plus lumalinux deployed (see the [README Installation](../README.md#installation)).
-Run every command with **Steam closed**.
+Prerequisites: the injection stack installed and reachable — SLSsteam + lumalinux
+deployed and loaded through the **wrapper** at `~/.local/share/SLSsteam/path/steam`
+(the model `setup.sh` installs, or LumaDeck's Quick Install). This replaces the old
+Headcrab-patched `steam.sh` model: `steam.sh` is left vanilla and injection comes
+from the wrapper (see the [README Installation](../README.md#installation) and
+[`decouple-headcrab-plan.md`](decouple-headcrab-plan.md)). Note `steamidra_lite.py`
+below is about **installing a game** into that stack; it is independent of how the
+`.so`s are injected. Run every command with **Steam closed**.
 
 ## What one install does
 
