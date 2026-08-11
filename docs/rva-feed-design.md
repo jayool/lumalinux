@@ -60,55 +60,54 @@ offset, so it is robust to prologue changes (it never reads the prologue).
    on-disk hash matches; the cron derived those RVAs from that exact binary and
    validated them (`check_patterns` unique-match) before publishing.
 
-## 5. Feed format (extend `res/updates.yaml`)
+## 5. Feed format — one file per build hash (`res/rvas/<sha256>.yaml`)
 
-Add a top-level `BuildRvas` map. It is **additive**: `update.cpp` today reads
-only `SafeModeHashes`, so old runtimes ignore `BuildRvas`; the new resolver reads
-it. RVAs are file vaddrs (image base 0), hex strings.
+**Implemented (Phase 1).** Rather than a `BuildRvas` block inside
+`res/updates.yaml`, the feed is **one file per build**, `res/rvas/<sha256>.yaml`,
+mirroring steam-monitor's `<sha256>.toml` layout. This was chosen over an inline
+block because: it never touches `updates.yaml` (its hand-maintained
+`steam_version` / `caps` comments stay intact); `updates.yaml` — fetched by every
+Deck on every boot — doesn't grow unbounded with every build's full RVA set; and
+each Deck fetches only its own build's small file. RVAs are file vaddrs (image
+base 0), hex strings.
 
 ```yaml
-SafeModeHashes:            # unchanged — the allow-list, grouped by pattern set
-  20260611150000:
-    - dd3ca9f549224da3e5514fecd9887d3bf3a8a219ff123d50fe3f7b5af888af19
-    # ...
-
-BuildRvas:                 # NEW — per exact steamclient.so hash
-  dd3ca9f549224da3e5514fecd9887d3bf3a8a219ff123d50fe3f7b5af888af19:
-    steam_version: 1785187029
-    hooks:                 # hook name -> file vaddr (RVA)
-      DepotKey:    "0x118c1f0"
-      GMRC:        "0x4d9f00"
-      BuildDep:    "0xfe1bf0"
-      ShaderDepot: "0x1b3e90"
-    # optional enrichment (steam-monitor `ipc` style): lets the runtime
-    # cross-check DepotKey and detect a vtable reorder without reading a prologue.
-    depotkey_vtable:
-      class:      "12CConfigStore"
-      vtable_rva: "0x2e6cbac"
-      slot:       6
-      fencepost:  "0x...."   # e.g. FNV of {slot-1, slot, slot+1} target RVAs
-    finder:                  # optional: the package-0 finder's per-build disp (X)
-      cache_global_disp: "0x3967c"
+# res/rvas/dd3ca9…af19.yaml  — auto-generated, do not edit
+steamclient_sha256: "dd3ca9f549224da3e5514fecd9887d3bf3a8a219ff123d50fe3f7b5af888af19"
+steam_version: 1785187029
+hooks:                    # UNIQUE, non-diagnostic hooks only (file vaddr)
+  DepotKey: "0x118c1f0"
+  GMRC: "0x4d9f00"
+  BuildDep: "0xfe1bf0"
+  ShaderDepot: "0x1b3e90"
+depotkey_rtti:            # CConfigStore vtable slot (reorder-drift detection)
+  class: "12CConfigStore"
+  slot: 6
+  rva: "0x118c1f0"
+finder:
+  cache_global_disp: "0x3967c"
 ```
 
 Notes:
+- A hook is written only when it resolved **UNIQUE**; a moved/ambiguous hook is
+  omitted so the runtime falls back to its byte pattern for that hook alone.
 - `hooks.DepotKey` is the accessor RVA the cron derived via the **RTTI vtable
-  walk** (`rtti_derive_slot`), i.e. robust-to-prologue at derive time; the
-  runtime just uses the number.
-- `depotkey_vtable` is optional; if present the runtime can verify
-  `vtable[slot]` translates to `hooks.DepotKey` and the fencepost matches.
+  walk** (`rtti_derive_slot`) — robust-to-prologue at derive time; the runtime
+  just uses the number. `depotkey_rtti.slot` enables a later `vtable[slot]`
+  cross-check / fencepost (a `depotkey_vtable.vtable_rva` + `fencepost` can be
+  added when that cross-check lands).
 
-## 6. CI / cron changes (`check_patterns.py`, `watch-steam.yml`)
+## 6. CI / cron changes (`check_patterns.py`, `watch-steam.yml`) — done
 
 `check_patterns` already produces `result.hooks[*].rvas`, `result.rtti.slot/rva`,
-and the finder disp. Add:
+and the finder disp. Implemented:
 
-- A `--emit-rvas <updates.yaml>` mode that, for the analyzed build's hash, writes
-  the `BuildRvas[<hash>]` block (hooks RVAs + depotkey_vtable + finder disp),
-  computing `fencepost` from the neighboring slot RVAs.
-- `watch-steam.yml` calls it right after the existing whitelist/caps step and
-  commits `updates.yaml` (same flow that appends hashes today). BLOCKING exit (3)
-  still gates: no RVA block is written for a build whose criticals didn't validate.
+- `check_patterns.py --emit-rvas <dir> [--steam-version N]`: on a **non-BLOCKING**
+  verdict, writes `<dir>/<sha256>.yaml` (function `emit_rvas_file`).
+- `watch-steam.yml` passes `--emit-rvas res/rvas --steam-version <ver>` on the
+  validate step and `git add res/rvas` alongside the hash bump, so the RVA file is
+  committed with the whitelist entry. A BLOCKING build writes no file (never
+  trusted). Unit-tested with a synthetic result (moved + diagnostic hooks omitted).
 
 No new analyzer is needed — this reuses the derivation lumalinux already runs.
 
@@ -130,9 +129,9 @@ namespace VaddrXlate {
 
 ```cpp
 namespace RvaFeed {
-  // Parse the (already-fetched) updates.yaml, hash the on-disk steamclient.so,
-  // select BuildRvas[hash]. Cheap: the SafeMode hash is computed anyway.
-  bool LoadForCurrentBuild(const char* steamclientPath, const std::string& yaml);
+  // Hash the on-disk steamclient.so and load res/rvas/<hash>.yaml (fetched like
+  // updates.yaml, cached). Cheap: the SafeMode hash is computed anyway.
+  bool LoadForCurrentBuild(const char* steamclientPath, const std::string& rvaYaml);
   // Runtime address for a hook, or 0 if this build has no feed entry for it.
   uintptr_t Resolve(const char* hookName);
 }
@@ -199,8 +198,8 @@ extra: verify `vtable[slot]` == this address and fencepost matches.)
 
 ## 12. Phased rollout
 
-1. **CI emit** (`check_patterns --emit-rvas`) — start populating `BuildRvas` for
-   new builds. No runtime change; pure data.
+1. **CI emit** (`check_patterns --emit-rvas`) — populate `res/rvas/<hash>.yaml`
+   for new builds. No runtime change; pure data. **DONE.**
 2. **`vaddr_xlate` C++** + unit test mirroring `tools/xlate_vaddr.py`.
 3. **`rva_feed` C++** + wire ONE hook (DepotKey) RVA-first with pattern fallback;
    validate on-device (`method=rva target=…` matches the pattern target).
@@ -211,9 +210,9 @@ Each phase is independently shippable and fails closed to today's behavior.
 
 ## 13. Open questions
 
-- Backfill `BuildRvas` for already-whitelisted hashes, or new builds only?
-- Put `BuildRvas` under the pattern-group key (like `SafeModeHashes`) or flat by
-  hash? Flat is simpler; RVAs are build-exact and don't depend on the group.
+- Backfill `res/rvas/` for already-whitelisted hashes, or new builds only?
+- Fetch each `res/rvas/<hash>.yaml` on demand (one small file per Deck, like
+  steam-monitor) vs. bundle them — on-demand keeps the per-boot download tiny.
 - Emit RVAs in `.text`-relative form or image-base-0 file vaddr? File vaddr keeps
   it aligned with `check_patterns`/`experiment_rtti_depotkey` reporting; `xlate`
   handles it.
