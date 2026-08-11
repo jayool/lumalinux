@@ -193,6 +193,11 @@ case "$TARGET" in
 plasma)
     stop_steam
     stop_plasma   # por si quedo una sesion anterior a medias
+    # openbox (el WM que levanta start-display.sh para Steam) impide a kwin
+    # coger el display: "kwin: unable to claim manager selection". Fuera antes
+    # de arrancar Plasma; al volver a gamescope se relanza.
+    pkill -x openbox 2>/dev/null
+    sleep 0.5
     if ! command -v startplasma-x11 >/dev/null 2>&1; then
         echo "startplasma-x11 no existe (¿falta el paquete plasma-x11-session?)"
         exit 1
@@ -204,6 +209,9 @@ plasma)
     ;;
 gamescope)
     stop_plasma
+    # kwin murio con Plasma: devolvemos openbox (gamepadui quiere un WM debajo
+    # para focus/stacking, igual que en el env base).
+    pgrep -x openbox >/dev/null 2>&1 || ( openbox >/dev/null 2>&1 & )
     # Decky (PluginLoader) sigue corriendo; se re-inyecta cuando el CEF vuelve.
     ( steam -gamepadui -no-cef-sandbox >/tmp/steam.log 2>&1 & )
     echo "steam gamepadui relanzado (log /tmp/steam.log)"
