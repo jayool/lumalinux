@@ -133,8 +133,8 @@ const uintptr_t* FindPointerValue(const std::vector<Range>& readable,
 // resolvers so the fixed-slot and derive-by-signature paths use the exact same
 // anchor walk (incl. the .data.rel.ro relocation wait).
 bool FindTypeVtable(const char* mangledName, uintptr_t& base, size_t& size,
-                    void**& vtable) {
-    base = 0; size = 0; vtable = nullptr;
+                    std::vector<void**>& vtables) {
+    base = 0; size = 0; vtables.clear();
     std::vector<Range> readable;
     if (!MapSteamclient(base, size, readable) || readable.empty()) {
         Log::Warn("RTTI: steamclient.so not mapped / no readable ranges");
@@ -210,21 +210,20 @@ bool FindTypeVtable(const char* mangledName, uintptr_t& base, size_t& size,
             r.end & ~(sizeof(uintptr_t) - 1));
         for (; p + 1 < e; ++p) {
             if (*p != 0) continue;
-            auto it = accept.find(*(p + 1));
-            if (it != accept.end()) {
-                vtable = reinterpret_cast<void**>(const_cast<uintptr_t*>(p + 2));
-                Log::Info("RTTI: '%s' vtable at %p (typeinfo=0x%lx, %zu candidate(s))",
-                          mangledName, (void*)vtable, (unsigned long)it->second,
-                          tiCandidates.size());
-                return true;
-            }
+            if (accept.find(*(p + 1)) != accept.end())
+                vtables.push_back(reinterpret_cast<void**>(const_cast<uintptr_t*>(p + 2)));
         }
     }
 
-    Log::Warn("RTTI: vtable for '%s' not found (%zu type-name pointer candidate(s), "
-              "first typeinfo=0x%lx)", mangledName, tiCandidates.size(),
-              (unsigned long)typeinfoAddr);
-    return false;
+    if (vtables.empty()) {
+        Log::Warn("RTTI: vtable for '%s' not found (%zu type-name pointer candidate(s), "
+                  "first typeinfo=0x%lx)", mangledName, tiCandidates.size(),
+                  (unsigned long)typeinfoAddr);
+        return false;
+    }
+    Log::Info("RTTI: '%s' -> %zu candidate vtable(s) from %zu type_info candidate(s)",
+              mangledName, vtables.size(), tiCandidates.size());
+    return true;
 }
 
 // Minimal "AA BB ?? .." matcher (same syntax as the k*Pattern literals), kept
@@ -266,59 +265,62 @@ size_t MatchSignature(uintptr_t addr, const char* sig) {
 namespace Rtti {
 
 uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
-    uintptr_t base = 0; size_t size = 0; void** vtable = nullptr;
-    if (!FindTypeVtable(mangledName, base, size, vtable)) return 0;
+    uintptr_t base = 0; size_t size = 0; std::vector<void**> vtables;
+    if (!FindTypeVtable(mangledName, base, size, vtables)) return 0;
 
-    if (!CanReadMemory(vtable, (slot + 1) * sizeof(void*))) {
-        Log::Warn("RTTI: vtable for '%s' at %p but slot %d not readable",
-                  mangledName, (void*)vtable, slot);
-        return 0;
+    // Several structures can carry the [0, &type_info] header (primary vtable,
+    // construction vtables, decoys); accept the first whose slot points in-module.
+    for (void** vtable : vtables) {
+        if (!CanReadMemory(vtable, (slot + 1) * sizeof(void*))) continue;
+        uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[slot]);
+        if (fn < base || fn >= base + size) continue;
+        Log::Info("RTTI: '%s' vtable at %p, slot %d -> 0x%lx (RVA 0x%lx)",
+                  mangledName, (void*)vtable, slot, (unsigned long)fn,
+                  (unsigned long)(fn - base));
+        return fn;
     }
-    uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[slot]);
-    if (fn < base || fn >= base + size) {
-        Log::Warn("RTTI: '%s' slot %d (0x%lx) outside steamclient [0x%lx,0x%lx)",
-                  mangledName, slot, (unsigned long)fn, (unsigned long)base,
-                  (unsigned long)(base + size));
-        return 0;
-    }
-
-    Log::Info("RTTI: '%s' vtable at %p, slot %d -> 0x%lx (RVA 0x%lx)",
-              mangledName, (void*)vtable, slot, (unsigned long)fn,
-              (unsigned long)(fn - base));
-    return fn;
+    Log::Warn("RTTI: '%s' none of %zu candidate vtable(s) had slot %d in-module",
+              mangledName, vtables.size(), slot);
+    return 0;
 }
 
 uintptr_t ResolveVtableSlotBySignature(const char* mangledName,
                                        const char* sigPattern,
                                        int maxSlots, int* outSlot) {
-    uintptr_t base = 0; size_t size = 0; void** vtable = nullptr;
-    if (!FindTypeVtable(mangledName, base, size, vtable)) return 0;
+    uintptr_t base = 0; size_t size = 0; std::vector<void**> vtables;
+    if (!FindTypeVtable(mangledName, base, size, vtables)) return 0;
 
-    uintptr_t hitFn = 0;
-    int hitSlot = -1;
-    int matches = 0;
-    for (int i = 0; i < maxSlots; ++i) {
-        // Bound the scan: stop the moment a slot pointer itself is unreadable
-        // (walked past the mapped vtable). Out-of-module / non-code entries are
-        // skipped, not fatal — only the accessor's prologue can match the sig.
-        if (!CanReadMemory(&vtable[i], sizeof(void*))) break;
-        uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[i]);
-        if (fn < base || fn >= base + size) continue;
-        if (MatchSignature(fn, sigPattern)) {
-            ++matches;
-            hitFn = fn;
-            hitSlot = i;
-            Log::Info("RTTI: '%s' slot %d -> 0x%lx (RVA 0x%lx) matches accessor signature",
-                      mangledName, i, (unsigned long)fn, (unsigned long)(fn - base));
+    // Try each candidate vtable ([0, &type_info] can head a decoy / construction
+    // vtable too) and keep the one with EXACTLY ONE slot whose target matches the
+    // accessor signature — that is the primary functions vtable. Fail-closed.
+    for (void** vtable : vtables) {
+        uintptr_t hitFn = 0;
+        int hitSlot = -1;
+        int matches = 0;
+        for (int i = 0; i < maxSlots; ++i) {
+            // Bound the scan: stop the moment a slot pointer itself is unreadable
+            // (walked past the mapped vtable). Out-of-module / non-code entries are
+            // skipped, not fatal — only the accessor's prologue can match the sig.
+            if (!CanReadMemory(&vtable[i], sizeof(void*))) break;
+            uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[i]);
+            if (fn < base || fn >= base + size) continue;
+            if (MatchSignature(fn, sigPattern)) {
+                ++matches;
+                hitFn = fn;
+                hitSlot = i;
+            }
+        }
+        if (matches == 1) {
+            Log::Info("RTTI: '%s' slot %d -> 0x%lx (RVA 0x%lx) matches accessor signature "
+                      "(vtable %p)", mangledName, hitSlot, (unsigned long)hitFn,
+                      (unsigned long)(hitFn - base), (void*)vtable);
+            if (outSlot) *outSlot = hitSlot;
+            return hitFn;
         }
     }
-    if (matches != 1) {
-        Log::Warn("RTTI: '%s' signature scan matched %d slots (need exactly 1) — fail closed",
-                  mangledName, matches);
-        return 0;
-    }
-    if (outSlot) *outSlot = hitSlot;
-    return hitFn;
+    Log::Warn("RTTI: '%s' no candidate vtable had exactly one accessor-signature slot "
+              "(%zu vtable(s) tried) — fail closed", mangledName, vtables.size());
+    return 0;
 }
 
 } // namespace Rtti
