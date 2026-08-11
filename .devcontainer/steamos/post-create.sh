@@ -154,41 +154,84 @@ sudo tee /usr/local/lib/lumadev/session-switch.sh >/dev/null <<'SWITCH'
 # del proceso que lo invoco (p.ej. el konsole del hand-off muere cuando este
 # script mata Plasma, y el relanzado de Steam tiene que seguir vivo).
 set +e
+
+# Re-exec con entorno LIMPIO. Cuando el switch lo dispara el konsole del
+# hand-off, hereda el entorno completo de la sesion Plasma (SESSION_MANAGER,
+# KDE_FULL_SESSION, QT_*, ...) que contamina el relanzado de Steam. Un cambio
+# de sesion real arranca con entorno fresco; lo reproducimos.
+if [ -z "$LUMADEV_CLEAN" ]; then
+    exec /usr/bin/env -i \
+        LUMADEV_CLEAN=1 \
+        HOME="${HOME:-/home/deck}" \
+        USER="$(id -un)" \
+        LOGNAME="$(id -un)" \
+        SHELL=/bin/bash \
+        LANG="${LANG:-en_US.UTF-8}" \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin \
+        /bin/bash "$0" "$@"
+fi
+
 TARGET="$1"
 
 export DISPLAY=:1
-export HOME="${HOME:-/home/deck}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$XDG_RUNTIME_DIR/bus}"
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 export LIBGL_ALWAYS_SOFTWARE=1
 export __GLX_VENDOR_LIBRARY_NAME=mesa
 export VK_LOADER_DRIVERS_DISABLE='nvidia*'
 export PATH="$HOME/.local/bin:$PATH"
 
+# stdout va a /tmp/session-select.log (redirigido por steamos-session-select).
+log() { echo "$(date '+%T') [switch $$] $*"; }
+
 STEAM_BIN="$HOME/.local/share/Steam/ubuntu12_32/steam"
 
 stop_steam() {
+    log "stop_steam"
     [ -x "$STEAM_BIN" ] && "$STEAM_BIN" -shutdown >/dev/null 2>&1
     for _ in $(seq 1 30); do pgrep -x steam >/dev/null 2>&1 || break; sleep 1; done
     pkill -x steam 2>/dev/null
     pkill -f steamwebhelper 2>/dev/null
     sleep 1
+    log "stop_steam done (steam=$(pgrep -x steam >/dev/null 2>&1 && echo VIVO || echo muerto))"
 }
+
+# Sin logind no hay "cerrar sesion" limpio: matamos los procesos de la sesion
+# Plasma. Lista explicita para no llevarnos nada mas por delante (Decky,
+# x11vnc y websockify tienen que sobrevivir al switch).
+PLASMA_PROCS="plasmashell kwin_x11 startplasma-x11 ksmserver kded6 kded5 \
+              kglobalacceld kactivitymanagerd xembedsniproxy kaccess ksplashqml"
 
 stop_plasma() {
-    # Sin logind no hay "cerrar sesion" limpio: matamos los procesos de la
-    # sesion Plasma. Lista explicita para no llevarnos nada mas por delante
-    # (Decky, x11vnc y websockify tienen que sobrevivir al switch).
-    for p in plasmashell kwin_x11 startplasma-x11 ksmserver kded6 kded5 \
-             kglobalacceld kactivitymanagerd xembedsniproxy kaccess \
-             ksplashqml; do
-        pkill -x "$p" 2>/dev/null
-    done
+    log "stop_plasma"
+    for p in $PLASMA_PROCS; do pkill -x "$p" 2>/dev/null; done
     pkill -f 'plasma[-_]session' 2>/dev/null
     pkill -f 'polkit-kde-authentication' 2>/dev/null
+    # Verificar y escalar a -9: si kwin sobrevive retiene el display y ni
+    # openbox ni la siguiente sesion Plasma pueden arrancar bien.
+    for _ in 1 2 3 4 5; do
+        pgrep -x plasmashell >/dev/null 2>&1 || pgrep -x kwin_x11 >/dev/null 2>&1 || break
+        sleep 1
+    done
+    for p in $PLASMA_PROCS; do pkill -9 -x "$p" 2>/dev/null; done
+    pkill -9 -f 'plasma[-_]session' 2>/dev/null
     sleep 1
+    log "stop_plasma done (kwin=$(pgrep -x kwin_x11 >/dev/null 2>&1 && echo VIVO || echo muerto) plasmashell=$(pgrep -x plasmashell >/dev/null 2>&1 && echo VIVO || echo muerto))"
 }
 
+start_steam_gamepadui() {
+    log "lanzando steam gamepadui"
+    ( steam -gamepadui -no-cef-sandbox >/tmp/steam.log 2>&1 & )
+    sleep 8
+    if ! pgrep -x steam >/dev/null 2>&1; then
+        log "steam no sobrevivio al arranque, reintento (mira /tmp/steam.log)"
+        ( steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1 & )
+        sleep 8
+    fi
+    log "start_steam done (steam=$(pgrep -x steam >/dev/null 2>&1 && echo arrancado || echo MUERTO))"
+}
+
+log "target=$TARGET"
 case "$TARGET" in
 plasma)
     stop_steam
@@ -199,13 +242,13 @@ plasma)
     pkill -x openbox 2>/dev/null
     sleep 0.5
     if ! command -v startplasma-x11 >/dev/null 2>&1; then
-        echo "startplasma-x11 no existe (¿falta el paquete plasma-x11-session?)"
+        log "startplasma-x11 no existe (¿falta el paquete plasma-x11-session?)"
         exit 1
     fi
     export XDG_SESSION_TYPE=x11
     export XDG_CURRENT_DESKTOP=KDE
     ( startplasma-x11 >/tmp/plasma.log 2>&1 & )
-    echo "plasma lanzado (log /tmp/plasma.log)"
+    log "plasma lanzado (log /tmp/plasma.log)"
     ;;
 gamescope)
     stop_plasma
@@ -213,11 +256,10 @@ gamescope)
     # para focus/stacking, igual que en el env base).
     pgrep -x openbox >/dev/null 2>&1 || ( openbox >/dev/null 2>&1 & )
     # Decky (PluginLoader) sigue corriendo; se re-inyecta cuando el CEF vuelve.
-    ( steam -gamepadui -no-cef-sandbox >/tmp/steam.log 2>&1 & )
-    echo "steam gamepadui relanzado (log /tmp/steam.log)"
+    start_steam_gamepadui
     ;;
 *)
-    echo "target desconocido: $TARGET"
+    log "target desconocido: $TARGET"
     exit 1
     ;;
 esac
@@ -347,7 +389,9 @@ date
 echo
 echo "Volviendo a Game Mode en 15s..."
 sleep 15
+echo ">> llamando a steamos-session-select gamescope"
 steamos-session-select gamescope
+echo ">> steamos-session-select devolvio rc=\$? — el switch sigue en /tmp/session-select.log"
 EOS
 chmod +x "$SCRIPT"
 
