@@ -148,45 +148,41 @@ killall steamwebhelper >/dev/null 2>&1 || true
 killall dgsc           >/dev/null 2>&1 || true   # kill any leftover local depot from the old approach
 sleep 2
 
-# 2. Prep package dir: clear it and drop the verified manifest in (this is what
-#    tells Steam which build to pull from the mirror).
-info "Preparing package dir..."
-[[ -d "$PKG_DIR" ]] || mkdir -p "$PKG_DIR"
-rm -f "$PKG_DIR"/* 2>/dev/null || true
-mv -f "$TMP_MANIFEST" "$PKG_DIR/$MANIFEST_NAME" || die "could not place manifest in $PKG_DIR"
+# Roll package/ back to its exact pre-downgrade state. Used on any failure below.
+# (if/explicit — never a chained &&/|| that could force the wrong branch.)
+rollback_pkg() {
+    rm -rf "$PKG_DIR" 2>/dev/null || true
+    if [[ "$had_pkg" == 1 ]]; then
+        mv -f "$BAK" "$PKG_DIR" 2>/dev/null || true
+    fi
+}
+
+# 2. Back up package/ (do NOT destroy it) and stage the target manifest in a fresh
+#    one. The manifest tells Steam which build to pull from the mirror.
+#    The update-pin (steam.cfg) is deliberately written LATER — only after the
+#    mirror download is VERIFIED (step 5). Writing it here is what turned a failed
+#    download into a non-starting Steam: empty package/ + a BootStrapperInhibitAll
+#    pin = Steam has no client and is forbidden from re-fetching one. With the pin
+#    deferred, a failed download self-heals (Steam re-pulls the current client),
+#    and the backup+rollback restores the exact prior state on top of that.
+info "Backing up package dir..."
+BAK="${PKG_DIR}.lumalinux.bak"
+had_pkg=0
+if [[ -d "$PKG_DIR" ]]; then
+    had_pkg=1
+    rm -rf "$BAK" 2>/dev/null || true          # drop any stale backup from an interrupted run
+    mv -f "$PKG_DIR" "$BAK" || die "could not back up $PKG_DIR — Steam left untouched"
+fi
+mkdir -p "$PKG_DIR"
+mv -f "$TMP_MANIFEST" "$PKG_DIR/$MANIFEST_NAME" \
+    || { rollback_pkg; die "could not place manifest in $PKG_DIR — Steam restored, nothing changed"; }
 trap - EXIT
 
-# 3. Pin: write steam.cfg so Steam holds the downgraded build (createsteamcfg
-#    port). Update-in-place: replace any existing BootStrapper* lines, keep the
-#    rest. Capture the kept lines and re-emit with printf '%s\n' so the block
-#    ALWAYS ends in a newline before the appended keys — otherwise a steam.cfg
-#    whose last line lacked a trailing newline would glue the keys onto it.
-#
-#    Stamp our own pin with a `# lumalinux` signature line. That line is how the
-#    LumaDeck side tells OUR pin (an active break-recovery downgrade, to be lifted
-#    only once the ecosystem catches up) from a FOREIGN one (headcrab's, written on
-#    every install) — a foreign pin is lifted on sight during migration. Steam
-#    ignores non-key lines in steam.cfg, so the signature is inert. Filter any prior
-#    signature out of the kept lines so re-runs don't stack duplicates.
-info "Writing Steam-update pin (steam.cfg)..."
-_kept=""
-if [[ -f "$STEAM_CFG" ]]; then
-    # Back up the PRISTINE steam.cfg once — a re-run must not overwrite it with the
-    # already-pinned version (that would destroy the only clean copy).
-    [[ -e "${STEAM_CFG}.lumadeck.bak" ]] || cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
-    _kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
-fi
-{
-    [[ -n "$_kept" ]] && printf '%s\n' "$_kept"
-    printf '# lumalinux\nBootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
-} > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
-ok "Pin written at $STEAM_CFG"
-
-# 4. Relaunch Steam headless to pull the target packages from the MIRROR. This is
+# 3. Relaunch Steam headless to pull the target packages from the MIRROR. This is
 #    headcrab's overideupdate, verbatim mechanism: SLSsteam-audited (export_sls)
 #    when present; vanilla otherwise (the downgrade is Steam's own bootstrapper).
-#    Best-effort like headcrab (it runs the same command &>/dev/null) — we cannot
-#    reliably detect mid-download failure from here.
+#    Best-effort (&>/dev/null, exit code unreliable) — step 4 checks the RESULT
+#    instead of trusting this command's status.
 LD_AUDIT_ARG=""
 if [[ -f "$SLS_DIR/SLSsteam.so" ]]; then
     if [[ -f "$SLS_DIR/library-inject.so" ]]; then
@@ -204,6 +200,50 @@ else
     steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
+
+# 4. Verify the mirror actually delivered client packages: package/ must now hold
+#    at least one file BEYOND the manifest we dropped. Heuristic (Steam could in
+#    theory leave a partial file), but infinitely better than wipe-and-pray — and
+#    it GATES the pin, so the worst a false positive can do is mis-pin, never leave
+#    a silently un-startable Steam.
+repopulated=0
+while IFS= read -r -d '' f; do
+    [[ "$(basename "$f")" == "$MANIFEST_NAME" ]] && continue
+    repopulated=1
+    break
+done < <(find "$PKG_DIR" -maxdepth 1 -type f -print0 2>/dev/null)
+
+if [[ "$repopulated" -ne 1 ]]; then
+    # Download did NOT land. No pin was written, so Steam self-heals on its own;
+    # restore the exact prior package/ on top for good measure, and report why.
+    rollback_pkg
+    die "Downgrade FAILED: the mirror ($DOWNGRADE_URL) delivered no client packages (package/ has only the manifest). Steam has been RESTORED to its previous state and NO update-pin was written, so Steam still starts normally. Check the mirror is reachable and retry."
+fi
+
+# 5. Download verified — NOW write the pin so Steam holds the downgraded build,
+#    then drop the backup. Update-in-place: replace any existing BootStrapper*
+#    lines, keep the rest, re-emitting kept lines with printf '%s\n' so the block
+#    always ends in a newline before the appended keys (else a steam.cfg whose last
+#    line lacked a trailing newline would glue the keys onto it). Stamp the pin with
+#    a `# lumalinux` signature line so the LumaDeck side tells OUR pin (an active
+#    break-recovery downgrade) from a FOREIGN one (headcrab's); Steam ignores
+#    non-key lines, so it is inert. Prior signature filtered out so re-runs don't
+#    stack duplicates.
+info "Download verified — writing Steam-update pin (steam.cfg)..."
+_kept=""
+if [[ -f "$STEAM_CFG" ]]; then
+    # Back up the PRISTINE steam.cfg once — a re-run must not overwrite it with the
+    # already-pinned version (that would destroy the only clean copy).
+    [[ -e "${STEAM_CFG}.lumadeck.bak" ]] || cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
+    _kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
+fi
+{
+    [[ -n "$_kept" ]] && printf '%s\n' "$_kept"
+    printf '# lumalinux\nBootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
+} > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG" \
+    || { rollback_pkg; die "could not write pin at $STEAM_CFG — Steam package restored, NOT pinned"; }
+ok "Pin written at $STEAM_CFG"
+rm -rf "$BAK" 2>/dev/null || true
 
 ok "Downgrade + pin applied. Steam is held at the supported build."
 info "Next: setup.sh re-establishes the wrapper; the QAM offers the update once the stack supports a newer build."
