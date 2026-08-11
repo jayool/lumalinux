@@ -44,8 +44,14 @@ bool obtainYaml(const std::string& hash, std::string& out) {
     if (const char* dir = std::getenv("LUMA_RVAS_DIR")) {
         if (readFile(std::filesystem::path(dir) / (hash + ".yaml"), out)) return true;
     }
+    // Base URL is overridable via LUMA_RVAS_URL (no trailing slash) so the fetch
+    // path can be tested against a branch/mirror, or pinned to an alternate feed
+    // source. Defaults to the repo's main branch.
+    const char* base = std::getenv("LUMA_RVAS_URL");
     const std::string url =
-        "https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/" + hash + ".yaml";
+        (base && *base ? std::string(base)
+                       : std::string("https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas"))
+        + "/" + hash + ".yaml";
     if (Curl::getString(url.c_str(), out) == 0 && out.find("hooks:") != std::string::npos) {
         std::error_code ec;
         std::filesystem::create_directories(cacheDir(), ec);
