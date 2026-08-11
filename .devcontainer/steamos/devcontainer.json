@@ -1,0 +1,26 @@
+{
+  "name": "SteamOS-like env (deck + gamepadui + hand-off)",
+  "build": { "dockerfile": "Dockerfile" },
+  "remoteUser": "deck",
+  "updateRemoteUserUID": true,
+  "forwardPorts": [6080],
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC (SteamOS)",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/steamos/post-create.sh",
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "runArgs": [
+    "--cap-add=SYS_PTRACE",
+    "--cap-add=SYS_ADMIN",
+    "--security-opt=seccomp=unconfined",
+    "--security-opt=apparmor=unconfined",
+    "--shm-size=2g"
+  ]
+}
