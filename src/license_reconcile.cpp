@@ -1,5 +1,6 @@
 #include "license_reconcile.hpp"
 #include "patterns.hpp"
+#include "rva_feed.hpp"
 #include "log.hpp"
 
 #include <atomic>
@@ -20,11 +21,23 @@ using NotifyFn = void (*)(void*);
 
 // Resolve the NotifyLicensesUpdated address ONCE and cache it. Deterministic per
 // process (steamclient.so base is fixed after load), so a static is safe.
-// FindNotifyLicensesUpdatedFunction requires a UNIQUE match and returns 0
-// otherwise, so a wrong-build pattern caches 0 -> the feature no-ops. Shared by
-// Resolve() (status, called at hook-install time) and Reconcile() (the fire).
+// Shared by Resolve() (status, called at hook-install time) and Reconcile()
+// (the fire).
+//
+// RVA feed first (prologue-independent, keyed by the steamclient.so hash), else
+// the byte pattern. FindNotifyLicensesUpdatedFunction requires a UNIQUE match
+// and returns 0 otherwise, so a wrong-build pattern caches 0 -> the feature
+// no-ops rather than firing at a garbage address. docs/rva-feed-design.md.
 uintptr_t ResolveAddr() {
-    static const uintptr_t addr = Patterns::FindNotifyLicensesUpdatedFunction();
+    static const uintptr_t addr = []() -> uintptr_t {
+        if (uintptr_t feed = RvaFeed::Resolve("Reconcile")) {
+            if (uintptr_t p = Patterns::FindNotifyLicensesUpdatedFunction(); p && p != feed)
+                Log::Warn("Reconcile: feed 0x%lx != pattern 0x%lx — using feed; "
+                          "investigate drift", (unsigned long)feed, (unsigned long)p);
+            return feed;
+        }
+        return Patterns::FindNotifyLicensesUpdatedFunction();
+    }();
     return addr;
 }
 
