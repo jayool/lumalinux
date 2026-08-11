@@ -232,9 +232,13 @@ fi
 info "Download verified — writing Steam-update pin (steam.cfg)..."
 _kept=""
 if [[ -f "$STEAM_CFG" ]]; then
-    # Back up the PRISTINE steam.cfg once — a re-run must not overwrite it with the
-    # already-pinned version (that would destroy the only clean copy).
-    [[ -e "${STEAM_CFG}.lumadeck.bak" ]] || cp -f "$STEAM_CFG" "${STEAM_CFG}.lumadeck.bak" 2>/dev/null || true
+    # No steam.cfg backup is taken here: nothing ever restores one. Un-pinning is
+    # LumaDeck's lift_freeze(), which strips exactly the BootStrapper*/`# lumalinux`
+    # lines from the LIVE file and deletes it if nothing else remains — so it
+    # recovers correctly regardless of any backup (including the fresh-install case
+    # where the whole file was ours to begin with). The old `cp` to
+    # steam.cfg.lumadeck.bak was write-only dead weight (and captured the pinned
+    # state as "pristine" on a re-run), so it's gone.
     _kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
 fi
 {
