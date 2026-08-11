@@ -26,8 +26,9 @@ Two paths: the LumaDeck plugin (recommended, tested) or a manual install.
    <https://github.com/jayool/LumaDeck> and point Decky at it.
 3. Open LumaDeck in the QAM and tap **Quick Install**. On a fresh setup it installs
    and configures everything in one tap, in the right order: SLSsteam +
-   CloudRedirect (via Headcrab), the .NET 9 runtime, and lumalinux. For individual
-   pieces or after a Steam update, use **Settings → Dependencies**.
+   CloudRedirect, the .NET 9 runtime, and lumalinux — all via the self-contained
+   wrapper installer (`setup.sh`). For individual pieces or after a Steam update, use
+   **Settings → Dependencies**.
 4. (Optional) Cloud saves: switch to desktop once, open the **CloudRedirect** app,
    and sign into your provider.
 
@@ -37,26 +38,20 @@ LumaDeck installs SLSsteam and lumalinux for you; you run nothing below.
 
 For driving lumalinux directly with Hubcap-style zips.
 
-1. **SLSsteam** via Headcrab, **from desktop mode** (its Steam restarts can trip
-   gamemode's crash-loop detector):
+1. **Install the whole stack** with the self-contained installer, **from desktop
+   mode** (its Steam restarts can trip gamemode's crash-loop detector):
 
    ```bash
-   curl -fsSL https://headcrab.pages.dev | bash
+   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
    ```
 
-   Installs SLSsteam and patches `steam.sh` to load it. Launch Steam once so the
-   wrapper settles.
+   One idempotent script: fetches SLSsteam + `library-inject` + CloudRedirect +
+   netsock + `liblumalinux.so`, writes the injection **wrapper** at
+   `~/.local/share/SLSsteam/path/steam`, and wires coverage (patched `*steam*.desktop`
+   + a Game Mode PATH drop-in). Your `steam.sh` and `/usr/bin/steam` stay **vanilla**.
+   Launch Steam once so it settles.
 
-2. **lumalinux**:
-
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
-   ```
-
-   Drops `liblumalinux.so` + tools and adds its `LD_PRELOAD` to `steam.sh` (keeping
-   any existing one, e.g. CloudRedirect's).
-
-3. **Add a game** for each Hubcap zip, with Steam closed:
+2. **Add a game** for each Hubcap zip, with Steam closed:
 
    ```bash
    python3 tools/steamidra_lite.py <appid>.zip
@@ -65,12 +60,15 @@ For driving lumalinux directly with Hubcap-style zips.
    Restart Steam and press **Install**. Full step and flag reference in
    [`docs/manual-install.md`](docs/manual-install.md).
 
-### After a Headcrab/SLSsteam update
+### After a Steam update
 
-Headcrab regenerates `steam.sh` when its updater runs, erasing lumalinux's
-`LD_PRELOAD` block (the deployed `.so` and `keys.txt` survive). Reapply it: in
-LumaDeck, **Settings → Dependencies → Install / Reapply lumalinux**; manually,
-re-run the `install.sh` one-liner above.
+The wrapper is reached by patched `.desktop` files + a Game Mode PATH drop-in, and a
+systemd `--user` guardian re-affirms that coverage — so a Steam self-update no longer
+erases injection the way a patched `steam.sh` did (and if a bad update breaks the
+byte patterns, the wrapper's crash-loop fail-safe boots vanilla instead of bricking).
+If injection ever stops, or to pull fresh `.so`s, reapply: in LumaDeck, **Settings →
+Dependencies → Install / Reapply lumalinux**; manually, re-run the `setup.sh`
+one-liner above (idempotent).
 
 ### Tested platforms
 
@@ -158,9 +156,9 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
 Almost always a Steam client or SLSsteam update. The log tells the cases apart, and
 [`docs/maintenance.md`](docs/maintenance.md) has the fix per case:
 
-- **No startup toast at all**: the `LD_PRELOAD` block is gone (Headcrab regenerated
-  `steam.sh`). Reapply lumalinux (see [After a Headcrab/SLSsteam
-  update](#after-a-headcrabslssteam-update)).
+- **No startup toast at all**: the wrapper isn't being reached (coverage lost — e.g.
+  a Steam update regenerated a `.desktop`, or the Game Mode PATH drop-in didn't
+  apply). Reapply lumalinux (see [After a Steam update](#after-a-steam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
   §A). DepotKey + GMRC (plus the package-0 finder) failing breaks installs;
   BuildDep is disabled by default and non-critical, and ShaderDepot is cosmetic.
@@ -192,9 +190,13 @@ and publishes a release on each `v*` tag.
 
 lumalinux is 32-bit and hooks 32-bit `steamclient.so`. It loads via **`LD_PRELOAD`**,
 not `LD_AUDIT` (which lands it in a separate linker namespace and corrupts the heap).
-The injection point is Headcrab's `~/.local/share/Steam/steam.sh` wrapper, not
-`/usr/bin/steam`, so the system file stays vanilla and survives `pacman -Syu steam`.
-Exact anchor and namespace detail in [RESEARCH §5](docs/RESEARCH.md).
+The injection point is the **wrapper** at `~/.local/share/SLSsteam/path/steam`
+(`setup.sh`'s model, from `slsteam-moon`): it exports `LD_AUDIT` for SLSsteam and
+`LD_PRELOAD` for CloudRedirect + lumalinux, then `exec`s the real Steam. The wrapper
+is reached by patched `*steam*.desktop` files + a Game Mode PATH drop-in — never by
+editing `steam.sh` or `/usr/bin/steam` — so those stay vanilla and coverage survives
+Steam self-updates (a guardian re-affirms it). Exact anchor and namespace detail in
+[RESEARCH §5](docs/RESEARCH.md).
 
 ### Related docs
 
