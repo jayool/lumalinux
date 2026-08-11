@@ -97,82 +97,58 @@ Linux release channel currently tops at **2.6.0**; 2.6.1/2.6.2 are Windows-only.
 
 ## Install order
 
-CloudRedirect goes in **before** lumalinux. lumalinux's installer detects
-CloudRedirect's `.so` if present and arranges for both to load.
+`setup.sh` installs the whole stack in one run and the wrapper loads whichever
+`.so`s are present, so there's no manual "CR before lumalinux" ordering to get right
+any more.
 
-1. Install SLSsteam via Headcrab, from **desktop mode** (running it from
-   Game Mode restarts Steam mid-install and can trigger the gamescope
-   OOBE wipe):
-
-   ```bash
-   curl -fsSL https://headcrab.pages.dev | bash
-   ```
-
-   This creates `~/.config/SLSsteam/config.yaml` with `DisableCloud: yes`
-   by default. (ACCELA and enter-the-wired are dead; Headcrab is the
-   current installer.)
-
-2. **Enable CloudRedirect in SLSsteam's config**: edit
-   `~/.config/SLSsteam/config.yaml` and change the `DisableCloud` line
-   from `yes` to `no`.
-
-3. **Install CloudRedirect**:
+1. Run the installer, from **desktop mode** (its Steam restarts can trip Game Mode's
+   crash-loop detector). It fetches SLSsteam + `library-inject` + **CloudRedirect**
+   (`cloud_redirect.so` + `cloud_redirect_cli` + the `org.cloudredirect.CloudRedirect`
+   Flatpak) + netsock + `liblumalinux.so`, writes the injection wrapper, and wires
+   coverage:
 
    ```bash
-   curl -fsSL https://headcrab.pages.dev | bash
+   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
    ```
 
-   This downloads `cloud_redirect.so` to
-   `~/.local/share/CloudRedirect/cloud_redirect.so`, installs the
-   configuration Flatpak (`org.cloudredirect.CloudRedirect`), and
-   regenerates `~/.local/share/Steam/steam.sh` to the CR-aware variant
-   (with `INJECT_CR=LD_PRELOAD=…cloud_redirect.so`).
+2. **CloudRedirect is enabled for you.** `setup.sh` sets `DisableCloud: no` in
+   `~/.config/SLSsteam/config.yaml` (CloudRedirect ships as a core component — the
+   `.so` download is fatal if it fails, so cloud is never left on without it). No
+   manual config edit needed.
 
-4. **Open the CloudRedirect Flatpak app once** to sign into your cloud
-   provider.
+3. **Open the CloudRedirect Flatpak app once** to sign into your cloud provider
+   (switch to desktop for this). CloudRedirect is inert until a provider signs in.
 
-5. **Install lumalinux**:
+## How they coexist in the wrapper
 
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
-   ```
+Injection now comes from the wrapper at `~/.local/share/SLSsteam/path/steam` (not a
+patched `steam.sh`). Before `exec`ing the real Steam, the wrapper builds the env from
+whichever `.so`s are on disk (paraphrased):
 
-## How they coexist in `steam.sh`
+```sh
+# LD_AUDIT: library-inject first, then SLSsteam
+export LD_AUDIT="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
 
-The CR-aware `steam.sh` from Headcrab has (paraphrased):
-
-```bash
-GameLauncher(){
-    CheckClientInfo
-    export $INJECT_SLS                         # LD_AUDIT=… SLSsteam
-    export $INJECT_CR                          # LD_PRELOAD=…cloud_redirect.so
-    source $STEAM_CLIENT "$@"
-}
+# LD_PRELOAD: prepend CloudRedirect then lumalinux (so lumalinux ends up FIRST),
+# each only if its .so exists; libextest is appended after, Wayland only.
+for _p in "$CR_SO" "$LL_SO"; do
+    [ -f "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"
+done
+export LD_PRELOAD
+exec "$STEAM_BIN" "$@"
 ```
 
-`export $INJECT_CR` sets `LD_PRELOAD` to `cloud_redirect.so` only: it
-does **not** preserve whatever was previously in `LD_PRELOAD` (this is an
-upstream-Headcrab behaviour we work around).
-
-lumalinux's installer inserts a block right before `source $STEAM_CLIENT`:
-
-```bash
-# >>> lumalinux launcher patch >>> (managed by install.sh - do not edit)
-export LD_PRELOAD="$HOME/.local/share/lumalinux/liblumalinux.so${LD_PRELOAD:+:}${LD_PRELOAD:-}"
-# <<< lumalinux launcher patch <<<
-```
-
-The `${LD_PRELOAD:+:}${LD_PRELOAD:-}` suffix preserves whatever
-`LD_PRELOAD` already has (in the CR case, that's
-`cloud_redirect.so`). Final result inside the Steam process:
+Final result inside the Steam process (both present):
 
 ```
 LD_PRELOAD=/home/<user>/.local/share/lumalinux/liblumalinux.so:/home/<user>/.local/share/CloudRedirect/cloud_redirect.so
 ```
 
-Both `.so`s load. lumalinux comes first in the chain so its symbols
-shadow anything CR also provides, but the two hook disjoint functions in
-`steamclient.so`, with no symbol-resolution conflicts observed.
+Both `.so`s load. lumalinux comes first in the chain so its symbols shadow anything
+CR also provides, but the two hook disjoint functions in `steamclient.so`, with no
+symbol-resolution conflicts observed. If CloudRedirect's `.so` isn't on disk the loop
+simply skips it and Steam runs with lumalinux only — no `steam.sh` block-insertion
+and no LD_PRELOAD-clobber to work around any more.
 
 ## Verifying both loaded
 
@@ -195,10 +171,13 @@ tr '\0' '\n' < /proc/$PID/environ | grep -E '^LD_(PRELOAD|AUDIT)='
 
 ## When only one of the two appears
 
-The Headcrab Updater regenerated `steam.sh` and the lumalinux block went
-with it. Re-run the lumalinux installer; the CR install survives
-untouched.
+If lumalinux loads but CloudRedirect doesn't (or vice-versa), the missing `.so`
+isn't on disk — the wrapper only adds a preload for a file that exists. Re-run the
+installer to re-fetch it; the other component is untouched.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
 ```
+
+(If *neither* loads — no banner at all — that's the wrapper not being reached, not a
+missing `.so`; see `maintenance.md` case B.)
