@@ -1,5 +1,5 @@
 {
-  "name": "SteamOS-like env (deck + gamepadui + hand-off)",
+  "name": "Steam validation env (SteamOS)",
   "build": { "dockerfile": "Dockerfile" },
   "remoteUser": "deck",
   "updateRemoteUserUID": true,
