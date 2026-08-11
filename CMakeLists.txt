@@ -75,6 +75,7 @@ set(LUMA_SOURCES
     src/rtti.cpp
     src/gmrc_xref.cpp
     src/vaddr_xlate.cpp
+    src/rva_feed.cpp
     src/sls_achievement_unblock.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp

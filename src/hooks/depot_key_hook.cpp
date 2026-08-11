@@ -1,6 +1,7 @@
 #include "depot_key_hook.hpp"
 #include "../patterns.hpp"
 #include "../rtti.hpp"
+#include "../rva_feed.hpp"
 #include "../key_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
@@ -110,25 +111,38 @@ bool Install() {
     // Both use the SAME signature, so they agree when both resolve; on the rare
     // disagreement we use the pattern (no regression) and log loudly.
     int derivedSlot = -1;
-    uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
-        "12CConfigStore", Patterns::kDepotKeyFnPattern, /*maxSlots=*/40, &derivedSlot);
-    uintptr_t pat  = Patterns::FindDepotKeyFunction();
-
     uintptr_t target = 0;
     const char* method = "none";
-    if (rtti && pat) {
-        if (rtti == pat) {
-            target = rtti; method = "rtti(agrees-with-pattern)";
-        } else {
-            Log::Warn("DepotKey: RTTI 0x%lx != pattern 0x%lx — using pattern "
-                      "(no regression); investigate the mismatch",
-                      (unsigned long)rtti, (unsigned long)pat);
-            target = pat; method = "pattern(rtti-mismatch)";
+
+    // RVA feed first: the CI publishes DepotKey's RVA per build (keyed by the
+    // steamclient.so hash), and it is prologue-independent — it survives a
+    // recompile that would break the byte pattern. RTTI/pattern below is the
+    // fallback for builds the feed hasn't published yet. docs/rva-feed-design.md.
+    if (uintptr_t feed = RvaFeed::Resolve("DepotKey")) {
+        target = feed; method = "rva";
+        if (uintptr_t p = Patterns::FindDepotKeyFunction(); p && p != feed)
+            Log::Warn("DepotKey: feed 0x%lx != pattern 0x%lx — using feed; investigate drift",
+                      (unsigned long)feed, (unsigned long)p);
+    }
+
+    if (!target) {
+        uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
+            "12CConfigStore", Patterns::kDepotKeyFnPattern, /*maxSlots=*/40, &derivedSlot);
+        uintptr_t pat  = Patterns::FindDepotKeyFunction();
+        if (rtti && pat) {
+            if (rtti == pat) {
+                target = rtti; method = "rtti(agrees-with-pattern)";
+            } else {
+                Log::Warn("DepotKey: RTTI 0x%lx != pattern 0x%lx — using pattern "
+                          "(no regression); investigate the mismatch",
+                          (unsigned long)rtti, (unsigned long)pat);
+                target = pat; method = "pattern(rtti-mismatch)";
+            }
+        } else if (rtti) {
+            target = rtti; method = "rtti(pattern-miss)";
+        } else if (pat) {
+            target = pat;  method = "pattern(rtti-miss)";
         }
-    } else if (rtti) {
-        target = rtti; method = "rtti(pattern-miss)";
-    } else if (pat) {
-        target = pat;  method = "pattern(rtti-miss)";
     }
 
     if (!target) {
