@@ -205,6 +205,13 @@ void InstallHooks() {
     }
 
     int active = 0, expected = 0;
+    // Critical-hook gate (the "abort if the scan fails" that #17 promised but never
+    // wrote). DepotKey + GMRC are the CRITICAL set (mirrors check_patterns.py):
+    // both must be active or a forced download can't complete. Track whether each
+    // installed, and whether a critical's absence is a genuine FAILED (its pattern
+    // moved) vs a deliberate env-disable — only the former marks the session
+    // blocked for LumaDeck.
+    bool depotKeyOk = false, gmrcOk = false, criticalFailed = false;
     std::string failed;
     std::string installed;   // names of the pieces actually installed, derived
                              // from the loop so the summary never goes stale
@@ -212,17 +219,21 @@ void InstallHooks() {
         if (std::getenv(s.disableEnv)) {
             Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
             Status::RecordHook(s.name, Status::DISABLED);
-            continue;
+            continue;   // a disabled critical leaves its *Ok flag false, but is NOT a FAILED
         }
         ++expected;
         if (s.install()) {
             ++active;
+            if (std::strcmp(s.name, "DepotKey") == 0) depotKeyOk = true;
+            if (std::strcmp(s.name, "GMRC") == 0)     gmrcOk     = true;
             if (!installed.empty()) installed += ", ";
             installed += s.name;
             Status::RecordHook(s.name, Status::INSTALLED);
         } else {
             Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
                        "updated — see docs/RESEARCH.md to re-derive patterns)", s.name);
+            if (std::strcmp(s.name, "DepotKey") == 0 || std::strcmp(s.name, "GMRC") == 0)
+                criticalFailed = true;
             if (!failed.empty()) failed += ", ";
             failed += s.name;
             Status::RecordHook(s.name, Status::FAILED);
@@ -248,7 +259,36 @@ void InstallHooks() {
     // and misses the case where Steam keeps PackageId=0 cached and never calls
     // LoadPackage, so the finder walks the cache directly and injects there. ON
     // BY DEFAULT (disable with LUMA_NO_PKG0_FINDER); the hook no longer injects.
-    if (std::getenv("LUMA_NO_PKG0_FINDER")) {
+    //
+    // CRITICAL-HOOK GATE (#17 fail-closed): the finder surfaces our forced depots
+    // as Steam download targets, but a forced download can only COMPLETE if both
+    // critical hooks are active — DepotKey (keys) and GMRC (request codes). Since
+    // the hash check is now advisory, a build whose critical pattern moved reaches
+    // here anyway; injecting then would strand the user at "Invalid content
+    // configuration" / "No connection" instead of leaving Steam clean. So THIS is
+    // the real gate #17's comment promised ("abort if the scan fails"): if a
+    // critical isn't active, DON'T inject. The passive hooks that did install stay
+    // put (Uninstall doesn't remove the detour — it would break them) and pass
+    // through harmlessly; owned games are unaffected. Reconcile and the SLS-
+    // achievement patch below still run — they don't touch the download path.
+    const bool criticalsActive = depotKeyOk && gmrcOk;
+    if (!criticalsActive) {
+        Status::RecordHook("PackageZeroFinder", Status::DISABLED);
+        // No Status::SetBlocked() here: the critical hook's own FAILED entry (set
+        // in the loop above) is already what LumaDeck reads as "not supported"
+        // (cause "hooks" → fix in Desktop), which is the accurate signal. A blocked
+        // flag is read FIRST by LumaDeck and would mislabel the cause as "version".
+        // A deliberate env-disable leaves the critical DISABLED (not "failed"), so
+        // LumaDeck stays healthy — correct, it's a user choice, not a break.
+        // criticalFailed here only selects the log line.
+        if (criticalFailed)
+            Log::Warn("Install: a CRITICAL hook FAILED — lumalinux is INACTIVE for "
+                      "forced content (not injecting; Steam behaves vanilla). Update "
+                      "lumalinux for this Steam build. Owned/installed games unaffected.");
+        else
+            Log::Warn("Install: a critical hook is disabled — not injecting "
+                      "(forced content off). Owned/installed games unaffected.");
+    } else if (std::getenv("LUMA_NO_PKG0_FINDER")) {
         Status::RecordHook("PackageZeroFinder", Status::DISABLED);
     } else {
         Hooks::PackageZeroFinder::Start();
