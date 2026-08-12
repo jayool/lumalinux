@@ -794,10 +794,17 @@ GML
 # launcher. ExecStart= resets the unit's ExecStart, then points it at ours; all
 # other directives (ExecStartPre tracker, ExecStop, ...) are preserved.
 install_gamemode_dropin() {
-    if ! have_user_systemd; then
-        warn "No systemd --user session — Game Mode drop-in not installed (Desktop coverage still active)."
-        return 0
-    fi
+    # ALWAYS write the drop-in file — it is just a file, and systemd reads unit
+    # drop-ins fresh on the next Game Mode start. Only the LIVE apply
+    # (daemon-reload) needs a running user bus. Skipping the whole thing when the
+    # bus isn't reachable RIGHT NOW was a real bug: the LumaDeck Desktop hand-off
+    # runs setup.sh from an autostart konsole before the user bus is up, so
+    # `have_user_systemd` returned false, the drop-in was never written, and Game
+    # Mode launched steam-launcher.service vanilla (uninjected) while Desktop —
+    # which uses the .desktop/PATH path, not systemd — worked. The file must land
+    # regardless; it takes effect on the next Game Mode boot. (write_gamemode_launcher
+    # runs just before this and is systemd-independent, so the target launcher
+    # always exists when this drop-in points at it.)
     mkdir -p "$GM_DROPIN_DIR"
     cat > "$GM_DROPIN" <<EOF
 # lumalinux Game Mode injection (managed by setup.sh — safe to delete)
@@ -805,8 +812,12 @@ install_gamemode_dropin() {
 ExecStart=
 ExecStart=%h/.local/share/SLSsteam/lumalinux-steam-launcher
 EOF
-    systemctl --user daemon-reload 2>/dev/null || true
-    ok "Game Mode injection installed (steam-launcher.service drop-in, via fail-safe)."
+    if have_user_systemd; then
+        systemctl --user daemon-reload 2>/dev/null || true
+        ok "Game Mode injection installed (steam-launcher.service drop-in, via fail-safe)."
+    else
+        warn "Game Mode drop-in written but not live-applied (no user bus right now) — it takes effect on the next Game Mode start."
+    fi
     return 0
 }
 remove_gamemode_dropin() {
