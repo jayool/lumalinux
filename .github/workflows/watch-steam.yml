@@ -88,7 +88,11 @@ jobs:
         if: steps.seen.outputs.cache-hit != 'true' && steps.wl.outputs.whitelisted == 'false'
         run: |
           set +e
-          python3 tools/check_patterns.py steamclient.so --json result.json > report.txt 2>&1
+          # --emit-rvas writes res/rvas/<sha256>.yaml (RVA-first feed) on a
+          # non-BLOCKING verdict; it is committed alongside the hash below.
+          python3 tools/check_patterns.py steamclient.so --json result.json \
+            --emit-rvas res/rvas --steam-version "${{ steps.ver.outputs.version }}" \
+            > report.txt 2>&1
           code=$?
           set -e
           cat report.txt
@@ -118,8 +122,8 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BR"
-          git add res/updates.yaml
-          git commit -m "chore(SafeMode): whitelist steamclient $SHORT (CI: patterns verified)"
+          git add res/updates.yaml res/rvas
+          git commit -m "chore(SafeMode): whitelist steamclient $SHORT (CI: patterns verified + RVA feed)"
           git push -u origin "$BR"
           {
             echo "Automated by \`watch-steam.yml\`. A new Steam client shipped and"

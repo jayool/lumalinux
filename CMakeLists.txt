@@ -46,6 +46,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32 -D_GLIBCXX_USE_CXX11_ABI=0")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m32")
 set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} -m32")
 
+# Fail the LINK on any undefined symbol instead of shipping a .so that only
+# breaks when LD_PRELOAD'd into Steam (as a conditionally-excluded source once
+# did — the empty-log "Steam won't start" bug). liblumalinux.so is self-contained
+# (all deps statically linked or dlopen-lazy), so it must have zero undefined
+# symbols; this catches "forgot to compile a source" / typo'd symbol at build.
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,--no-undefined")
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -73,6 +80,9 @@ set(LUMA_SOURCES
     src/license_reconcile.cpp
     src/patterns.cpp
     src/rtti.cpp
+    src/gmrc_xref.cpp
+    src/vaddr_xlate.cpp
+    src/rva_feed.cpp
     src/sls_achievement_unblock.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp
@@ -84,6 +94,7 @@ set(LUMA_SOURCES
     src/globals.cpp
     src/status.cpp
     src/curl.cpp
+    src/sha256.cpp
 )
 
 # SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so).
@@ -112,11 +123,15 @@ set(LUMA_SOURCES
 # (manifest.opensteamtool.com, manifest.steam.run) — so it must be present even
 # in LUMA_NO_UPDATE builds. curl.cpp is dlopen-lazy with ZERO link cost (no
 # NEEDED entry), so compiling it always is free and keeps the reaper-safe
-# property intact. Only sha256.cpp/update.cpp (the actual SafeMode gate) stay
-# gated below.
+# property intact. sha256.cpp is ALSO unconditional now (in LUMA_SOURCES above):
+# the RVA feed (src/rva_feed.cpp) hashes steamclient.so via Utils::getFileSHA256
+# to key res/rvas/<hash>.yaml, so it must be present even in LUMA_NO_UPDATE builds
+# — otherwise the .so has an undefined symbol and fails to load. It is a self-
+# contained SHA-256 (no libcrypto), so compiling it always is free. Only
+# update.cpp (the actual SafeMode gate) stays gated below.
 option(LUMA_NO_UPDATE "Build without the SafeMode update-check (no hash gate)" ON)
 if(NOT LUMA_NO_UPDATE)
-    list(APPEND LUMA_SOURCES src/sha256.cpp src/update.cpp)
+    list(APPEND LUMA_SOURCES src/update.cpp)
 endif()
 
 add_library(lumalinux SHARED ${LUMA_SOURCES})
