@@ -184,12 +184,37 @@ merge_slssteam_config() {
 #   NotifyInit/Notifications: yes — UX toasts
 edit_slssteam_config() {
     local cfg="$1"; [[ -f "$cfg" ]] || return 0
+
+    # Cosmetic toasts — flip in place, best-effort (a miss only loses a toast).
     sed -i "s/^NotifyInit:.*/NotifyInit: yes/" "$cfg"
     sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
-    sed -i "s/^DisableCloud:.*/DisableCloud: no/" "$cfg"
-    sed -i "s/^SafeMode:.*/SafeMode: no/" "$cfg"
-    sed -i "s/^DisableUpdates:.*/DisableUpdates: no/" "$cfg"
-    ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes)."
+
+    # Functional keys — flip in place, and if the flip DIDN'T take (the key was
+    # absent or not top-level: e.g. the SLSsteam template was missing so the
+    # seed/merge above never ran and we're editing a foreign config), APPEND it so
+    # the value is GUARANTEED. Relying only on the bare sed matching is what let
+    # SafeMode silently stay "yes" (headcrab's update freno) — or DisableUpdates
+    # stay "yes" (unowned games can't update) — while we printed "Applied".
+    # Append only fires when no top-level key exists, so it never duplicates one.
+    _sls_ensure_kv() {  # $1=key $2=value  (edits $cfg via the outer local)
+        sed -i "s/^$1:.*/$1: $2/" "$cfg"
+        grep -qE "^$1:[[:space:]]*$2([[:space:]]|\$)" "$cfg" || printf '%s: %s\n' "$1" "$2" >> "$cfg"
+    }
+    _sls_ensure_kv DisableCloud   no
+    _sls_ensure_kv SafeMode       no
+    _sls_ensure_kv DisableUpdates no
+
+    # Only claim success once the three functional keys are verified. If any is
+    # still wrong (e.g. the append couldn't write), warn loudly instead of lying.
+    local bad=""
+    for _key in SafeMode DisableUpdates DisableCloud; do
+        grep -qE "^${_key}:[[:space:]]*no([[:space:]]|\$)" "$cfg" || bad="${bad:+$bad, }${_key}"
+    done
+    if [[ -z "$bad" ]]; then
+        ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes)."
+    else
+        warn "SLSsteam config: ${bad} could NOT be set to 'no' in $cfg — SLSsteam's update-freeze/block may still be active. Check the file by hand."
+    fi
 }
 
 # Restore a clean steam.sh so the WRAPPER is the sole injector, handling the two
