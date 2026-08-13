@@ -359,8 +359,12 @@ void Run() {
             }
         }
         // Never give up: poll fast until the package first appears, then watch
-        // at a slower cadence so a rebuilt PackageId=0 gets re-injected.
-        std::this_thread::sleep_for(std::chrono::seconds(foundOnce ? kReinjectSec : kPollSec));
+        // at a slower cadence so a rebuilt PackageId=0 gets re-injected. But wake
+        // IMMEDIATELY if a game was just added (keys.txt changed) so its depots
+        // are injected + reconciled at once instead of up to kReinjectSec later —
+        // the #38 "install too soon -> 0 target depots" window. The idle cadence
+        // (and its safety-reinject role) is unchanged; only wake-on-add is new.
+        LicenseReconcile::WaitForKeysChangeOr(foundOnce ? kReinjectSec : kPollSec);
     }
 }
 

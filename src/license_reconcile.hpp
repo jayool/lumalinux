@@ -50,6 +50,15 @@ void NotifyKeysChanged();
 // already touches Steam structures) and AFTER the new depots are injected.
 bool TakeKeysChanged();
 
+// Sleep up to `timeoutSec`, but wake IMMEDIATELY if keys.txt changed
+// (NotifyKeysChanged fired) — returns at once if a change is already pending.
+// The package-0 finder calls this in place of a plain sleep so a freshly-added
+// game is injected + reconciled without waiting for the next slow poll tick
+// (the #38 "install too soon -> 0 target depots" window). Does NOT consume the
+// flag; the finder still calls TakeKeysChanged() after re-injecting. Call from
+// the finder thread only.
+void WaitForKeysChangeOr(int timeoutSec);
+
 // Fire CUser::NotifyLicensesUpdated once, if enabled + a CUser is known + the
 // function resolves uniquely. Broadcasts LicensesUpdated_t -> Steam refreshes
 // appinfo/ownership, no restart. Safe no-op otherwise. Call from a Steam

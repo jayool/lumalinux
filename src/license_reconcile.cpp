@@ -4,8 +4,11 @@
 #include "log.hpp"
 
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdlib>
+#include <mutex>
 #include <string>
 
 #include <sys/stat.h>
@@ -14,6 +17,12 @@ namespace {
 
 std::atomic<void*> g_pCUser{nullptr};
 std::atomic<bool>  g_keysChanged{false};
+
+// Wake primitive for the package-0 finder: lets it sleep on a timeout but wake
+// the instant a game is added (keys.txt change), instead of on its next slow
+// tick. The flag above doubles as the CV predicate.
+std::mutex              g_wakeMtx;
+std::condition_variable g_wakeCv;
 
 // CUser::NotifyLicensesUpdated is cdecl, single arg (`this`). It rebuilds the
 // LicensesUpdated_t callback from this user's own license vector and posts it.
@@ -77,11 +86,31 @@ void SetUser(void* cuser) {
 }
 
 void NotifyKeysChanged() {
-    g_keysChanged.store(true, std::memory_order_release);
+    // Set the flag under the wake mutex, THEN notify, so the finder — which
+    // checks the flag under the same mutex in WaitForKeysChangeOr — can never
+    // miss the wakeup (every set-true is locked + notified). Still safe from the
+    // inotify thread: it touches only this primitive, never Steam.
+    {
+        std::lock_guard<std::mutex> lk(g_wakeMtx);
+        g_keysChanged.store(true, std::memory_order_release);
+    }
+    g_wakeCv.notify_all();
 }
 
 bool TakeKeysChanged() {
     return g_keysChanged.exchange(false, std::memory_order_acq_rel);
+}
+
+void WaitForKeysChangeOr(int timeoutSec) {
+    std::unique_lock<std::mutex> lk(g_wakeMtx);
+    // Wake early if a change is already pending or arrives during the wait; else
+    // time out at the finder's normal cadence. Does NOT consume the flag (the
+    // finder consumes it via TakeKeysChanged() after re-injecting). A false-going
+    // transition from TakeKeysChanged() — not under this mutex — can only cause a
+    // harmless spurious re-wait, never a missed wake, since every true-transition
+    // goes through the locked notify above.
+    g_wakeCv.wait_for(lk, std::chrono::seconds(timeoutSec),
+                      [] { return g_keysChanged.load(std::memory_order_acquire); });
 }
 
 void Reconcile() {
