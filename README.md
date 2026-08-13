@@ -217,7 +217,10 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 
 ## Credits / notes
 
-- Hook design references **LumaCore** (Windows), reimplemented for Linux.
+- Hook design references **LumaCore** (Windows), reimplemented for Linux — see
+  [`docs/lumacore-findings.md`](docs/lumacore-findings.md) for the full
+  side-by-side analysis (shared seams, coexistence boundaries, and where each
+  side leads).
 - Runs alongside **SLSsteam** (ownership / licensing layer); **never forks it**.
   Beyond coexisting, it applies one surgical, reversible in-memory patch to
   `SLSsteam.so` (native achievements §17): no source fork, fail-closed and opt-out.
