@@ -1624,10 +1624,29 @@ in `AdditionalApps`, i.e. `CConfig::isAddedAppId(appId) == true`. Target predica
 alongside the since-removed `sls_update_unblock` §16) does an in-memory redirect of
 SLSsteam.so:
 
-1. **Resolve symbols** from the on-disk `SLSsteam.so` `.symtab` (SLSsteam ships
-   un-stripped): `CUser::isSubscribed`, `CConfig::isAddedAppId`, the `g_config`
-   object, and the two `sendAndRecvGet*Stats` functions. All-or-nothing — a
-   rename/strip fails the resolve and `Apply()` no-ops (cheevos off, never a crash).
+1. **Resolve symbols** from the on-disk `SLSsteam.so`: `CUser::isSubscribed`,
+   `CConfig::isAddedAppId`, the `g_config` object, and the two
+   `sendAndRecvGet*Stats` functions. The four functions match by **mangled-name
+   PREFIX** (the nested-name up to the closing `E`, *before* the parameter
+   encoding), scanning `.symtab` then `.dynsym`; `g_config` (a plain, param-free
+   global) matches exactly, and LTO `.cold`/`.lto_priv` split-offs (a `.` in the
+   name) are skipped. All-or-nothing — a miss fails the resolve and `Apply()`
+   no-ops (cheevos off, never a crash).
+
+   > **Why prefix, not the full mangled name (fixed after SLSsteam `20260728`).**
+   > The mangled name encodes parameter types, so a signature change breaks an
+   > exact-name lookup. SLSsteam `20260728` changed `sendAndRecvGetUserStats`' last
+   > arg from `uint32_t` (`j`) to `EMsg` (`4EMsg`): the hardcoded
+   > `…sendAndRecvGetUserStatsE…S3_j` stopped matching the real `…S3_4EMsg`, and
+   > since the resolve is all-or-nothing `Apply()` **silently no-op'd on every Deck
+   > that had updated SLSsteam** — native achievements OFF, and (because the
+   > licence-reconcile's `CUser` is captured *only* inside this guard, see §"license
+   > reconcile" / `license_reconcile.cpp`) the **no-restart Add path died with it**.
+   > Prefix matching survives parameter-type changes; the `.dynsym` fallback
+   > survives a future `.symtab` strip. Symbols were all still present (`GLOBAL
+   > DEFAULT`) — only the one hardcoded string was stale. Root-caused + fixed on a
+   > Deck-mirroring SteamOS codespace (LumaDeck #38 chased the same window from the
+   > finder side).
 2. **Find the guard call** inside each `sendAndRecvGet*Stats` by scanning for
    `E8 rel32 (call isSubscribed) · 83 C4 imm8 (add esp — cdecl caller cleanup) ·
    84 C0 (test al,al) · 75 rel8 (jne)`. Require **exactly one** hit per function
