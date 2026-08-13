@@ -20,14 +20,19 @@ namespace {
 // Mangled names in SLSsteam.so (verified present in the 20260711 release, which
 // ships NOT stripped). If AceSLS renames/strips these, ResolveSymbols fails and
 // Apply() no-ops — a safe degradation.
-constexpr const char* kIsSubscribed   = "_ZN5CUser12isSubscribedEj";
-constexpr const char* kIsAddedAppId   = "_ZN7CConfig12isAddedAppIdEj";
+// Functions are matched by mangled-name PREFIX — the nested-name up to the
+// closing 'E', i.e. WITHOUT the parameter encoding — so a parameter-type change
+// in SLSsteam doesn't break resolution. This bit us for real: SLSsteam 20260728
+// changed sendAndRecvGetUserStats' last arg from uint32_t (mangled 'j') to EMsg
+// ('4EMsg'), so the old full-name lookup missed it and the patch silently no-op'd
+// (native achievements off, and the license-reconcile CUser capture with it).
+// g_config is a plain, unmangled, param-free global — matched EXACTLY (a prefix
+// there could collide with e.g. a g_configXxx symbol).
+constexpr const char* kIsSubscribed   = "_ZN5CUser12isSubscribedE";
+constexpr const char* kIsAddedAppId   = "_ZN7CConfig12isAddedAppIdE";
 constexpr const char* kGConfig        = "g_config";
-constexpr const char* kGetUserStats   =
-    "_ZN12Achievements23sendAndRecvGetUserStatsEP7CAPIJobP16CProtoBufMsgBasejS3_j";
-constexpr const char* kGetPlayerStats =
-    "_ZN12Achievements25sendAndRecvGetPlayerStatsEP30CClientUnifiedServiceTransport"
-    "PKcP28CPlayer_GetUserStats_RequestP29CPlayer_GetUserStats_Response";
+constexpr const char* kGetUserStats   = "_ZN12Achievements23sendAndRecvGetUserStatsE";
+constexpr const char* kGetPlayerStats = "_ZN12Achievements25sendAndRecvGetPlayerStatsE";
 
 // Resolved-at-init pointers the replacement guard calls. SLSsteam is x86-32 GCC:
 // non-static methods are cdecl with `this` as an explicit first stack arg, so a
@@ -106,11 +111,54 @@ bool FindSo(SoInfo& out) {
     return haveBase && !out.path.empty();
 }
 
-struct Sym { uintptr_t value = 0; uint32_t size = 0; bool found = false; };
+struct Sym  { uintptr_t value = 0; uint32_t size = 0; bool found = false; };
+struct Want { const char* pat; bool prefix; };  // prefix (funcs) vs exact (g_config)
 
-// Resolve every name in `names` from the ELF32 .symtab of the on-disk .so.
-// Returns false unless ALL are found (fail-closed).
-bool ResolveSymbols(const std::string& path, const std::vector<const char*>& names,
+// Scan ONE symbol table (.symtab or .dynsym) for each still-unresolved Want.
+// A prefix Want matches any symbol starting with its pattern, EXCEPT names that
+// carry a '.' (the LTO `.cold` / `.lto_priv` split-offs, which share the prefix
+// but aren't the real entry point). An exact Want matches the full name. A
+// defined, non-zero-sized hit wins and is never downgraded to a size-0 one (the
+// size bounds the later guard scan).
+void ScanSymTable(const std::vector<uint8_t>& buf, const Elf32_Shdr& tab,
+                  const Elf32_Shdr& str, const std::vector<Want>& want,
+                  std::vector<Sym>& out) {
+    if (tab.sh_entsize < sizeof(Elf32_Sym)) return;
+    if ((size_t)tab.sh_offset + tab.sh_size > buf.size()) return;
+    if ((size_t)str.sh_offset + str.sh_size > buf.size()) return;
+    const char*  strs = reinterpret_cast<const char*>(buf.data() + str.sh_offset);
+    const size_t nstr = str.sh_size;
+    const size_t nsym = tab.sh_size / tab.sh_entsize;
+    for (size_t s = 0; s < nsym; ++s) {
+        const auto* sym = reinterpret_cast<const Elf32_Sym*>(
+            buf.data() + tab.sh_offset + s * tab.sh_entsize);
+        if (sym->st_shndx == SHN_UNDEF) continue;  // undefined import: no address
+        if (sym->st_name >= nstr) continue;
+        const char* nm = strs + sym->st_name;
+        for (size_t k = 0; k < want.size(); ++k) {
+            if (out[k].found && out[k].size) continue;  // already a sized hit
+            bool hit;
+            if (want[k].prefix) {
+                const size_t pl = std::strlen(want[k].pat);
+                hit = std::strncmp(nm, want[k].pat, pl) == 0 &&
+                      std::strchr(nm, '.') == nullptr;
+            } else {
+                hit = std::strcmp(nm, want[k].pat) == 0;
+            }
+            if (!hit) continue;
+            if (out[k].found && !sym->st_size) continue;  // don't downgrade to size-0
+            out[k].value = sym->st_value;
+            out[k].size  = sym->st_size;
+            out[k].found = true;
+        }
+    }
+}
+
+// Resolve every Want from the on-disk ELF32, scanning .symtab first (it carries
+// symbol sizes, needed to bound the guard scan) then .dynsym as a fallback for a
+// build that strips .symtab but keeps the dynamic table. Fail-closed: returns
+// false unless ALL Wants are found.
+bool ResolveSymbols(const std::string& path, const std::vector<Want>& want,
                     std::vector<Sym>& out) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
@@ -126,33 +174,13 @@ bool ResolveSymbols(const std::string& path, const std::vector<const char*>& nam
         return false;
 
     const auto* shs = reinterpret_cast<const Elf32_Shdr*>(buf.data() + eh->e_shoff);
-    const Elf32_Shdr* symtab = nullptr;
-    for (int i = 0; i < eh->e_shnum; ++i)
-        if (shs[i].sh_type == SHT_SYMTAB) { symtab = &shs[i]; break; }
-    if (!symtab || symtab->sh_entsize < sizeof(Elf32_Sym) ||
-        symtab->sh_link >= eh->e_shnum)
-        return false;
+    out.assign(want.size(), Sym{});
 
-    const Elf32_Shdr& strtab = shs[symtab->sh_link];
-    if ((size_t)symtab->sh_offset + symtab->sh_size > buf.size()) return false;
-    if ((size_t)strtab.sh_offset + strtab.sh_size > buf.size()) return false;
-
-    const char*  strs = reinterpret_cast<const char*>(buf.data() + strtab.sh_offset);
-    const size_t nstr = strtab.sh_size;
-    const size_t nsym = symtab->sh_size / symtab->sh_entsize;
-
-    out.assign(names.size(), Sym{});
-    for (size_t s = 0; s < nsym; ++s) {
-        const auto* sym = reinterpret_cast<const Elf32_Sym*>(
-            buf.data() + symtab->sh_offset + s * symtab->sh_entsize);
-        if (sym->st_name >= nstr) continue;
-        const char* nm = strs + sym->st_name;
-        for (size_t k = 0; k < names.size(); ++k)
-            if (!out[k].found && std::strcmp(nm, names[k]) == 0) {
-                out[k].value = sym->st_value;
-                out[k].size  = sym->st_size;
-                out[k].found = true;
-            }
+    for (uint32_t kind : { (uint32_t)SHT_SYMTAB, (uint32_t)SHT_DYNSYM }) {
+        for (int i = 0; i < eh->e_shnum; ++i) {
+            if (shs[i].sh_type != kind || shs[i].sh_link >= eh->e_shnum) continue;
+            ScanSymTable(buf, shs[i], shs[shs[i].sh_link], want, out);
+        }
     }
     for (const auto& s : out)
         if (!s.found) return false;
@@ -253,11 +281,12 @@ bool Apply() {
 
     // Order matters: [0]=isSubscribed [1]=isAddedAppId [2]=g_config
     //                [3]=getUserStats [4]=getPlayerStats
-    std::vector<const char*> names = {
-        kIsSubscribed, kIsAddedAppId, kGConfig, kGetUserStats, kGetPlayerStats,
+    std::vector<Want> want = {
+        {kIsSubscribed, true}, {kIsAddedAppId, true}, {kGConfig, false},
+        {kGetUserStats, true}, {kGetPlayerStats, true},
     };
     std::vector<Sym> syms;
-    if (!ResolveSymbols(so.path, names, syms)) {
+    if (!ResolveSymbols(so.path, want, syms)) {
         Log::Warn("SLS-ach: could not resolve SLSsteam symbols (stripped or renamed?) "
                   "— native achievements stay off. %s", so.path.c_str());
         return false;
