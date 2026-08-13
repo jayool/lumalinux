@@ -26,9 +26,9 @@
 #      (auto-vanilla on a startup crash), so a bad Steam update can never brick
 #      Game Mode. Plus a systemd guardian that re-asserts .desktop coverage.
 #
-# No root required. Desktop mode → patched .desktop; Game Mode → PATH drop-in
-# (efficacy on gamescope boot is the one real-Deck test, see plan WS5). Not
-# handled: Steam-as-Flatpak paths.
+# No root required. Desktop mode → patched .desktop (+ PATH drop-in for terminals);
+# Game Mode → systemd drop-in on steam-launcher.service (the PATH drop-in does NOT
+# reach Game Mode — verified on-device). Not handled: Steam-as-Flatpak paths.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash

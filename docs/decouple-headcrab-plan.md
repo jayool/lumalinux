@@ -17,7 +17,9 @@ backend Decky). Rama de trabajo: `claude/steam-update-gating`.*
 > | **WS5** | pruebas en Deck | ✅ hecho (migración desde headcrab + instalación limpia validadas) |
 >
 > Dependencia de headcrab que queda: **solo datos** (el pin `HeadcrabCompatibleClientVer`
-> + `sources.txt`), en la ruta rara de downgrade. Decoplarlo del todo es lumalinux#26.
+> + los *client manifests* de `Deadboy666/SteamTracking` + el mirror `bifrosthub.ru`),
+> en la ruta rara de downgrade. Decoplar el **pin** es lumalinux#26 (el mirror/manifests
+> del downgrade NO están cubiertos por #26).
 > §1 y §2 se conservan como el diagnóstico/racional *previo al cambio*.
 
 ---
@@ -27,10 +29,10 @@ backend Decky). Rama de trabajo: `claude/steam-update-gating`.*
 Dejar de **ejecutar** `headcrab.sh` para instalar / quick-install / reparar.
 Mover la inyección de las 3 `.so` de un `steam.sh` frágil (SHA-verificado,
 re-extraído en cada update de Steam) a un **wrapper propio** alcanzado por
-parcheo de `.desktop` + wrap del launcher del sistema (el modelo de moon,
-probado en producción). Reducir headcrab a una dependencia de **datos** (el pin
-de compatibilidad + `sources.txt`) usada solo en la ruta rara de downgrade de
-rescate. Borrar la maquinaria de freeze/pin/handoff.
+parcheo de `.desktop` (Desktop), un PATH drop-in (terminales) y un drop-in de
+systemd en `steam-launcher.service` (Game Mode). Reducir headcrab a una dependencia
+de **datos** (el pin de compatibilidad + los client manifests + el mirror) usada solo
+en la ruta rara de downgrade de rescate. Borrar la maquinaria de freeze/pin/handoff.
 
 ---
 
@@ -129,7 +131,8 @@ lumalinux/setup.sh  (NUEVO — equivalente a moon setup.sh, self-contained)
    │           (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notif=yes)
    ├─ version: graba el tag de release de SLSsteam en .slssteam.version
    ├─ wrapper: ~/.local/share/SLSsteam/path/steam  (inyecta las 3 .so)
-   ├─ cobertura: parchea .desktop Exec + PATH drop-in Game Mode + autostart
+   ├─ cobertura: .desktop Exec (Desktop) + PATH drop-in (terminales) +
+   │             drop-in systemd en steam-launcher.service (Game Mode) + autostart
    ├─ guardian: re-afirma cobertura tras updates de Steam
    ├─ migración: neutraliza el steam.sh de headcrab + barre sus leftovers
    └─ uninstall: restaura .desktop/launcher/PATH, borra wrapper
@@ -161,11 +164,14 @@ retirará `install.sh` cuando esté probado.
   instalación de la **app Flatpak de CloudRedirect** (best-effort, saltable con
   `LUMA_SKIP_CR_APP=1`) + escritura del wrapper + cobertura **Desktop**
   (`.desktop` Exec de `steam`/`steam-jupiter`/`bazzite-steam` + autostart
-  override) + cobertura **Game Mode** (PATH drop-in en `.bashrc`/`.zshrc`/
-  `.profile`, el modelo de moon) + uninstall (revierte todo, incl. el PATH).
-  Validado end-to-end en Deck real: instalación limpia (4 `.so` mapeadas en el
-  cliente 32-bit, `status.json` con hooks activos) y **migración desde headcrab**
-  (steam.sh restaurado a vanilla, Game Mode arranca por el drop-in).
+  override) + un **PATH drop-in** en `.bashrc`/`.zshrc`/`.profile` (solo
+  **terminales**) + cobertura **Game Mode** vía un **drop-in de systemd en
+  `steam-launcher.service`** (divergió de moon, que usaba el PATH drop-in para Game
+  Mode; en Deck se comprobó que el PATH **no** llega a la sesión gamescope) +
+  uninstall (revierte todo). Validado end-to-end en Deck real: instalación limpia
+  (4 `.so` mapeadas en el cliente 32-bit, `status.json` con hooks activos) y
+  **migración desde headcrab** (steam.sh restaurado a vanilla, Game Mode arranca por
+  el drop-in de systemd).
   Añadidos respecto al diseño original: **config template-based** (seed/merge +
   edit in-place de SafeMode/DisableCloud/DisableUpdates/NotifyInit/Notifications),
   **grabado de la versión de SLSsteam** en `~/.config/SLSsteam/.slssteam.version`
@@ -192,11 +198,13 @@ retirará `install.sh` cuando esté probado.
     extraída a `ensure-desktop-coverage.sh` (compartida install/guardian). Probado:
     genera y habilita los units; apply idempotente; uninstall restaura.
   - Wrap del launcher del sistema (`/usr/bin/steam`): **no** — en SteamOS/Deck
-    (inmutable) moon lo salta; Game Mode va por el PATH drop-in. Solo haría falta
-    en Linux escritorio mutable (baja prioridad).
-- **La incógnita que quedaba (RESUELTA en Deck, WS5):** que la sesión gamescope de
-  Game Mode herede el PATH del rc y resuelva `steam` por PATH (no por ruta
-  absoluta). Confirmado: Game Mode arranca por el drop-in tras la migración.
+    (inmutable) se deja vanilla. Game Mode se cubre con un **drop-in de systemd en
+    `steam-launcher.service`** (ver WS1.1), no tocando `/usr/bin/steam`.
+- **La incógnita que quedaba (RESUELTA en Deck, WS5):** si la sesión gamescope de
+  Game Mode hereda el PATH del rc y resuelve `steam` por PATH. Resultado: **no** —
+  el PATH drop-in NO llega a Game Mode (verificado en Deck), así que la cobertura de
+  Game Mode se hace por el **drop-in de systemd en `steam-launcher.service`**, no por
+  PATH. (Divergencia de moon, análoga a la de WS3.)
 
 **Fuentes de descarga confirmadas** (verificadas 2026-08-08):
 - SLSsteam + `library-inject.so`: `SLSsteam-Any.7z` de
@@ -293,34 +301,40 @@ headcrab. Estado real de cada fichero:
 LumaDeck. El mecanismo reproduce el de headcrab con piezas nuestras, leyendo datos
 de Deadboy. NO es magia de headcrab (verificado leyendo `headcrab.sh`):
 
-1. Leer el pin `HeadcrabCompatibleClientVer` + fetch `sources.txt` de
-   `Deadboy666/h3adcr-b-modul3s` (**solo datos**).
-2. Descargar los chunks del build desde la **CDN oficial de Valve**
-   (`client-update.fastly.steamstatic.com`) con `curl`/`aria2c` a `package/`
-   (reemplaza el binario `dlm`).
-3. Servirlos en `localhost:1666` con un servidor estático que respete el patrón de
-   URLs que Steam pide (reemplaza el binario `dgsc`).
-4. Correr el downgrade con el **flag propio de Steam**:
-   `steam -forcesteamupdate -forcepackagedownload -overridepackageurl http://localhost:1666/ -exitsteam`.
-5. escribir `steam.cfg` para fijar el build — **el único sitio donde un freeze es
-   legítimo ahora** — firmado con una línea `# lumalinux` para que
-   `steam_freeze.py` lo distinga de un freeze ajeno (headcrab) y lo mantenga hasta
-   que el ecosistema alcance el pin (ver §WS3).
-6. **Gate**: ofrecerlo solo cuando la inyección esté rota en un build no
+1. Descargar el **client manifest** del build objetivo (deck/linux) desde
+   `Deadboy666/SteamTracking@headcrab` (`DECK_MANIFEST_URL`/`LINUX_MANIFEST_URL`) a
+   `$STEAM/package/` (**solo datos**). El manifest se fetchea y verifica **antes** de
+   tocar `package/`, así un fallo de red aborta con Steam intacto.
+2. Escribir el pin en `steam.cfg` (`BootStrapperInhibitAll` /
+   `BootStrapperForceSelfUpdate`) — **el único sitio donde un freeze es legítimo
+   ahora** — firmado con una línea `# lumalinux` para que `steam_freeze.py` lo
+   distinga de un freeze ajeno (headcrab) y lo mantenga hasta que el ecosistema
+   alcance el pin (ver §WS3).
+3. Relanzar Steam headless y **SLSsteam-audited** (el `export_sls` de headcrab:
+   `LD_AUDIT=<library-inject>:<SLSsteam>`), apuntándolo directamente al **mirror de
+   paquetes de headcrab**:
+   `steam -forcesteamupdate -forcepackagedownload -overridepackageurl https://headcrab.bifrosthub.ru/client-stable -exitsteam`.
+   Steam baja los paquetes del build objetivo **directamente del mirror**; el viejo
+   depot local-proxy (`dlm`/`dgsc` en `localhost:1666`) está **MUERTO** — comentado
+   en el propio headcrab — y no se usa. Todas las URLs son overridables por entorno
+   (`DOWNGRADE_URL`, `DECK_MANIFEST_URL`, `LINUX_MANIFEST_URL`).
+4. **Gate**: ofrecerlo solo cuando la inyección esté rota en un build no
    reconocido **y** lumalinux/SLSsteam no estén listos (cruzar con `updates.yaml`).
    Break-glass, opt-in, en Desktop.
 
-**A verificar antes de comprometer WS4**: el patrón exacto de peticiones que Steam
-manda a `-overridepackageurl` (para confirmar que un `http.server` estático basta,
-o si `dgsc` hace algo especial). Hasta verificarlo, WS4 puede seguir usando los
-binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
+**Resuelto:** no hace falta servidor estático ni `dlm`/`dgsc` — `downgrade.sh`
+apunta Steam **directamente** al mirror de headcrab (`-overridepackageurl
+https://headcrab.bifrosthub.ru/client-stable`), que es lo que hace el propio headcrab
+hoy (el path `localhost:1666`/`dlm`/`dgsc` está muerto). Único pendiente: ejercitar el
+downgrade/mirror en vivo una vez (ver WS5).
 
 ### WS5 — Pruebas en la Deck (seguridad) — ✅ HECHO
 
 - Validado en codespace Arch limpio (instalación de cero) **y** en Deck real
   (migración desde headcrab + instalación limpia).
 - Verificado: cargan las 4 `.so` (SLSsteam por LD_AUDIT; CR + lumalinux + netsock
-  mapeadas en el proceso 32-bit); Game Mode arranca por el PATH drop-in; `steam.sh`
+  mapeadas en el proceso 32-bit); Game Mode arranca por el drop-in de systemd en
+  `steam-launcher.service`; `steam.sh`
   restaurado a vanilla; `status.json` con hooks activos y `blocked=null`.
 - Verificado el ciclo de juego: un no-owned descarga (las 6 gates abren); el
   race de descarga (#38) se auto-cura vía re-check de Steam.
@@ -350,7 +364,7 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 | El wrapper no cubre alguna vía de launch | Steam corre vanilla (sin unlock) — **falla seguro, no brickea** | cubrir `.desktop` + launcher sistema + autostart + PATH; re-afirmar con guardian |
 | Coexistencia de las 3 `.so` | crash en init | ya probado en `steam.sh` hoy; mismo orden (library-inject 1º; CR/lumalinux en LD_PRELOAD) |
 | Perder la red de seguridad del freeze en un update malo | brick / crash-loop | portar el crash-guard de moon (WS1.6): cliente-cambiado + crash → vanilla |
-| El servidor estático de downgrade no casa con lo que Steam pide | downgrade falla | mantener `dgsc` de Deadboy como fallback hasta verificar el patrón |
+| El mirror de downgrade (`bifrosthub.ru`) cae o cambia | downgrade falla | overridable por `DOWNGRADE_URL`/`*_MANIFEST_URL`; es la ruta rara/opt-in; sin fallback local (`dlm`/`dgsc` muerto) |
 | Drift de las URLs de release (AceSLS/CR) | fetch falla | fijar a `releases/latest`, fail-closed con error claro (como hace `headcrab_compat` hoy) |
 
 ---
@@ -358,10 +372,11 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 ## 7. Dependencia de headcrab que queda tras todo esto
 
 - **Ruta feliz** (install / quick / repair): **CERO**.
-- **Downgrade escape-hatch**: **dos ficheros de datos** (pin de compat +
-  `sources.txt`) de los repos de Deadboy, leídos por HTTP, en una ruta opt-in poco
-  frecuente. El mecanismo es nuestro. Promovible a 100%-propio más tarde (generar
-  `sources.txt` desde `updates.yaml`) si se quiere.
+- **Downgrade escape-hatch**: **datos de Deadboy** — el pin de compat + los
+  *client manifests* de `Deadboy666/SteamTracking@headcrab` + el **mirror de paquetes**
+  `headcrab.bifrosthub.ru` — leídos por HTTP, en una ruta opt-in poco frecuente. El
+  mecanismo es nuestro (`downgrade.sh`). El **pin** es promovible a 100%-propio más
+  tarde (lumalinux#26); el mirror/manifests NO están cubiertos por #26.
 
 ---
 
@@ -378,7 +393,7 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 - `installer.py` — `install_via_setup()` corre `setup.sh`; fuera los patches headcrab
 - `steam_freeze.py` — **CONSERVADO**, hecho *origin-based* (firma `# lumalinux`)
 - `desktop_handoff.py` — **CONSERVADO** (enruta el downgrade + sign-in CR)
-- `headcrab_compat.py` — **CONSERVADO** (lee pin/target + sources; #26 lo decoplará)
+- `headcrab_compat.py` — **CONSERVADO** (lee el pin/target; #26 lo decoplará)
 - `slssteam_config.py` — lee `.slssteam.version` para detectar updates de SLSsteam
 - `components.py`, `update_checks.py`, `paths.py`, `slssteam_ops.py`, `main.py`,
   `quick_install_cli.py` — ajustadas referencias; gates de update por-build quitados
@@ -390,8 +405,10 @@ binarios `dlm`/`dgsc` de Deadboy como fallback mientras nosotros orquestamos.
 - Modelo de inyección: `swwayps/slsteam-moon` `setup.sh` (wrapper + cobertura
   `.desktop`/launcher). Findings propios: `docs/slsteam-moon-findings.md` M7, M3.
 - Mecanismo de downgrade: `Deadboy666/h3adcr-b` `headcrab.sh`
-  (`clientdowngrade` = `prepdowngrade` + `overideupdate`; `dlm`/`dgsc`/`sources.txt`
-  de `h3adcr-b-modul3s`; chunks desde `client-update.fastly.steamstatic.com`).
+  (`clientdowngrade` = `prepdowngrade` + `overideupdate`; **enfoque mirror**: Steam
+  baja los paquetes directo de `headcrab.bifrosthub.ru` vía `-overridepackageurl`, con
+  los client manifests de `Deadboy666/SteamTracking@headcrab`; el path
+  `dlm`/`dgsc`/`localhost:1666` está muerto).
 - Las 6 gates que deben seguir abriendo: `docs/method.md`.
 - Inyección: sustituida por el wrapper (`lumalinux/setup.sh`). El viejo modelo era
   el `LD_PRELOAD` en `steam.sh` (`src/main.cpp`) parcheado por `_HEADCRAB_PATCHES`

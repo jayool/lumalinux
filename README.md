@@ -48,7 +48,8 @@ For driving lumalinux directly with Hubcap-style zips.
    One idempotent script: fetches SLSsteam + `library-inject` + CloudRedirect +
    netsock + `liblumalinux.so`, writes the injection **wrapper** at
    `~/.local/share/SLSsteam/path/steam`, and wires coverage (patched `*steam*.desktop`
-   + a Game Mode PATH drop-in). Your `steam.sh` and `/usr/bin/steam` stay **vanilla**.
+   for Desktop, a PATH drop-in for terminals, and a systemd drop-in on
+   `steam-launcher.service` for Game Mode). Your `steam.sh` and `/usr/bin/steam` stay **vanilla**.
    Launch Steam once so it settles.
 
 2. **Add a game** for each Hubcap zip, with Steam closed:
@@ -62,8 +63,9 @@ For driving lumalinux directly with Hubcap-style zips.
 
 ### After a Steam update
 
-The wrapper is reached by patched `.desktop` files + a Game Mode PATH drop-in, and a
-systemd `--user` guardian re-affirms that coverage — so a Steam self-update no longer
+The wrapper is reached by patched `.desktop` files (Desktop), a PATH drop-in
+(terminals), and a systemd drop-in on `steam-launcher.service` (Game Mode); a systemd
+`--user` guardian re-affirms the `.desktop` coverage — so a Steam self-update no longer
 erases injection the way a patched `steam.sh` did (and if a bad update breaks the
 byte patterns, the wrapper's crash-loop fail-safe boots vanilla instead of bricking).
 If injection ever stops, or to pull fresh `.so`s, reapply: in LumaDeck, **Settings →
@@ -157,8 +159,8 @@ Almost always a Steam client or SLSsteam update. The log tells the cases apart, 
 [`docs/maintenance.md`](docs/maintenance.md) has the fix per case:
 
 - **No startup toast at all**: the wrapper isn't being reached (coverage lost — e.g.
-  a Steam update regenerated a `.desktop`, or the Game Mode PATH drop-in didn't
-  apply). Reapply lumalinux (see [After a Steam update](#after-a-steam-update)).
+  a Steam update regenerated a `.desktop`, or the Game Mode `steam-launcher.service`
+  drop-in was dropped). Reapply lumalinux (see [After a Steam update](#after-a-steam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
   §A). DepotKey + GMRC (plus the package-0 finder) failing breaks installs;
   BuildDep is disabled by default and non-critical, and ShaderDepot is cosmetic.
@@ -193,9 +195,10 @@ not `LD_AUDIT` (which lands it in a separate linker namespace and corrupts the h
 The injection point is the **wrapper** at `~/.local/share/SLSsteam/path/steam`
 (`setup.sh`'s model, from `slsteam-moon`): it exports `LD_AUDIT` for SLSsteam and
 `LD_PRELOAD` for CloudRedirect + lumalinux, then `exec`s the real Steam. The wrapper
-is reached by patched `*steam*.desktop` files + a Game Mode PATH drop-in — never by
-editing `steam.sh` or `/usr/bin/steam` — so those stay vanilla and coverage survives
-Steam self-updates (a guardian re-affirms it). Exact anchor and namespace detail in
+is reached by patched `*steam*.desktop` files (Desktop), a PATH drop-in (terminals),
+and a systemd drop-in on `steam-launcher.service` (Game Mode) — never by editing
+`steam.sh` or `/usr/bin/steam` — so those stay vanilla and coverage survives Steam
+self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and namespace detail in
 [RESEARCH §5](docs/RESEARCH.md).
 
 ### Related docs

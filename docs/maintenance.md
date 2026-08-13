@@ -30,24 +30,36 @@ common; A.2 happens occasionally; C is rare but blocking when it hits.
 ### A.1 Hash bump (no rebuild, no release)
 
 This handles **the majority of Steam updates**, because Valve usually moves
-byte offsets without moving the prologues we anchor on. The hooks would
-install fine — the only thing stopping us is lumalinux's SafeMode whitelist
-not knowing the new `steamclient.so` hash yet.
+byte offsets without moving the prologues we anchor on — so the hooks keep
+installing on their own. An unknown `steamclient.so` hash no longer stops
+anything (SafeMode is **advisory**, not a gate — see below); the hash bump's
+job now is to mark the new build **verified** and to publish its **RVA file**,
+so hooks resolve RVA-first on it instead of leaning on the byte scan.
 
-How it works (`src/update.cpp`, `res/updates.yaml`, `res/version.txt`):
+How it works (`src/main.cpp`, `src/update.cpp`, `src/rva_feed.cpp`,
+`res/updates.yaml`, `res/version.txt`, `res/rvas/`):
 
 - `LUMALINUX_SAFEMODE_VERSION` is embedded at build time from
   `res/version.txt` (a timestamp like `20260611150000`).
 - On boot, lumalinux fetches
   `https://raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml`
   and looks under `SafeModeHashes:` for an entry matching its version. The
-  list under it is the set of `steamclient.so` SHA-256 hashes known to be
-  compatible with the patterns shipped in this lumalinux build.
-- If the current `steamclient.so` hashes to one of those entries → green
-  light, hooks install. If not → SafeMode refuses.
-- **`updates.yaml` is fetched from `main` every boot.** The deployed lumalinux
-  binary on user Decks does NOT need to be replaced for a hash bump to reach
-  them — they pick it up automatically on next launch.
+  list under it is the set of `steamclient.so` SHA-256 hashes known-verified
+  for the patterns shipped in this lumalinux build.
+- The hash check is **advisory, not a gate** (`src/main.cpp`). A known hash is
+  the fast path; an **unknown** hash does NOT refuse — lumalinux logs a notice
+  and proceeds on the **pattern/RVA scan**, which is the real gate: hooks
+  install if they still resolve on this binary, and a genuine break surfaces as
+  FAILED hooks (not a hard block). So a fresh, un-whitelisted build usually
+  works on its own until the bump lands.
+- Independently, each hook resolves **RVA-first** (`src/rva_feed.cpp`): if
+  `res/rvas/<hash>.yaml` exists for the current build it is used before any byte
+  pattern, so a verified build keeps hooking even when a pattern moves. The hash
+  bump (`watch-steam.yml`, §A auto-PR) publishes that RVA file alongside the
+  `SafeModeHashes` entry.
+- **`updates.yaml` and `res/rvas/` are fetched from `main` every boot.** The
+  deployed lumalinux binary on user Decks does NOT need to be replaced for a
+  hash bump to reach them — they pick it up automatically on next launch.
 
 > **Build note (0.15.0+).** Releases ship with the gate ON — `build.yml` passes
 > `-DLUMA_NO_UPDATE=OFF`. This is only safe because 0.15.0 removed SafeMode's
@@ -243,10 +255,11 @@ loaded at all.
 launched **without going through the wrapper**. Two ways that happens:
 
 1. **Coverage lost.** A Steam self-update (or a DE/desktop change) regenerated a
-   `*steam*.desktop`, or the Game Mode PATH drop-in isn't in effect, so the launch
-   resolved the real Steam instead of the wrapper. The systemd `--user` guardian
-   re-affirms coverage on a timer + on `.desktop` changes; if it isn't running (or a
-   brand-new launch path appeared) coverage can lapse.
+   `*steam*.desktop`, or the Game Mode systemd drop-in on `steam-launcher.service`
+   was dropped, so the launch resolved the real Steam instead of the wrapper. The
+   systemd `--user` guardian re-affirms `.desktop` coverage on a timer + on
+   `.desktop` changes; if it isn't running (or a brand-new launch path appeared)
+   coverage can lapse.
 2. **The crash-loop fail-safe latched vanilla — on purpose.** The wrapper counts
    startup crashes (`*.dmp` in the first 180 s) and boots **vanilla** (no injection)
    after the 3rd — or the 1st if `steamclient.so` changed since the last clean boot
@@ -266,8 +279,10 @@ curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | ba
 or, in LumaDeck, **Settings → Dependencies → Install / Reapply lumalinux**. If the
 banner still doesn't appear next boot, the launch path genuinely isn't hitting the
 wrapper — check the guardian is active
-(`systemctl --user status slsteam-desktop-guardian.path`) and that Game Mode inherits
-the PATH drop-in. If the banner appears but hooks then fail, it wasn't B — go to A.
+(`systemctl --user status lumalinux-desktop-guardian.path`) and that the Game Mode
+drop-in is present (`systemctl --user cat steam-launcher.service` should route
+`ExecStart` through the wrapper's Game Mode launcher). If the banner appears but hooks
+then fail, it wasn't B — go to A.
 
 > In the old model this row meant "Headcrab regenerated `steam.sh` and dropped
 > lumalinux's `LD_PRELOAD` block". That can't happen now: `steam.sh` is left vanilla
