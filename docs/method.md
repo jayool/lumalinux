@@ -165,7 +165,7 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 | **3 Depot surfacing** | package-0 **finder** (active cache walk, §13) | `PackagePatch::LoadPackage` (hook, injects appids into Package 0's `AppIdVec`) | KeyValues / manifest patching |
 | **4 Manifest pinning** | **SLSsteam** `ManifestIds` (since v0.16.10; lumalinux's BuildDep hook disabled, SLSsteam owns `BuildDepotDependency`) | `ManifestBind::BuildDepotDependency` (hook) | manifest patching |
 | **5 Depot key** | **DepotKey** hook from `keys.txt` | `DepotKeys::LoadDepotDecryptionKey` from `.lua` | `addappid(depot,0,"hexkey")` in lua |
-| **6 Manifest request code** | **GMRC** hook at runtime (3-provider cascade: opensteamtool→wudrm→steamrun, §5) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-download manifests — **LumaCore.dll has no runtime GMRC hook** (verified) | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
+| **6 Manifest request code** | **GMRC** hook at runtime (3-provider cascade: opensteamtool→wudrm→steamrun, §5) | **SteaMidra Python** pre-fetches it (`get_gmrc`) to pre-seed `depotcache/`, **and** LumaCore.dll now also runs a runtime GMRC bridge at the **wire layer** (`NetPacket_Manifest`+`ManifestFetch`, SFF 6.6.4) — same 3 providers, returns the code by rewriting the CM response frame | `fetch_manifest_code_ex(...)` via `opensteamtool`/`steamrun`/`wudrm`, supplied to the client at runtime |
 | **Who downloads content** | Steam client (Model A) | Steam client; manifests pre-seeded by SteaMidra (Model A) | Steam client (Model A) |
 | **Lua location** | `keys.txt` + `config/stplug-in/<appid>.lua` (interop) | `config/stplug-in/<appid>.lua` | `config/lua/` |
 | **Extras** | per-game shader-pre-cache skip for keyless games (ShaderDepot hook, §13.10) — keeps keyed/owned games' shaders | family-share bypass (`PacketRouter`), achievements (`setStat`), rich-presence, CD-key | achievements/stats spoof |
@@ -201,17 +201,20 @@ Both end with the **Steam client** doing the content download.
 
 ### Note on RESEARCH §11.5 vs the actual LumaCore source
 
-RESEARCH §11.5 describes a LumaCore `GMRC hook (ManifestBind::FetchSteamRun)`
-fetching from `manifest.steam.run`. The **current** LumaCore source in SFF has
-**no such hook** — `ManifestBind.cpp` only does `BuildDepotDependency`, and the
-only `GetManifestRequestCode` reference anywhere is the protobuf message
-definition in `proto/steam_messages.proto`. On Windows the request code is
-fetched by the **SteaMidra Python layer** (`sff/http_utils.py:get_gmrc`), not by
-LumaCore.dll at runtime. lumalinux's runtime GMRC hook is therefore **unique to
-the Linux native-download path** — it's the piece that lets the *Steam client*
-(rather than a pre-fetch step) obtain the code mid-download. Treat §11.5's
-LumaCore column as describing an older/assumed LumaCore, not the one in SFF
-today.
+An earlier version of this note (and RESEARCH §11.5) said the current LumaCore
+source had **no** `GetManifestRequestCode` hook. That is now **stale**. As of SFF
+`6.6.4` LumaCore runs a runtime GMRC bridge at the **wire layer**
+(`NetPacket_Manifest.cpp` + `ManifestFetch.cpp`): `Handlers::DepotFallback`
+intercepts the outbound `ContentServerDirectory.GetManifestRequestCode#1` on
+`BBuildAndAsyncSendFrame`/`RecvPkt` and rewrites the CM response with a uint64
+code fetched from the same three providers lumalinux uses. The SteaMidra Python
+`get_gmrc` pre-fetch still exists too, for pre-seeding `depotcache/`. So
+lumalinux's runtime GMRC hook is **unique in *mechanism*, not existence**: it
+works at the **function layer** (`GetManifestRequestCode`, writing `*out_code`),
+which is SLSsteam-safe and also covers the shader pre-cache case — whereas
+LumaCore's wire-frame rewrite lives on the layer SLSsteam owns and could not be
+copied onto our stack. See [`lumacore-findings.md`](lumacore-findings.md)
+Finding 1.
 
 ---
 

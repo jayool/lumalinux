@@ -615,25 +615,28 @@ v0.8.1.
 
 ### 11.5 GMRC hook (`ManifestBind::FetchSteamRun`)
 
-> **Correction (verified 2026-06 against the SFF LumaCore source).** The
-> "LumaCore" column below describes an *older or assumed* LumaCore. The current
-> LumaCore.dll in `Midrags/SFF` has **no `GetManifestRequestCode` hook at all** —
-> `ManifestBind.cpp` only implements `BuildDepotDependency`, and the only GMRC
-> reference anywhere is the protobuf message in `proto/steam_messages.proto`. On
-> Windows the request code is fetched by the **SteaMidra Python layer**
-> (`sff/http_utils.py:get_gmrc`) to *pre-download manifests into depotcache*, not
-> supplied to the Steam client at runtime. So the runtime GMRC hook is **unique
-> to lumalinux's native-client-download path**; LumaCore doesn't need it because
-> SteaMidra pre-seeds the manifests. See [`method.md`](method.md) §5.
+> **Correction (verified 2026-08 against SFF `6.6.4`).** An earlier note here said
+> LumaCore had **no `GetManifestRequestCode` hook at all**. That is now **stale**.
+> LumaCore runs a runtime GMRC bridge at the **wire layer** —
+> `NetPacket_Manifest.cpp` (`Handlers::DepotFallback`) intercepts the outbound
+> `ContentServerDirectory.GetManifestRequestCode#1` on
+> `BBuildAndAsyncSendFrame`/`RecvPkt` and rewrites the CM response with a uint64
+> code from `ManifestFetch.cpp` (the same three providers lumalinux uses).
+> SteaMidra's Python `get_gmrc` pre-fetch still exists too, for pre-seeding
+> `depotcache/`. So the runtime GMRC hook is **unique to lumalinux in *mechanism*
+> (function-layer, SLSsteam-safe), not existence** — LumaCore reaches it on the
+> wire layer, which SLSsteam owns and lumalinux cannot touch. The table's LumaCore
+> column below is updated to the `6.6.4` wire-layer bridge. See
+> [`method.md`](method.md) §5 and [`lumacore-findings.md`](lumacore-findings.md)
+> Finding 1.
 
-| | LumaCore (older/assumed) | lumalinux |
+| | LumaCore 6.6.4 (wire-layer) | lumalinux |
 |---|---|---|
-| Hooked function | `GetManifestRequestCode` | Same |
-| HTTP endpoint | `https://manifest.steam.run/api/manifest/{gid}` | **3-provider cascade** (v0.15.8): opensteamtool → wudrm → steamrun |
-| Endpoint status | **DEAD** (no longer responds) | opensteamtool **live** (needs non-curl UA), wudrm flaky (502s), steam.run dead (404) |
-| HTTPS / HTTP | HTTPS via WinHttp | **libcurl** (`dlopen`), HTTPS+HTTP, UA `OpenSteamTool/1.0` (§7) |
-| Gating | Whenever it knows the manifest | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — the OR covers the shader pre-cache case where Steam asks for a manifest that wasn't in the original `.lua` |
-| Return on success | (LumaCore has an async layer that fills the cache; it writes back via PacketRouter) | Synchronous — `*out_code = code; return 1` |
+| Seam | **Wire handler** on `ContentServerDirectory.GetManifestRequestCode#1` (`NetPacket_Manifest.cpp`, via `BBuildAndAsyncSendFrame`/`RecvPkt`) — **not** a function hook | **Function hook** on `GetManifestRequestCode` (writes `*out_code`) |
+| HTTP endpoint | **3-provider chain** (`ManifestFetch`): opensteamtool → steam.run → wudrm | **3-provider cascade** (v0.15.8): opensteamtool → wudrm → steamrun |
+| HTTPS / HTTP | WinHTTP, `OpenSteamTool/1.0` UA for the opensteamtool host | **libcurl** (`dlopen`), HTTPS+HTTP, UA `OpenSteamTool/1.0` (§7) |
+| Gating | `LuaLoader::HasDepot(depotId)` on the outbound request | `KeyStore::HasManifestGid(gid) \|\| KeyStore::HasDepot(depot_id)` — the OR covers the shader pre-cache case where Steam asks for a manifest that wasn't in the original `.lua` |
+| Return on success | Async: rewrites the CM **response frame** with `set_manifest_request_code(code)` + `eresult=OK` (via PacketRouter) | Synchronous — `*out_code = code; return 1` |
 
 lumalinux is functionally better here (covers shader pre-cache) and, since
 v0.15.8, no longer worse on resilience: the single-plain-HTTP-host weakness was
