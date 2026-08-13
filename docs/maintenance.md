@@ -276,7 +276,7 @@ wrapper, re-affirms coverage, and clears the vanilla latch):
 curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
 ```
 
-or, in LumaDeck, **Settings → Dependencies → Install / Reapply lumalinux**. If the
+or, in LumaDeck, **Settings → Components → Install / Reinstall Components**. If the
 banner still doesn't appear next boot, the launch path genuinely isn't hitting the
 wrapper — check the guardian is active
 (`systemctl --user status lumalinux-desktop-guardian.path`) and that the Game Mode

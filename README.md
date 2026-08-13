@@ -28,7 +28,7 @@ Two paths: the LumaDeck plugin (recommended, tested) or a manual install.
    and configures everything in one tap, in the right order: SLSsteam +
    CloudRedirect, the .NET 9 runtime, and lumalinux — all via the self-contained
    wrapper installer (`setup.sh`). For individual pieces or after a Steam update, use
-   **Settings → Dependencies**.
+   **Settings → Components**.
 4. (Optional) Cloud saves: switch to desktop once, open the **CloudRedirect** app,
    and sign into your provider.
 
@@ -69,7 +69,7 @@ The wrapper is reached by patched `.desktop` files (Desktop), a PATH drop-in
 erases injection the way a patched `steam.sh` did (and if a bad update breaks the
 byte patterns, the wrapper's crash-loop fail-safe boots vanilla instead of bricking).
 If injection ever stops, or to pull fresh `.so`s, reapply: in LumaDeck, **Settings →
-Dependencies → Install / Reapply lumalinux**; manually, re-run the `setup.sh`
+Components → Install / Reinstall Components**; manually, re-run the `setup.sh`
 one-liner above (idempotent).
 
 ### Tested platforms
@@ -160,7 +160,7 @@ Almost always a Steam client or SLSsteam update. The log tells the cases apart, 
 
 - **No startup toast at all**: the wrapper isn't being reached (coverage lost — e.g.
   a Steam update regenerated a `.desktop`, or the Game Mode `steam-launcher.service`
-  drop-in was dropped). Reapply lumalinux (see [After a Steam update](#after-a-steam-update)).
+  drop-in was dropped). Reinstall the components (see [After a Steam update](#after-a-steam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
   §A). DepotKey + GMRC (plus the package-0 finder) failing breaks installs;
   BuildDep is disabled by default and non-critical, and ShaderDepot is cosmetic.
