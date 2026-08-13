@@ -1,6 +1,6 @@
 # Design: per-build RVA feed (RVA-first resolution, byte-pattern fallback)
 
-Status: proposal. Modeled on OpenSteamTool's `PatternLoader` (RVA-first, sig
+Status: implemented / shipped (v0.18.0). Modeled on OpenSteamTool's `PatternLoader` (RVA-first, sig
 fallback) and OpenSteam001/steam-monitor's per-DLL-hash TOML feed (`pattern` and
 `ipc` branches), adapted to Linux / `steamclient.so`.
 
@@ -78,8 +78,10 @@ steam_version: 1785187029
 hooks:                    # UNIQUE, non-diagnostic hooks only (file vaddr)
   DepotKey: "0x118c1f0"
   GMRC: "0x4d9f00"
-  BuildDep: "0xfe1bf0"
   ShaderDepot: "0x1b3e90"
+  Reconcile: "0x5a11c0"    # NotifyLicensesUpdated — no-restart reconcile
+                           # (BuildDep is emitted only when it resolves
+                           #  uniquely on the build; omitted otherwise)
 depotkey_rtti:            # CConfigStore vtable slot (reorder-drift detection)
   class: "12CConfigStore"
   slot: 6
@@ -129,10 +131,10 @@ namespace VaddrXlate {
 
 ```cpp
 namespace RvaFeed {
-  // Hash the on-disk steamclient.so and load res/rvas/<hash>.yaml (fetched like
-  // updates.yaml, cached). Cheap: the SafeMode hash is computed anyway.
-  bool LoadForCurrentBuild(const char* steamclientPath, const std::string& rvaYaml);
   // Runtime address for a hook, or 0 if this build has no feed entry for it.
+  // The feed loads lazily on the first Resolve() (std::call_once): it hashes the
+  // on-disk steamclient.so and fetches/caches res/rvas/<hash>.yaml (like
+  // updates.yaml). No separate load call — Resolve() is the whole public surface.
   uintptr_t Resolve(const char* hookName);
 }
 ```
