@@ -2308,3 +2308,91 @@ por una tercera vez sin necesidad); se anota como riesgo conocido de la ruta que
 
 **Neto del 04-08: cero cambios de código, una mejora gratis que nos toca de lleno, y una
 actualización del hazard de §7.3.**
+
+#### 7.7.11 Día 2026-08-05 — 14 commits (el hook IPC baja un nivel, y dos arreglos de FakeAppIds)
+
+**`77f5d44` — `CSteamEngine::RunInterface` → `CSteamEngine::ProcessIPCFrame`.** Sube un
+escalón en la pila: `ProcessIPCFrame(this, HSteamPipe pipe, CUtlBuffer* in, CUtlBuffer* out)`
+recibe **todos** los comandos IPC, y él despacha según `EIPCCmd`:
+
+```cpp
+const EIPCCmd cmd = *reinterpret_cast<EIPCCmd*>(pBufIn->mem.base + 0);
+if (cmd == EIPCCmd::RunInterface) { /* todo lo de antes */ }
+else { ret = tramp.fn(pSteamEngine, pipe, pBufIn, pBufOut); }   // pasa de largo
+```
+
+`RunInterface` era **el comando 1**; ahora ve la superficie entera. Gana además el
+**`HSteamPipe`** explícito en la firma (antes había que pedírselo a
+`utils->getCurrentSteamPipe()`), y de paso identifica un comando nuevo:
+`EIPCCmd::CreateGlobalUser = 3` (*"Also used to connect to global user"*). El comentario de
+07-27 explicando por qué **no** reemplaza los demás hooks desde aquí se conserva íntegro — el
+motivo sigue vigente: muchas llamadas se saltan la capa IPC.
+
+**Los dos arreglos de FakeAppIds — el bloque que nos toca.**
+
+`50c439a` **"Fix some callbacks not reaching fakeAppId enabled games"**. Hook nuevo
+(`DetourHook`, patrón `CUser::PostCallbackToAppId`) que **reencamina el destinatario**:
+
+```cpp
+const AppId_t fakeAppId = FakeAppIds::getFakeAppId(appId);
+if (fakeAppId) { g_pLog->debug("Rerouting callback from %u to %u\n", appId, fakeAppId); appId = fakeAppId; }
+```
+
+El problema: Steam publica callbacks **dirigidos al appId real**, pero el juego corre
+registrado como el **falso** — así que nunca los recibía. Es un agujero silencioso: no
+crashea, simplemente falta funcionalidad que depende de callbacks.
+
+`50eed0d` **"Fix lobbies getting hidden due to fake & real appId missmatch"**. Hook sobre
+`IClientFriends::GetFriendGamePlayed` (RTTI `12CUserFriends`), reescribiendo el appId reportado
+de un amigo **del falso al real**:
+
+```cpp
+if (fakeAppId && fakeAppId == gamePlayed->appId) gamePlayed->appId = realAppId;
+```
+
+O sea: cuando el amigo aparece jugando **tu mismo appId falso**, se traduce a tu appId real, de
+forma que el juego —que pregunta "¿está mi amigo jugando a *mi* juego?" usando el real— lo
+reconozca y no oculte el lobby / el "Unirse a partida". Detalle de privacidad suyo: *"We do not
+log this function, it's basically useless since we don't want any SteamIds in the logs"*.
+
+**Relevancia directa para LumaDeck: alta, y `50eed0d` describe literalmente nuestro caso de
+uso.** LumaDeck fija FakeAppIds para habilitar multijugador (`fixes.py`, valor tomado del
+`OnlineFix.ini`; y el toggle manual "Native Online" con 480 fijo — ver §7.7.4). El escenario
+**dos usuarios de LumaDeck con FakeAppId 480 en el mismo juego queriendo verse los lobbies** es
+exactamente lo que este commit arregla. Y `50c439a` arregla callbacks perdidos en cualquier
+juego con FakeAppId. **Cuarta razón acumulada** para recomendar SLSsteam ≥ `20260815201341`
+(tras `IN_MOVED_TO` §4.1, `CDKeys` §7.2 y los stutters §7.7.10).
+
+**`913aca1` — aviso nuevo en la config**, y merece nota: añade a `FakeAppIds` la línea
+*"Do not run multiple apps under the same AppId simultaneously!"* (que en HEAD se amplía con
+*"It's possible but will most likely cause undefined behaviour"*).
+
+Nos aplica en teoría: LumaDeck **puede** acabar con varios juegos mapeados al mismo 480 (es lo
+normal — es el appId que usa OnlineFix), y comprobado que **no hay ningún aviso en la UI**
+sobre ejecutarlos a la vez (grep en `i18n.ts` y `GameDetail.tsx`: nada). Pero la exposición
+real en un Deck es **baja**: el Game Mode ejecuta un juego a la vez, así que llegar al caso
+requiere Desktop mode o un atajo no-Steam en paralelo. **No accionable hoy.** Si alguna vez se
+reporta, el dato ya está a mano: `slssteam_ops.list_fake_app_ids()` devuelve el mapa
+`{realId: fakeId}` completo, así que detectar "N juegos comparten el 480" y avisar es UI de una
+línea.
+
+**Refactors y SDK.** `d566a87` mueve la política dentro de la feature: `FakeAppIds::runIPCFrame`
+pasa a recibir la interfaz y comprobar `shouldUseRealAppIdForInterface` **él mismo**, así que el
+hook deja de duplicar la condición pre/post. Comportamiento idéntico, menos acoplamiento.
+`f79b238` convierte `EIPCInterface` en `enum class` (ida y vuelta: el 27-07 lo había hecho
+`enum : uint8_t`). `73a710c` sustituye el relleno campo-a-campo del `CSteamId` de 32→64 bits por
+la constante canónica: `steamId64 |= 0x0110000100000000` (universo público + cuenta individual),
+dejando el código viejo comentado. `c727ff1` y `de76936` amplían `EIPCCmd` y `CUtlBuffer`;
+`ec239e6` añade `IClientFriends.hpp` (soporte del hook de arriba). `6c85f93` y `05d89d9`
+logging y comentarios de `ProcessIPCFrame`; `a646d81` renombra en `vftableinfo`.
+
+`8d16704` **"Fix type of fakeAppIdMap"** — `unordered_map<uint32_t, AppId_t>` →
+`unordered_map<HSteamPipe, AppId_t>`. Ojo, es **puramente descriptivo**: `HSteamPipe`, `AppId_t`
+y `uint32_t` son el mismo tipo (`typedef uint32_t`), y el inicializador incluso decía
+`unordered_map<AppId_t, AppId_t>()`. Eran tres nombres para lo mismo; ahora es el correcto.
+**Cero cambio de comportamiento** — pero es el tipo de arreglo que evita que el siguiente lector
+crea que la clave es un appId cuando es un handle de pipe.
+
+**Neto del 05-08: cero accionables**, dos mejoras gratis que caen de lleno en el flujo de
+multijugador de LumaDeck, y una nota de baja prioridad sobre el aviso de FakeAppIds
+simultáneos.
