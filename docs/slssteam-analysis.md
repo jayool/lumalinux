@@ -2807,9 +2807,15 @@ peligroso es *punear un miembro tipado*, y eso lumalinux no lo hace.
 ##### 7.7.15.b Corrección a mi propio commit en LumaDeck: la fecha de `LogLevels`
 
 Rastreado con `git log -S"LogLevels:" -- res/config.yaml`: la clave de config **`LogLevels`**
-(plural, y con semántica de **máscara**: `0xff`) aparece en **`b5b1315`, el 2026-08-11**
-(*"refactor(log): Make logging smarter"*). Lo del 09-08 son los **flags internos**, mientras el
-config seguía siendo `LogLevel` con un **índice de bit**.
+(plural) aparece en **`b5b1315`, el 2026-08-11** (*"refactor(log): Make logging smarter"*). Lo del
+09-08 son los **flags internos**, mientras el config seguía siendo `LogLevel` con un **índice de
+bit**.
+
+*(Precisado en §7.7.16: el cambio va en tres pasos, no dos. **09-08** define los flags como
+`1 << n` pero `__log` sigue comparando `flags < getMinLevel()`, o sea los usa como **magnitud**;
+**10-08** (`82afc5d`) cambia esa comparación a un **test de máscara**, y ahí es donde el valor del
+config pasa de índice a máscara; **11-08** (`b5b1315`) renombra la clave a plural para que el
+nombre cuadre con la semántica.)*
 
 En el mensaje del commit `a061b00` de LumaDeck escribí que faltaba *"`LogLevels`
 (b556408/ebf28b4, 2026-08-09)"*. **La atribución es imprecisa**: esos dos commits introdujeron
@@ -2830,3 +2836,85 @@ filtraba por app, opera sobre los vectores de depots enteros.
 
 **Neto del 09-08: cero accionables**, una comprobación de aliasing que sale limpia, y una
 corrección de fecha en mi propio commit de LumaDeck.
+
+#### 7.7.16 Días 2026-08-10 y 2026-08-11 — 8 commits (el logging se asienta, y `Notifications` desaparece de verdad)
+
+**10-08 (2 commits).**
+
+`82afc5d` **"Add ability to turn off individual loglevels"** — es el cambio semántico que faltaba
+para que los flags del 09-08 sirvieran de algo:
+
+```cpp
+-if (flags < getMinLevel())              // umbral: "sólo lo que pese más que X"
++if (!(g_config.logLevel.get() & flags)) // máscara: "sólo los bits que yo encienda"
+```
+
+**Aquí es donde el valor del config deja de ser un índice y pasa a ser una máscara.** Hasta este
+commit los niveles estaban *definidos* como `1 << n` pero se *usaban* como magnitud, que es por
+lo que el config listaba índices (§7.7.15). Ahora se pueden apagar niveles **individuales**, no
+sólo cortar por debajo de un umbral. Y de paso desaparece `getMinLevel()`, el *"dirty workaround
+for not being able to access g_config from __log"*.
+
+`8097864` **"Set LogLevel count to actual num"** — `ELogLevelCount` 8 → 9 y el bucle de
+`ELogLevel_ToString` de `i = ELogLevelCount` a `i = ELogLevelCount - 1`. Ojo: los dos cambios se
+compensan, así que **no hay cambio de comportamiento** — el bucle ya recorría los 9 bits
+correctos. Lo que arregla es el **significado de la constante**: pasa de valer "índice del bit más
+alto" a valer "número de niveles", que es lo que su nombre dice.
+
+**11-08 (6 commits).**
+
+`d5a17c7` **"Properly remove Notifications"** — y "properly" es la palabra clave, porque **no
+sólo borra la opción de config: borra el interruptor**:
+
+```cpp
+-if (shouldNotify() && notification.size() > 0)
++if (notification.size() > 0)
+```
+
+Fuera la variable `notifications`, fuera su línea de log, y fuera `CLog::shouldNotify()`.
+
+**Consecuencia visible para el usuario: `Notifications: no` ya no silencia nada.** La forma de
+callar los toasts pasa a ser **apagar los bits de notificación en `LogLevels`**
+(`k_ELogLevelNotifyShort` = `0x40`, `k_ELogLevelNotifyLong` = `0x80`; el default `0xff` los lleva
+encendidos). Lo confirma el `2b4b411` del 12-08, que añade `k_ELogLevelInfo` a `notify`/`notifyLong`
+*"So it still gets logged when users turn of notifications"* — o sea, apagas el toast pero el
+mensaje sigue cayendo al fichero.
+
+**Qué implica para LumaDeck** (comprobado): LumaDeck **no** escribe `Notifications` en ningún
+sitio, así que no hay nada que arreglar por nuestra parte. Dos notas:
+1. **Un usuario que lo hubiera puesto a mano** para silenciar los toasts de SLSsteam **volverá a
+   verlos** tras actualizar. Migración: quitar `0x40|0x80` de `LogLevels` (p.ej. `0x3F`).
+2. **El refresco del `_BUNDLED_YAML` que hicimos (`a061b00`) cuadra con esto.** Quitar
+   `Notifications` del referente es correcto porque upstream ya la ignora; y como el completado es
+   **append-only**, quien ya tenga la clave en su config la conserva como texto inerte (SLSsteam
+   ignora en silencio las claves que no espera, §7.7.4). Consistente en los dos sentidos.
+
+`b5b1315` **"Make logging smarter"** — renombra la clave `LogLevel` → **`LogLevels`** (plural),
+para que el nombre cuadre con la semántica de máscara que llegó el día anterior. El valor ya era
+`0xff`.
+
+`49cc2dc` **"Use `Info | Once` for config logging"**, con el motivo escrito: *"Prevents the
+logfile bloating to hell and back with big configs"*. Cambia los `LOG_INFO` del volcado de config
+—cada setting, cada entrada de `IdleStatus`, `DlcData`, `DenuvoGames`, y los tres templates
+`getSetting`/`getList`/`getMap`— por `LOG_CUSTOM(Info | Once, …)`. El flag `Once` dedupe por
+mensaje formateado contra un `msgHist` que vive todo el proceso.
+
+**Y esto nos beneficia más que a un usuario vanilla**, por la misma razón que los stutters de
+§7.7.10: **LumaDeck provoca recargas de config a propósito.** Cada `_commit_config()` hace el poke
+para que SLSsteam hot-reloadee (§4.1), y cada recarga **re-volcaba el config entero al log** —
+todos los settings más una línea por cada entrada de las listas. Un usuario con 40 juegos añadidos
+y unas cuantas operaciones en la sesión acumulaba miles de líneas repetidas. Con `Once`, se
+registran una vez y punto. **Quinta razón acumulada** para recomendar SLSsteam ≥ `20260815201341`
+(tras §4.1, §7.2, §7.7.10 y §7.7.11).
+
+`37a29f7` **carga `LogLevels` primero**, *"Otherwise on first load settings won't get logged"* —
+coherente con la máscara del 10-08: si el `LOG_CUSTOM` de cada setting comprueba una máscara que
+todavía no se ha leído, no se imprime nada. Orden de inicialización, no lógica.
+
+`cd43f3b` pasa `DlcData` a usar `getMap` en lugar de parseo a mano — de rebote hereda el manejo de
+errores por clave (§7.7.4) y el flag `silent`. `7059664` espacios en `if`/`for`.
+
+**Neto de los dos días: cero accionables**, un cambio de comportamiento visible (`Notifications`
+deja de funcionar; migración documentada), una confirmación de que el refresco del schema en
+LumaDeck cuadra con upstream en los dos sentidos, y una mejora de tamaño de log que nos toca
+especialmente.
