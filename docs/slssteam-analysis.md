@@ -2724,3 +2724,109 @@ que faltaban; `8375b8e` un newline.
 **Neto del 08-08: cero accionables**, un requisito de runtime nuevo (`/proc`) que en SteamOS se
 cumple y que degrada sin romper, anotado como **candidato de diagnóstico** para
 `troubleshooting.md` si alguna vez fallan los lobbies tras una actualización de SLSsteam.
+
+#### 7.7.15 Día 2026-08-09 — 14 commits (reescritura del logging)
+
+Doce de los catorce commits son el sistema de logs. Parece autocomplaciente para un mod, pero
+tiene una justificación que él escribe: *"tracing will come in very handy when hunting down
+crashes"* (`e578e5a`). Viene de un mes arreglando cuelgues y corrupciones de heap, y está
+construyendo el instrumental para el siguiente.
+
+**El arco del día, en orden:**
+
+`b556408` amplía los niveles y mete `__FILE__`/`__FUNCTION__`/`__LINE__` en cada macro `LOG_*`.
+`652a3b6` los aplica por todo el proyecto. `ebf28b4` convierte los niveles en **flags bitwise**
+combinables (`k_ELogLevelX = 1 << n`), de modo que se puede pedir "sólo errores y notificaciones
+largas" en vez de un umbral lineal.
+
+`9a54629` **readmite** los wrappers de `__log` que había quitado, con el razonamiento a la vista:
+*"otherwise notifications will still print logging info to the log. Of course we could just not
+print them but **optimizing them out fully just feels better**"*. O sea, elige la variante que el
+compilador puede eliminar entera antes que la que simplemente no imprime.
+
+`0f73549` **arregla un off-by-one en la propia definición de los flags**: empezaban en `1 << 1`,
+desperdiciando el bit 0 y desplazando toda la numeración documentada. Ojo al detalle: en este
+punto el valor del config es **el índice del bit**, no la máscara — por eso `LogLevel: 4` pasa a
+`LogLevel: 3`.
+
+`dfed8e2` itera los niveles al revés en `ELogLevel_ToString` *"Makes the higher levels show up
+first. Makes more sense because they are more important"*. `e578e5a` añade `traceOnce`.
+
+`9aad713` **quita** `NotifyWarn` y `NotifyError` porque son *"easily replicated by mixing flags"*
+(p.ej. `NotifyShort | Warn`) y añade `ELogLevelCount = 8`. Es un cambio visible en el config:
+quien tuviera `LogLevel: 8` o `9` apunta ahora a otra cosa. Transitorio, porque el 11-08 cambia
+todo otra vez.
+
+**El par que más me gusta del día, y son 21 minutos:** `9e51989` convierte las plantillas de
+logging en funciones print de verdad, *"It's kind of a mess, but this way **we get actual format
+checks**"*. Y el commit siguiente, `3b1be49`, **arregla las llamadas malformadas a `printf` que
+esos checks acaban de encontrar** (*"Using pedantic settings we had to explicitly convert some
+stuff"*). Habilitar una comprobación del compilador y que se pague a sí misma en el mismo rato.
+
+##### 7.7.15.a `4afaede` — strict aliasing, y qué pasa con lumalinux
+
+El único commit del día que no es logging y tiene fondo real:
+
+```cpp
+-fakeAppIdMapPings[*reinterpret_cast<uint64_t*>(&details.address)] = realAppId;
++fakeAppIdMapPings[details.ip64] = realAppId;
+```
+
+Estaba leyendo un miembro **declarado** como `servernetadr_t` (dos `uint16_t` + un `uint32_t`)
+a través de un `uint64_t*`. Eso viola **strict aliasing**: el compilador tiene derecho a asumir
+que dos punteros de tipos incompatibles no apuntan al mismo sitio, y con eso reordena o cachea
+lecturas. Es la clase de bug que **funciona a `-O0` y revienta a `-O2/-O3`**. Lo arregla con la
+herramienta correcta, una `union { servernetadr_t address; uint64_t ip64; }`.
+
+Y le importaba especialmente porque su `Makefile` compila con
+`-O3 -flto=auto -floop-block -fgraphite-identity -floop-parallelize-all -fomit-frame-pointer`:
+con LTO y ese nivel de agresividad, el compilador explota los supuestos de aliasing mucho más.
+
+**¿Nos aplica?** Fui a comprobarlo en serio, y la respuesta es **no, y conviene entender por
+qué** (para no añadirlo a la lista de préstamos falsos):
+
+- **Ninguno de los dos proyectos usa `-fno-strict-aliasing`.** lumalinux compila con
+  `-m32 -D_GLIBCXX_USE_CXX11_ABI=0`, `-Wall -Wextra -Wpedantic`, y —dato interesante—
+  **`-fno-reorder-blocks-and-partition`**, una mitigación de optimización muy específica que ya
+  encontraron necesaria y documentaron. O sea que ya piensan en estos términos.
+- **Pero el patrón que le explotó a él no aparece en lumalinux.** Su bug era leer un **miembro
+  con tipo declarado** a través de otro tipo. Los `reinterpret_cast` de lumalinux van de
+  **memoria cruda** (un `void*`/`uintptr_t` sacado de un puntero de Steam) a **un único tipo** por
+  acceso: `CUtlVector<uint32_t>*` en el LoadPackage, `void**` para las vtables en `rtti.cpp`,
+  `lm_byte_t*` en el escaneo de patrones — y los tipos `char`/`unsigned char` están **exentos**
+  de strict aliasing por norma. No hay ningún sitio donde se lean los mismos bytes como dos tipos
+  distintos.
+- Y donde se leen offsets distintos del mismo objeto (`PkgId(pInfo)` como `uint32_t*` y
+  `AppIdVec(pInfo)` como `CUtlVector*`), **no solapan**, así que no hay conflicto.
+
+**Conclusión: nada que hacer.** `-fno-strict-aliasing` sería seguro-a-cambio-de-nada como
+cinturón extra, pero **no lo respalda ninguna violación encontrada**, y lo apunto explícitamente
+como tal para que no se lea como un hallazgo. Lo que sí queda es la observación: el patrón
+peligroso es *punear un miembro tipado*, y eso lumalinux no lo hace.
+
+##### 7.7.15.b Corrección a mi propio commit en LumaDeck: la fecha de `LogLevels`
+
+Rastreado con `git log -S"LogLevels:" -- res/config.yaml`: la clave de config **`LogLevels`**
+(plural, y con semántica de **máscara**: `0xff`) aparece en **`b5b1315`, el 2026-08-11**
+(*"refactor(log): Make logging smarter"*). Lo del 09-08 son los **flags internos**, mientras el
+config seguía siendo `LogLevel` con un **índice de bit**.
+
+En el mensaje del commit `a061b00` de LumaDeck escribí que faltaba *"`LogLevels`
+(b556408/ebf28b4, 2026-08-09)"*. **La atribución es imprecisa**: esos dos commits introdujeron
+los flags, no la clave de config. La fecha correcta es **2026-08-11 (`b5b1315`)**.
+
+**No afecta al arreglo**: el `_BUNDLED_YAML` se refrescó copiando el `config_default.hpp` de
+upstream y se verificó **byte-idéntico** al que sirve la URL, así que la clave y su default
+(`LogLevels: 0xff`) son los correctos. Sólo estaba mal la fecha citada en la prosa del mensaje.
+No reescribo el commit ya publicado por un dato de atribución; queda corregido aquí, que es el
+registro vivo.
+
+**Menores.** `8f450e8` ajusta el comentario de `LogLevel`; `cfc3bfb` añade un script que genera
+las versiones Debug y Release (automatiza los paquetes "Any" y "Release"). `3882c46` quita el
+argumento `appId` **sin usar** de `Apps::buildDepotDependency` — es su helper interno, **no** la
+firma del hook `CUserAppManager::BuildDepotDependency`, así que **no hay impacto en la nota de
+coexistencia de BuildDep** de `main.cpp`. De paso revela algo: su handler de BuildDep no
+filtraba por app, opera sobre los vectores de depots enteros.
+
+**Neto del 09-08: cero accionables**, una comprobación de aliasing que sale limpia, y una
+corrección de fecha en mi propio commit de LumaDeck.
