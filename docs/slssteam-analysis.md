@@ -2688,6 +2688,14 @@ FakeAppIds resolviendo mal sin ningún error visible, y el log de SLSsteam lo de
 `"No SteamAppId in /proc/<pid>/environ! Using 0"` o `"Failed to open … to get %p's appId!"`.
 Merece la pena tenerlo en la lista mental de sospechosos de `troubleshooting.md`.
 
+> **Mejora del 12-08 (`d680874`) — el log ya dice QUÉ proceso falló.** Añade una lectura de
+> `/proc/<pid>/comm` para sacar el nombre del ejecutable y lo mete en las líneas de error:
+> `"Failed to open /proc/1234/environ for MyGame.exe to get 0x3's appId!"`. Sube bastante el valor
+> diagnóstico de esta ruta: con el nombre del proceso se distingue de un tirón si el fallo es en
+> un juego concreto, en el propio cliente de Steam, o en un proceso auxiliar. Si el `comm` tampoco
+> se puede leer, avisa (`"ExeName will be unknown in logs"`) y sigue con `"Unknown"` — degrada en
+> vez de callarse.
+
 **`14d9e32` — el comentario más valioso del día**, y hay que leerlo junto al 07-08:
 
 ```cpp
@@ -2918,3 +2926,87 @@ errores por clave (§7.7.4) y el flag `silent`. `7059664` espacios en `if`/`for`
 deja de funcionar; migración documentada), una confirmación de que el refresco del schema en
 LumaDeck cuadra con upstream en los dos sentidos, y una mejora de tamaño de log que nos toca
 especialmente.
+
+#### 7.7.17 Día 2026-08-12 — 12 commits (`CDKeys`, y un experimento olvidado)
+
+**`79905b0` — la opción `CDKeys`.** Ya está desglosada en la caja de corrección de **§7.2**
+(genera una clave determinista `srand(accountId + appId)` en formato `XXXX-XXXX-XXXX-XXXX`, o usa
+la del config, vía un hook nuevo sobre `IClientUser::GetLegacyCDKey`). No lo repito. Dos cosas que
+añadir desde la perspectiva del día:
+
+- **El flag `silent` de `getSetting`/`getList`/`getMap` nace aquí**, y nace *para esto*: no volcar
+  las CD keys al log (sólo `"Added CDKey for %u"`). Es el mismo flag que resultó relevante en
+  §7.7.4 al comprobar que las claves ausentes **sí** cuentan para el toast de errores — porque
+  `silent` suprime el log del **valor**, no la llamada a `setError`.
+- Y su motivo escrito enlaza todo el rango: *"Previously SLSsteam just disabled CD keys because it
+  was the better choice to make seeing how **we didn't have a decompiler** and IClientUser's VFT
+  tended to change a lot"*. El trabajo de julio (§7.7.1–7.7.5) es literalmente lo que hizo viable
+  esta feature de agosto.
+
+##### 7.7.17.a `3d7b17f` — un experimento olvidado en la ruta del live refresh (que nunca llegó a release)
+
+Merece detalle porque toca **exactamente** el mecanismo que analicé en §7.7.7, y porque el
+resultado de comprobarlo es tranquilizador.
+
+`CUser::postCallback` estaba redirigido a través de otra función:
+
+```cpp
+-Hooks::CUser_PostCallbackToAppId.tramp.fn(this, 0, static_cast<unsigned int>(type), pCallback, callbackSize);
++const static auto fn = reinterpret_cast<void(*)(void*, ECallbackType, void*, uint32_t, uint32_t)>(Patterns::CUser::PostCallback.address);
++fn(this, type, pCallback, callbackSize, 0);
+```
+
+O sea: en vez de llamar a `CUser::PostCallback`, llamaba a **`CUser::PostCallbackToAppId` con
+`appId = 0`**. Son dos funciones distintas de Steam. El título lo llama *"forgotten test"* — un
+experimento que se quedó puesto por olvido, no una decisión.
+
+**Por qué importa el sitio:** `CUser::postCallback` tiene **exactamente dos llamantes**,
+comprobado, y los dos son el callback del live refresh:
+
+```cpp
+// feats/apps.cpp:271 y :279, dentro de Apps::postAppLicensesChanged
+user->postCallback(ECallbackType::AppLicensesChanged_t, &cb, sizeof(cb));
+```
+
+Así que durante ese tiempo **el `AppLicensesChanged_t` de SLSsteam se emitía por una función que
+no era la prevista**. No puedo determinar la diferencia de comportamiento entre
+`PostCallback(type, cb, size, 0)` y `PostCallbackToAppId(0, type, cb, size)` sin desensamblar
+Steam, así que no afirmo que estuviera roto — sólo que no era lo que él quería.
+
+**Y lo importante: no afectó a ningún usuario.** El experimento entró el **05-08**
+(`50c439a`, cuando añadió el hook de `PostCallbackToAppId`) y se retiró el **12-08**. Comprobado el
+historial de `res/version.txt`: entre `20260728212859` (28-jul) y `20260815201341` (15-ago) **no
+hay ninguna release**. La ventana entera cae **entre releases**, o sea vivió sólo en `dev`/`main`
+y **nunca se publicó**. Cero impacto para usuarios de LumaDeck o de nadie.
+
+*(Nota de detalle: llamaba a `.tramp.fn`, o sea la función original, **no** su propio hook — así
+que el reencaminamiento real↔falso de `hkUser_PostCallbackToAppId` no entraba en juego. Y aunque
+hubiera entrado: comprobado que `getFakeAppId(0)` devolvería el comodín `0:` si el usuario lo
+tuviera puesto, pero **LumaDeck nunca escribe ese comodín** — `slssteam_ops.py:126` escribe
+`"  {appid}: {fake_id}"`, siempre con el appid real como clave.)*
+
+**`d680874` — el log del `/proc` ya dice qué proceso falló.** Lee `/proc/<pid>/comm` para sacar el
+nombre del ejecutable y lo mete en los mensajes de error. **Sube el valor diagnóstico de la ruta
+que anoté en §7.7.14** — allí queda actualizado.
+
+**`2b4b411` — la contrapartida de haber quitado `Notifications`.** Añade `k_ELogLevelInfo` a
+`notify`/`notifyLong` *"So it still gets logged when users turn of notifications"*. Cierra el
+cambio del 11-08 (§7.7.16): ahora apagar los bits de notificación en `LogLevels` silencia el toast
+**pero el mensaje sigue cayendo al fichero de log**. Sin esto, apagar los toasts te dejaba también
+sin registro, que es justo lo que no quieres cuando algo va mal.
+
+**Tipado y pulido (el resto del día).** `f0dab0e` sustituye `void*` por tipos de clase reales en las
+firmas de los hooks; `df64d1d` pule el SDK y añade un `sdk.hpp` agregador; `ce8ce33` amplía
+`CServerPipe` (de donde sale el `pid` del §7.7.14); `9d88160` borra definiciones de clase obsoletas
+en `feats/`; `dbb3a09` quita un `static` redundante sobre un `constexpr`; `4d99883` usa
+`ELogLevel_ToString` para loguear el `LogLevels`; `25e1a2f` evita que el `clean-tools` del Makefile
+falle si un subjob devuelve non-zero.
+
+**`ffc66d6`** cambia el `uint32_t type` de `BBuildAndAsyncSendFrame` por
+`EWebSocketConnectionSendType` en la firma del hook, el typedef y los wrappers. El enum ya era
+`: uint32_t`, así que **cero cambio de ABI ni de comportamiento** — es la misma disciplina de
+"el tipo debe decir lo que el valor significa" de §7.7.2 y §7.7.11.
+
+**Neto del 12-08: cero accionables.** La feature del día (`CDKeys`) ya estaba capturada en §7.2; el
+experimento olvidado nunca salió en release; y el resto es tipado, pulido y una mejora de
+diagnóstico que refuerza la nota de `/proc`.
