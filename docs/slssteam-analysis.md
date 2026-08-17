@@ -2629,3 +2629,98 @@ noticia estructural para la estrategia de coexistencia.
 
 **Neto del 07-08: cero accionables.** Un bug cosmético de SLSsteam anotado, una confirmación de
 que `a62efeb` no rompe nada, y una observación de frontera que refuerza §5.
+
+#### 7.7.14 Día 2026-08-08 — 10 commits (el AppId real sale de `/proc`)
+
+**`9ce2650` — "Read real AppId from process environment".** Cambia la forma de saber **qué juego
+hay al otro lado de un pipe**, que es el dato del que depende todo FakeAppIds.
+
+Antes: un `AppId_t lastAppLaunched` global que se actualizaba en `launchApp`, y
+`setAppIdForCurrentPipe` asociaba ese "último lanzado" al pipe actual. Frágil por construcción —
+si dos juegos arrancan cerca, o si el orden no es el esperado, la asociación se cruza.
+
+Ahora, `getRealAppIdFromEnv(HSteamPipe)`:
+1. saca el `pid` del `CServerPipe` correspondiente al pipe,
+2. abre **`/proc/<pid>/environ`**,
+3. extrae `SteamAppId=N` por regex,
+4. y **cachea el resultado por pipe** (`fakeAppIdMap[pipe] = appId`).
+
+Es una fuente de verdad mucho mejor: el `SteamAppId` del entorno lo pone Steam al lanzar el
+proceso, así que es el appId real por definición, sin heurística de orden.
+
+Detalle de diseño acertado: **cachea también el 0**. El pipe del propio cliente de Steam no
+tiene `SteamAppId` en su entorno, así que se resuelve a 0 una vez y **no se vuelve a leer
+`/proc`** en cada llamada. La caché sirve tanto para acertar como para no reintentar.
+
+`c2a3a2f` documenta la consecuencia en la config:
+
+```
+#Requires access to /proc to read processes' real AppId from their environment
+#(most distros allow this by default)
+```
+
+##### 7.7.14.a Requisito nuevo de runtime: acceso a `/proc` — qué implica para LumaDeck
+
+**LumaDeck conduce FakeAppIds** (§7.7.4, §7.7.11), así que este requisito es nuestro también.
+Desglosado:
+
+- **`/proc/<pid>/environ` es modo `0400`, propiedad del UID del proceso.** Leerlo exige **mismo
+  UID** o root. SLSsteam corre dentro del cliente de Steam (uid `deck`) y los juegos también
+  corren como `deck` → **legible**. En SteamOS funciona.
+- **Degrada, no rompe.** Comprobada la ruta: si no se puede abrir el fichero o no hay
+  `SteamAppId`, `getRealAppIdFromEnv` devuelve 0, y `getRealAppIdForCurrentPipe` cae a
+  `utils->getAppId()` — que es el fallback que **ya existía antes** de este commit. O sea, un
+  `/proc` inaccesible deja FakeAppIds funcionando *mal* (devolvería el appId **falso** donde
+  debería devolver el real, así que la traducción falso↔real se confunde), pero **sin crash**.
+- **Riesgos teóricos, no verificados on-device:**
+  - `hidepid=1/2` montado en `/proc` ocultaría los procesos ajenos. **No es el default en
+    SteamOS.**
+  - **Namespaces de PID**: los juegos bajo Proton corren dentro del contenedor del Steam Linux
+    Runtime (pressure-vessel / bubblewrap). Si ese contenedor no comparte el namespace de PIDs,
+    el `pid` que SLSsteam lee del `CServerPipe` podría no resolverse en su vista de `/proc`.
+    **No lo he verificado** — el pid que registra Steam debería ser el visible desde el host,
+    porque la conexión IPC la acepta el Steam del host, pero no lo doy por seguro.
+
+**Valor práctico para nosotros: diagnóstico.** No hay nada que cambiar. Pero si algún día un
+usuario reporta *"el online fix / los lobbies dejaron de funcionar después de actualizar
+SLSsteam"*, **`/proc` es una causa candidata que no existía antes del 08-08**. El síntoma sería
+FakeAppIds resolviendo mal sin ningún error visible, y el log de SLSsteam lo delata:
+`"No SteamAppId in /proc/<pid>/environ! Using 0"` o `"Failed to open … to get %p's appId!"`.
+Merece la pena tenerlo en la lista mental de sospechosos de `troubleshooting.md`.
+
+**`14d9e32` — el comentario más valioso del día**, y hay que leerlo junto al 07-08:
+
+```cpp
+//Replacing this call with an injected GetAppOwnershipTicketResponse is possible, but breaks
+//in offline mode so we don't do that
+```
+
+**El día después** de construir la capacidad de inyectar mensajes (§7.7.13), documenta un sitio
+donde **decidió no usarla**, y por qué. Es una alternativa descartada dejada por escrito — el
+tipo de nota que evita que el siguiente lector (o él mismo en tres meses) reintente un camino
+muerto. Nótese además que el motivo es **modo offline**, o sea la clase de caso que sólo se
+descubre probando.
+
+**`23f3dd7` — retira su propia abstracción, dos días después de crearla.** Los wrappers
+`Steam::alloc<T>()` / `Steam::free()` / `Steam::realloc<T>()` que añadió el 06-08 (§7.7.12)
+desaparecen; se llama a `Plat_Alloc`/`Plat_Free`/`Plat_Realloc` directamente. No aportaban nada
+sobre los punteros de función. Buena señal: **borra la indirección cuando no se gana el sitio**,
+en vez de dejarla porque ya está escrita.
+
+**`eb4cfac`** sustituye el literal `if (type == 2)` por `k_EWebSocketConnectionSendRaw` — el
+mismo movimiento de "el nombre pasa de etiqueta a información" que ya se vio con
+`getCurrentSteamPipe` (§7.7.2).
+
+**`e3ed672` — toggle `DEBUG` en el Makefile.** Sin `-D DEBUG`, las llamadas inline a
+`CLog::once` y `CLog::debug` **se optimizan fuera por completo** — y lo verificó:
+*"I checked using radare, without DEBUG being defined the inlined calls of CLog::once &
+CLog::debug get fully optimized out"*. Comprobar el binario en vez de asumir que el compilador
+hizo lo esperado es el detalle que separa una suposición de un hecho.
+
+**Menores.** `6786383` versiones hook+tramp para `CMCInterface` y `CWebSocketConnection`
+(continúa los cimientos del 07-08); `b0781a0` limpieza de headers; `a05f9ff` targets `.PHONY`
+que faltaban; `8375b8e` un newline.
+
+**Neto del 08-08: cero accionables**, un requisito de runtime nuevo (`/proc`) que en SteamOS se
+cumple y que degrada sin romper, anotado como **candidato de diagnóstico** para
+`troubleshooting.md` si alguna vez fallan los lobbies tras una actualización de SLSsteam.
