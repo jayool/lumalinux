@@ -38,20 +38,22 @@ bool readFile(const std::filesystem::path& p, std::string& out) {
     return !out.empty();
 }
 
-// res/rvas/<hash>.yaml text: LUMA_RVAS_DIR override (test/offline) -> repo fetch
-// (cached) -> cache fallback (offline). Mirrors update.cpp's fetch+cache flow.
+// res/rvas/<hash>.yaml text: repo fetch (cached) -> cache fallback (offline).
+// Mirrors update.cpp's fetch+cache flow.
+//
+// The feed source is HARDCODED on purpose. It used to be overridable via the env
+// vars LUMA_RVAS_DIR (local dir) and LUMA_RVAS_URL (alternate base URL), which
+// was convenient for testing a branch without publishing — but those overrides
+// shipped in release builds, and this feed decides WHERE HOOKS GET INSTALLED
+// inside Steam's process. Anything able to add an env var to Steam's launch (a
+// modified .desktop, a launcher script, another Decky plugin) could therefore
+// point the feed at a server it controlled and choose our hook targets. That
+// turns "can write a file in $HOME" into "can run code inside Steam", so the
+// overrides are gone. To test against a branch, point this URL at it in a local
+// build; do NOT reintroduce a runtime override in a release path.
 bool obtainYaml(const std::string& hash, std::string& out) {
-    if (const char* dir = std::getenv("LUMA_RVAS_DIR")) {
-        if (readFile(std::filesystem::path(dir) / (hash + ".yaml"), out)) return true;
-    }
-    // Base URL is overridable via LUMA_RVAS_URL (no trailing slash) so the fetch
-    // path can be tested against a branch/mirror, or pinned to an alternate feed
-    // source. Defaults to the repo's main branch.
-    const char* base = std::getenv("LUMA_RVAS_URL");
     const std::string url =
-        (base && *base ? std::string(base)
-                       : std::string("https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas"))
-        + "/" + hash + ".yaml";
+        "https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/" + hash + ".yaml";
     if (Curl::getString(url.c_str(), out) == 0 && out.find("hooks:") != std::string::npos) {
         std::error_code ec;
         std::filesystem::create_directories(cacheDir(), ec);

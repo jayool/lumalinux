@@ -10,9 +10,10 @@
 // the RVA is a precomputed offset, it is robust to a recompile that shifts the
 // prologue (which breaks byte patterns). See docs/rva-feed-design.md.
 //
-// The feed is obtained from LUMA_RVAS_DIR (a local dir, for testing/offline pin)
-// or fetched from the repo with a disk cache, mirroring update.cpp. A build with
-// no feed file — or a hook not listed in it — resolves to 0 (fall back).
+// The feed is fetched from the repo (hardcoded URL) with a disk cache, mirroring
+// update.cpp. A build with no feed file — or a hook not listed in it — resolves
+// to 0 (fall back). There is deliberately NO runtime override of the feed source:
+// see the note on obtainYaml() in rva_feed.cpp.
 namespace RvaFeed {
 
 // Runtime address for `hookName` via the feed, or 0 to fall back to the byte

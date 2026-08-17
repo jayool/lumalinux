@@ -218,8 +218,9 @@ with atomic `.tmp`+rename writes, for both `steamclient64.dll` and `steamui.dll`
 
 **lumalinux** ships an **RVA feed** (`rva_feed.cpp`, `res/rvas/<sha>.yaml`): it
 publishes **RVAs** (offsets) keyed by the steamclient.so build SHA, fetched from
-`raw.githubusercontent.com/jayool/lumalinux/main/res/rvas` (overridable via
-`LUMA_RVAS_URL`/`LUMA_RVAS_DIR`) and disk-cached in `~/.cache/lumalinux/rvas/`.
+`raw.githubusercontent.com/jayool/lumalinux/main/res/rvas` (hardcoded — the
+`LUMA_RVAS_URL`/`LUMA_RVAS_DIR` overrides were removed, see rva-feed-design §15)
+and disk-cached in `~/.cache/lumalinux/rvas/`.
 Resolution is **RVA-first with byte-pattern fallback**, guarded by two runtime
 sanity checks — the RVA must translate via `VaddrXlate` and land inside
 steamclient.so's `r-x` mapping (`inSteamclientExec`). It is **wired into 5 hooks**

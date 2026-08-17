@@ -206,8 +206,10 @@ extra: verify `vtable[slot]` == this address and fencepost matches.)
 3. **`rva_feed` C++** + wire ONE hook (DepotKey) RVA-first with pattern fallback;
    validate on-device (`method=rva target=…` matches the pattern target). **DONE.**
 4. Extend to GMRC / BuildDep / ShaderDepot / Reconcile. **DONE** — all five hooks
-   resolve RVA-first; end-to-end fetch (real HTTPS, `LUMA_RVAS_URL`-overridable
-   base, disk cache) validated live: `RvaFeed: loaded 4 hook RVA(s)` + `method=rva`.
+   resolve RVA-first; end-to-end fetch (real HTTPS, hardcoded base, disk cache)
+   validated live: `RvaFeed: loaded 4 hook RVA(s)` + `method=rva`. *(The base was
+   `LUMA_RVAS_URL`-overridable during that validation; the override was removed
+   later — see §15.)*
 5. (Optional) `depotkey_vtable` cross-check + feed signing. **Signing: DECLINED
    for now** — see §14.
 
@@ -250,3 +252,44 @@ than a `.text`-bounded RVA. It is a clean, non-blocking add at that point:
 `res/rvas/<hash>.yaml.sig` + a vendored Ed25519 verify (TweetNaCl-style, no
 libcrypto — keeps the reaper-safe property) + a 32-byte pubkey in a header. Fail
 closed: bad/absent signature ⇒ ignore the feed ⇒ byte patterns.
+
+## 15. Feed source overrides — REMOVED (2026-08-17)
+
+`obtainYaml()` used to accept two runtime overrides of the feed source:
+
+- `LUMA_RVAS_DIR` — read `<dir>/<hash>.yaml` from a local directory instead of fetching.
+- `LUMA_RVAS_URL` — replace the base URL, so the fetch could be pointed at a branch or mirror.
+
+Both were for local testing, and both **shipped in release builds**. That is the
+problem: this feed decides **where hooks get installed inside Steam's process**.
+Anything able to add an env var to Steam's launch — a modified `.desktop`, a
+launcher script, another Decky plugin — could point the feed at a server it
+controlled and pick our hook targets. It converted "can write a file in `$HOME`"
+into "can influence code running inside Steam": a local privilege escalation, not
+a remote entry point, but a free one.
+
+Note this is a *different* threat from the one §14 weighs. §14 correctly declines
+signing because the feed's trust root is GitHub and a forged RVA is bounded by
+`VaddrXlate::ToRuntime` + `inSteamclientExec`. Those bounds still apply here — the
+worst case remains a hook at the wrong Valve function inside steamclient's `.text`
+— but the *attacker* is different: not someone who compromised the repo, someone
+already on the device. Signing would not have closed it either (a local attacker
+can drop an unsigned feed in the cache just as easily). Removing the override is
+the proportionate fix, and it costs nothing.
+
+**What changed:** the base URL is now a hardcoded string literal; both `getenv`
+calls are gone. Nothing else referenced these vars (no CI workflow, no script, no
+test — grepped).
+
+**What we lose:** no runtime way to test the feed against a branch or a local
+directory. To test, edit the URL in a local build. Do **not** reintroduce a
+runtime override on a release path; if a dev-only override is ever wanted, gate it
+at compile time (`#ifdef`), never on a marker file — a marker that *enables* a
+dangerous path can be created by the very local attacker it would be guarding
+against (unlike `~/.config/lumalinux/no_reconcile`, which only *disables* a
+feature and is therefore safe to leave writable).
+
+**Still open, not addressed here:** the disk cache at `~/.cache/lumalinux/rvas/`
+is read back without revalidation and is writable by any same-user process. That
+is the remaining local vector, and closing it needs in-`.so` verification — i.e.
+the §14 "revisit" path. Unchanged priority: low, given the `.text` bounds.
