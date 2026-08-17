@@ -1139,13 +1139,11 @@ positivo en los stubs repetitivos de `.plt` es improbable.
 
 Lo que sí salió de la comparación, por orden de valor real:
 
-1. **`/proc/self/maps` se re-lee y re-parsea en CADA búsqueda.** `FindInSteamclient`,
-   `FindUniqueInSteamclient`, `FindLoadPackageFunction` y `FindSteamclientBase` llaman
-   todos a `FindModuleRangeFromMaps()`. Son **~6 parseos completos** del fichero
-   durante `InstallHooks()` (Steam tiene cientos/miles de líneas de mapeo), más uno por
-   segundo en el bucle de poll del constructor. Cachear el `ModuleRange` tras el primer
-   acierto es un cambio de ~5 líneas y vale bastante más que ceñirse a `.text`.
-   *(El poll del ctor sí necesita re-consultar: detecta la aparición del módulo.)*
+1. ~~**`/proc/self/maps` se re-lee y re-parsea en CADA búsqueda**~~ → **DESCARTADO, medido.**
+   Ver §7.7.1.c: el parseo de maps cuesta **0.06–0.22 ms**, y el total cacheable de un
+   arranque es **~0.5–1.8 ms**. Irrelevante. El coste real está en el propio escaneo de
+   patrones (~19 ms cada uno), que es **43×–145×** el total de los parseos. No cachear
+   por rendimiento.
 2. **Inconsistencia substring vs sufijo.** `main.cpp::IsSteamclient()` es estricto
    (`ends_with("/steamclient.so")`), pero `FindModuleRangeFromMaps()` usa
    `line.find("steamclient.so")` — substring. Si en el proceso coexistieran dos rutas
@@ -1159,10 +1157,53 @@ Lo que sí salió de la comparación, por orden de valor real:
    `FindUniqueInSteamclient`/`FindLoadPackageFunction` ya están correctos aquí
    (`i + patLen <= r.size`), a diferencia del de SLSsteam. **[YA]**
 
-**Conclusión: NO abrir issue por el `.text`.** Si se toca `patterns.cpp`, hacerlo por
-(1) y (2), que son baratos y sí tienen sustancia. El aprendizaje transferible de verdad
-de este commit es otro: **leer las secciones del ELF de disco** como primitiva, que es
-lo que desbloquea el pipeline RTTI/vtable — ver §7.7.1.b.
+**Conclusión: NO abrir issue por el `.text`, ni por el cacheo.** Lo único que sobrevive
+de esta línea es (2), y es un one-liner de robustez, no de rendimiento. El aprendizaje
+transferible de verdad de este commit es otro: **leer las secciones del ELF de disco**
+como primitiva, que es lo que desbloquea el pipeline RTTI/vtable — ver §7.7.1.b.
+
+##### 7.7.1.c Medición — dónde está de verdad el tiempo en `patterns.cpp` [YA / cerrado]
+
+Motivo de la medición: en §7.7.1.a afirmé que cachear el `ModuleRange` "vale bastante
+más que ceñirse a `.text`". **Falso, y por un factor de dos órdenes de magnitud.**
+Medido replicando los bucles exactos de `patterns.cpp` (`FindModuleRangeFromMaps`,
+`SigScan`, y el bucle unique de `FindUniqueInSteamclient`) sobre `/proc/self/maps`
+sintéticos de 1.5k y 4k líneas y un `.text` de 9 MB de ruido (peor caso: patrón de 20
+bytes que no existe, recorre todo). `-O2`, Xeon @ 2.1 GHz:
+
+| Operación | 1.5k líneas | 4k líneas |
+|---|---|---|
+| 1× parseo de `/proc/self/maps` | **0.064 ms** | **0.219 ms** |
+| 1× `SigScan` sobre 9 MB (first-match) | **18.6 ms** | 19.0 ms |
+| 1× bucle unique sobre 9 MB | **20.1 ms** | 19.9 ms |
+| ~8× parseos de maps (todo lo cacheable) | 0.51 ms | 1.75 ms |
+| 4× escaneo (el trabajo real) | **74.5 ms** | 76.1 ms |
+| **ratio escaneo / maps** | **145×** | **43×** |
+
+Escaneos reales por arranque en la config por defecto de un Deck: **4** — DepotKey,
+GMRC, ShaderDepot y Reconcile. (`BuildDep` está off por defecto y `LoadPackage` es
+opt-in → 0. Los dos call-sites que parecían duplicar escaneo, `depot_key_hook.cpp:123`
+vs `:131` y `license_reconcile.cpp:43` vs `:48`, son **ramas mutuamente excluyentes**;
+y `ResolveAddr()` ya cachea en un `static`. **[YA]**)
+
+Conclusiones:
+
+1. **El cacheo del `ModuleRange` no merece la pena.** ~1 ms sobre un arranque. Y el
+   poll del ctor (1 parseo/segundo) es 0.2 ms/s: ruido.
+2. **El coste está en el escaneo**, y aun así son ~76 ms **en un hilo detached durante
+   el arranque de Steam** — invisible para el usuario. Tampoco merece optimizarse.
+3. Dato de interés si algún día importa: los dos escaneos `FindUniqueInSteamclient`
+   (ShaderDepot y Reconcile) **nunca salen temprano** — tienen que recorrer los 9 MB
+   completos para *demostrar* unicidad, incluso si el match está en el primer byte. Es
+   el precio correcto a pagar por no hookear la función equivocada (§ comentario en
+   `patterns.cpp:121-127`), no un defecto.
+4. **La preocupación de consistencia entre llamadas tampoco se sostiene**: temí que el
+   `mprotect` de la colocación de un hook sacara páginas del filtro `r-x` y encogiera el
+   rango para búsquedas posteriores. No ocurre: `lmhook.cpp` restaura la protección
+   anterior tras cada escritura (`LM_ProtMemory(..., oldProt, nullptr)` en las líneas
+   75 y 115), y `LM_HookCode` hace lo mismo internamente.
+
+**Veredicto global: `patterns.cpp` no necesita tocarse por rendimiento.** Cerrado.
 
 ##### 7.7.1.b Corrección — el pipeline RTTI/vtable SÍ es portable a `LD_PRELOAD`
 
