@@ -2509,3 +2509,123 @@ Es, con diferencia, lo más accionable que ha salido del barrido.
 
 **Neto del 06-08: un [PRESTABLE] de prioridad media con traza completa** (el primero del
 rango), más una incoherencia menor de documentación en `main.cpp`.
+
+#### 7.7.13 Día 2026-08-07 — 8 commits (cimientos para inyectar mensajes)
+
+**`4b29945` — ProtoBuf lite → ProtoBuf completo.** El commit que explica el +38k/−22k del día
+(regeneración de todos los `.pb.cpp`/`.pb.h`). Su motivo: *"We're gonna need it from now on.
+Mostly for dumping messages"*.
+
+La diferencia técnica importa: **protobuf-lite no lleva reflexión ni descriptores**, así que no
+existe `DebugString()` ni formato texto — para imprimir un mensaje tienes que escribir el
+printer a mano, campo a campo. Con protobuf completo puedes volcar **cualquier** mensaje sin
+tocar código. El precio es tamaño de binario y memoria. Cambia peso por capacidad de
+introspección, y lo hace justo antes de necesitarla.
+
+**Los cimientos para inyectar mensajes — tres commits que son una sola historia.**
+
+`cc8d42a` **"Fix missing pad in CNetPacket"** — el struct estaba declarado como **`0x14`
+(20 bytes)** y en realidad mide **`0x20` (32)**. Añade 12 bytes de padding y corrige el
+comentario de tamaño. **Es el prerrequisito de todo lo demás**: `CCMInterface::recvPkt(CNetPacket*)`
+recibe un puntero, y si le pasas un `CNetPacket` construido en pila que mide 12 bytes menos de
+lo que Steam espera, Steam lee y escribe **más allá del objeto** → corrupción de pila. No se
+puede fabricar un paquete para dárselo a Steam hasta tener el tamaño bien.
+*(Desliz de nombres: el campo se llama `__pad0x10` pero está en `0x14`.)*
+
+`7366bed` añade la **receta** para usar `recvPkt`, que es oro documental:
+
+```cpp
+//Before using make sure to:
+//Create header with steamId & realm
+//Create body
+//Serialize
+//Set type with ProtoBuf mask
+//Set refs to 1 (not doing this will debugbreak() in a failed assert)
+```
+
+`6e8e8de` **"Add ability to send messages & spoof incoming ones"** — versiones hook+tramp para
+`CCMInterface` y `CWebSocketConnection`, más `IClientUser::sendMsg`.
+
+**Y aquí está lo interesante: la cadena lleva tres semanas montándose.**
+
+| Fecha | Commit | Pieza |
+|---|---|---|
+| 07-25 | `4bd33e7` | identifica el padding de `+0xC` como `int32_t refs` (contador de referencias) |
+| 08-06 | `b937ab2` | libera el paquete de verdad con `Plat_Free` en vez de mentir sobre el tamaño |
+| 08-06 | `0fc9cf9` | asigna con `Plat_Alloc` en vez de la arena estática |
+| 08-07 | `cc8d42a` | corrige el tamaño real del struct (0x14 → 0x20) |
+| 08-07 | `7366bed` | documenta que hay que poner `refs = 1` o salta un assert |
+| 08-07 | `6e8e8de` | y ya se pueden enviar/falsificar mensajes |
+
+Ese `refs = 1` del último paso **es** el campo que identificó el 25-07. Tres semanas de
+cimientos para una capacidad que todavía no es una feature — no hay ninguna opción de config que
+la use. Es infraestructura por adelantado.
+
+**`3d7d3c6` — `has_target_job_name()` antes de usarlo**, con su motivo: *"Do not modify header by
+blindly requesting the target_job_name"*. Nota honesta: en proto2 un getter **const** de un campo
+opcional no debería mutar el mensaje (devuelve el valor o el default), así que esto se lee más
+como código defensivo que como un bug arreglado — y antes ya era seguro porque un campo sin
+poner devuelve `""`, que nunca iguala al nombre buscado. Lo que sí gana es **intención
+explícita**: dice "sólo si el campo existe" en lugar de apoyarse en que comparar contra vacío
+falle.
+
+**`a62efeb` — simplifica `isValid()`**, y lo comprobé porque parecía una regresión:
+
+```cpp
+-return body && size > sizeof(CNetPacketBody) && body->type != INVALID_NETPACKET_TYPE;
++return getType() != INVALID_NETPACKET_TYPE && size > sizeof(CNetPacketBody);
+```
+
+Desaparece el `body &&`. **No es regresión:** `getType()` tiene su propia guarda
+(`if (!body) return INVALID_NETPACKET_TYPE;`), así que el nullcheck se movió, no se perdió.
+Correcto.
+
+**Pero al lado hay un bug de verdad, de los suyos** (no accionable por nosotros, se anota como
+observación del barrido):
+
+```cpp
+constexpr bool isProtoBuf() const {
+    if (getType() == INVALID_NETPACKET_TYPE) {
+        return INVALID_NETPACKET_TYPE;      // ← ENetPacket(-1) desde una función bool
+    }
+    return getType() & PROTOBUF_TYPE_MASK;
+}
+```
+
+`INVALID_NETPACKET_TYPE` es `-1`, y `-1` convertido a `bool` es **`true`**. O sea:
+`isProtoBuf()` devuelve **"sí, es protobuf"** justo cuando quiere decir "no lo es". La intención
+está invertida.
+
+Rastreados los tres llamantes: dos (`hooks.cpp:275` y `:481`) van precedidos de `isValid() &&`,
+que ya filtra el caso, así que están tapados. El tercero **no**: `CNetPacket.cpp:8`, dentro de
+`getProtoBufTypeName()`, que a su vez se llama en `hooks.cpp:271` — **una línea antes** del
+`isValid()` de la 275. Efecto real: para un paquete con `body == nullptr`, la línea de log
+imprime un nombre de mensaje inventado (`-1 & ~0x80000000` = `0x7FFFFFFF`) en lugar de
+`"Unknown"`. **Cosmético, sólo afecta al log.** Ni crash ni cambio de comportamiento.
+
+**Menores.** `c51c4fa` limpia `la_objopen` (`const std::string name = map->l_name` en vez de
+construir el string tres veces) y deja ver que ya trackea `libtier0_s.so` del día anterior;
+`b571526` arregla el logging dentro de `assembleCodeAt`.
+
+##### 7.7.13.a Frontera (§5): SLSsteam crece hacia la capa de mensajes, nosotros no estamos ahí
+
+Vale la pena anotarlo en términos del mapa de coexistencia, porque este día lo hace nítido.
+
+**SLSsteam** lleva un mes profundizando en la **capa de red/mensajes**: `CNetPacket`,
+`CCMInterface::recvPkt`, `CWebSocketConnection`, protobuf completo, y ahora capacidad de
+**enviar y falsificar** mensajes.
+
+**lumalinux no tiene nada de eso.** Comprobado: **cero** `#include` de protobuf en todo `src/`,
+cero referencias a `CNetPacket`, `EMsg` o `CMsgClient*` (la única coincidencia del grep es un
+comentario en `sls_achievement_unblock.cpp` que menciona `EMsg` al explicar el cambio de
+mangling). lumalinux opera en la **capa de llamada a función**: hookea `LoadDepotDecryptionKey`,
+`GetManifestRequestCode`, `GetShaderCacheDepot`, `BuildDepotDependency` — argumentos y valores
+de retorno, no paquetes.
+
+**Consecuencia para §5:** los conjuntos no sólo son disjuntos hoy, sino que **están creciendo en
+direcciones que no colisionan**. SLSsteam se hunde hacia la red; lumalinux se queda en la
+frontera del install-path. No hay ninguna señal de que vaya a haber solape, y eso es una buena
+noticia estructural para la estrategia de coexistencia.
+
+**Neto del 07-08: cero accionables.** Un bug cosmético de SLSsteam anotado, una confirmación de
+que `a62efeb` no rompe nada, y una observación de frontera que refuerza §5.
