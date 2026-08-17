@@ -2028,3 +2028,123 @@ comprobado cuál de los dos callbacks es el que realmente refresca la UI de Stea
 **Neto del 30-07 para lumalinux: cero accionables.** Un [YA] a favor (la fuga de fds no
 existe en la reescritura de `curl.cpp`) y una pregunta cerrada con traza (el callback afinado
 no afecta al live refresh, y los dos mecanismos son complementarios).
+
+#### 7.7.8 Día 2026-07-31 — 8 commits (cumple su propia queja, y endurece la config)
+
+**`b8ef92f` — `IClientConfigStoreMap` → `IClientConfigStore`.** Cumple, cuatro días después,
+la queja que se había dejado escrita el 27-07 (§7.7.5): *"I really do not like hooking the
+IClient\*Map functions because they are very surface level and get skipped over a lot"*. Baja
+el hook del wrapper del mapa a la **clase real**, resuelta por RTTI (`12CConfigStore`).
+
+Y aquí se ve el truco que sostiene todo su esquema: coge el **índice** de
+`21IClientConfigStoreMap` (que es donde viven los literales de nombre que su decompilador
+lee) y lo aplica a la **vtable de `12CConfigStore`**:
+
+```cpp
+IClientConfigStore_SetString.setup(
+    VFTIndexes::IClientConfigStoreMap::SetString.getPrintName().c_str(),
+    store.functions[VFTIndexes::IClientConfigStoreMap::SetString.index],   // ← índice del Map, vtable de la impl
+    hkClientConfigStore_SetString);
+```
+
+O sea **asume correspondencia de orden de slots entre el wrapper `*Map` y la implementación**.
+Es lo que permite nombrar slots de clases que no llevan los literales encima. Supuesto no
+declarado y no verificado por él, pero que funciona en la práctica. *(Es también el mecanismo
+que §7.7.2.a evaluó para DepotKey y descartó: allí el problema no es la correspondencia sino
+que el accesor no tiene un nombre distintivo.)*
+
+**`00c93c6` — nombres de funciones sobrecargadas.** Bug real del mapa `nombre → índice`: si
+dos slots referencian **el mismo literal** (funciones sobrecargadas, p.ej. dos `SetString`
+con firmas distintas), el segundo **sobreescribía** al primero en `functionMap[str] = i`.
+Ahora, si la clave ya existe, va probando `nombre2`, `nombre3`… hasta encontrar hueco.
+Tercer arreglo del mismo punto crítico en nueve días (tras el `retf` del 23-07 y el
+centinela `leaOffset` del 30-07): el mapa nombre→slot del que depende su hooking entero.
+Nótese el cambio de `const auto& str` a `auto str` — necesita copia porque ahora lo modifica.
+
+**`284115b` — abortar si falla la creación de la config.** `CConfig::init()` pasa de
+"si `createFile()` va bien, monta el watcher; en cualquier caso `loadSettings`" a **retornar
+`false` y no seguir**. Motivo suyo: *"the tickets assume the config directory was created
+successfully"* — `Ticket::getTicketDir()` construye `<configDir>/cache` y hace
+`create_directories`. Antes, un fallo de permisos en el directorio dejaba SLSsteam corriendo
+con defaults y los tickets escribiendo a un sitio inexistente; ahora aborta limpio.
+
+**`4bfe8e2` — el buffer de paquetes.** `g_packetsArrayIndex` (`uint32_t`, índice) pasa a
+`g_packetsArrayOffset` (`uintptr_t`, offset en bytes), y documenta los límites: *"Biggest
+message I have observed was around 600kb"* → `MAX_PACKET_SIZE` 1 MB × `MAX_PACKETS` 8 = **8 MB
+de arena estática** para serializar paquetes. Es la arena que el 06-08 (`0fc9cf9`) sustituirá
+por el asignador propio de Steam.
+
+**Menores.** `ac12369` actualiza el *"hall of shame"* del README (ver nota abajo). `e15dcce`
+renombra `hkBUpdateOwnershipTicket`→`hkBUpdateAppOwnershipTicket`; `57b80e3` un newline doble.
+`5f946ec` cambia `if (!name.size())` por `if (name.size() < 1)` — el commit dice *"something
+more logical"*, pero **son semánticamente idénticos** (`size()` es unsigned); es preferencia
+de estilo, no un arreglo.
+
+##### 7.7.8.a Contexto de ecosistema — el "hall of shame" y por qué nos concierne
+
+`ac12369` reescribe la entrada de un proyecto y **le añade un plugin de Decky**:
+
+> *"OnetapBeta **& Hammer Decky** by Hammer Steam: Resells Steamless & SLSsteam for a bogus
+> price, completely breaking licensing agreements and leeching off the communities hard work
+> while putting in 0 effort themself."*
+
+Relevante porque **LumaDeck es también un plugin de Decky que instala SLSsteam**, o sea juega
+en el mismo terreno que Ace está señalando públicamente. La diferencia es de postura, y
+LumaDeck está en el lado correcto por construcción, no por suerte:
+- **Gratis y MIT**, sin reventa.
+- **Acredita a AceSLS/SLSsteam de forma prominente** en la tabla de créditos del README.
+- **No re-empaqueta SLSsteam**: lo descarga de upstream vía el `setup.sh` de lumalinux, así
+  que el usuario recibe el binario de Ace, no una copia renombrada.
+- Y lumalinux **nunca forkea** SLSsteam (§0, §5): coexiste y aplica un parche reversible en
+  memoria, con los ficheros portados marcados AGPL-3.0 y atribuidos fichero a fichero.
+
+No hay nada que cambiar. Se anota porque conviene saber que el upstream vigila activamente
+este espacio, y porque la postura de atribución que ya seguimos **es** lo que nos distingue.
+
+##### 7.7.8.b Hallazgo colateral en LumaDeck — `set_sls_value` es destructivo [MINA, no bug activo]
+
+Encontrado tirando del hilo de `284115b` (permisos y creación de config), no de un cambio de
+SLSsteam. **No es un bug activo: es una mina.**
+
+`main.py` expone tres métodos de config de SLSsteam:
+
+```python
+async def read_sls_config(self) -> str:   # inofensivo (lectura)
+async def get_sls_value(self, key) -> str: # inofensivo (lectura)
+async def set_sls_value(self, key, value) -> str:   # ← DESTRUCTIVO
+    from slssteam_config import set_value
+    set_value(key, value)
+```
+
+`set_value` (`backend/slssteam_config.py:88`) hace `read_config()` → mutar dict →
+`write_config()`. Y ese par **no preserva el fichero**:
+- `_read_yaml` hace `line.strip()` **antes** de parsear, o sea **descarta la indentación**.
+  Un `  - 480` bajo `AdditionalApps:` queda en `- 480`, sin `:`, y se **salta**. Un
+  `  1234: 5678` bajo `FakeAppIds:` se parsea como clave **de primer nivel** `1234`.
+- `_write_yaml` reescribe **el fichero entero** como líneas planas `key: value`.
+
+Efecto de **una sola** llamada: se pierden los comentarios y, sobre todo, **todo el contenido
+anidado** — `AdditionalApps` (¡los juegos!), `DlcData`, `FakeAppIds`, `ManifestIds`,
+`CDKeys`, `DenuvoGames`. `AdditionalApps` quedaría como `AdditionalApps: ` vacío → SLSsteam
+deja de fingir propiedad → **los juegos de LumaDeck dejan de funcionar**, en silencio.
+
+**Por qué NO está pasando hoy:** comprobado que **ningún** wrapper de `src/api.ts` ni ninguna
+página lo invoca (grep sobre `api.ts`, `pages/*.tsx`, `components/*.tsx`: cero). Está expuesto
+como RPC pero muerto desde la UI. Sólo se dispara si alguien añade el wrapper o lo llama desde
+la consola de Decky.
+
+**Por qué merece cerrarse:** el resto del backend ya hace lo correcto —`slssteam_ops.py` edita
+**por líneas y append-only**, y §4.3/`slssteam_schema.py` insisten en no perder un byte—. Este
+par es la única vía que contradice ese invariante, y su nombre (`set_sls_value`) invita a
+usarlo. Opciones: borrar los tres métodos, o reimplementar `set_value` sobre el editor por
+líneas de `slssteam_ops.py`. **Pendiente de decisión del dev; no tocado.**
+
+*(Aparte y menor, sin verificar on-device: el backend de Decky corre como **root** en Game
+Mode —`plugin.json` lleva `flags: ["_root"]`, y `paths.py:561` lo dice— y `_commit_config`
+escribe el `.tmp` con `open()` normal antes del `os.replace`, así que el `config.yaml`
+resultante queda **root:644**. Legible por SLSsteam, o sea sin rotura funcional; pero el
+usuario ya no puede editarlo a mano sin `sudo`, y SLSsteam está diseñado alrededor de un
+config editable a mano.)*
+
+**Neto del 31-07: cero accionables de SLSsteam**, y un hallazgo colateral en LumaDeck que es
+la primera cosa del barrido que apunta a código propio y no a documentación.
