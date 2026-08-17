@@ -1076,9 +1076,8 @@ on-device: el log del parche (`SLS-ach: scoped the native-achievement guard…` 
 completo)—. Los internals del decompilador ya están desglosados en §7.5.1; esta
 sección NO los repite, documenta qué se construyó **encima**.*
 
-**Estado: EN CURSO.** Días desglosados a fondo: `2026-07-23`. El resto del rango está
-inventariado y clasificado (ver §7.7.0) pero pendiente de desglose fino; se irá
-completando día a día.
+**Estado: COMPLETO — cerrado el 2026-08-17.** Los 22 días del rango están desglosados a
+fondo en §7.7.1 … §7.7.19. El cierre, con el balance de accionables, está en §7.7.20.
 
 #### 7.7.0 Panorama de la ventana — el hilo conductor
 
@@ -1097,7 +1096,7 @@ por orden cronológico:
 | 08-05 | `RunInterface` → `ProcessIPCFrame` (un nivel más profundo en la capa IPC) | pendiente |
 | 08-12 | **`CDKeys`**: suministra la clave en vez de saltar el paso | **§7.2 corregido** |
 | 08-14 | API local: `setcompat`/`getcompat`/`dumpcompat`/`dumplibraries` + `API.md` | amplía §4.2 |
-| 08-15 | Release `20260815201341`. **`IN_MOVED_TO`** en el filewatcher | **§4.1 actualizado** |
+| 08-15 | Release `20260815201341`. **`IN_MOVED_TO`** en el filewatcher; `CUtlRBTree` como árbol real | **§4.1 actualizado**, §7.7.19 |
 
 **Regalos gratis para LumaDeck en esta ventana** (nada que implementar): CD-keys legacy
 suministradas (§7.2), stutters de logros arreglados, callbacks y lobbies de FakeAppIds
@@ -3133,3 +3132,189 @@ hace nada**, así que conviene loguear el caso `else`.)*
 **Neto de los dos días: cero accionables de SLSsteam**, un [PRESTABLE] de prioridad media-baja en
 LumaDeck, y la constatación de que la API local ya es un canal de control razonablemente completo
 y documentado (aunque apagado por defecto).
+
+#### 7.7.19 Día 2026-08-15 — 15 commits, release `20260815201341` (el día del cierre)
+
+Último día del rango, y el más útil para nosotros de los tres finales. Tres cosas de sustancia, un
+arreglo de build, la release, y cuatro commits peleándose con el Markdown de GitHub.
+
+**`ac6830b` `chore(sdk): Fix names & function order in CUtl`** — cosmético, prepara el terreno.
+
+**`9be780a` `feat(sdk): Parse CUtlRBTree as actual binary tree now`** — el commit técnico del día.
+El día anterior había añadido `CUtlRBTree` con un `find()` que era una **mentira útil**: recorría
+los elementos linealmente y comparaba claves, ignorando por completo que la estructura es un
+árbol. Funciona, pero es O(n) sobre un contenedor diseñado para O(log n), y además asume que todos
+los slots entre `0` y `size` están vivos (en un RBTree de Valve hay huecos: los nodos borrados
+quedan en una free-list). Aquí lo hace bien: mapea los campos reales
+
+```cpp
+struct Element_t {
+    int32_t leftIndex;      //0x0
+    int32_t rightIndex;     //0x4
+    uint8_t __pad0x0[0x8];  //0x8
+    T key;                  //0x10
+    T2* value;              //0x14
+};                          //0x18
+...
+int32_t rootNodeIndex;      //0x14  (antes: dentro de un pad de 0x20)
+uint32_t allocated;         //0x18
+```
+
+y `find()` desciende desde `rootNodeIndex` comparando `key` y saltando a `leftIndex`/`rightIndex`
+hasta dar con `-1` (el centinela de "sin hijo"). También cambia la firma: devuelve
+`Element_t*` en vez de `T2*`, y es `CUtlMap::at()` quien extrae `->value`. Detalle de diseño
+correcto: quien tiene el nodo puede leer clave *y* valor.
+
+`ee0021b` borra el comentario de "no verificado" con la nota de que **lo probó contra
+`m_MapAppOwnershipTickets` y `m_mapPackages`, y ambos funcionaron**. Eso es la validación cruzada
+que da credibilidad al layout.
+
+> **Contexto honesto: `CUtlMap`/`CUtlRBTree` todavía NO se usan en ninguna parte.** Grep sobre
+> todo el repo (`src/`, `tools/`, `include/`): la única aparición es su propia definición en
+> `src/sdk/CUtl.hpp`. Es **andamiaje**, no una funcionalidad enviada. Ace mapeó los contenedores
+> porque los va a necesitar (los mapas de paquetes y de tickets de ownership son exactamente lo
+> que hace falta para dejar de adivinar el estado de licencias), pero al cerrar el rango son
+> código muerto. No hay nada que "nos aporte" hoy.
+
+**Un bug latente en ese `find()`, para el registro.** El chequeo `index == -1` está **al final**
+del bucle, no al principio:
+
+```cpp
+int32_t index = rootNodeIndex;
+for (;;) {
+    const auto node = &elements[index];   // <-- deref antes de validar index
+    if (node->key == key) return node;
+    ...
+    if (index == -1) break;
+}
+```
+
+Con un **árbol vacío** (`rootNodeIndex == -1`, que es lo que Valve pone) la primera iteración lee
+`elements[-1]->key`, o sea 0x18 bytes por debajo del array. Lectura fuera de rango, no escritura,
+así que lo más probable es un falso negativo o un valor basura comparado — pero es un `read` OOB
+real. No nos afecta (no usamos su SDK), y probablemente a él tampoco todavía porque el código está
+sin usar. Lo apunto porque si algún día tomamos prestado el layout, el bucle hay que reescribirlo
+con la guarda arriba.
+
+**`d005614`** añade `steam.hpp` a `sdk.hpp` (include que faltaba). **`96cb06b`** afina la
+redacción de `API.md`.
+
+**`665fc8c` `fix(API): Fix first command getting executed twice`** — arreglo real de la API, y
+explica por qué el bug existía. El código viejo hacía, en cada notificación de inotify:
+
+```cpp
+fstream.close();
+fstream.open(path, std::fstream::in);
+```
+
+…partiendo de un `fstream` que `init()` había dejado **abierto**. Y `isEnabled()` se apoyaba en
+`fstream.is_open()` como prueba de vida. El resultado es que el estado del stream y el estado
+"¿estoy inicializado?" eran la misma variable, y un `echo > fichero` (que dispara **dos** eventos
+de inotify: el truncado y el cierre-escritura) acababa procesando el primer comando dos veces.
+El arreglo separa las dos cosas: un `bool initialized` propio para `isEnabled()`, `init()` cierra
+el stream tras crear el fichero, y `onFileChange()` abre-lee-cierra en cada evento con un
+`goto done` que garantiza el cierre en todos los caminos de error. De paso cambia
+`strcmp(split[0].c_str(), "x") == 0` por `split[0] == "x"` — el `strcmp` era comparar un
+`std::string` bajando a `const char*` por gusto.
+
+*Relevancia para nosotros: si algún día LumaDeck usa esa API, **una operación duplicada importa**.
+`install|appId|libraryIndex` ejecutado dos veces es benigno; `uninstall|appId` dos veces también;
+pero el patrón de escritura correcto es `os.replace` de un fichero temporal (un solo `IN_MOVED_TO`)
+y no `echo >`. Y ese arreglo llegó en `20260815201341`: en versiones anteriores el duplicado
+está presente.*
+
+**`182fdf0` `feat(Makefile): Makefile is now flag aware`** — calidad de vida de build. Calcula
+`FLAGSSHA := sha256sum` de `CXXFLAGS + LDFLAGS` y mete los objetos en `obj/$(FLAGSSHA)/`, con el
+`.so` como `bin/SLSsteam-$(FLAGSSHA).so` y un `link-bins` que hace `ln -f` al nombre canónico. Así
+alternar entre builds (con/sin `TRACE`, distinto compilador) no invalida la caché del otro. El
+detalle fino está en `embed-config.sh`/`embed-version.sh`: ahora **solo reescriben el header si el
+contenido cambió**, porque si no el `mtime` nuevo forzaba recompilar `config.o` en cada cambio de
+flags. Es el mismo problema de "generated header con timestamp" que nos morderá en `rva_feed` si
+alguna vez generamos cabeceras; vale la pena tenerlo presente.
+
+**`1444fa5` `fix(filewatcher): Add IN_MOVE_TO to watch events`** — el commit del rango con más
+impacto directo en LumaDeck, ya documentado en §4.1:
+
+```cpp
+constexpr static int WATCH_MASK = IN_CLOSE_WRITE | IN_MOVED_TO;
+```
+
+Antes solo `IN_CLOSE_WRITE`. Un `os.replace()` —que es lo que hace `_commit_config()` de LumaDeck—
+**no** genera `IN_CLOSE_WRITE` en el fichero destino; genera `IN_MOVED_TO` en el directorio. Por eso
+en SLSsteam < `20260815201341` **la recarga en caliente de la config no se dispara cuando LumaDeck
+escribe**, y el usuario tiene que reiniciar Steam sin saber por qué. Y afecta también a
+`/tmp/SLSsteam.API`: escribir el comando con rename atómico no funcionaba antes de este commit.
+
+**La release.** `c73e40b` sube `res/version.txt` y `src/version.hpp` de `20260728212859` a
+`20260815201341`; `505b2c5` sube los dos PKGBUILDs (de `20260801163409`, o sea llevaban dos semanas
+desfasados) y el `sha256sums` del tarball; `97364a2` añade la entrada de SafeMode:
+
+```yaml
+  20260815201341: #tag 20260815201341
+    - d0c0ff6e...a6b3df8900 #ubuntu32_32 & steamdeck_stable - 20260804
+```
+
+> **Ojo con esto, es un detalle operativo real.** La entrada nueva lista **un solo hash** de
+> `steamclient.so` (el build de Steam del 2026-08-04), mientras que la del tag anterior listaba
+> dos. `Updater::verifySafeModeHash()` (`update.cpp:128`) busca `clientHashMap[VERSION]` y compara
+> el SHA-256 del `steamclient.so` cargado. Si no coincide:
+> - con **`SafeMode: yes`** → `LOG_NOTIFYERROR("Unknown steamclient.so hash! Aborting...")` y
+>   `unload()`: **SLSsteam no arranca**;
+> - con **`WarnHashMissmatch: yes`** → solo un toast de "please update".
+>
+> **Ambos vienen `no` por defecto** (`res/config.yaml` líneas 98 y 102, y los defaults en código
+> `config.cpp:176-177` también son `false`), así que el usuario normal no ve nada. Pero si LumaDeck
+> alguna vez activa `SafeMode` "por seguridad", combinado con un Steam que no sea exactamente el
+> build del 08-04 el resultado es **SLSsteam abortando en silencio**. Recomendación: **no tocar
+> `SafeMode`**, y si se quiere señal de desajuste, usar `WarnHashMissmatch`, que avisa sin matar.
+
+**`5d76d5b`, `143dcba`, `a70939b`, `01a3b1e`** — cuatro commits, dos pares de mensajes idénticos,
+todos arreglando el renderizado de `API.md` (*"Fix docs again I hate github's markdown. Why is it
+so weird..."*). `01a3b1e` es el HEAD del rango. Cero contenido técnico; los cuento porque están en
+los 205.
+
+**Neto del día:** un arreglo que **nos importa de verdad** (`IN_MOVED_TO`, §4.1), un arreglo de la
+API que importa si la usamos (`665fc8c`), andamiaje de contenedores que aún no se usa, y una
+release cuya entrada de SafeMode conviene no activar. Cero accionables nuevos en lumalinux.
+
+#### 7.7.20 Cierre del barrido — balance de los 22 días
+
+**Lo que la ventana nos da gratis (nada que implementar; basta actualizar SLSsteam a
+`20260815201341`):**
+
+| # | Qué | Dónde | Por qué importa |
+|---|---|---|---|
+| 1 | `IN_MOVED_TO` en el filewatcher | §4.1, §7.7.19 | Sin esto el `os.replace` de `_commit_config()` **no** dispara la recarga en caliente |
+| 2 | `CDKeys` | §7.2, §7.7.17 | Suministra la clave de CD en vez de saltarse el paso |
+| 3 | Stutters de logros nativos | §7.7.10 | Micro-tirones al desbloquear, arreglados |
+| 4 | Callbacks y lobbies con FakeAppIds | §7.7.11 | Multijugador con AppId falso ya no se rompe |
+| 5 | Log de config con flag `Once` | §7.7.16 | Deja de inundar `~/.SLSsteam.log` |
+
+**Accionables abiertos en nuestro lado, por prioridad:**
+
+| Prioridad | Qué | Ref | Estado |
+|---|---|---|---|
+| **Media** | `std::realloc` de libc sobre memoria asignada por Steam en `AppendIdsToVec` | §7.7.12.a | **Abierto**, sin autorizar. Paso 1 = log de diagnóstico comparando `Plat_Realloc` vs `realloc` |
+| Baja | Premisa falsa del comentario de `downloads.py:1399` + docstring de `steam_utils.py` | §7.7.18.a | **Abierto**, cosmético |
+| Baja | Decidir si el pin de compat tool se elimina o se mueve a `SteamClient.Apps` | §7.7.18.a | **Abierto** |
+| — | Refresco del schema embebido (`CDKeys`, `LogLevels`, sin `Notifications`) | §7.7.17 | **Hecho** (LumaDeck `a061b00`) |
+| — | Borrado del round-trip dict de config (destructivo) | §4.1 | **Hecho** (LumaDeck `ecf2f65`) |
+| — | §7.2 premisa falsa, §7.6 verificación falsa, `RESEARCH.md` §15.4 y §17 | — | **Corregidos** |
+
+**Lo que el barrido corrigió de nuestra propia documentación** — y es el resultado menos cómodo
+pero más valioso: §7.2 partía de una premisa **falsa** sobre `checkAppOwnership`; §7.6 afirmaba
+haber verificado el parche de logros contra `20260723102618` con "firmas sin cambio", y era
+**falso** — la ventana de rotura era 6 días y 2 releases más ancha de lo documentado (`59f8259`,
+2026-07-20); §1.6 y §1.7 citaban precedentes upstream que **ya no existen**; `RESEARCH.md` §17
+atribuía la rotura al día equivocado.
+
+**Lo que NO nos aporta, dicho claro.** Seis de las siete "oportunidades prestables" que apunté
+durante el barrido no sobrevivieron a la verificación: el escaneo ceñido a `.text` (con
+`-z separate-code` el mapeo r-x ya es todo código), el cacheo del `ModuleRange` (medido: 0,06–0,22 ms
+de parseo de maps frente a ~19 ms de SigScan, 43×–145× a favor de no optimizarlo), la navegación
+por objeto raíz (3 de nuestros 5 objetivos no son virtuales; el único que lo es ya usa RTTI), la
+regla de tipos (no leemos por máscaras en ningún sitio, y somos nosotros los que tenemos
+`static_assert`, no él), copiar `Updater::isEnabled()` (`rva_feed.cpp:68` necesita el SHA de todas
+formas), y la URL `master` del schema (el redirect de GitHub devuelve 200 y contenido idéntico).
+El patrón es consistente y vale como lección: **el hallazgo sobrevive si se mide o se lee el
+código; muere si se razona por analogía con lo que hizo upstream.**
