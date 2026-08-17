@@ -3,7 +3,8 @@
 *Fecha de investigación: 2026-07-06. Base del análisis: [`AceSLS/SLSsteam`](https://github.com/AceSLS/SLSsteam)
 @ `ebfb079` (`VERSION = 20260624075231`), i386, C++20/CMake, libmem.
 Re-verificado contra las releases `20260705132808` (`5c632dd`) y `20260705144737`
-(`da97d11`) — ver §7 para los deltas. Compañero de
+(`da97d11`) — ver §7 para los deltas. **Barrido de la ventana `20260723102618` →
+`20260815201341` (205 commits) en §7.7, en curso día a día.** Compañero de
 [`slsteam-moon-findings.md`](slsteam-moon-findings.md) (el mod) y
 [`opensteamtool-findings.md`](opensteamtool-findings.md).*
 
@@ -168,7 +169,15 @@ detour-en-slot-resuelto); lumalinux eligió el no-intrusivo, que es el correcto
 bajo coexistencia (no queremos reescribir vtables que SLSsteam podría estar
 leyendo).
 
-### 1.6 Captura de instancia viva + self-heal vía RunIPCFrame [PRESTABLE — cómo obtener una vtable en runtime]
+### 1.6 Captura de instancia viva + self-heal vía RunIPCFrame [SUPERSEDED upstream — ver §7.7]
+
+> ⚠️ **SUPERSEDED (2026-07-24, `8de3384`).** SLSsteam **eliminó los cinco hooks de
+> `RunIPCFrame`** y con ellos esta técnica entera. Las instancias vivas ya no se
+> capturan al vuelo: se navegan estructuralmente (`CSteamEngine → getUser() →
+> getAppManager()/getClientApps()/getClientUser()`) vía offsets de miembro
+> localizados por patrón, desde un único `placeVFTHooks()`. Esta sección se
+> conserva como registro del mecanismo antiguo; **como técnica "PRESTABLE" está
+> obsoleta** — lo vigente es §7.7.
 
 Problema: para hacer un VFTHook necesitas el **puntero de la vtable de una
 instancia viva** de la interfaz (`IClientAppManager`, etc.), y ese puntero no
@@ -194,7 +203,15 @@ existe tras construir el objeto), el patrón "hookea RunIPCFrame → captura `th
 → resuelve vtable → deshookea" es la vía. Es el mismo self-heal de RunIPCFrame
 que ya anotamos para slsteam-moon (§13/#18), aquí en su forma original.
 
-### 1.7 Hook "naked" ensamblado a mano (GetSteamId) [contexto, no prestable]
+### 1.7 Hook "naked" ensamblado a mano (GetSteamId) [SUPERSEDED upstream — ver §7.7]
+
+> ⚠️ **SUPERSEDED (2026-07-27, `c4152f5`).** SLSsteam **borró el trampolín naked**.
+> Ahora intercepta el `steamId` en el **buffer de retorno de la capa IPC**, dentro de
+> `CSteamEngine::RunInterface` (desde 2026-08-05, `ProcessIPCFrame`), filtrando por
+> `interfaz == ClientUser && exitCode == Success && fnId == 0xD6FC3200`. El
+> desensamblado de la función se conserva como comentario en su código. La lección de
+> esta sección ("lo que cuesta hookear sin punto de anclaje limpio") se mantiene, pero
+> el mecanismo descrito ya no existe. Ver §7.7.
 
 `createAndPlaceSteamIdHook` (`hooks.cpp:824-930`) es un caso especial:
 `IClientUser::GetSteamID` tiene múltiples matches y una convención rara, así que
@@ -324,6 +341,31 @@ copiar es el de directorio + `IN_CLOSE_WRITE` + filtro por nombre**, ~60 líneas
 no el de vigilar el fichero (que documenté aquí antes como prestable y resultó
 ser justo la variante buggy). Candidato de baja prioridad, pero copiar la versión
 correcta desde el principio.
+
+**Actualización 2026-08-15 (`1444fa5`) — el watcher ahora sí ve los renames.**
+SLSsteam añadió `IN_MOVED_TO` a la máscara, en el `inotify_add_watch` **y** en el
+filtro del loop:
+
+```cpp
+constexpr static int WATCH_MASK = IN_CLOSE_WRITE | IN_MOVED_TO;   // filewatcher.hpp
+```
+
+Esto cierra el agujero que quedaba: **`IN_CLOSE_WRITE` no dispara cuando el fichero
+llega por rename** (`rename(2)` / `os.replace`), sólo cuando alguien escribe y cierra
+el fichero en su sitio.
+
+**Impacto directo en LumaDeck.** `backend/slssteam_ops.py::_commit_config()` escribe
+el `config.yaml` de forma atómica (`os.replace`) y **luego hace un "poke"**
+(reabrir+cerrar el fichero) cuyo único propósito es emitir un `IN_CLOSE_WRITE` que el
+watcher sí escuchaba — el comentario de esa función documenta exactamente esta
+carencia. Con SLSsteam ≥ `20260815201341` **el poke es redundante**: el rename ya se
+detecta solo, y desaparece la ventana entre el `replace` y el poke.
+
+No retirar el poke sin gatear por versión: LumaDeck ya lee la versión instalada de
+SLSsteam (`backend/components.py`, `backend/slssteam_config.py` → `.slssteam.version`),
+así que la condición es trivial. Y el poke es inofensivo en builds nuevos (un
+`IN_CLOSE_WRITE` extra = una recarga idempotente), así que **no hay urgencia**: es
+deuda a retirar cuando el mínimo soportado suba, no un bug.
 
 ### 4.2 API local (canal de control)
 
@@ -617,6 +659,70 @@ neutralizando el campo `extended/hadthirdpartycdkey` del appinfo offline
   sobre-ingeniería preventiva mientras no veamos el síntoma.
 - **Estado:** solo anotado, no accionado. Si aparece, la causa y el fix de
   referencia (moon `3acab45`) ya están aquí.
+
+> ⚠️ **CORRECCIÓN + ACTUALIZACIÓN (2026-08-12, `79905b0`).** Dos cosas, y la primera
+> es un error de esta sección.
+>
+> **1. La premisa de arriba es falsa.** Escribí que "un added app, por el hook de
+> ownership, lee como `subscribed=true`". **No es así**, y no lo ha sido nunca en la
+> ventana analizada. El helper interno de SLSsteam llama al **trampolín**, no a su
+> propio hook:
+>
+> ```cpp
+> // src/sdk/CUser.cpp — idéntico en ebfb079, 69594b9 y HEAD
+> bool CUser::checkAppOwnership(const AppId_t appId, AppOwnershipInfo_t* pInfo) {
+>     return Hooks::CUser_CheckAppOwnership.tramp.fn(this, appId, pInfo);   // ← tramp
+> }
+> bool CUser::isSubscribed(const AppId_t appId) {
+>     AppOwnershipInfo_t info {};
+>     if (!checkAppOwnership(appId, &info)) return false;
+>     return info.ownsLicense && !info.licenseExpired;
+> }
+> ```
+>
+> O sea: `isSubscribed()` **ve la propiedad REAL**, deliberadamente, porque va por el
+> trampolín y se salta el falseo de `hkUser_CheckAppOwnership`. Para un added app
+> (juego de LumaDeck, no poseído de verdad) devuelve **false**. Por tanto
+> `shouldDisableCDKey() → !isSubscribed → true` → **vanilla sí desactivaba el gate**.
+> La asimetría `shouldDisableCDKey` vs `shouldDisableUpdates` es real a nivel de
+> código, pero **no producía el síntoma que le atribuí**. Lo que moon `3acab45`
+> aportaba de verdad era la otra mitad: zerear el out-param y **neutralizar
+> `extended/hadthirdpartycdkey`** en el appinfo offline para saltarse el paso
+> "GettingLegacyKey".
+>
+> *(Este es un patrón a recordar al leer SLSsteam: `CUser::*` en `src/sdk/` son
+> wrappers que llaman al **tramp**, no a la versión hookeada. Cualquier razonamiento
+> del tipo "aquí SLSsteam se ve su propio falseo" es sospechoso por defecto.)*
+>
+> **2. Vanilla ahora ataca el problema por el lado opuesto: suministra la clave.**
+> Nueva opción de config `CDKeys` + hook nuevo sobre `IClientUser::GetLegacyCDKey`:
+>
+> ```cpp
+> static bool hkClientUser_GetLegacyCDKey(IClientUser* p, AppId_t appId, char* k, uint32_t n) {
+>     Apps::getLegacyCDKey(appId);                       // inyecta ANTES de la original
+>     return Hooks::IClientUser_GetLegacyCDKey.originalFn.fn(p, appId, k, n);
+> }
+> ```
+>
+> `Apps::getLegacyCDKey` sale temprano si `isSubscribed` (juegos poseídos intactos), y
+> si no: coge la clave de `CDKeys` en el config o **genera una determinista** — 4
+> segmentos de 4 chars `A-Z0-9`, `srand(accountId + appId)`, formato `XXXX-XXXX-XXXX-XXXX`
+> — y la fija con `clientUser->setLegacyCDKey()`. Comentario suyo: inyectarla sólo en
+> `GetLegacyCDKey` no funcionaba bien, hay que **setearla**. Se borra quitando
+> `cdk_[n]` del `localconfig.vdf`. El config no loguea las claves (flag `silent` nuevo
+> en `getSetting`/`getList`/`getMap`; sólo `"Added CDKey for %u"`).
+>
+> Razón que da en el commit: *"antes SLSsteam simplemente desactivaba las CD keys
+> porque era la mejor opción teniendo en cuenta que no teníamos decompilador y la VFT
+> de `IClientUser` cambiaba mucho"* — o sea, **el trabajo de julio (§7.7) es lo que
+> hizo viable la feature**.
+>
+> **Neto para LumaDeck:** los juegos con CD-key legacy de terceros pasan de "gate
+> desactivado" a "clave suministrada", lo cual cubre además los que **exigen** una
+> clave con forma válida en vez de conformarse con que no se les pida. Cubre los added
+> apps porque `isSubscribed` lee propiedad real (punto 1). **Sin trabajo por nuestra
+> parte.** Sigue siendo nicho (DRM de juegos viejos), y sigue sin verificarse
+> on-device — pero ya no es un "gap conocido de vanilla", es una feature de vanilla.
 
 ### 7.3 Logros nativos — el "borrow" de schema y su scoping (`sls_achievement_unblock`)
 
@@ -913,3 +1019,187 @@ Lo único no confirmado es la forma de bytes compilada exacta (el `.so` del rele
 que derive y el patrón deja el `imm8` del `add esp` libre. Confirmación práctica
 on-device: el log del parche (`SLS-ach: scoped the native-achievement guard…` vs
 `guard pattern not found exactly once`) y `LUMA_SLS_ACH_TRACE=1`.
+
+---
+
+### 7.7 Ventana `20260723102618` → `20260815201341` — barrido día a día
+
+*Método: clon completo de `AceSLS/SLSsteam`, lectura de diffs commit a commit desde
+`69594b9` (donde acaba §7.5/§7.6) hasta `01a3b1e`. **205 commits, 2026-07-23 →
+2026-08-15**, dos releases (`20260728212859` y `20260815201341`), +43.7k/−25.1k líneas
+—de las que ~38k son la regeneración de protobufs del 08-07 (paso de ProtoBuf lite a
+completo)—. Los internals del decompilador ya están desglosados en §7.5.1; esta
+sección NO los repite, documenta qué se construyó **encima**.*
+
+**Estado: EN CURSO.** Días desglosados a fondo: `2026-07-23`. El resto del rango está
+inventariado y clasificado (ver §7.7.0) pero pendiente de desglose fino; se irá
+completando día a día.
+
+#### 7.7.0 Panorama de la ventana — el hilo conductor
+
+Un solo tema explica casi todo: **Ace desmantela el hooking por patrones de bytes y
+apoya el proyecto entero sobre el decompilador** (§7.5.1). Consecuencias en cascada,
+por orden cronológico:
+
+| Fecha | Hito | Efecto en el doc |
+|---|---|---|
+| 07-23 | Endurece decompilador + `patternScan` ceñido a `.text` | §7.7.1 |
+| 07-24 | **Elimina los 5 hooks `RunIPCFrame`**; navegación estructural `CSteamEngine→CUser→interfaces` | **§1.6 SUPERSEDED** |
+| 07-25 | Análisis movido a **antes de las relocaciones**; patrones cortos + prólogo con comodines | pendiente |
+| 07-27 | **Borra el trampolín naked de `GetSteamId`**; intercepta el buffer IPC | **§1.7 SUPERSEDED** |
+| 07-28 | Release `20260728212859`. `SteamIdOverride`, `FakeName`, refactor masivo de tipos SDK | rotura de `sls_achievement_unblock` → fix por prefijo |
+| 08-04 | Arregla stutters del fetch de reviews en logros nativos | mejora §7.3 |
+| 08-05 | `RunInterface` → `ProcessIPCFrame` (un nivel más profundo en la capa IPC) | pendiente |
+| 08-12 | **`CDKeys`**: suministra la clave en vez de saltar el paso | **§7.2 corregido** |
+| 08-14 | API local: `setcompat`/`getcompat`/`dumpcompat`/`dumplibraries` + `API.md` | amplía §4.2 |
+| 08-15 | Release `20260815201341`. **`IN_MOVED_TO`** en el filewatcher | **§4.1 actualizado** |
+
+**Regalos gratis para LumaDeck en esta ventana** (nada que implementar): CD-keys legacy
+suministradas (§7.2), stutters de logros arreglados, callbacks y lobbies de FakeAppIds
+corregidos, fuga de descriptores en curl cerrada, crash del logger durante el apagado
+de Steam arreglado.
+
+#### 7.7.1 Día 2026-07-23 — 3 commits (mantenimiento con intención)
+
+**`6725ff1` `chore(PKGBUILDs): Update`** — sube `pkgver` a `20260723102618` en
+`pkg/slssteam/PKGBUILD` y `pkg/slssteam-git/PKGBUILD` + nuevo `sha256sums`. Release
+plumbing; es literalmente "publicar la versión donde acaba §7.5".
+
+> **[FRONTERA — dependencia oculta de `sls_achievement_unblock`]**
+> Ese PKGBUILD lleva:
+> ```bash
+> #Disable stripping to not mess up disturb ticket-grabber
+> options=(!strip)
+> ```
+> SLSsteam se publica **sin strippear**, con `.symtab` intacta. Y de eso depende
+> nuestro §17: `sls_achievement_unblock.cpp` resuelve
+> `_ZN12Achievements25sendAndRecvGetPlayerStatsE*` y
+> `_ZN12Achievements23sendAndRecvGetUserStatsE*`, que son funciones **internas, no
+> exportadas** — no están en `.dynsym`, sólo en `.symtab`. Si SLSsteam se strippeara,
+> el parche caería al `no-op` de fail-safe y los logros nativos se apagarían en
+> silencio (bueno: degrada limpio, ver §17).
+> **Lo relevante es el motivo:** el `!strip` está ahí por el `ticket-grabber`, **no por
+> nosotros**. Nuestra feature va montada sobre una decisión ajena que puede revertirse
+> sin que nadie piense en LumaDeck. No accionable hoy; sí anotable como riesgo. Si
+> aparece `SLS-ach: could not resolve` en un build nuevo, **lo primero a comprobar es
+> `nm -a SLSsteam.so | wc -l`** antes de asumir drift de mangling.
+
+**`69d9623` `fix(decompiler): Add retf to abort instructions in function parser`** —
+`__parseFunction` desensambla instrucción a instrucción y para al ver un retorno. Sólo
+reconocía `ret`/`retn`; añade `retf` (*far return*, `CB`/`CA`, reliquia del modo
+segmentado). Si el parser no reconoce el retorno **no para**: se desborda al cuerpo de
+la función siguiente y sigue anotando referencias a strings ajenas → el mapa
+`nombre→índice de slot` de `parseInterfaceMapBase` sale contaminado → hook en el slot
+equivocado. Su propio comentario dice que capstone normaliza todos los `ret`, o sea que
+en la práctica es **un no-op defensivo**: coste cero, elimina una clase de bug
+diagnosticable sólo a base de sufrimiento. Sin efecto para nosotros; señal de que
+estaba blindando los cimientos justo antes de cargar peso encima (07-24).
+
+**`f87979f` `refactor(memhlp): Optimize patternscan by just scanning the .text
+section`** — el importante del día.
+
+- **Antes:** `LM_EnumSegments` sobre **todo el proceso**, se queda con los segmentos
+  `LM_PROT_XR`, y luego filtra por solape con el módulo objetivo. Tres defectos: (a)
+  enumera todo para tirar casi todo; (b) el filtro descarta sólo lo que queda
+  *totalmente* fuera, así que un segmento con solape **parcial** se escanea entero,
+  incluidos trozos de otra `.so`; (c) el segmento r-x arrastra `.init`/`.plt`/`.fini`
+  además de `.text`.
+- **Ahora:** pide `.text` a `Decompiler::getSection()` —que ya leyó las cabeceras ELF
+  **de disco**— y escanea `[base+sh_addr, +sh_size)`. Un bucle, sin mapa intermedio.
+- **Cambio acoplado en `main.cpp`:** `Decompiler::parseHeader(g_modSteamUI)`. SLSsteam
+  también escanea patrones en `steamui.so`; si `patternScan` ahora exige el mapa de
+  secciones, hay que parsear sus cabeceras o los escaneos ahí fallan en silencio
+  (`Didn't find .text section`). Nótese la distinción deliberada: **`parseHeader`** =
+  sólo cabeceras ELF (baratísimo, un `fopen` + tres `fread`); **`parseModule`** = eso +
+  recorrer `.rodata` entera recogiendo strings + `.data.rel.ro` buscando vtables
+  (caro). De `steamui` sólo quiere las secciones, y lo documenta en el comentario para
+  que nadie lo "arregle" luego.
+- **Observaciones propias (no son suyas):** sobrevive un off-by-one — el bucle va
+  `addr < end` y la guarda interna es `byteAddr > end` (debería ser `>=`, y el bucle
+  parar en `end - bytes.size()`), así que la última iteración puede leer hasta
+  `bytes.size()` bytes más allá de `.text`. Inocuo en la práctica (`.text` nunca es lo
+  último del mapeo) pero latente. Y el escaneo **no sale al primer match**: cuenta
+  todos y devuelve **el último**, con un `debug` cuando `matches > 1` — intencionado
+  (quiere saber cuándo un patrón es ambiguo, de ahí sus comentarios *"Not unique. All
+  matches point to correct function though"*), pero significa que cada patrón recorre
+  `.text` completa siempre.
+
+##### 7.7.1.a Veredicto sobre "escanear sólo `.text`" en lumalinux [PRESTABLE — prioridad BAJA]
+
+Anotado tras comparar contra `src/patterns.cpp`. **El valor de este commit NO se
+traslada, porque lumalinux nunca tuvo el problema que él arregló.** Su ganancia venía
+de eliminar `LM_EnumSegments` sobre el proceso entero + un filtro de solape chapucero;
+`FindModuleRangeFromMaps()` ya filtra por nombre de módulo en `/proc/self/maps` y ya se
+restringe a `r-x`. El delta que queda es sólo **mapeo r-x vs sección `.text`**, y con
+`-z separate-code` (default en binutils moderno) ese mapeo es `.init + .plt + .text +
+.fini`: **todo código, sin `.rodata`**. Así que "quita falsos positivos por datos" es
+**falso** en nuestro caso, y la aceleración es marginal (`.text` es la aplastante
+mayoría del rango). Los patrones de lumalinux son de 20+ bytes, con lo que un falso
+positivo en los stubs repetitivos de `.plt` es improbable.
+
+Lo que sí salió de la comparación, por orden de valor real:
+
+1. **`/proc/self/maps` se re-lee y re-parsea en CADA búsqueda.** `FindInSteamclient`,
+   `FindUniqueInSteamclient`, `FindLoadPackageFunction` y `FindSteamclientBase` llaman
+   todos a `FindModuleRangeFromMaps()`. Son **~6 parseos completos** del fichero
+   durante `InstallHooks()` (Steam tiene cientos/miles de líneas de mapeo), más uno por
+   segundo en el bucle de poll del constructor. Cachear el `ModuleRange` tras el primer
+   acierto es un cambio de ~5 líneas y vale bastante más que ceñirse a `.text`.
+   *(El poll del ctor sí necesita re-consultar: detecta la aparición del módulo.)*
+2. **Inconsistencia substring vs sufijo.** `main.cpp::IsSteamclient()` es estricto
+   (`ends_with("/steamclient.so")`), pero `FindModuleRangeFromMaps()` usa
+   `line.find("steamclient.so")` — substring. Si en el proceso coexistieran dos rutas
+   que contengan esa cadena (p.ej. `linux32/` y `linux64/`), el `[min_start, max_end]`
+   agregado abarcaría **desde una hasta la otra**, incluyendo lo que haya en medio →
+   rango enorme, posibles huecos no mapeados (riesgo de SIGSEGV al escanear) y matches
+   cruzados entre módulos. **No verificado que ocurra** —lumalinux es i386 y sólo carga
+   en procesos de 32 bits, donde en principio sólo está `linux32/steamclient.so`— pero
+   alinear el filtro con `IsSteamclient()` cuesta una línea y cierra el caso.
+3. Los dos off-by-one equivalentes en `SigScan` y en los bucles de
+   `FindUniqueInSteamclient`/`FindLoadPackageFunction` ya están correctos aquí
+   (`i + patLen <= r.size`), a diferencia del de SLSsteam. **[YA]**
+
+**Conclusión: NO abrir issue por el `.text`.** Si se toca `patterns.cpp`, hacerlo por
+(1) y (2), que son baratos y sí tienen sustancia. El aprendizaje transferible de verdad
+de este commit es otro: **leer las secciones del ELF de disco** como primitiva, que es
+lo que desbloquea el pipeline RTTI/vtable — ver §7.7.1.b.
+
+##### 7.7.1.b Corrección — el pipeline RTTI/vtable SÍ es portable a `LD_PRELOAD`
+
+Rectifico una conclusión precipitada: dije que la resolución de vtables por RTTI de
+SLSsteam "no se puede portar a lumalinux" porque exige analizar antes de las
+relocaciones, y eso sólo lo da `LD_AUDIT`. **La premisa es correcta pero la conclusión
+es errónea, y la dirección del problema es la contraria.**
+
+Lo que SLSsteam arregló el 07-25 (`3e9dfdd`) fue: *".rodata.ro.rel seems to get
+modified so the offsets turn into actual addresses which broke the decompiler flow"*. Su
+código asume valores **relativos al módulo** y les suma la base:
+
+```cpp
+const lm_address_t offset = *(reinterpret_cast<lm_address_t*>(start) + i);
+this->functions.emplace_back(offset + moduleBase);   // ← asume offset relativo
+```
+
+O sea: **pre-relocación** los slots de la vtable contienen offsets (hay que sumar base);
+**post-relocación** ya contienen **direcciones absolutas listas para usar**. Un
+consumidor `LD_PRELOAD`, que por definición llega después, no tiene un problema: tiene
+un caso **más sencillo** — lee el puntero del slot y lo usa tal cual, sin aritmética de
+base. La validación natural es comprobar que el puntero cae dentro del rango r-x del
+módulo.
+
+Lo que sigue haciendo falta y no es gratis es el resto del pipeline: leer las secciones
+del ELF de disco (`.rodata`/`.rodata.str` para strings, `.data.rel.ro` para vtables),
+localizar los `typeInfo` por nombre RTTI mangled, y —si se quiere el descubrimiento
+automático de índices— desensamblar las funciones de los `IClient*Map` para cruzar el
+literal del nombre con el número de slot. Eso es el grueso de `decompiler.cpp` +
+`vftableinfo.cpp`. lumalinux ya tiene la primitiva RTTI (§1.4/§15, `src/rtti.cpp`) y ya
+tiene traducción de direcciones (`src/vaddr_xlate.cpp`), así que la distancia es menor
+de lo que parece.
+
+**Estado: sigue siendo [PRESTABLE], no [DESCARTADO].** Coste real: medio-alto (el
+desensamblado por slot es lo caro). Beneficio: los hooks dejarían de depender de
+patrones de bytes, que es nuestra causa nº1 de rotura por update de Steam (§A de
+`maintenance.md`). Candidato serio para cuando `patterns.cpp` vuelva a romperse, no
+antes — y con la ruta gradual obvia: empezar por RTTI+vtable para los hooks
+**no críticos** (ShaderDepot, `NotifyLicensesUpdated`), que ya degradan a no-op limpio,
+y dejar DepotKey/GMRC en patrones hasta que la ruta esté probada en campo.
