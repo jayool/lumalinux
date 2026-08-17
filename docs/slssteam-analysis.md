@@ -1014,6 +1014,38 @@ resuelve vtables de *steamclient*, no su lógica propia de achievements:
 - `isSubscribed` es método no-inline (definido en su `.cpp`), sin LTO no se inlinea →
   el `call` sobrevive y el símbolo se exporta.
 
+> 🔴 **ESTA VERIFICACIÓN ERA FALSA. Corregido 2026-08-17 (ver §7.7.6).**
+> El punto de arriba —*"firmas sin cambio en `src/feats/achievements.{cpp,hpp}`"*— **no era
+> cierto cuando se escribió**, y esa falsa verificación es la razón más probable de que la
+> rotura pasara desapercibida varios días.
+>
+> `59f8259` (**2026-07-20**, *"refactor(sdk): Replace handmade EMsgType enum with protoc
+> generated EMsg"*) cambió el último parámetro de `Achievements::sendAndRecvGetUserStats`
+> de `const uint32_t targetType` a `const EMsg targetType`. Mangled: `…S3_j` → `…S3_4EMsg`.
+> Comprobado release a release:
+>
+> | VERSION | fecha | último parámetro |
+> |---|---|---|
+> | `20260710192125` | 07-10 | `const uint32_t targetType` |
+> | `20260714131044` | 07-14 | `const uint32_t targetType` |
+> | **`20260722152506`** | **07-22** | **`const EMsg targetType`** ← primera afectada |
+> | `20260723102618` | 07-23 | `const EMsg targetType` ← la que este §7.6 declaró "intacta" |
+> | `20260728212859` | 07-28 | `const EMsg targetType` |
+>
+> **Consecuencias:**
+> 1. La ventana de rotura empieza en **`20260722152506`**, no en `20260728212859`. Seis días
+>    y **dos releases** más de lo documentado. Si alguna vez se correlacionan reportes de
+>    "los logros dejaron de funcionar", el rango es más ancho.
+> 2. `RESEARCH.md` §17 y el mensaje de `e3dc918` atribuyen el cambio a "SLSsteam 20260728".
+>    Es la release donde se **detectó**, no donde se introdujo.
+> 3. No afecta al fix: el matching por prefijo cubre toda la ventana igual.
+>
+> **Lección de método:** verificar "firmas sin cambio" leyendo el fuente **en el HEAD
+> actual** no dice nada sobre si cambiaron *desde la última verificación*. Lo que había que
+> comparar es la firma **entre releases**, que es lo que hace la tabla de arriba. Para los
+> símbolos que se resuelven por nombre mangled, el chequeo correcto es
+> `git log -S"<firma>" -- <fichero>`, no un grep del estado presente.
+
 Lo único no confirmado es la forma de bytes compilada exacta (el `.so` del release da
 403 en el proxy; compilarlo no es reproducible), pero no hay razón estructural para
 que derive y el patrón deja el `imm8` del `add esp` libre. Confirmación práctica
@@ -1815,3 +1847,84 @@ día es **22 de febrero**, `notifyInit` saca un mensaje especial.
 hallazgo real pero por debajo del umbral de acción (doble SHA-256, ~25-50 ms en hilo
 detached), y una pregunta abierta con números (los dos fetches secuenciales con timeouts de
 30 s en la ruta de instalación de hooks).
+
+#### 7.7.6 Día 2026-07-28 — 28 commits, release `20260728212859` (el día más cargado)
+
+**Lo primero: la rotura de `sls_achievement_unblock` NO empezó aquí.** Ver la caja roja de
+§7.6. `20260728212859` es la release donde se **detectó** (fue la que había en el Deck
+cuando se root-causeó), no donde se introdujo: la firma cambió en `59f8259` el **20-07** y
+la primera release afectada es **`20260722152506`** (22-07). Dos releases y seis días antes.
+Y el refactor de tipos de ESTE día (`f624777`, `CUtl*` de `struct` a `class` con `public:`)
+**no altera ningún mangled name** — `struct` y `class` manglean idéntico —, así que la
+atribución vaga que hice en el primer barrido ("coherente con la reescritura masiva de tipos
+del 28-07") también era falsa.
+
+**Aportes de la comunidad.** `a8c468d` + `f391f19` de **`_drazy` / Deadboy666** actualizan
+`res/updates.yaml` (PRs #146 y #147), mergeados de madrugada. Es el mismo Deadboy666 de
+Headcrab, que ya figura en los créditos de LumaDeck — el ecosistema se realimenta.
+
+**La saga del ticket cifrado — cuatro commits que se pisan entre sí en un día.** Es la
+historia más instructiva del rango porque se ve el método de Ace en vivo:
+1. `3c520bd` **"Only spoof steamId when necessary"**: añade un hook a
+   `IClientUser::GetEncryptedAppTicket` para armar un spoof de un solo uso, y **saca** de
+   `getCachedEncryptedTicket` la guarda de FakeAppIds que había puesto el 26-07.
+2. `b8b0b51` **"Improve threading & timing"**: `oneTimeSteamIdSpoof` pasa de variable única
+   a **`unordered_map<AppId_t, CSteamId>`**. Bug real: con dos juegos a la vez, uno podía
+   consumir el spoof del otro.
+3. `3b2e0d8` **"Restore old encrypted Ticket behaviour"** — la marcha atrás, con el
+   razonamiento escrito: *"Denuvo can be tricked by switching after a variable amount of
+   GetSteamId calls. But it's to unreliable, needs custom amounts per game and would add a
+   lot of clutter to the config. So it's axed until I can find a safe timing"*. Restaura la
+   guarda y **comenta** (no borra) el `.place()`/`.remove()` del hook que acababa de añadir
+   en el paso 1. El hook queda instalado-pero-no-colocado, listo para reactivar.
+4. `8d5c4f9` **"Optimize code by using pointers & skip copy"**: `getCachedTicket` pasa de
+   devolver `SavedTicket` por valor a `SavedTicket*`, construyendo **dentro** del mapa
+   (`SavedTicket& ticket = ticketMap[appId];`) en vez de construir-y-copiar. `nullptr` en vez
+   de un ticket vacío como señal de "no hay".
+
+   El patrón que se repite: **prueba una idea, la mide contra la realidad, y la retira
+   dejando el andamio comentado y el motivo escrito.** No borra el trabajo, lo desactiva.
+
+**Config nueva.** `f7926b5` **`SteamIdOverride`** (mapa `appId → steamId64`; `0` = usar el
+del ticket cacheado) para juegos que llaman a `GetSteamId` **antes** de pedir su ticket, y
+como workaround de partidas guardadas bloqueadas. `4390e1a` + `a630b7e`/`8da82c2`
+**`FakeName`**: intercepta `CMsgClientPersonaState`, busca tu propio `friendid()` y reescribe
+`player_name` — habilitado por el paso a 64 bits del 27-07, porque hay que comparar contra
+`g_currentSteamId.steamId64`. `c61df24` + `d942ada` corrigen el tipo de `DenuvoGames` de
+`uint32_t` a `uint64_t`/`CSteamId`: la clave es un **steamId completo**, y con 32 bits el
+guard anti-Denuvo comparaba mal.
+
+**Robustez.** `3f56397` arregla un crash cuando se loguea **durante el apagado de Steam**
+(comprueba `ofstream.is_open()` antes de escribir; las operaciones encoladas llegaban con el
+stream ya cerrado). `e7eb27a` sólo llama a `getTicketOwnershipExtendedData` **si la original
+devolvió tamaño** — antes lo hacía siempre, incluso cuando no había ticket. `bfc3458` añade
+`/run/current-system/sw/bin/curl` a la cascada de `execve` **para NixOS** (nota: en esta
+época `Curl::getString` todavía lanzaba `curl` por `execve`, no libcurl).
+
+**Release y limpieza.** `22b49e7` bumpea a `20260728212859`, `0c6d8ec`/`1906382` los
+PKGBUILDs, `0919403` `res/updates.yaml`. `f624777` convierte `CUtl*` de `struct` a `class`
+con `public:` (cosmético, sin efecto en mangling ni en layout); `3f2bc38` borra el
+`CSteamID.hpp` viejo ya sin usar; `81f4e8e`/`1a06744`/`f828ba5` estilo (ordenar hooks
+alfabéticamente, quitar `&` redundantes delante de los `hk*`, un typo en `VFTable::analyze`).
+
+##### 7.7.6.a Correcciones aplicadas a la documentación de lumalinux
+
+Este día produjo **el primer hallazgo del barrido que corrige código-adyacente y no sólo
+prosa**, aunque sigue siendo documentación:
+
+1. **§7.6 de este doc** declaraba `sls_achievement_unblock` *"verificado al fuente contra
+   `20260723102618`"* con *"firmas sin cambio en `src/feats/achievements.{cpp,hpp}`"*. Era
+   **falso**: en esa misma release la firma ya era `4EMsg` y el parche ya no-opeaba en
+   silencio. Corregido con la tabla release-a-release.
+2. **`RESEARCH.md` §17** atribuía el cambio a "SLSsteam `20260728`". Corregido a `59f8259`
+   (20-07), primera release `20260722152506`, con la nota de que `20260728212859` es donde
+   se detectó.
+3. **Lección de método, anotada en §7.6:** verificar "firmas sin cambio" grepeando el
+   **HEAD actual** no dice nada sobre si cambiaron *desde la verificación anterior*. Para
+   símbolos resueltos por nombre mangled el chequeo correcto es
+   `git log -S"<firma>" -- <fichero>` entre releases, no un grep del presente. Es
+   exactamente el error que dejó la rotura invisible seis días.
+
+**Neto del 28-07 para lumalinux: cero cambios de código** (el fix por prefijo ya cubre toda
+la ventana, incluida la parte que no estaba documentada), **dos correcciones de doc** y una
+lección de método que vale para cualquier futuro parche anclado en símbolos.

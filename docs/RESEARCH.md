@@ -1641,8 +1641,13 @@ SLSsteam.so:
 
    > **Why prefix, not the full mangled name (fixed after SLSsteam `20260728`).**
    > The mangled name encodes parameter types, so a signature change breaks an
-   > exact-name lookup. SLSsteam `20260728` changed `sendAndRecvGetUserStats`' last
-   > arg from `uint32_t` (`j`) to `EMsg` (`4EMsg`): the hardcoded
+   > exact-name lookup. SLSsteam changed `sendAndRecvGetUserStats`' last
+   > arg from `uint32_t` (`j`) to `EMsg` (`4EMsg`) — in `59f8259` (**2026-07-20**,
+   > *"Replace handmade EMsgType enum with protoc generated EMsg"*), first shipped in
+   > release **`20260722152506`**, NOT in `20260728212859` as this note and `e3dc918`
+   > originally said; `20260728212859` is where it was *detected*. The broken window is
+   > therefore six days and two releases wider than first recorded (see
+   > `slssteam-analysis.md` §7.6/§7.7.6 for the release-by-release table). The hardcoded
    > `…sendAndRecvGetUserStatsE…S3_j` stopped matching the real `…S3_4EMsg`, and
    > since the resolve is all-or-nothing `Apply()` **silently no-op'd on every Deck
    > that had updated SLSsteam** — native achievements OFF, and (because the
