@@ -3106,9 +3106,29 @@ hace nada**, así que conviene loguear el caso `else`.)*
   puede escribir, y por el que pasan `install`/`uninstall`/`setcompat`. En un Deck monousuario es
   una preocupación modesta, pero es ensanchar superficie por algo que `SteamClient` ya da gratis.
 
-**Prioridad: media-baja.** No hay síntoma confirmado, pero es una precondición documentada y
-violada, y el arreglo es una línea con el patrón que ya usáis al lado. Lo mínimo sería **quitar la
-frase engañosa de la docstring** o, mejor, mover la escritura al frontend vía `SteamClient`.
+> 🔻 **REBAJADO a BAJO / cosmético — 2026-08-17, tras objeción del dev.** El razonamiento de
+> arriba omitía lo decisivo: **en un Steam Deck, "Steam Play para todos los demás títulos" viene
+> ACTIVADO por defecto**, así que un juego sólo-Windows **ya se lanza con Proton sin ninguna
+> entrada en `CompatToolMapping`** — Steam usa el default global. `CompatToolMapping` sirve para
+> **anular** ese default por juego (fijar una versión concreta), no para habilitar Proton.
+>
+> Consecuencias, y todas rebajan el hallazgo:
+> 1. **La premisa del comentario de `downloads.py:1399-1401` es falsa**: *"Steam wouldn't otherwise
+>    launch a Windows binary on the Deck without explicit compat tool"*. Sí lo lanzaría.
+> 2. Por tanto `set_compat_tool_for_app` es **redundante** en la configuración normal de un Deck,
+>    y su probable inefectividad es **invisible porque no hacía falta** — no porque los usuarios lo
+>    corrijan a mano, como escribí. Es la explicación limpia de por qué el dev lleva semanas
+>    jugando juegos Windows sin incidencias.
+> 3. **Antigüedad**: `set_compat_tool_for_app` **y** su llamada entraron en el **mismo** commit,
+>    `cda38b7` (**2026-07-29**). Tres semanas, sin síntoma — coherente con que sea redundante.
+>
+> **Lo que queda como accionable, todo de prioridad baja:** corregir la premisa del comentario,
+> quitar la frase engañosa de la docstring, y decidir si el pin se elimina (no aporta) o se mueve a
+> `SteamClient.Apps` para que funcione de verdad en el único caso donde importaría: un usuario que
+> haya **desactivado** Steam Play global y necesite el pin por juego. Configuración rara en un Deck.
+>
+> *(Y esto no lo arregla actualizar SLSsteam: es código 100 % de LumaDeck. Independiente de la
+> versión de SLSsteam instalada.)*
 
 **Neto de los dos días: cero accionables de SLSsteam**, un [PRESTABLE] de prioridad media-baja en
 LumaDeck, y la constatación de que la API local ya es un canal de control razonablemente completo
