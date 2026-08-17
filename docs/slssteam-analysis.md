@@ -2396,3 +2396,116 @@ crea que la clave es un appId cuando es un handle de pipe.
 **Neto del 05-08: cero accionables**, dos mejoras gratis que caen de lleno en el flujo de
 multijugador de LumaDeck, y una nota de baja prioridad sobre el aviso de FakeAppIds
 simultáneos.
+
+#### 7.7.12 Día 2026-08-06 — 9 commits (el asignador de Steam) ★ el día con el hallazgo más relevante del rango
+
+**`a2edc13` — localiza el asignador de Steam, y lo hace de la forma más limpia posible.**
+`dlopen("libtier0_s.so")` + `dlsym` de tres símbolos **C exportados**:
+
+```cpp
+Plat_Alloc   = reinterpret_cast<Plat_Alloc_t>(dlsym(tier0, "Plat_Alloc"));
+Plat_Free    = reinterpret_cast<Plat_Free_t>(dlsym(tier0, "Plat_Free"));
+Plat_Realloc = reinterpret_cast<Plat_Realloc_t>(dlsym(tier0, "Plat_Realloc"));
+```
+
+**Ni patrones, ni RTTI, ni índices de vtable** — son símbolos exportados con nombre estable,
+o sea la resolución más robusta de todo el proyecto. Añade `libtier0_s.so` como tercer módulo
+en `la_objopen` y a la precondición de `load()` (ahora espera steamclient + steamui + tier0).
+*(Descuido menor: `if (!Plat_Alloc | !Plat_Free | !Plat_Realloc)` usa `|` bitwise donde quería
+`||`; funciona porque los operandos no tienen efectos secundarios.)*
+
+**`b937ab2` — "Free netpacket instead of hiding".** El `clearBody()` viejo no liberaba nada,
+**mentía sobre el tamaño** para que Steam viera un cuerpo vacío y lo liberase él:
+
+```cpp
+//Hide body and call original function so steam uses it's own free
+size = body->headerSize + sizeof(CNetPacketBody);
+```
+
+Ahora libera de verdad (`Steam::Plat_Free(body)`, y limpia `size`/`body`/`originalBody`) y
+**retorna sin llamar al original**. Cambio semántico real: antes el paquete seguía pasando por
+el handler de Steam con el cuerpo vacío; ahora se descarta **antes**. Para "ahogar" un mensaje
+es más correcto — no llega al parser.
+
+**`0fc9cf9` — la arena estática muere, y con ella el mutex.** El comentario es la mejor parte:
+
+```cpp
+//Freeing pData royally fucks up memory, proly a use after free scenario
+//So we copy the packet into fresh memory, modify that, etc
+```
+
+Antes: apuntaba `packet.body` al `pData` de Steam, mutaba **en sitio**, y reasignaba
+`pData = packet.body` con el comentario *"Do not free ourself since Steam does so. We reuse our
+CNetPacket buffer"*, apoyándose en la **arena estática de 8 MB** (`g_packetsArray`, §7.7.8).
+Ahora: `Plat_Alloc(dataSize)` → `memcpy` → mutar → llamar al trampolín con el buffer nuevo →
+`Plat_Free`. Y borra la arena entera **más `g_packetSerializeMutex`**.
+
+Eso último es lo más elegante del día: la arena necesitaba mutex porque dos serializaciones
+concurrentes competían por el offset. Con asignación por llamada **no hay estado compartido, así
+que no hace falta candado**. Elimina el recurso compartido en vez de protegerlo.
+
+Contraste que vale anotar: **la misma semana, el mismo dev, dos instintos opuestos.** Aquí quita
+estado mutable compartido; en la ruta de logros del 04-08 (§7.7.10) **añadió** un mapa
+compartido sin sincronizar.
+
+**Menores.** `da69f54` añade `EIPCCmd_ToString`/`EIPCInterface_ToString` (legibilidad de logs).
+`38b3af1` mueve el log de `hkTraceIPC` **antes** de la llamada real — si la llamada revienta, la
+línea ya está escrita; es una decisión de instrumentación para postmortems. `556d2a6` pule
+`CNetPacket`; `dd85a69` sustituye `malloc` por `std::string` en `memhlp`; `e2cfdb2`/`4d4eab8`
+formato y comentarios.
+
+##### 7.7.12.a ★ Hallazgo: la ruta de inyección por defecto de lumalinux hace `realloc` de libc sobre memoria de Steam
+
+**Este es el primer [PRESTABLE] técnico real de todo el barrido, y no es hipotético.**
+
+`src/hooks/load_package_hook.cpp::AppendIdsToVec` hace crecer el `AppIdVec` del paquete con
+**`std::realloc` de libc**, sobre un puntero que asignó Steam:
+
+```cpp
+// Grow if needed (raw libc realloc — CUtlMemory is malloc-backed on Steam
+// Linux i386; growth doubles capacity, min first alloc 32).
+void* new_mem = std::realloc(vec->m_pMemory, new_alloc * sizeof(uint32_t));
+```
+
+**Y es un camino VIVO y por defecto**, no código muerto. Traza comprobada:
+`package_zero_finder.cpp:348` → `Hooks::LoadPackage::InjectDepots(pkg, "finder")` →
+`AppendIdsToVec` → `std::realloc`. El package-0 finder está **ON por defecto**
+(`LUMA_NO_PKG0_FINDER` lo apaga) y es **el único inyector** — o sea el corazón de que un
+install funcione. *(El hook `LoadPackage` en sí ya no inyecta: sólo registra el avistamiento. La
+ruta viva es la del finder.)*
+
+**El supuesto está escrito y es load-bearing:** *"CUtlMemory is malloc-backed on Steam Linux
+i386"*. Y `a2edc13` acaba de demostrar que **Steam asigna a través de `Plat_Alloc`/`Plat_Free`/
+`Plat_Realloc` de `libtier0_s.so`**, no de libc directamente. Si esos wrappers reenvían a libc
+—lo habitual en el tier0 de Valve en Linux— el supuesto se sostiene y hoy no hay bug. Si algún
+día usan un heap propio, un `realloc()` de libc sobre un puntero de `Plat_Alloc` es **UB**, y
+el síntoma sería justo el que lumalinux ya conoce: `free(): invalid pointer` / corrupción de
+heap. El historial de `main.cpp:5` lo dice sin adornos: *"v0.3: BuildDepotDependency injection
+(**allocator issues** — abandoned)"*.
+
+**Atenuantes honestos:** el `realloc` sólo se ejecuta si el vector **necesita crecer**
+(`!m_pMemory || m_nAllocationCount < total`); si el `AppIdVec` del paquete 0 ya tiene capacidad,
+es escritura en sitio y no se toca el asignador. Y no hay ningún crash reportado atribuido a
+esto. **No es un bug conocido: es un supuesto no verificado en la ruta crítica.**
+
+**Lo que SLSsteam nos regala aquí son las dos mitades:**
+1. **Cómo verificarlo, barato:** `dlsym("Plat_Realloc")` en `libtier0_s.so` y comparar el
+   puntero contra el `realloc` de libc (`dlsym(RTLD_NEXT, "realloc")`). Si coinciden —o si
+   `Plat_*` es un trampolín de una instrucción a libc—, el supuesto queda **confirmado con
+   evidencia** en lugar de asumido, y se puede anotar en el comentario. Se puede hacer en un
+   log de diagnóstico sin cambiar comportamiento.
+2. **Cómo arreglarlo si no coinciden:** usar `Plat_Realloc` (y `Plat_Free`) exactamente como él
+   — `dlopen`/`dlsym` de símbolos exportados, sin patrones, con fallback a libc si tier0 no
+   está. Coste bajo y sin fragilidad nueva.
+
+**Y una incoherencia de documentación detectada de paso:** el historial de versiones de
+`main.cpp` (entrada v0.5.6, línea 19) afirma **"In-place append only (no risky manual
+realloc)"**. La ruta viva **sí** hace un realloc manual. Es una nota histórica, no una promesa
+actual, pero quien lea esa cabecera se llevará la impresión contraria a lo que hace el código.
+
+**Prioridad: media.** No hay síntoma, pero está en la ruta crítica por defecto y el coste de
+cerrarlo (un log de diagnóstico primero, `Plat_Realloc` después sólo si hace falta) es bajo.
+Es, con diferencia, lo más accionable que ha salido del barrido.
+
+**Neto del 06-08: un [PRESTABLE] de prioridad media con traza completa** (el primero del
+rango), más una incoherencia menor de documentación en `main.cpp`.
