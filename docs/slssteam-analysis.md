@@ -3010,3 +3010,106 @@ falle si un subjob devuelve non-zero.
 **Neto del 12-08: cero accionables.** La feature del día (`CDKeys`) ya estaba capturada en §7.2; el
 experimento olvidado nunca salió en release; y el resto es tipado, pulido y una mejora de
 diagnóstico que refuerza la nota de `/proc`.
+
+#### 7.7.18 Días 2026-08-13 y 2026-08-14 — 13 commits (la API local crece y se documenta)
+
+**13-08 (2 commits).** `0227a09` quita un include innecesario en `apps.cpp`. `1bdf1a6` es de
+**DeveloperMikey**, un contribuidor externo, arreglando el build de nix — segundo aporte de fuera
+en el rango (tras los `updates.yaml` de Deadboy666 el 28-07).
+
+**14-08 — la API local pasa de dos comandos a seis, y se documenta.**
+
+`aebac96` refactoriza los comandos de instalación: `Utils::isNumber` + `strtoul` por un
+`Utils::tryConvertToNumber` tipado, y `InstallCommand_t` → `InstallOp_t`/`LibraryOp_t`. Luego
+`b7407e4`, `89c70c8` y `1dc0fdd` añaden **`setcompat`**, **`getcompat`**, **`dumpcompat`** y
+**`dumplibraries`**, todos vía `IClientCompat` (nuevo `src/sdk/IClientCompat.hpp`). `75ba3eb`
+crea **`API.md`**, la primera documentación de usuario del canal:
+
+```
+dumplibraries : Lists all available libraries' label, their path & their index
+install|appId|libraryIndex : Installs appId into library at libraryIndex
+uninstall|appId : Uninstalls appId
+dumpcompat|appId : Lists all available compatibility tools for appId
+getcompat|appId : Lists the current compatibility tool for appId
+setcompat|appId[|tool-name] : Set's or clears the compatibility tool for appId
+```
+
+`4eecaa4` añade un nivel de log dedicado **`k_ELogLevelAPI`**, para poder aislar la salida de la
+API del resto del log — necesario si un consumidor externo va a parsearla.
+
+Y `6e8951e` + `4135d51` + `aa35638` + `ac6830b` añaden **`CUtlString`, `CUtlMap` y `CUtlRBTree`**
+al SDK, con `CUtlBuffer` extendido. No es casualidad: `dumpcompat` y `dumplibraries` tienen que
+**recorrer contenedores internos de Steam** para enumerar herramientas y bibliotecas. El 15-08
+(`9be780a`) los completa parseando el `CUtlRBTree` como árbol binario de verdad, verificado contra
+`m_MapAppOwnershipTickets` y `m_mapPackages`.
+
+`06603a0` quita una terminación nula innecesaria en la cdkey (*"std::string is already null
+terminated since c++11"*); `9c350c1` mueve un comentario.
+
+##### 7.7.18.a ★ Hallazgo: `set_compat_tool_for_app` viola su propia precondición
+
+Perseguir `setcompat` llevó a algo en LumaDeck. **Segundo [PRESTABLE] técnico del barrido**, y
+esta vez el arreglo ya está en casa.
+
+`backend/steam_utils.py:440` escribe la entrada `CompatToolMapping` **directamente en
+`localconfig.vdf`**, iterando los `userdata/<id>/config/`. Y su propia docstring declara la
+precondición:
+
+> *"**Safe to call while Steam is not running**; Steam reloads the file on start."*
+
+**Pero el llamante la viola.** `downloads.py:1403` la invoca dentro de `_download_zip_for_app`,
+para forzar Proton cuando el juego no trajo depot de Linux:
+
+```python
+if not _get_download_state(appid).get("hasLinuxDepot", False):
+    from steam_utils import set_compat_tool_for_app
+    if set_compat_tool_for_app(appid):
+        logger.info(f"LumaDeck: Forced proton_experimental for {appid} (Windows-only depot)")
+```
+
+Y eso corre **con Steam vivo por definición** — es un plugin de Decky, vive dentro de Steam.
+
+**El modo de fallo:** Steam mantiene `localconfig.vdf` **cacheado en memoria** y lo reserializa al
+salir. Una edición hecha por fuera mientras Steam corre no está en esa copia, así que **al cerrar
+Steam la sobreescribe**. El síntoma sería un juego Windows-only instalado por LumaDeck que se
+queda **sin compat tool** y no arranca.
+
+**Lo que NO he verificado, y es importante:** no he comprobado on-device que la pérdida ocurra.
+Si ocurriera siempre, *todos* los juegos Windows-only instalados por LumaDeck fallarían al
+lanzarse, que es un bug demasiado ruidoso para pasar inadvertido — así que o se está perdiendo y
+los usuarios ponen Proton a mano por costumbre, o Steam se comporta de forma distinta a lo que
+asumo. **La violación de precondición es real y verificable en el código; el fallo resultante es
+inferencia.**
+
+**Y el arreglo idiomático ya lo tenéis, en el fichero de al lado.** `GameDetail.tsx:188-196` ya
+hace mutaciones **en vivo** contra Steam desde el frontend, con guarda defensiva:
+
+```ts
+const sc: any = (window as any).SteamClient;
+if (sc?.Apps?.SetAppLaunchOptions) {
+    sc.Apps.SetAppLaunchOptions(appid, r.launchOptions || "");
+}
+```
+
+El compat tool tiene la misma forma: `SteamClient.Apps.SpecifyCompatTool(appid, tool)`. Va contra
+el Steam en ejecución, así que **su estado en memoria se actualiza y él mismo persiste** — el
+conflicto de caché desaparece. *(No doy por seguro el nombre exacto del método; hay que
+confirmarlo en runtime. Y ojo: con el patrón `sc?.Apps?.X` un nombre equivocado **no falla, no
+hace nada**, así que conviene loguear el caso `else`.)*
+
+**La vía de SLSsteam (`setcompat`) también resolvería el problema, pero es peor para nosotros:**
+- Exige `API: yes`, y upstream **envía `API: no`** en su `res/config.yaml` (comprobado, línea 110)
+  — curioso: el default **en código** es `true` (`getSetting<bool>(node, "API", true)`), pero el
+  fichero que se escribe dice `no`, así que un config nuevo la lleva apagada. LumaDeck tendría que
+  encenderla, y ya tiene la maquinaria (`ensure_slssteam_flags` + los editores por líneas).
+- Abre un canal de comandos en `/tmp/SLSsteam.API` que **cualquier proceso del mismo usuario**
+  puede escribir, y por el que pasan `install`/`uninstall`/`setcompat`. En un Deck monousuario es
+  una preocupación modesta, pero es ensanchar superficie por algo que `SteamClient` ya da gratis.
+
+**Prioridad: media-baja.** No hay síntoma confirmado, pero es una precondición documentada y
+violada, y el arreglo es una línea con el patrón que ya usáis al lado. Lo mínimo sería **quitar la
+frase engañosa de la docstring** o, mejor, mover la escritura al frontend vía `SteamClient`.
+
+**Neto de los dos días: cero accionables de SLSsteam**, un [PRESTABLE] de prioridad media-baja en
+LumaDeck, y la constatación de que la API local ya es un canal de control razonablemente completo
+y documentado (aunque apagado por defecto).
