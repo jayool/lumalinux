@@ -1550,11 +1550,16 @@ sale gratis para todas las claves.
   post-renombrado y devuelve **200 con contenido idéntico a `main`**, incluidas las cuatro
   claves nuevas. **No es un bug**, sólo una dependencia implícita de una cortesía de
   GitHub.
-- **Lo que sí está desactualizado (bajo impacto):** al snapshot `_BUNDLED_YAML` le faltan
-  `CDKeys` y `LogLevels`. Sólo se usa si el fetch en vivo falla (primer arranque sin red,
-  GitHub caído, proxy). En ese caso el completado omite esas dos claves y el toast persiste
-  para ellas. Su propio docstring ya lo prevé (*"Updated when we bump supported
-  SLSsteam"*) → es mantenimiento pendiente, no defecto.
+- **Lo que sí está desactualizado (bajo impacto):** el snapshot `_BUNDLED_YAML` tiene 29
+  claves y está desfasado en **tres** puntos frente a upstream: le falta `CDKeys` (08-12),
+  le falta `LogLevels` (08-09), y arrastra el `LogLevel` **singular** que upstream renombró
+  a plural. Sólo se usa si el fetch en vivo falla (primer arranque sin red, GitHub caído,
+  proxy). En ese caso el completado omite las dos claves nuevas y SLSsteam las enumera en
+  el toast — confirmado que sí cuentan: el flag `silent` que Ace añadió a
+  `getSetting`/`getMap` sólo suprime el **log del valor**, no la llamada a `setError`. La
+  `LogLevel` obsoleta es inocua (una clave desconocida se ignora en silencio; sólo toasta
+  lo que SLSsteam *espera* y no encuentra). Su propio docstring ya lo prevé (*"Updated when
+  we bump supported SLSsteam"*) → es mantenimiento pendiente, no defecto.
 - **Y el docstring cita el texto viejo del toast** (`"Issues during config loading
   encountered! Missing key(s)"`), que este commit cambió. Cosmético, pero es el documento
   que explica el *por qué* del módulo.
@@ -1592,6 +1597,48 @@ la llamada viene del propio cliente y no de un juego), devuelve el steamId sin t
 Elige la corrección del caso común sobre el caso Denuvo. Ojo: lo revierte parcialmente el
 28-07 (`3b2e0d8`), al concluir que engañar a Denuvo por *timing* es demasiado
 inconsistente.
+
+**Mecanismo exacto (el "disable" es indirecto).** El commit no añade ningún
+`if (fakeAppIds) return`. Lo que hace es **cambiar el appId con el que se consulta la
+caché de tickets**: de `FakeAppIds::getRealAppIdForCurrentPipe()` (el appId REAL) a
+`utils->getAppId()` (el que reporta el pipe, que **con FakeAppIds activo es el FALSO**).
+Y `getCachedEncryptedTicket` ya llevaba dentro esta guarda:
+
+```cpp
+const AppId_t realAppId = FakeAppIds::getRealAppIdForCurrentPipe();
+const AppId_t fakeAppId = FakeAppIds::getFakeAppId(realAppId);
+if (realAppId && fakeAppId && appId != realAppId) {
+    g_pLog->once("Returning empty cached encrypted ticket for %u because it's set to %u\n", ...);
+    return ticket;   // ← VACÍO
+}
+```
+
+Con el appId del pipe (falso) != realAppId, la guarda dispara → ticket vacío →
+`ticket.steamId == 0` → **no hay steamId con el que spoofear**. El spoofing se desactiva
+por *inanición de datos*, no por una rama explícita. (Más los dos guards nuevos: `!utils`
+y `getAppId() == 0` → "never spoof inside the Steamclient".)
+
+**¿Nos aplican los "cons"? Verificado: la ruta automática NO, la manual SÍ podría.**
+LumaDeck fija FakeAppIds por dos caminos distintos:
+1. **Automático, durante la aplicación de un fix** (`backend/fixes.py`): el valor sale del
+   `[Main]` del `OnlineFix.ini` **que trae el propio fix**, nunca de un 480 hardcodeado
+   (`_parse_onlinefix_ini`: *"Returns {} if no FakeAppId is found so callers only ever act
+   on what the fix explicitly declares (never a hardcoded 480)"*). Y el comentario de
+   `fixes.py:335-346` lo dice explícito: *"Denuvo / single-player / generic cracks have no
+   such .ini, so they get neither 480 nor netsock"*. O sea: **por construcción, LumaDeck
+   nunca pone un FakeAppId en un juego Denuvo** → los dos "cons" del commit son
+   estructuralmente imposibles por esta ruta, y los "pros" (AuthSessions, tickets cifrados
+   reales) caen justo encima del flujo de online-fix.
+2. **Manual, el toggle "Native Online"** (`GameDetail.tsx:390` → `enable_native_online` →
+   `add_fake_app_id(appid, 480)`): aquí el 480 **sí es fijo** y es decisión del usuario.
+   Nada impide activarlo sobre un juego Denuvo, y en ese caso sí se entra en el caso que
+   Ace marcó como roto. Candidato a nota en la UI si alguna vez se reporta.
+
+**Precondición que acota el impacto real:** el spoof sólo actuaba si existía un **ticket
+cifrado cacheado** para el juego, y esa caché la puebla SLSsteam observando el tráfico
+(`~/.config/SLSsteam/`). LumaDeck **no la toca en absoluto** (comprobado: ninguna
+referencia a tickets en `backend/`, sólo comentarios del schema). Para un usuario sin
+tickets cacheados de ese juego, este commit no cambia nada.
 
 **`7663aef` — redactar el título de apps privadas.** Dos cambios en uno:
 1. **Estrecha** la condición de `sendGamesPlayed`: de `else if (!owned || getFakeAppId(gameId))`
