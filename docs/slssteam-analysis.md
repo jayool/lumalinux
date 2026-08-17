@@ -1520,3 +1520,111 @@ condicional]**, con el disparador escrito.
 
 **Neto del 25-07 para lumalinux: cero accionables**, más una retractación. El único
 candidato (`PrologueUpwards`) queda como condicional con disparador definido.
+
+#### 7.7.4 Día 2026-07-26 — 9 commits (el trade-off de FakeAppIds + privacidad)
+
+**`1250950` — los errores de config pasan de genéricos a enumerados.** Antes había un
+`enum ELoadError { None, MissingKey, ParsingException }` con **orden de severidad** (sólo
+se guardaba el peor: `if (__loadErrors.get() > err) return;`) y el toast era literal:
+`"Issues during config loading encountered! Missing key(s)"`. Ahora `__loadErrors` es un
+`std::string` que **acumula**, y `setError()` recibe el nombre de la clave:
+
+```
+Config loading errors:
+Missing DlcData
+Missing DenuvoGames
+Failed to parse IdleStatus
+```
+
+Los tres templates (`getSetting`/`getList`/`getMap`) pasan su `name` a `setError`, así que
+sale gratis para todas las claves.
+
+**Relevancia para §4.3 (completado de `config.yaml`), verificada:**
+- **Ganancia de diagnóstico real:** el toast ya dice *qué* clave falta. Un usuario con un
+  config incompleto puede arreglarlo a mano sin adivinar.
+- **`backend/slssteam_schema.py` de LumaDeck sigue funcionando bien.** Trae
+  `config_default.hpp` **en vivo** desde upstream, así que las claves nuevas del rango
+  (`CDKeys`, `LogLevels`, `SteamIdOverride`, `FakeName`) se completan solas.
+  Comprobado por HTTP: la URL apunta a la rama `master`, que **no existe** en
+  `AceSLS/SLSsteam` (sus ramas son `main` y `dev`) — pero GitHub mantiene el redirect
+  post-renombrado y devuelve **200 con contenido idéntico a `main`**, incluidas las cuatro
+  claves nuevas. **No es un bug**, sólo una dependencia implícita de una cortesía de
+  GitHub.
+- **Lo que sí está desactualizado (bajo impacto):** al snapshot `_BUNDLED_YAML` le faltan
+  `CDKeys` y `LogLevels`. Sólo se usa si el fetch en vivo falla (primer arranque sin red,
+  GitHub caído, proxy). En ese caso el completado omite esas dos claves y el toast persiste
+  para ellas. Su propio docstring ya lo prevé (*"Updated when we bump supported
+  SLSsteam"*) → es mantenimiento pendiente, no defecto.
+- **Y el docstring cita el texto viejo del toast** (`"Issues during config loading
+  encountered! Missing key(s)"`), que este commit cambió. Cosmético, pero es el documento
+  que explica el *por qué* del módulo.
+
+**`62afc2e` — "Replace C code with C++", y es más que cosmético.** El código viejo:
+
+```cpp
+char pathBuf[255];
+const char* configDir = getenv("XDG_CONFIG_HOME");
+if (configDir != NULL) sprintf(pathBuf, "%s/SLSsteam", configDir);
+else { const char* home = getenv("HOME"); sprintf(pathBuf, "%s/.config/SLSsteam", home); }
+```
+
+`sprintf` sin límite a un buffer fijo de 255 bytes **desde una variable de entorno**.
+Un `$XDG_CONFIG_HOME` largo desborda la pila. La versión con `ostringstream` no tiene
+tope, así que ese riesgo desaparece. **Pero `getenv("HOME")` sigue sin comprobarse**: el
+código nuevo hace `path << home << "/.config"` y meter un `const char*` nulo en un
+`ostream` es UB igual. Arregla (a), no (b).
+
+Detalle latente del mismo commit: `createFile()` pasa de `fopen(path, "w")` (trunca) a
+`std::ofstream(path, std::ios::app | std::ios::out)` (**añade**). Es inocuo porque
+`createFile` está guardado por un check de existencia (es create-if-missing, §4.3), pero
+si alguna vez se llamara sobre un fichero existente, el comportamiento cambió de
+"sobreescribe" a "duplica el config por defecto al final".
+
+**`293eb93` — desactiva el spoofing de SteamId cuando se usa FakeAppIds.** El commit más
+interesante del día porque **él mismo enumera el trade-off** en el mensaje:
+- *Pros:* arregla el uso de tickets de propiedad cifrados **reales**, arregla las
+  AuthSessions.
+- *Cons:* rompe las activaciones de Denuvo en versiones recientes, rompe el multijugador
+  online en juegos Denuvo vía FakeAppIds.
+
+Añade además **"Never spoof inside the Steamclient"**: si `utils->getAppId()` es 0 (o sea,
+la llamada viene del propio cliente y no de un juego), devuelve el steamId sin tocar.
+Elige la corrección del caso común sobre el caso Denuvo. Ojo: lo revierte parcialmente el
+28-07 (`3b2e0d8`), al concluir que engañar a Denuvo por *timing* es demasiado
+inconsistente.
+
+**`7663aef` — redactar el título de apps privadas.** Dos cambios en uno:
+1. **Estrecha** la condición de `sendGamesPlayed`: de `else if (!owned || getFakeAppId(gameId))`
+   a `else if (getFakeAppId(gameId))`, y borra el tracking de `owned`. Correcto: rellenar
+   `game_extra_info` sólo hace falta cuando el appId reportado es **falso** (los amigos
+   verían "Spacewar" en vez del juego); para un juego simplemente no-poseído el appId es
+   real y Steam ya resuelve el nombre solo.
+2. **Redacta**: hookea `SetString` del config store, parsea `WebStorage\PrivateApps`
+   (formato `[730,240,440]`) a un `unordered_set`, y si el juego está ahí escribe
+   `"Redacted"` en lugar del nombre real.
+
+**Relevancia para LumaDeck:** aplica exactamente al flujo del 480. LumaDeck fija
+FakeAppIds (`backend/slssteam_ops.py::add_fake_app_id`, default 480 — ver
+`FIXES_MAP.md` §"Online multiplayer") para habilitar multijugador. Con esto, un usuario que
+además tenga el juego marcado como privado en su perfil **deja de filtrar el título real**
+a la lista de amigos. Mejora de privacidad gratis, pequeña y real.
+
+**Menores:** `27f4926` retira el override manual de appId en los hooks de DLC (el título
+dice `IClientAppManager` pero el diff toca `IClientApps` — commit mal etiquetado);
+`f34025e` sustituye un `printf` perdido en `memhlp` por `g_pLog->debug` (escribía al stdout
+de Steam); `32d0ed0` `stringstream`→`ostringstream` en 6 ficheros (el bidireccional no
+hacía falta); `a5abb50` paddings `char`→`uint8_t` (un `char` es signed y su signo puede
+sorprender al leer bytes crudos); `0684cc3` arregla el typo *"Chocked"*→*"Choked"* **y** de
+paso sustituye dos mensajes hardcodeados por el nombre real del paquete/job.
+
+**Observación menor sobre `1250950`:** el toast acumulado se emite con
+`g_pLog->notify(errors.c_str())`, o sea **una cadena construida en runtime como format
+string** de un `__log` estilo printf, que además acaba en
+`system("notify-send … \"<msg>\"")`. Hoy es inofensivo (los nombres de clave son literales
+de compilación, sin `%` ni `"` ni `$`), pero es el patrón que muerde en cuanto un nombre
+venga de datos. No afecta a lumalinux; anotado por completitud.
+
+**Neto del 26-07 para lumalinux: cero.** Para LumaDeck: la redacción de apps privadas
+(gratis) y **dos items de mantenimiento de prioridad baja** en `slssteam_schema.py` —
+refrescar `_BUNDLED_YAML` con `CDKeys`/`LogLevels`, y actualizar el docstring que cita el
+texto viejo del toast.
