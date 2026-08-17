@@ -1416,7 +1416,13 @@ Evidence:
 Vtable slot indices and RPC names are *much* more stable than byte patterns, not
 immune. Valve reordered the `IClient*::RunIPCFrame` virtuals on 2026-06-24 and
 SLSsteam had to bump (those are vtable-dispatched too). This trades "update every
-build" for "update rarely" — what CR advertises. **DepotKey now closes even the
+build" for "update rarely" — what CR advertises.
+
+> **Note on that example (2026-07-24).** SLSsteam has since **deleted every
+> `IClient*::RunIPCFrame` hook** (`8de3384`), so the specific precedent no longer
+> exists upstream — it navigates `CSteamEngine → CUser →` member offsets instead.
+> The caveat itself is unaffected, and arguably reinforced: the reorder is part of
+> *why* Ace moved off those hooks. See `slssteam-analysis.md` §7.7.2. **DepotKey now closes even the
 reorder gap**: instead of trusting a fixed index it DERIVES the slot by matching
 the accessor's prologue signature inside the vtable (`ResolveVtableSlotBySignature`),
 so a reorder is *handled* — the accessor is found at its new slot — and a

@@ -1244,3 +1244,158 @@ patrones de bytes, que es nuestra causa nº1 de rotura por update de Steam (§A 
 antes — y con la ruta gradual obvia: empezar por RTTI+vtable para los hooks
 **no críticos** (ShaderDepot, `NotifyLicensesUpdated`), que ya degradan a no-op limpio,
 y dejar DepotKey/GMRC en patrones hasta que la ruta esté probada en campo.
+
+#### 7.7.2 Día 2026-07-24 — 12 commits (mueren los 5 hooks `RunIPCFrame`)
+
+**Resumen: Ace no eliminó el "arranque por hook desechable", consolidó cinco en uno.**
+
+*El problema de fondo.* Un `VFTHook` parchea un slot de la vtable de un **objeto vivo**,
+y Steam no te da el puntero de sus `IClientAppManager` / `IClientApps` / `IClientUtils` /
+`IClientUser`. La solución vieja (la de §1.6) era hookear por patrón una función que
+recibiera el objeto como `this` — `RunIPCFrame`, llamada pronto y a menudo —, robarle la
+vtable, colocar los hooks reales y **auto-desinstalarse**. Coste: **5 patrones de bytes
+que existen sólo para arrancar**, sin aportar ninguna feature, y uno más por cada
+interfaz nueva.
+
+**Los dos habilitadores:**
+
+1. **`1865890` — vtables secundarias (= herencia múltiple).** `CUser : CBaseUser,
+   IClientUser, IClientMatchmaking, IClientAppDisableUpdates, IClientBilling` no tiene
+   una vtable, tiene varias sub-vtables contiguas, **todas apuntando al MISMO typeinfo
+   `5CUser`**. El código viejo hacía `vftables[name] = vft` y cada hallazgo pisaba al
+   anterior. Ahora los encadena en `subclasses[0..n]` por orden de memoria, y el
+   comentario del commit siguiente documenta el mapa de herencia deducido a mano
+   (`subclasses[0]` = `IClientUser`, porque la primaria es `CBaseUser`).
+   Detección de frontera entre sub-vtables: **heurística**, `offset & 0xFFFF0000` (el
+   `offset-to-top` del siguiente sub-vtable es negativo). Con un `TODO` admitiendo que
+   la vía correcta —cruzar typeinfos— *"no le salió bien: funcionaba en las 4 primeras
+   vftables de CUser y luego empezaba a fallar"*. **Fragilidad declarada en el corazón
+   del sistema nuevo.**
+2. **`8fada22` + `28d59a1` — offsets de miembro.** Cuatro patrones de un tipo distinto:
+   localizan **la instrucción que calcula la dirección de un miembro**, con
+   `SigFollowMode::None`, y le extraen el desplazamiento. `m_OffsetUserAppInfo` =
+   `"8D 90 ? ? ? ? …"` (`lea edx,[eax+disp32]`, opcode de 2 bytes → lee en `+2`);
+   `m_OffsetClientUser` = `"2D ? ? ? ? …"` (`sub eax,imm32`, opcode de 1 byte → lee en
+   `+1`). Las interfaces están **embebidas**, no son punteros (`this + offset`, sin
+   desreferenciar), y el puntero a vtable sale del offset 0 del sub-objeto.
+   Nota de método suya: *"Like the previous commits I picked some patterns that go back
+   about 9 months"* — **eligió patrones verificados contra ~9 meses de builds**.
+
+**Las dos víctimas de prueba:** `69ea49b` retira el patrón de `GetSteamId` (que su
+propio comentario admitía no-único) y `269e867` el `RunIPCFrame` de RemoteStorage. Este
+segundo enseña algo: la vtable de RemoteStorage **se relocaliza**, así que un `VFTHook`
+no sirve (*"the pointers are all wrong and would need manual adjustment which breaks
+current assumptions by VFTHook<T>"*) → usa un `DetourHook`, y para ello añade la
+sobrecarga `DetourHook::setup(name, addr, fn)` que **desacopla "cómo encuentro la
+función" de "cómo la hookeo"**.
+
+**La ejecución, `8de3384`** (−223/+164 en `hooks.cpp`, 22 ficheros). Dos mitades:
+- Los 4 `RunIPCFrame` restantes fuera; en su lugar un `placeVFTHooks()` one-shot
+  (`static bool hooked` + mutex, *"I don't think the IPC layer is multithreaded but
+  better safe than sorry"*) llamado desde el hook de `CSteamEngine::RunInterface`. No
+  puede hacerse al cargar: *"first run CUser is null"* — sigue necesitando **un latido
+  recurrente** que reintente. `RunInterface` es ese latido. **De 5 hooks-reloj a 1.**
+- Mueren los globales `g_pClientApps` / `g_pClientAppManager` / `g_pClientUtils` /
+  `g_pClientUser`, sustituidos por navegación (`g_pSteamEngine->getUser()->getClientApps()`)
+  en `api.cpp`, `config.cpp` y `feats/*`. La ganancia es de diseño: un global se rellena
+  *si y cuando* alguien pasó por el bootstrap; una navegación **funciona siempre que el
+  engine exista**. Estado mutable global con orden de init implícito → consulta
+  idempotente.
+
+Balance de patrones del día: **−6 frágiles (5 bootstrap + 1 localizador), +4 offsets de
+miembro.** Y el cambio cualitativo pesa más que el recuento: un offset de miembro se
+mueve si Valve **reordena los campos de la clase**; un prólogo se mueve cuando Valve
+**recompila la función**. Lo segundo pasa constantemente.
+
+**Los tres arreglos del SDK** (`bc25bf8`, `3c77e9f`, `99d0af7`) parecen trivia y son
+método — su SDK es un espejo a mano de structs de Steam, y un espejo que miente
+envenena todo lo que se lea a través de él:
+- `EInterfaceType` de `uint32_t` a `uint8_t`: el campo es **1 byte**; leía 4 y
+  enmascaraba con `& 0xff`, o sea **leía 3 bytes de campos vecinos**. Regla:
+  *si necesitas una máscara para leer un campo, tu tipo está mal.*
+- `getPipeIndex() -> uint32_t*` a `getCurrentSteamPipe() -> HSteamPipe`: devolver valor
+  en vez de puntero mata la clase de bug que su propio comentario borrado ese día
+  describía (*"Don't assign a pointer to IClientUser::GetSteamID! …it's lifetime is very
+  short"*). Y el renombre no es cosmético: `GetCurrentSteamPipe` es el nombre **real** en
+  la `IClientUtils` de Steam → el nombre pasa de etiqueta a **clave de búsqueda**.
+- `CUtlBuffer::flags` de `uint8_t`@0x1A a `uint32_t`@0x18. **Impacto conductual: cero**
+  — el total sigue siendo `0x24`, los campos anteriores (`mem`/`get`/`put`/`offset`) no
+  se mueven, y `flags` **no se lee en ningún sitio**, ni entonces ni hoy. Es fidelidad
+  preventiva del espejo. (Los comentarios `//0x1A`/`//0x1B` quedan obsoletos: la
+  aritmética cuadra, los comentarios mienten.)
+
+**Comentarios/limpieza:** `73dba5f` documenta el mutex y su propia incertidumbre;
+`b752536` documenta el layout del buffer IPC por primera vez **y esconde un arreglo de
+correctitud** (usaba el cursor `get` del buffer como offset del `interfaceType`, que
+está en offset **fijo** 1); `ce0bb89` imports/formato en ~17 ficheros.
+
+##### 7.7.2.a Veredicto sobre lo "prestable" del 24-07 — 1 de 3 sobrevive
+
+Anotado tras verificar las tres candidatas contra el código de lumalinux. **Dos eran
+malas y una es sólo confirmación.** Se registra para que nadie las re-derive.
+
+**(1) "Localizar un objeto raíz y navegar desde él, aplica tal cual" → FALSO.**
+La técnica exige que los targets sean **métodos virtuales de objetos alcanzables desde
+una raíz**. `RESEARCH.md` §15.2 ya tiene la tabla, verificada por RVA en el build
+f5eb8bd3, y dice que **3 de 5 targets de lumalinux no son virtuales**:
+
+| Hook | ¿Virtual? | Ruta update-proof |
+|---|---|---|
+| DepotKey | **SÍ** — vtable de `CConfigStore`, slot 6 | RTTI → slot DERIVADO por firma — **✅ ya implementado** |
+| GMRC | no (pero es un RPC con nombre) | RTTI del transport + dispatch por nombre de RPC (coste: protobuf) |
+| BuildDep | no | ninguna — se queda en patrón |
+| ShaderDepot | no | ninguna — se queda en patrón (no crítico) |
+| LoadPackage | no | ninguna (sólo diagnóstico) |
+
+Para esos tres **no hay raíz que navegar**: son lógica local sobre appinfo/KeyValues, no
+métodos despachados por vtable. Y el único que sí lo es (DepotKey) **ya usa RTTI** desde
+§15.3. O sea: la "lección de arquitectura" era re-derivar peor un análisis que ya
+existía. **No accionable.**
+
+**(2) "Desacoplar localización de hooking" → [YA], y uniforme.** Verificado: los cuatro
+hooks siguen la misma forma — `RvaFeed::Resolve(name)` primero, si falla el
+patrón/locator/RTTI, y luego `LmHook::Install(target, …)` con la dirección ya resuelta
+(`depot_key_hook.cpp:121-152`, `gmrc_hook.cpp:65-73`, `shader_depot_hook.cpp:95-97`,
+`depot_dependency_hook.cpp:154`). Lo que Ace añadió el 24-07 con
+`DetourHook::setup(name, addr, fn)` lumalinux ya lo tenía por diseño. Confirmación
+buena, nada que hacer.
+
+**(3) "La regla de los tipos, mirable en `steam_types.hpp`" → VACÍA, y al revés.**
+- `grep` de lecturas con máscara en `src/`: **cero** (fuera de `sha256.cpp`, donde son
+  aritmética legítima). No hay nada que arreglar.
+- Y la comparación va en la otra dirección: `steam_types.hpp` **pinza los layouts con
+  `static_assert`** (`sizeof(CUtlVector)==16`, `sizeof(DepotEntry)==0x20`) → el build
+  falla si un supuesto se rompe. SLSsteam tiene **0 `static_assert` en todo su `sdk/`**
+  y depende de comentarios a mano `//0x1A` que, como se vio arriba, se quedan obsoletos.
+
+**Y lo que creí que era la pregunta nueva del día TAMBIÉN estaba ya contestada.**
+La diferencia real entre los dos proyectos es cómo derivan el slot: SLSsteam **por
+NOMBRE** (`parseInterfaceMapBase` lee el literal dentro de los wrappers `IClient*Map` y
+construye `nombre → índice`), lumalinux **por FIRMA DE BYTES**
+(`ResolveVtableSlotBySignature`) — o sea que la ruta RTTI de lumalinux sigue arrastrando
+una dependencia de patrón. Parecía una mejora obvia a proponer. Pero `RESEARCH.md` §15.4
+ya lo tiene descartado, con el motivo:
+
+> *(A hook whose target self-names could instead derive the slot by that name, à la
+> SLSsteam's decompiler; DepotKey's accessor is a generic KeyValues call with no
+> distinctive string, so the prologue signature is the discriminant.)*
+
+Es decir: el accesor de DepotKey es un **getter genérico de KeyValues sin string
+distintivo**, así que el nombre no identificaría un slot único. La firma del prólogo *es*
+el discriminante, a propósito. (Dato a favor de que la mecánica en sí funcionaría: Ace da
+ese salto para ConfigStore — coge el índice de `21IClientConfigStoreMap` y lo aplica a la
+vtable de `12CConfigStore`, `b8ef92f`, asumiendo correspondencia de orden entre wrapper e
+implementación. Pero eso resuelve el *cómo*, no el problema de que el nombre no sea
+único.)
+
+Lo único que quedaría por hacer aquí es **de bajo valor**: §15.4 *afirma* que no hay
+string distintivo, pero no lo respalda con un volcado. Un `nombre → índice` de
+`21IClientConfigStoreMap` (desensamblando sus slots y cruzando literales de `.rodata`,
+como `parseInterfaceMapBase`) confirmaría la afirmación con evidencia y cerraría el tema
+para siempre; `tools/check_patterns.py` ya camina vtables estáticamente, así que sería
+una extensión pequeña. **Opcional, aserción→evidencia, no un cambio de conclusión.**
+
+**Neto del 24-07 para lumalinux: cero accionables.** El día es valiosísimo para
+*entender* SLSsteam (y para saber que §1.6 está muerta), pero `RESEARCH.md` §15.2–15.4 ya
+había anticipado todas sus lecciones aplicables, con más precisión y con RVAs verificados.
+Conviene recordarlo antes de volver a "descubrir" esto en un barrido futuro.
