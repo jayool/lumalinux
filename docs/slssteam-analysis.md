@@ -1928,3 +1928,103 @@ prosa**, aunque sigue siendo documentación:
 **Neto del 28-07 para lumalinux: cero cambios de código** (el fix por prefijo ya cubre toda
 la ventana, incluida la parte que no estaba documentada), **dos correcciones de doc** y una
 lección de método que vale para cualquier futuro parche anclado en símbolos.
+
+#### 7.7.7 Día 2026-07-30 — 6 commits (fugas de descriptores y el callback afinado)
+
+**`cbd0cd0` — fuga de descriptores en `Curl::getString`.** En esta época su curl todavía era
+`fork()` + `execve("curl")` + `pipe()`. Dos fugas, ambas reales:
+- Si `fork()` falla, se retornaba **sin cerrar ninguno de los dos extremos** del pipe.
+- Tras el bucle de lectura, **el extremo de lectura nunca se cerraba**.
+
+Severidad: `Curl::getString` no es una llamada de arranque aislada — `getReviewersForGame`
+la usa **por app** en la ruta de logros nativos (`https://store.steampowered.com/appreviews/…`),
+con reintentos. O sea **un fd filtrado por cada fetch de schema**, acumulándose durante toda
+la sesión de Steam. Encaja con el `3b97ac2` del 04-08, que reduce drásticamente cuántas
+veces se llama a esa función: los dos atacan la misma presión desde lados distintos.
+
+**Para lumalinux: no aplica. [YA]** — `src/curl.cpp` es una **reescritura**, no un port: usa
+libcurl con `dlopen` y un `CURLOPT_WRITEFUNCTION` que hace `data->append(...)`. Cero
+`fork`, cero `pipe`, cero `execve` (comprobado: 0 ocurrencias). La clase de bug no existe
+ahí. La reescritura se hizo por el incidente del `reaper` (§7.7.5.a), y de rebote inmunizó
+contra esto.
+
+**`a673d04` — buffer de lectura de 128 a 8192 bytes.** El JSON de reviews es de decenas de
+KB (`num_per_page` = `maxSchemaTries`), así que leerlo en trozos de 128 bytes eran cientos de
+`read()` y otros tantos append al `ostringstream`. 64× menos syscalls por fetch.
+
+**`e2ac776` — el centinela equivocado en el parser de funciones.** `parseFunction` inicializa
+`lm_address_t leaOffset = LM_ADDRESS_BAD` (que es `(lm_address_t)-1`, o sea `0xFFFFFFFF`), y
+la guarda decía:
+
+```cpp
+if (!leaOffset) continue;      // "salta si no está puesto"  ← compara contra 0
+```
+
+Pero el centinela de "no puesto" es `LM_ADDRESS_BAD`, no `0`. Así que **el caso que la guarda
+pretendía saltar era justo el que no saltaba**: antes de encontrar el thunk PIC, `leaOffset`
+valía `0xFFFFFFFF`, `!leaOffset` era falso, y el código seguía a la lógica de `lea`
+calculando `targetAddr = 0xFFFFFFFF ± offset` y buscándolo en el mapa de strings. Casi
+siempre un fallo inocuo, pero podía producir una **referencia a string espuria**. Arreglado a
+`if (leaOffset == LM_ADDRESS_BAD) continue;`.
+
+Es **la misma clase de bug que el `retf` del 23-07** (§7.7.1): el parser de funciones
+divagando donde no debe y contaminando el mapa `nombre → índice de slot` del que ahora
+depende todo el hooking. Dos endurecimientos del mismo punto crítico en una semana.
+
+**`146e28f` — `AppLicensesChanged_t` sólo para el appList que cambió.** Su mensaje: *"Previously
+we just invoked it for any appInfo received. Didn't cause any issues but was lazy"*. Añade
+`pendingLicenseChanges` (con mutex) y un early-return si no hay apps nuevas:
+
+```cpp
+// runIPCFrame: sólo pide appinfo para lo nuevo, y lo marca pendiente
+const auto added = g_config.newApps;
+if (!added.size()) return;
+...
+pendingLicenseChanges.emplace(appId);
+
+// parseProductInfoFromResponse: sólo emite callback para lo que pidió
+if (!pendingLicenseChanges.contains(app.appid())) continue;
+set.emplace(app.appid());
+pendingLicenseChanges.erase(app.appid());
+```
+
+##### 7.7.7.a ¿Afecta al live refresh de LumaDeck? Trazado: NO, y explica por qué
+
+Dije en el primer barrido que esto *"toca directamente el live refresh de LumaDeck"*.
+Trazadas ambas rutas, **no lo toca** — y el porqué merece quedar escrito, porque revela que
+los dos mecanismos de refresco **no son redundantes sino complementarios**.
+
+**Son dos señales distintas, con disparadores distintos:**
+
+| | SLSsteam | lumalinux |
+|---|---|---|
+| Callback | `AppLicensesChanged_t` | `LicensesUpdated_t` (`ECallbackType` 0x7d) |
+| Cómo | `Apps::postAppLicensesChanged(set)` | `CUser::NotifyLicensesUpdated(user)` |
+| Disparador | recarga de `config.yaml` → diff de `AdditionalApps` | cambio en **`keys.txt`** (watcher) |
+
+**El diff de SLSsteam** (`config.cpp:203-212`): al recargar, `newApps` = los appIds de
+`AdditionalApps` que **no estaban** en la carga anterior.
+
+**Traza del flujo de "Add Game" de LumaDeck:** añade el appid a `AdditionalApps` → `os.replace`
++ poke → SLSsteam recarga → `newApps` **contiene** el appid → `runIPCFrame` pide su appinfo y
+lo marca pendiente → llega la respuesta PICS → el callback se emite **para él**. **Funciona**,
+y el estrechamiento está exactamente alineado con el caso que LumaDeck crea.
+
+**Dónde el estrechamiento sí cambia algo — y por qué tampoco importa:** en un
+**re-deploy** sobre un juego **ya añadido** (el flujo *"Fix Update"*), el appid **no es nuevo**
+en el diff → `newApps` vacío → `runIPCFrame` sale temprano → nada en `pendingLicenseChanges`
+→ si más tarde llega appinfo de ese juego, **antes** el callback se emitía y **ahora no**.
+Pero ese flujo reescribe `keys.txt`, que es lo que dispara el watcher de lumalinux →
+`Reconcile()` → `LicensesUpdated_t`. **La cobertura viene por la otra ruta**, no por ésta.
+
+**Conclusión: cero impacto**, y una nota de arquitectura para el futuro: si alguna vez se
+plantea retirar el reconcile de lumalinux por "ya lo hace SLSsteam", **no es cierto** — el de
+SLSsteam sólo cubre apps *nuevas en el diff de config*, y desde el 30-07 lo hace de forma
+deliberadamente estrecha. *(Análisis de rutas de código, no verificado on-device: no he
+comprobado cuál de los dos callbacks es el que realmente refresca la UI de Steam.)*
+
+**Menores:** `2b4a039` merge de `main` a `dev`; `b3da36b` PKGBUILDs.
+
+**Neto del 30-07 para lumalinux: cero accionables.** Un [YA] a favor (la fuga de fds no
+existe en la reescritura de `curl.cpp`) y una pregunta cerrada con traza (el callback afinado
+no afecta al live refresh, y los dos mecanismos son complementarios).
