@@ -754,6 +754,19 @@ Dos detalles clave para nosotros:
   SLSsteam que sólo importan cuando el borrow **corre** — y nuestro parche
   ensancha la población de apps que lo alcanzan.
 
+  > **Actualización 2026-08-04 (`3b97ac2`), ver §7.7.10.** Este hazard se ha movido en
+  > las dos direcciones. **A mejor:** el `fork`+`curl` ya no corre por cada petición —
+  > SLSsteam recuerda el dueño que funcionó (`preferredOwners[appId]`) y se salta el
+  > fetch de reviews entero, lo que era exactamente la causa de los stutters en juegos
+  > que espamean `GetUserStats`. Como nuestro parche es lo que mete a los juegos de
+  > LumaDeck en esta ruta, la mejora nos beneficia de forma desproporcionada.
+  > **A peor:** el arreglo introduce un **segundo `unordered_map` sin lock**
+  > (`preferredOwners`), alcanzable desde las dos entradas igual que `ownerBlacklist`, y
+  > con patrones read-modify-write (`contains` → `at` → `erase`). Comprobado a HEAD:
+  > **cero mutex en todo `achievements.cpp`**. O sea: baja la *frecuencia* con la que se
+  > pisa el hazard, no lo sincroniza. La nota de arriba debe leerse ahora como **dos**
+  > mapas sin lock, no uno.
+
 **Por qué los juegos de LumaDeck no tenían logros por defecto.** LumaDeck instala
 vía descarga **nativa** de Steam, que escribe una **licencia local real**
 (`config.vdf` DecryptionKeys/AppTokens + `.acf`). Así `isSubscribed(appId)`
@@ -2222,3 +2235,76 @@ ficheros enteros a tabulador. La inconsistencia se la provocó él mismo el comm
 
 **Neto de los dos días para lumalinux: cero accionables, un [YA]** (la recolección de fallos
 de todos los hooks, que lumalinux ya hace y además publica en `status.json`).
+
+#### 7.7.10 Día 2026-08-04 — 3 commits (los stutters de los logros nativos)
+
+**`a1b30e8` + `690fb8a`** — hash de cliente 2026.08.04 en `res/updates.yaml`, y merge de
+`main` a `dev`. Rutina.
+
+**`3b97ac2` — "Fix stutters caused by review fetching".** El commit con más impacto real
+para LumaDeck de toda la segunda mitad del rango, porque ataca un hazard que **nuestro propio
+parche amplifica**.
+
+**El problema, en sus palabras:** *"Some games just ruthlessly spam GetUserStats, which in turn
+just spams getReviewersForGame which causes massive stuttering."*
+
+Traducido al flujo de §7.3: cada petición de stats de un juego no-poseído disparaba
+`getReviewersForGame(appId)` → un `Curl::getString` **bloqueante** (en esta época todavía
+`fork`+`execve("curl")`) a `store.steampowered.com/appreviews/…`, **en el hilo de la petición
+del juego**. Un juego que pide stats en bucle producía una petición HTTP por vuelta. De ahí los
+tirones.
+
+**El arreglo:** memoriza el dueño que funcionó y **sáltate el fetch entero**.
+
+```cpp
+//Prefer last successfull owner to skip review fetch. Fixes stutters caused
+//by review fetching in games that spam stat requests
+if (preferredOwners.contains(appId)) {
+    const uint32_t res = tryGetPlayerStats(..., preferredOwners.at(appId));
+    if (res == k_EResultOK) return res;
+    preferredOwners.erase(send->appid());     // falló -> se repite el proceso entero
+}
+const auto reviewers = getReviewersForGame(send->appid());   // sólo si no hay preferido
+```
+
+`preferredOwners[appId] = steamId` se fija dentro de los helpers nuevos (`tryGetPlayerStats` /
+`tryGetUserStats`, extraídos en este mismo commit) **sólo** cuando el resultado es
+`k_EResultOK`. Y conserva la disciplina que ya tenía en el blacklist: sólo se apunta como
+fallido un `k_EResultFailure` confirmado, **no** un `NoConnection` — un corte de red no quema
+un dueño válido.
+
+Efecto en régimen estacionario: de *una petición HTTP por llamada a stats* a **una por juego y
+sesión** (mientras el dueño preferido siga sirviendo).
+
+##### 7.7.10.a Por qué esto nos toca más que a un usuario de SLSsteam vanilla
+
+Porque **nosotros somos los que ponemos a los juegos de LumaDeck en esa ruta**. Recordando
+§7.3: la descarga nativa escribe una licencia local real, así que `isSubscribed(appId)` devuelve
+**true** para un juego de LumaDeck y el guard salta el borrow — de ahí que
+`sls_achievement_unblock` reescriba el guard a `isSubscribed && !isAddedAppId` para que los
+juegos añadidos **sí** lo alcancen.
+
+Consecuencia directa, que §7.3 ya anticipaba (*"nuestro parche ensancha la población de apps que
+lo alcanzan"*): un usuario de LumaDeck con logros nativos activos entra en el camino del borrow
+para **todos** sus juegos añadidos, mientras un usuario de SLSsteam vanilla sólo lo hace para
+los realmente no-poseídos. Los stutters, por tanto, nos pegaban más. Y el arreglo nos beneficia
+más. **Argumento concreto para recomendar SLSsteam ≥ `20260815201341` a los usuarios de
+LumaDeck**, junto con el `IN_MOVED_TO` de §4.1 y los `CDKeys` de §7.2.
+
+**Y el matiz que hay que anotar, no celebrar:** el arreglo **añade un segundo contenedor
+compartido sin sincronizar**. `preferredOwners` es un `std::unordered_map` global, escrito
+(`[appId] = steamId`, líneas 113 y 200) y leído/borrado (`contains` → `at` → `erase`, líneas
+142-150 y 221-230) **desde las dos entradas**, igual que `ownerBlacklist`. Comprobado a HEAD:
+**cero mutex en todo `achievements.cpp`**. Como esas entradas cuelgan de los hilos de job/RPC
+de Steam, dos peticiones concurrentes sobre distintos appIds pueden hacer insert/erase a la vez
+sobre el mismo mapa → UB (los `unordered_map` de la stdlib no son thread-safe ni para claves
+distintas).
+
+O sea: **baja la frecuencia con la que se pisa el hazard, no lo sincroniza.** En la práctica
+la ventana se estrecha mucho (menos llamadas, y el camino rápido sale antes), así que el neto
+es claramente positivo — pero la nota de §7.3 pasa de "un mapa sin lock" a **dos**. No es
+accionable por nuestra parte (es código de SLSsteam, y parchearlo cruzaría la frontera de §5
+por una tercera vez sin necesidad); se anota como riesgo conocido de la ruta que habilitamos.
+
+**Neto del 04-08: cero cambios de código, una mejora gratis que nos toca de lleno, y una
+actualización del hazard de §7.3.**
