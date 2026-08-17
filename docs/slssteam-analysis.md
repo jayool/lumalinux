@@ -2148,3 +2148,77 @@ config editable a mano.)*
 
 **Neto del 31-07: cero accionables de SLSsteam**, y un hallazgo colateral en LumaDeck que es
 la primera cosa del barrido que apunta a código propio y no a documentación.
+
+#### 7.7.9 Días 2026-08-01 y 2026-08-02 — 6 commits (jornadas flojas)
+
+Dos días de poco volumen y ningún cambio de mecanismo. Se documentan por completitud del
+barrido; **no hay nada accionable ni prestable en ninguno de los dos**.
+
+**01-08 (3 commits).**
+
+`46b6ff5` **"Search all functions before aborting"** — `VFTIndexes::init()` pasa de abortar en
+el primer `VFTableInfo_t` que no resuelve, a intentarlos **todos** y devolver `false` si alguno
+falló:
+
+```cpp
+bool success = true;
+for(const auto& fn : functions)
+    if (!fn->init()) success = false;   // antes: return false
+...
+return success;
+```
+
+Comprobado el llamante (`main.cpp:184`): sigue abortando igual (*"Failed to parse VFTables!
+Aborting…"*). O sea **el cambio es puramente de diagnóstico**: si Valve reordena una clase, el
+log muestra de una vez *todos* los índices afectados en lugar de obligar a arreglarlos de uno
+en uno, arranque a arranque. El bloque que hay tras el bucle es sólo el `dump` de
+`DumpClientInterfaces`, no lógica de control.
+
+*(Hazard latente, no de hoy: `VFTableInfo_t::init()` tiene efecto secundario — fija `index` y
+`address`. Con el early-return, un fallo dejaba la tabla intacta; ahora deja **algunas
+entradas resueltas y otras no**. Es inocuo porque el llamante aborta, pero si alguien
+degradara ese abort a un warning, tendría una tabla a medias.)*
+
+El mismo commit incluye, sin relación con su título, un renombrado en el hook de
+`BuildDepotDependency` (`void* a0` → `pClientAppManager`). Commit mezclado.
+
+**Para lumalinux: [YA], y por delante.** `InstallHooks()` (`src/main.cpp:218-241`) ya recorre
+**todos** los hooks, registra el resultado de cada uno (`Status::RecordHook` →
+INSTALLED/DISABLED/FAILED), acumula la lista de fallidos y reporta `X/Y hooks active` en el
+toast y en `status.json`. El mismo principio, y además **expuesto a LumaDeck** para el badge de
+salud, que es un paso más de lo que hace él.
+
+`2281333` **`AppOwnershipInfo_t::region`** — `char region[2]` + `char field7_0x1A[2]` se
+fusionan en `char region[4]`, con el motivo: *"Client copies this like a DWORD, so even though
+CountryCodes are only 2 bytes 4 seems to be correct"*. Ojo con no dramatizar esto: **el tamaño
+total no cambia** (2+2 = 4), así que **todos los offsets posteriores son idénticos** — es una
+*fusión de campos*, no un cambio de layout. Y comprobado que **nadie lee `region`** (lo que se
+usa es `regionRestricted`, otro campo). Impacto conductual: **cero**. Es documentación del
+struct, del mismo estilo que el `CUtlBuffer::flags` del 24-07.
+
+**Frontera:** `AppOwnershipInfo_t` es la capa de propiedad de SLSsteam (§5) y lumalinux no la
+conoce — comprobado, cero referencias a `AppOwnershipInfo` en `src/`. Nada que mirar.
+
+`7cf6636` PKGBUILDs.
+
+**02-08 (3 commits).**
+
+`03a4a96` **"Fix exiting when connection to Steam was lost"** — bug real en los dos tools de
+.NET. `OnDisconnected` y `OnLoggedOff` imprimían `"Disconnected from Steam! Exiting..."` pero
+**nunca ponían `finished = true`**, así que el bucle de callbacks seguía girando: el mensaje
+mentía y el proceso **se quedaba colgado para siempre**. Dos líneas, un cuelgue menos en
+`schema-grabber` y `ticket-grabber`.
+
+`fdefbe5` borra una declaración muerta en `CNetPacket.hpp` y el `tools/ticket-grabber/build.sh`
+(6 líneas) — resto de la migración a Makefiles del 27-07 (`f91ceaf`), que dejó los `build.sh`
+sin uso.
+
+`ae9428a` cambia 4 espacios por tabulador en los dos `Program.cs` (812 líneas en cada
+dirección). **Es lo que explica el diffstat abultado del día** (~816/819) — nada de fondo. Y
+tiene gracia el orden: en `03a4a96` añadió los dos `finished = true;` **con tabulador** en el
+ticket-grabber mientras el fichero usaba espacios (se ve en el propio diff, `+\t\t\tfinished`
+frente al `+            finished` del schema-grabber), y el commit siguiente normaliza los
+ficheros enteros a tabulador. La inconsistencia se la provocó él mismo el commit anterior.
+
+**Neto de los dos días para lumalinux: cero accionables, un [YA]** (la recolección de fallos
+de todos los hooks, que lumalinux ya hace y además publica en `status.json`).
