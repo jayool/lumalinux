@@ -1675,3 +1675,143 @@ venga de datos. No afecta a lumalinux; anotado por completitud.
 (gratis) y **dos items de mantenimiento de prioridad baja** en `slssteam_schema.py` —
 refrescar `_BUNDLED_YAML` con `CDKeys`/`LogLevels`, y actualizar el docstring que cita el
 texto viejo del toast.
+
+#### 7.7.5 Día 2026-07-27 — 16 commits (la capa IPC nombrada, y muere el último hook artesanal)
+
+**Bloque A — la capa IPC deja de ser anónima.** `d1bbc92` + `1082525` renombran
+`EInterfaceType` → **`EIPCInterface`** (48 constantes `k_EInterfaceTypeClient*` →
+`k_EIPCInterfaceClient*`) y añaden **`EIPCCmd`** (`RunInterface = 1`,
+`SerializeCallbacks = 2`, `ConnectPipe = 9`) y **`EIPCExitCode`** (`Success = 0xb`).
+`2be9d89` renombra los argumentos del hook (`pBufInterfaceInfo` → `pBufIPCCmd`,
+`a2` → `pBufReturn`). Puro nombrado, pero es el paso que convierte "un buffer con bytes"
+en "un protocolo con vocabulario" — y sin ese vocabulario el commit siguiente no se puede
+escribir.
+
+`e8e04f1` documenta el layout **y deja escrito por qué NO reemplaza todos sus hooks por
+este único punto**, que es la pregunta obvia al ver la capa IPC:
+
+> *"While hooking this function to replace the other hooks might seem attractive we do not
+> do so. Many calls straight up bypass the IPC layer and go straight for the original VFT
+> implementations (IClientAppManager comes to mind). Although it's a great spot to quickly
+> test things"*
+
+`b3b2f98` añade la otra confesión del día, sobre el hook de `SetString`:
+> *"I really do not like hooking the IClient*Map functions because they are very surface
+> level and get skipped over a lot. But for the current purpose it's enough"*
+
+(Lo cumple el 31-07 con `b8ef92f`, bajando el hook a `IClientConfigStore`.)
+
+**Bloque B — `c4152f5`: muere el trampolín naked de `GetSteamID` (§1.7).** El hook artesanal
+(pushad/pushfd, `call` a un `stdcall`, popad, instrucciones sobreescritas, `jmp` relativo
+ensamblado a mano con `MemHlp::assembleCodeAt`) se sustituye por **interceptar el buffer de
+retorno del IPC**:
+
+```cpp
+if (type == k_EIPCInterfaceClientUser && exitCode == EIPCExitCode::Success && fnId == 0xD6FC3200)
+{
+    if (!g_currentSteamId.accountId)
+        memcpy(&g_currentSteamId, pBufIPCResult->mem.base + 1, sizeof(CSteamId));
+    const CSteamId newId = hkClientUser_GetSteamId(g_currentSteamId);
+    memcpy(pBufIPCResult->mem.base + 1, &newId, sizeof(newId));
+}
+```
+
+Tres claves identifican la llamada: **interfaz** + **exit code** + **id de función**
+(`0xD6FC3200`). Deja el desensamblado en comentario explicando por qué era artesanal
+(*"IClientUser::GetSteamID has been optimized to hell and back"*: el steamId se lee de
+`[edx-0x174E]`/`[edx-0x1752]` y se escribe en `[eax]`/`[eax+4]`, sin prólogo estándar donde
+anclar). **Cambia el ancla de "la forma de la función" a "la identidad del mensaje"** —
+mucho más estable, y sólo posible tras el bloque A.
+
+Ojo al `fnId = 0xD6FC3200`: es un id **hardcodeado** que no se resuelve por nombre. Es una
+constante nueva que puede moverse si Valve reordena su tabla de funciones IPC. Cambia una
+fragilidad por otra, más pequeña.
+
+**Bloque C — `3250c2c` + `6d1c7fd`: `g_currentSteamId` de 32 a 64 bits.** Pasa de
+`uint32_t` (accountId) a **`CSteamId`** completo (steamId64), y todos los usos se vuelven
+explícitos (`g_currentSteamId.accountId` donde antes valía el entero pelado): `apps.cpp`
+(`familyShared`, `unlockApp`, el guard de Denuvo), `ticket.cpp` (los dos
+`saveTicketToCache`). El ticket-grabber cambia su formato en consecuencia. También borra el
+comentario-aviso de `globals.hpp` (*"Don't assign a pointer to IClientUser::GetSteamID!
+…it's lifetime is very short"*), que ya no aplica porque ahora se copia por valor del
+buffer IPC. Habilitador del `FakeName` del 28-07, que necesita comparar `friendid()`
+(64 bits) contra el steamId propio.
+
+**Bloque D — `12a8e2f`: `Updater::isEnabled()`.** Añade una guarda al principio de
+`init()` y de `verifySafeModeHash()`:
+
+```cpp
+bool Updater::isEnabled() { return g_config.safeMode.get() || g_config.warnHashMissmatch.get(); }
+```
+
+Si ninguna de las dos opciones está activa, **ni descarga `updates.yaml` ni calcula el
+SHA**. Lógico: en SLSsteam ambas son opciones de config y `SafeMode` viene `no` por
+defecto, así que para el usuario típico ese trabajo era íntegramente tirado.
+
+##### 7.7.5.a Veredicto sobre `Updater::isEnabled()` en lumalinux — NO transfiere
+
+En el primer barrido escribí que *"el `Updater::isEnabled()` es un patrón que lumalinux
+podría copiar: tu `verifySafeModeHash()` hashea el `steamclient.so` en cada arranque aunque
+el resultado sea solo advisory"*. **La premisa es correcta, la conclusión no.**
+
+Correcto: en un build de release (`-DLUMA_NO_UPDATE=OFF`, que es lo que pasa el workflow)
+`main.cpp:149-156` llama a `Updater::init()` + `verifySafeModeHash()` en cada arranque, y
+su único consumidor es un `Log::Notify` advisory — el comentario del propio código lo dice
+en mayúsculas (*"ADVISORY, not a gate"*). No hay kill-switch en runtime: `LUMA_NO_UPDATE`
+es `#ifndef`, de compilación.
+
+**Pero la optimización no se puede aplicar, porque el hash NO es prescindible.**
+`src/rva_feed.cpp:68` llama a `Utils::getFileSHA256(path)` para keyear
+`res/rvas/<hash>.yaml`, y el RVA feed es la ruta **primaria** de resolución de DepotKey,
+GMRC, ShaderDepot y Reconcile. El `CMakeLists.txt:126-130` lo deja explícito: `sha256.cpp`
+se compila **incondicionalmente** justo por eso. O sea: SLSsteam puede saltarse el hash
+porque sin SafeMode nadie lo usa; lumalinux lo necesita igual.
+
+**Y el riesgo de red que motivaría saltárselo ya está resuelto, mejor que en SLSsteam.**
+Hubo un incidente real: el `NEEDED` de libcurl/libcrypto se resolvía en *cada* hijo de
+`steam.sh` incluido el `reaper` de 32 bits; cuando el runtime de Steam quitó la versión de
+símbolo `CURL_OPENSSL_4`, `liblumalinux.so` dejó de cargar ahí y **los juegos rebotaban**.
+El apaño de urgencia (0.13.6) fue compilar SafeMode fuera; **0.15.0 eliminó la causa**:
+SHA-256 propio sin libcrypto y `dlopen` perezoso de libcurl, o sea cero dependencias de
+enlace. **[YA]**, y por delante de él.
+
+**Lo que sí queda, y es pequeño: el hash se calcula DOS veces.** `update.cpp:128` y
+`rva_feed.cpp:68` llaman cada uno a `Utils::getFileSHA256` sobre el mismo
+`steamclient.so`, sin caché. Medido: SHA-256 de 12 MB son ~12 ms con el de OpenSSL; el de
+`src/sha256.cpp` es propio y sin optimizar, así que la pasada duplicada estará en el orden
+de **25-50 ms**. Corre en el hilo detached del constructor, igual que los ~76 ms de
+escaneo de patrones (§7.7.1.c), o sea **no es visible para el usuario**. Un `static` con
+caché por path en `getFileSHA256` lo elimina; **no merece un cambio por sí solo**, sí
+merece incluirse si alguna vez se toca esa zona.
+
+**Observación NO verificada, con números (merece una mirada, no una acción).** En un build
+de release la instalación de hooks encadena **dos fetches HTTPS secuenciales** antes de
+terminar: `update.cpp:39` (`updates.yaml`) y `rva_feed.cpp:55` (`res/rvas/<hash>.yaml`).
+Ambos usan los **defaults** de `Curl::getString` — `connectTimeoutSec = 15`,
+`totalTimeoutSec = 30`. Con una red *colgada* (no ausente: un portal cautivo o un firewall
+que traga SYN), el peor caso son ~60 s antes de que `InstallHooks()` acabe — y con él el
+arranque del package-0 finder y la escritura de `status.json`, que es lo que LumaDeck lee
+para el badge de salud. Con red ausente curl falla rápido, y ambos tienen caché en disco
+como fallback (pero sólo *después* del timeout). El comentario de `curl.hpp` demuestra que
+el tema está pensado para GMRC (*"so a hung endpoint can never block the calling
+thread"*), y la sonda de ShaderDepot ya pasa valores cortos; la ruta de arranque se quedó
+con los generosos. **No verificado on-device y puede ser perfectamente aceptable** — el
+usuario tarda mucho más de 60 s en llegar a pulsar Install. Se anota como pregunta.
+
+**Bloque E — higiene.** `4e79bcd` cambia `unique_lock` por `lock_guard` en `log.hpp` y
+`mtvar.hpp` (ninguno necesitaba unlock manual ni movibilidad) **y de paso revierte el
+`std::ios::app` de ayer** (`62afc2e`) a un `std::ofstream(path)` normal — o sea, el cambio
+latente truncar→añadir de `createFile` que anotamos en §7.7.4 lo corrigió él al día
+siguiente. `42a23ff` añade `SavedTicket::isValid()` y sustituye los `!ticket.ticket.size()`
+/ `!steamId.isSet()` dispersos. `871f065` `map`→`unordered_map` para los tickets (no hacía
+falta orden). `f91ceaf` da Makefile propio a `library-inject`, `schema-grabber` y
+`ticket-grabber`, con rebuild de los subproyectos .NET cuando cambian; `9d6a05d` limpia un
+resto del ticket-grabber en el schema-grabber; `a9b5135` apunta el build de nix a
+`audit-libs` con todos los cores. `30acee8` arregla el formato de un **easter egg**: si el
+día es **22 de febrero**, `notifyInit` saca un mensaje especial.
+
+**Neto del 27-07 para lumalinux: cero accionables.** Una retractación más
+(`Updater::isEnabled()`), un [YA] a favor de lumalinux (la ruta libcurl/libcrypto), un
+hallazgo real pero por debajo del umbral de acción (doble SHA-256, ~25-50 ms en hilo
+detached), y una pregunta abierta con números (los dos fetches secuenciales con timeouts de
+30 s en la ruta de instalación de hooks).
