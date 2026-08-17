@@ -1399,3 +1399,124 @@ una extensión pequeña. **Opcional, aserción→evidencia, no un cambio de conc
 *entender* SLSsteam (y para saber que §1.6 está muerta), pero `RESEARCH.md` §15.2–15.4 ya
 había anticipado todas sus lecciones aplicables, con más precisión y con RVAs verificados.
 Conviene recordarlo antes de volver a "descubrir" esto en un barrido futuro.
+
+#### 7.7.3 Día 2026-07-25 — 13 commits (el bug de "analizar demasiado tarde")
+
+**`3e9dfdd` + `807e229` — la relocación de `.data.rel.ro`.** Los dos commits que
+sostienen la corrección de §7.7.1.b, y el hallazgo conceptual del día. Mensaje textual:
+*".rodata.ro.rel seems to get modified so the offsets turn into actual addresses which
+broke the decompiler flow"*.
+
+Qué pasa: `VFTable::analzye()` lee cada slot y le **suma la base del módulo**
+(`functions.emplace_back(offset + moduleBase)`), o sea asume valores **relativos**. Pero
+`.data.rel.ro` es, por definición, *data con relocaciones*: el linker dinámico convierte
+esos offsets en **direcciones absolutas** al cargar. Si analizas después, sumas la base
+a algo que ya es absoluto → basura.
+
+Arreglo, en dos pasos:
+1. `3e9dfdd` mueve `LM_FindModule` + `parseModule` **dentro de `la_objopen`**, por módulo
+   y por separado (`steamclient.so` y `steamui.so`), con el comentario *"Analyse modules
+   before any relocations get applied"*. Y elimina los `LM_FindModule` de `load()`.
+2. `807e229` va más lejos: **analiza TODAS las vtables inmediatamente** dentro de
+   `la_objopen`, y quita los `analzye()` diferidos de `hooks.cpp` y `vftableinfo.cpp`.
+   Reconoce el coste: *"This is wasteful, but we have to analyse right away otherwise the
+   offset get turned into addresses messing up the analysis. We could workaround it by
+   only loading after a late module has been loaded"*.
+
+**Por qué importa para nosotros:** esto es lo que hace que su pipeline de vtables sea
+`LD_AUDIT`-only, y **es exactamente la razón por la que §7.7.1.b concluye que para
+`LD_PRELOAD` el caso es más FÁCIL, no imposible**: post-relocación los slots ya son
+direcciones absolutas, así que se leen tal cual, sin aritmética de base. Su bug es
+nuestro caso trivial.
+
+**`7aee22c` — `ServerResponded` de patrón a índice de vtable.**
+`ISteamMatchmakingPingResponse::ServerResponded` (patrón en `steamui.so`) →
+`CGameInfoDialog::ServerResponded` (`VFTIndexes::CGameInfoDialog::ServerResponded`).
+Un patrón menos, y el primero que retira en `steamui.so` — que es el módulo cuyas
+cabeceras empezó a parsear el 23-07 (`f87979f`).
+
+**`d2f94c8` — "Refine patterns": la migración de estilo.** Dos cambios acoplados:
+- El vector de prólogo pasa de `std::vector<uint8_t>` a **`std::vector<int16_t>`**, para
+  poder poner **comodines (`-1`) dentro del prólogo**. `findPrologue()` los salta.
+- Y migra los patrones del estilo **"firma larga en el CALL-SITE + `SigFollowMode::Relative`"**
+  (localiza la llamada `E8` y la sigue hasta la función) al estilo **"ancla corta DENTRO
+  de la función + `PrologueUpwards`"** (busca hacia atrás el prólogo). Ejemplo:
+  `CUser::CheckAppOwnership` pasa de 26 bytes en el call-site a
+  `"0F 94 C2 08 51"` + prólogo `{0x53,0x56,0x57,0xE5,0x89,0x55,-1,-1,-1,-1,0x5,-1,-1,-1,-1,0xE8}`.
+  Igual `TraceIPC`, `CAPIJob::SendAndRecv`, `CAppDataCache::BParseResponseMessage`,
+  `CWebSocketConnection::BBuildAndAsyncSendFrame`, `CSteamEngine::RunInterface`,
+  `CUser::UpdateAppOwnershipTicket`.
+
+##### 7.7.3.a Veredicto sobre la "migración de patrones" — RETRACTACIÓN + trade-off real
+
+**Retracto lo que escribí en el primer barrido:** dije que *"tus patrones de
+`patterns.cpp` son del tipo largo y frágil que él acaba de abandonar"*. **Falso.** Lo que
+Ace abandonó el 25-07 son **patrones de call-site con `SigFollowMode::Relative`**.
+Verificado en `src/patterns.hpp`: **los seis patrones de lumalinux están anclados en el
+PRÓLOGO de su función objetivo**, ninguno en un call-site, y no existe nada equivalente a
+`SigFollowMode::Relative`:
+
+| Patrón | Ancla |
+|---|---|
+| `kDepotKeyFnPattern` | `55 57 56 53 E8 ?? …` — prólogo |
+| `kBuildDepotDependencyPattern` | `55 89 E5 57 56 E8 ?? …` — prólogo |
+| `kLoadPackagePattern` | `55 89 E5 57 E8 ?? …` — prólogo |
+| `kGmrcFunctionPattern` | `E8 ?? ?? ?? ?? 05 ?? … 55 89 E5 …` — thunk PIC + prólogo |
+| `kShaderCacheDepotPattern` | `57 56 53 E8 ?? … 81 C3 ?? …` — prólogo |
+| `kNotifyLicensesUpdatedPattern` | `55 89 E5 57 56 53 E8 ?? …` — prólogo |
+
+O sea: **lumalinux ya partía del destino de su migración.** Y va más allá en el
+comodinado, que hace con más criterio que él: wildcardea el rel32 del `get_pc_thunk`, el
+imm32 del GOT, el tamaño de frame (`81 EC ?? ?? ?? ??`), el disp32 de globales
+GOT-relativas (`8B 83 ?? ?? ?? ??`, con el comentario explicando *por qué*: "shifts
+between Steam builds… verified still unique wildcarded"), y hasta **los dos bytes bajos
+de un offset de miembro dejando los altos como restricción** (`8B B8 ?? ?? 00 00`, con la
+deriva documentada 0x1b18→0x1b14). Eso es más fino que los comodines todo-o-nada de
+SLSsteam.
+
+**Lo que SÍ es genuinamente distinto, y es un TRADE-OFF, no una mejora:** el `PrologueUpwards`
+reduce la **superficie de bytes que debe permanecer estable**. lumalinux alcanza
+unicidad haciendo el patrón **largo y contiguo** desde el inicio de la función (DepotKey:
+45 bytes, ~37 fijos) — si cambia *cualquier* byte de esa ventana, rompe. SLSsteam la
+alcanza con **ancla corta + prólogo corto en dos sitios separados** (CheckAppOwnership:
+~11 bytes fijos en total), así que un cambio en medio de la función no le afecta.
+
+Pero el precio es real y él lo paga: **anclas cortas son mucho más propensas a
+multi-match**. `"0F 94 C2 08 51"` son 5 bytes; el prólogo hace de segundo filtro pero no
+garantiza unicidad — de ahí su log `"Pattern %s found %i times"` y sus comentarios
+*"Not unique. All matches point to correct function though"*. Para lumalinux eso es peor
+que para él: `FindUniqueInSteamclient` **exige unicidad** y falla cerrado, así que más
+ambigüedad = ShaderDepot y Reconcile desactivados. Y el patrón largo de lumalinux tiene
+una virtud compensatoria: **codifica la secuencia de carga de argumentos**, o sea es
+semánticamente auto-validante, no una coincidencia de bytes.
+
+**Veredicto: no migrar.** Es un trade-off con contrapartida concreta, sobre un esquema
+que ya está en el lado bueno del cambio que Ace hizo. Si alguna vez un patrón de
+lumalinux rompe *por una recompilación que sólo tocó el medio de la función* (síntoma:
+el prólogo sigue ahí pero el patrón no matchea), entonces `PrologueUpwards` es la
+herramienta — y entonces sí merece implementarse. Anotado como **[PRESTABLE
+condicional]**, con el disparador escrito.
+
+**El resto del día:**
+- **`ce6509f` — crash al arrancar con `ExtendedLogging`.** Guarda `g_pSteamEngine->getUser()`
+  antes de tocar `getUtils()->getAppId()` en la línea de log. Y de paso **mueve el mutex
+  de `placeVFTHooks` DESPUÉS del early-return de `!usr`**: antes, cada llamada a
+  `RunInterface` previa a que existiera `CUser` serializaba en el mutex para nada.
+- **`8effc44` — nullchecks de `CUser::getClient*`.** Mete la guarda **dentro** de
+  `CSteamEngine::getUtils()` (`if (!getUser()) return nullptr;`) y retira las guardas
+  redundantes de los llamantes. Éste y el anterior son la factura del `8de3384` de ayer,
+  que navegaba estructuralmente sin proteger los eslabones intermedios.
+- **`3620dd2` — SteamStub roto en Palworld multicuenta.** Invierte la precedencia en
+  `hkClientUser_GetSteamId`: el spoof de un solo uso pasa a mandar **sobre** el steamId
+  del ticket cifrado cacheado. *"One time spoof should take presedence, otherwise
+  SteamStub will fail for games that use encrypted tickets for online auth when you play
+  on multiple accounts"*. Nicho, pero es el tipo de bug que sólo aparece con varias
+  cuentas.
+- **`4bd33e7`** identifica el padding de `CNetPacket+0xC` como `int32_t refs` (contador de
+  referencias) — preparación para el `b937ab2` del 08-06 ("liberar el netpacket en vez de
+  esconderlo"). **`9927612`** añade el hash de cliente 2026.07.25 a SafeMode. **`526b828`,
+  `dfb8614`, `9f232e6`** estilo; el último corrige el mapa del buffer IPC documentado
+  ayer (`base+2` es `*(this+4)`, el id de función está en `base+6`).
+
+**Neto del 25-07 para lumalinux: cero accionables**, más una retractación. El único
+candidato (`PrologueUpwards`) queda como condicional con disparador definido.
