@@ -478,6 +478,91 @@ Everything else: parity-by-lineage, we-lead, or not-portable.
 
 ---
 
+## Re-sweep 2026-08-17 — `6d2fb30` → `a26a359` (SteaMidra 6.6.5)
+
+*Método: mismo clon de `Midrags/SFF`, leyendo todo lo posterior al commit de
+referencia de este doc (`6d2fb30`, SteaMidra 6.6.4, 2026-08-11). **Un solo commit
+nuevo**: `a26a359` "Release SteaMidra v6.6.5" (2026-08-16). SFF aplasta cada
+release en un commit único, así que ese commit son 43.213 inserciones y 14.615
+borrados repartidos por 37 ficheros.*
+
+**Lo primero, y es lo que decide el resto: `LumaCore/` NO se ha tocado.**
+`git show a26a359 --stat -- LumaCore` no devuelve nada. Todo el release está en el
+launcher Python (`sff/`) y la web UI. **El análisis de este documento sigue
+vigente sobre la capa C++ que analiza**; no hay que re-leer nada del hook.
+
+### Dos pistas que parecían prestables y murieron al verificarlas
+
+**1. `prewarm_pattern_cache_if_missing` (`sff/lumacore/lumacore_setup.py`).** SFF
+ahora precalienta la caché de TOMLs de patrones al arrancar la app, desde Python,
+para que la DLL no tenga que descargar. Lo perseguí porque `RvaFeed::obtainYaml`
+hace un `Curl::getString` con timeouts por defecto de 15 s de conexión y 30 s
+totales, y si eso corriera en el camino del cargador sería un bloqueo de arranque
+de hasta medio minuto en cada build de Steam sin feed.
+
+**No aplica: ya está fuera del camino crítico.** `main.cpp:428` — el constructor
+lanza un `std::thread(...).detach()` que sondea por `steamclient.so` y sólo
+entonces llama a `InstallHooks()`. La descarga del feed ocurre en ese hilo, no en
+el cargador. Precalentar desde LumaDeck no ganaría nada.
+
+**2. Fallback de versión vía `status.json`.** SFF ha añadido leer
+`<Steam>/lumacore/status.json` → `lumacore_version` cuando su registro de
+instalación no sabe la versión (cubre instalaciones manuales).
+
+**No aplica: LumaDeck ya hace lo mejor.** `backend/paths.py:756-769` usa
+`read_lumalinux_status()` → `status.get("version")` como fuente **primaria**, no
+como plan B. SFF está poniéndose al día con algo que nuestro lado ya resolvió.
+
+### Dos observaciones que sí conviene tener escritas
+
+**3. SteaMidra es también un agregador de claves — nosotros no.** `[contexto, no
+accionable]`
+
+`sff/lua/fallback_depotkeys.json` pasa a ser un fichero de **64 MB con 368.230
+entradas**, de las que **188.789 (51 %) llevan clave real**; el resto son depots
+conocidos sin clave. Va empaquetado, offline.
+
+Y en `sff/lua/provider.py:378-410` está el otro extremo: `_entry_fingerprint()`
+genera una huella `id:key` por entrada, `_mark_fingerprints_sent()` la registra en
+`sent_items` de `contributor_state.json`, y `reset_contributor_state()` existe
+para que el usuario **reenvíe todas sus claves**. Es decir, las claves de los
+usuarios se recolectan y se suben, con deduplicación por huella.
+
+Eso explica de dónde salen 368k claves, y es una **diferencia de capacidad real,
+no de técnica**: pueden resolver claves que nosotros no, porque tienen una base
+alimentada por su parque de usuarios. Nuestro stack no tiene equivalente y este
+doc no propone construirlo — se anota para que la diferencia no se lea como un
+fallo técnico nuestro cuando es un modelo distinto.
+
+**4. Filtro de atribución ofuscado: rechazan `.lua` que acrediten a DepotBox.**
+`[contexto de ecosistema, sin impacto para nosotros]`
+
+`sff/lua/provider.py:412-424`, `_filter_attributed_source()` — *"Reject scripts
+that carry a third-party attribution banner"*. La cadena que busca **no está en
+claro**: se reconstruye en runtime desde cinco fragmentos con tres claves XOR
+distintas, uno invertido, otro con resta de 17 y otro con resta alterna, de forma
+que un `grep` sobre el repo no la encuentra.
+
+Decodificada:
+
+```
+f0='Down'  f1='loade'  f2='d us'  f3='ing D'  f4='epotBox'
+→ "Downloaded using DepotBox"
+```
+
+**No nos afecta**: LumaDeck no escribe banners de atribución en los `.lua` que
+produce (comprobado en `backend/downloads.py` — sólo mensajes de log con prefijo
+`LumaDeck:`), así que nada de lo nuestro dispara ese filtro. Queda anotado por lo
+que dice del ecosistema: hay proyectos que se bloquean entre sí por atribución y
+esconden a quién.
+
+### Neto del re-barrido
+
+**Cero accionables.** La capa que este documento analiza no ha cambiado, las dos
+pistas técnicas mueren al contrastarlas con nuestro código, y las dos
+observaciones restantes son contexto — una explica una asimetría de datos, la otra
+una práctica del ecosistema.
+
 ## References
 
 - LumaCore (`Midrags/SFF` @ `6d2fb30`, `LumaCore/`): `docs/LumaCore.md`;
