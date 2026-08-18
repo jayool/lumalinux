@@ -876,6 +876,99 @@ headcrab/`.desktop` (D6), or convergence (D7). D8 is not a moon port but the
 
 ---
 
+## Delta — 2026-08-18 (desde el delta del 2026-07-22)
+
+*53 commits, 2026-07-23 → 2026-08-14. El grueso es suyo y no nos toca: cobertura
+de lanzadores en el escritorio (`557ec42`, `04d8e56`, `5eb9711`, `a4b5a5e`,
+`2984163`), presencia, tickets, y su capa `appinfo`/`provision`. Aquí sólo lo
+que cruza con nuestras costuras.*
+
+### ★ D9 — cuarentena de depots: distinguen "clave que no descifra" de "sin clave"
+
+`1022c9f` (07-27) añade un subsistema nuevo de ~730 líneas
+(`depotquarantine.cpp` 437, `.hpp` 142, `depotquarantine_store.hpp` 152). Hookea
+**`OnChunkUnpacked`** —en dos convenciones, stack y `regparm(3)`— y detecta
+cuando una clave que ellos suministraron **falla al descifrar un chunk**. Cada
+chunk fallido se identifica por su SHA de 20 bytes en `chunk+0x0c`; el depot pasa
+a cuarentena y `ManifestBind` deja de ofrecerlo (`shouldDropManagedDlc`). El
+ámbito está acotado a depots gestionados por ellos y con script `stplug-in` vivo
+(`inManagedScope`).
+
+**Es una capacidad que no tenemos, y el hueco es real.** Nuestro hook de claves
+no puede saberlo por construcción: valida forma (`hex.size() != 64` en
+`key_store.cpp:45`, `KeySize >= 32` en el hook) y nada más. Una clave buena y una
+mala son 32 bytes indistinguibles hasta que un chunk se descifra.
+
+Lo que LumaDeck tiene son **dos preguntas distintas, y ninguna es ésta**:
+
+| | Pregunta | Cuándo |
+|---|---|---|
+| `downloads.py:1042` `_count_app_depot_keys` | ¿ha llegado **alguna** clave? | al instalar el `.lua` |
+| `steam_utils.py:307` `check_stuck_updates` | ¿Steam se quejó (`UpdateResult=8`)? | después, y con falso positivo conocido |
+| **moon** | ¿la clave **descifra**? | durante la descarga |
+
+**Recomendación: NO portar el hook.** Hay una vía mucho más barata que conviene
+descartar primero — `depot_key_hook.cpp:80` ya documenta que un fallo de
+descifrado sale como **`"Invalid content configuration"`** por el lado de Steam,
+así que probablemente Steam lo registre en `~/.local/share/Steam/logs/
+content_log.txt` con el depot id. Si es así, son ~50 líneas en `steam_utils.py`
+en vez de 730 de C++ y un hook nuevo en el camino de descarga. **Sin verificar:
+hace falta mirar ese log durante una instalación que falle de verdad.**
+
+Y antes de nada, la pregunta de frecuencia: **no hay ni un incidente registrado**
+de "clave presente pero incorrecta" en nuestros repos. El único fallo de
+descifrado documentado es el depot de shaders **sin** clave, ya resuelto por otra
+vía (ShaderDepot skip, RESEARCH §13.9). Es plausible que sea un problema que moon
+tiene por inyectar entradas desde manifiestos Lua propios — algo que nosotros no
+hacemos.
+
+### D10 — su feed de patrones firmado nace en esta ventana
+
+`be35ab5` (08-01) crea `tools/pattern-refresh/` (~2.400 líneas con tests):
+descarga un catálogo por hash de módulo, lo **verifica con Ed25519** y lo cachea.
+`85ccd0c` lo consume desde catálogos locales exactos, `1668847` (08-09) mueve el
+refresco **al wrapper de Steam**, y `ef36141` lo hace no bloqueante.
+
+Comparación con nuestro feed de RVAs, sin acción:
+- **Firma**: ellos verifican Ed25519 con clave pública horneada en compilación;
+  `rva_feed.cpp` es HTTPS sin firmar. Declinado deliberadamente y por buenas
+  razones — ver `rva-feed-design.md` §14 (la raíz de confianza sigue siendo
+  GitHub) y §15 (por qué los overrides por entorno se quitaron).
+- **Momento**: ellos refrescan desde el wrapper, antes de Steam; nosotros
+  descargamos perezosamente en el primer `Resolve()`. **No es un problema**:
+  `main.cpp:428` instala los hooks en un `std::thread(...).detach()`, así que esa
+  descarga nunca estuvo en el camino del cargador.
+- **Dónde vive la criptografía**: en su binario aparte, no en el `.so` inyectado
+  (`LDFLAGS := -shared -Wl,--no-undefined -lpthread -ldl`). Ése es el patrón
+  correcto si algún día firmamos, y la razón está en `curl.cpp`: una dependencia
+  NEEDED nueva reproduce el fallo de carga en `reaper` de 0.13.6.
+
+`643a163` + `9e0f3b6` (07-30) añaden además "runtime hook attestation" y un
+"generic locator probe" (~430 líneas): validan en runtime que los hooks quedaron
+donde tocaba. Nuestro equivalente es `status.json` con el resultado por hook, más
+las comprobaciones cruzadas de DepotKey (RTTI) y GMRC (xref) — que, ojo, **avisan
+pero no bloquean**: si discrepan, se usa el patrón y se loguea.
+
+### Verificado y NO aplicable
+
+- **`774acc2` (07-29) "run watcher-originated client calls on the owner thread"**
+  — disciplina de hilos para llamadas nacidas en el watcher. Ya lo hacemos: el
+  hilo de inotify sólo toca la primitiva de despertar (`NotifyKeysChanged`),
+  nunca Steam.
+- **`362476d` size-0** — ya cubierto en el delta del 2026-07-10 (ver arriba), con
+  la misma conclusión. Se anota aquí sólo para no volver a perseguirlo: nuestro
+  BuildDep **sólo parchea entradas existentes**, nunca añade, así que no puede
+  crear una entrada de tamaño 0 (`depot_dependency_hook.cpp:60-81`, bucle de `0`
+  a `m_Size` sin tocar `m_Size`), y además el hook está **apagado por defecto**
+  (`main.cpp:198`).
+
+### Neto del delta
+
+**Un hueco real (D9) y ningún accionable inmediato.** La cuarentena de claves es
+una capacidad que no tenemos, pero antes de portar nada toca (a) comprobar si
+`content_log.txt` ya trae el dato y (b) confirmar que el problema nos ocurre. Lo
+demás es su infraestructura, o cosas que ya resolvemos de otra forma.
+
 ## References
 
 - moon: `src/feats/depotkey.cpp` (`importLuaScripts`, `provisionManifests`,
