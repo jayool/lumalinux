@@ -4,18 +4,23 @@ on:
   push:
     branches: [main, master]
     tags: ['v*']
-    # res/updates.yaml is fetched at runtime by the deployed .so (src/update.cpp),
-    # not embedded, so a hash-only bump (watch-steam) doesn't change the artifact —
-    # skip the rebuild. NOTE: applies to tag pushes too, but a v* release is never
-    # cut on an updates.yaml-only commit ("no rebuild, no release"), so it's safe.
+    # res/updates.yaml and res/rvas/ are fetched at runtime by the deployed .so
+    # (src/update.cpp, src/rva_feed.cpp), not embedded, so a data-only bump
+    # (watch-steam) doesn't change the artifact — skip the rebuild. NOTE: applies
+    # to tag pushes too, but a v* release is never cut on a data-only commit
+    # ("no rebuild, no release"), so it's safe.
     paths-ignore:
       - 'res/updates.yaml'
+      - 'res/rvas/**'
   pull_request:
-    # Same reasoning: skip Build on PRs that only touch res/updates.yaml (the
-    # watch-steam hash bumps). Pattern re-derive PRs touch src/patterns.hpp, so
-    # they still build. paths-ignore only skips when EVERY changed file matches.
+    # Same reasoning: skip Build on PRs that only touch runtime-fetched data (the
+    # watch-steam hash bumps, which since 2026-08-11 carry res/rvas too). Pattern
+    # re-derive PRs touch src/patterns.hpp, so they still build — paths-ignore only
+    # skips when EVERY changed file matches, and that is what keeps the re-derive
+    # paths building even though they now commit res/rvas as well.
     paths-ignore:
       - 'res/updates.yaml'
+      - 'res/rvas/**'
   workflow_dispatch:
 
 permissions:
