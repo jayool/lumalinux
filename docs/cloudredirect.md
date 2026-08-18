@@ -181,3 +181,61 @@ curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | ba
 
 (If *neither* loads — no banner at all — that's the wrapper not being reached, not a
 missing `.so`; see `maintenance.md` case B.)
+
+## Re-barrido 2026-08-18 — v2.6.2 → HEAD (`bc5e38a`)
+
+*26 commits, del 2026-07-22 a hoy: releases v2.6.3, v2.6.4 y v2.6.5. La tabla de
+`SC_RVA_GLOBAL_ENGINE` de arriba ya cubría hasta v2.6.2, así que esa es la
+frontera real, no la ventana de julio del bloque "Update".*
+
+**La premisa de superficies disjuntas sigue intacta.** Nada de esta ventana toca
+el camino de contenido/depots. El grueso son playtime y last-played (`4c531ff`,
+`5c0c36f`, `531072f`, `c680fd5`, `784a506`), almacenamiento S3/R2, y la retirada
+progresiva de features de SteamTools (`75b87cf`, `bc5e38a`).
+
+### CloudRedirect pasa a MIT — antes no tenía licencia
+
+`2c7f89e` (2026-08-18) añade `LICENSE` con el texto MIT: **+21 líneas, cero
+borrados.** Es decir, hasta hoy el repo estaba **sin licencia**, que por defecto
+significa "todos los derechos reservados" — no era legalmente reutilizable. A
+partir de v2.6.5 sí lo es, con atribución. Relevante si alguna vez se quiere
+tomar algo prestado de ahí.
+
+### Accionable en LumaDeck: `_account_id()` elige mal el usuario sin `MostRecent`
+
+`9d9260d` (PR externo de `ciscosweater`) cambia el parseo de `loginusers.vdf` de
+"busca `MostRecent "1"`" a una cascada **`MostRecent > AutoLogin > Timestamp`**.
+Que venga de un PR de fuera dice que alguien se lo encontró en una máquina real.
+
+`LumaDeck backend/achievements.py:139-146` tiene el mismo patrón sin la cascada:
+
+```python
+if best is None:
+    best = sid                      # fallback: el PRIMERO del fichero
+if re.search(r'"MostRecent"\s*"1"', body):
+    best = sid; break
+```
+
+Sin `MostRecent "1"` se queda con el primer bloque del VDF, que es orden
+arbitrario, no recencia. Como `_account_id()` alimenta el nombre del fichero
+`UserGameStats`, elegir mal escribe los logros en el fichero de otra cuenta y no
+aparecen. **Prioridad baja** — en una Deck lo normal es una cuenta y `MostRecent`
+suele estar presente; es un arreglo para multi-cuenta. No aplicado.
+
+### Verificado y NO aplicable
+
+- **`ea671c8` "Watch SLSSteam config in a smarter way"** — CR pasa de
+  `inotify_add_watch(configPath, IN_MODIFY)` a vigilar el **directorio** con
+  `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE`. Es el mismo fallo que SLSsteam
+  arregló en `1444fa5` (ver `slssteam-analysis.md` §4.1): vigilar el fichero con
+  `IN_MODIFY` no ve una escritura por rename atómico. Tercer proyecto en
+  tropezar con ello. **lumalinux ya lo hace bien** — `key_store.cpp:181` vigila
+  el directorio con esa máscara exacta, y lo documenta. Nada que hacer.
+- **`eec2f2f` detección de "unlock solution"** — detecta `LumaCore.dll` y
+  recomienda HubcapTools, pero vive entera en `ui/` (el WPF de Windows); no
+  aparece en `src/platform/linux/` ni `src/common/`. El `.so` de Linux no gatea
+  nada, así que no hay riesgo para la coexistencia.
+- **`2251593` ruta `~/.steam/debian-installation/`** — LumaDeck sólo contempla
+  `.local/share/Steam` y `.steam/steam`. Esa ruta es de escritorios
+  Debian/Ubuntu; irrelevante en SteamOS salvo que algún día importe el Decky de
+  escritorio.
