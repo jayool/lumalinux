@@ -293,3 +293,68 @@ feature and is therefore safe to leave writable).
 is read back without revalidation and is writable by any same-user process. That
 is the remaining local vector, and closing it needs in-`.so` verification — i.e.
 the §14 "revisit" path. Unchanged priority: low, given the `.text` bounds.
+
+## 16. Re-derived patterns now publish to the feed too (2026-08-17)
+
+**The gap.** `watch-steam.yml` landed 2026-07-23; the RVA feed landed 2026-08-11,
+19 days later. Only the CLEAN path was retrofitted with `--emit-rvas`, so the two
+re-derivation paths kept committing `src/patterns.hpp` alone:
+
+```
+line 125:  git add res/updates.yaml res/rvas          <- CLEAN (exit 0)
+line 251:  git add src/patterns.hpp                   <- non-critical moved (exit 2)
+line 398:  git add src/patterns.hpp version.txt updates.yaml   <- critical moved (exit 3)
+```
+
+That inverted the feed's whole point. On a CLEAN build the feed is redundant (the
+byte pattern resolved — that is *how* the RVA was derived). On a moved-pattern
+build, where a data-only fix would actually help, the feed was empty and every
+user waited for a rebuild + release.
+
+**The change.** Both re-derivation paths now pass `--emit-rvas res/rvas
+--steam-version "$VER"` on the `check_patterns` re-validation they already run,
+and commit `res/rvas` alongside `patterns.hpp`. Two lines per path, plus `VER` in
+each step's `env`. `check_patterns` self-gates (`if args.emit_rvas and
+result["verdict"] != "BLOCKING"`), so a re-validation that fails writes nothing.
+
+**Why unreviewed publication is acceptable here** — this was the open question,
+and the existing pipeline already answers it. Reaching the commit step requires
+`check_patterns` to return CLEAN against the patched header, and CLEAN is not
+merely "the pattern matches somewhere":
+
+- Ghidra's derivation (`derive_patterns.py`) anchors on **stable Steam strings** —
+  `"BuildDepotDependency"`, `"ContentServerDirectory.GetManifestRequestCode#1"`,
+  `"shadercachedepot"`. The anchor *is* the function's identity.
+- DepotKey has no in-function anchor, so it is the weak one: dispatcher → the
+  `"Software\Valve\Steam\Depots\"` KeyValues path → follow `vtable[+0x18]`. But
+  `check_patterns` cross-checks it: `rtti_derive_slot` walks `CConfigStore`'s
+  vtable and requires **exactly one slot** whose target matches the re-derived
+  pattern. `NO_SLOT_MATCH`, `AMBIGUOUS` and `VTABLE_WALK_FAILED` all append to
+  `blocking` ⇒ exit 3 ⇒ `applied=false` ⇒ issue, no PR.
+
+Be precise about what that buys: RTTI takes the **same** `patstr`, so it is a
+*constraint* ("the function this pattern finds must be a CConfigStore virtual"),
+not an independent second derivation. It catches a pattern derived from a function
+outside that vtable — which is the realistic Ghidra failure — not a mis-derivation
+that happens to land on another slot of the same vtable.
+
+Note also what CLEAN does **not** prove: it answers "does this pattern match
+exactly once?", never "is this the right function?". The confidence comes from the
+string anchors and the RTTI constraint, not from uniqueness alone.
+
+**The behavioural change on the critical path, stated plainly.** The feed is keyed
+only by the steamclient.so SHA-256 and is **not scoped by SafeMode group**, so a
+deployed `.so` fetches it regardless of which pattern-set it was compiled with.
+Publishing on exit 3 therefore means deployed binaries **self-heal on next boot**,
+where previously they stayed inert until a Deck-tested release shipped. That is the
+intended win, but it does remove a human step that used to exist for criticals, so
+it is called out here and in the workflow comment rather than left implicit.
+
+The release is still required: the feed only covers the one hash it was derived
+from, while `patterns.hpp` is the fallback for every other build.
+
+**Stale comment fixed in passing.** The exit-3 block claimed deployed `.so`s stay
+inert because "SafeMode keeps blocking". lumalinux's hash check is **advisory**
+(`main.cpp:150` toasts and proceeds to the pattern scan); what actually keeps them
+inert is that their compiled-in patterns no longer resolve. Same outcome, wrong
+mechanism, and the difference matters now that the feed bypasses it.

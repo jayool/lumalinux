@@ -186,6 +186,7 @@ jobs:
         if: steps.check.outcome == 'success' && steps.check.outputs.exit == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.ver.outputs.version }}
         run: |
           echo "applied=false" >> "$GITHUB_OUTPUT"
           # Which non-critical const(s) actually moved (ShaderDepot / Reconcile).
@@ -218,8 +219,14 @@ jobs:
             echo "could not apply derived non-critical pattern(s) — falling back to issue."; exit 0
           fi
           # Re-validate against the live binary: patched header must be CLEAN (0).
+          # --emit-rvas piggybacks on this run: the re-derived addresses are
+          # published as DATA (res/rvas/<sha>.yaml) so deployed .so's self-heal on
+          # next boot, instead of waiting for the rebuild+release this PR needs.
+          # check_patterns only writes the file on a non-BLOCKING verdict, so a
+          # failed re-validation emits nothing and we bail below anyway.
           set +e
-          python3 tools/check_patterns.py steamclient.so --json recheck.json > recheck.txt 2>&1
+          python3 tools/check_patterns.py steamclient.so --json recheck.json \
+            --emit-rvas res/rvas --steam-version "$VER" > recheck.txt 2>&1
           rcode=$?
           set -e
           cat recheck.txt
@@ -248,7 +255,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BR"
-          git add src/patterns.hpp
+          git add src/patterns.hpp res/rvas
           git commit -m "fix(patterns): re-derive non-critical pattern(s) ($MOVED) for client $SHORT"
           git push -u origin "$BR"
           {
@@ -257,11 +264,17 @@ jobs:
             echo "Ghidra headless derivation (\`derive_patterns.py\`), re-derived UNIQUE pattern(s),"
             echo "applied them to \`src/patterns.hpp\`, and \`check_patterns.py\` now reports **CLEAN**."
             echo
-            echo "Unlike the hash-bump PR, **this changes a compiled pattern**, so it only takes"
-            echo "effect after a **rebuild + release** — merging alone is not enough. These are"
-            echo "non-critical (installs already work): ShaderDepot restores the per-game"
-            echo "shader-skip; Reconcile restores no-restart Add Game. No rush, but a live-install"
-            echo "test on a Deck is recommended first."
+            echo "Unlike the hash-bump PR, **this changes a compiled pattern**, so the pattern"
+            echo "itself only reaches users after a **rebuild + release**. These are non-critical"
+            echo "(installs already work): ShaderDepot restores the per-game shader-skip;"
+            echo "Reconcile restores no-restart Add Game. No rush, but a live-install test on a"
+            echo "Deck is recommended first."
+            echo
+            echo "**Merging alone DOES now fix this Steam build**, though: the PR also carries"
+            echo "\`res/rvas/<sha>.yaml\`, and deployed \`.so\`s fetch that feed by steamclient hash"
+            echo "on every boot. They resolve the re-derived addresses RVA-first and self-heal"
+            echo "without waiting for the release. The release still matters for every OTHER"
+            echo "build — the feed only covers the one hash it was derived from."
             echo
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
@@ -329,6 +342,7 @@ jobs:
         if: steps.check.outcome == 'success' && steps.check.outputs.exit == '3'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.ver.outputs.version }}
         run: |
           echo "applied=false" >> "$GITHUB_OUTPUT"
           ONLY=$(python3 tools/blocking_constants.py result.json)
@@ -352,8 +366,11 @@ jobs:
           if [ "$acode" -ne 0 ]; then
             echo "could not apply all blocking criticals — falling back to issue."; exit 0
           fi
+          # As on the non-critical path, publish the re-derived addresses as DATA
+          # too (see the note on the PR step below for why that is safe here).
           set +e
-          python3 tools/check_patterns.py steamclient.so --json recheck.json > recheck.txt 2>&1
+          python3 tools/check_patterns.py steamclient.so --json recheck.json \
+            --emit-rvas res/rvas --steam-version "$VER" > recheck.txt 2>&1
           rc=$?
           set -e
           cat recheck.txt
@@ -384,18 +401,36 @@ jobs:
           git checkout -b "$BR"
           # A moved CRITICAL hook needs a NEW pattern-set -> a new SafeMode group.
           # Bump res/version.txt to a fresh group-id, create that group in
-          # res/updates.yaml, and whitelist this build's hash THERE. Safe to land
-          # ahead of the release because deployed .so's key on their OLD compiled
-          # group (src/update.cpp) and never see this hash (SafeMode keeps blocking,
-          # correct), and LumaDeck's gate reads the RELEASE's version.txt so it will
-          # not offer this build until the release compiled from these patterns ships.
+          # res/updates.yaml, and whitelist this build's hash THERE. Deployed .so's
+          # key on their OLD compiled group (src/update.cpp) so they never see this
+          # hash, and LumaDeck's gate reads the RELEASE's version.txt so it will not
+          # offer this build until the release compiled from these patterns ships.
+          #
+          # NOTE: the hash whitelist is ADVISORY in lumalinux, not a gate — main.cpp
+          # only toasts on a miss and proceeds to the pattern scan (an earlier
+          # version of this comment said "SafeMode keeps blocking", which was never
+          # what the runtime did). What actually keeps a deployed .so inert on this
+          # build is that its compiled-in patterns no longer resolve.
+          #
+          # And that is exactly what the res/rvas file committed below now fixes:
+          # the feed is keyed ONLY by the steamclient.so hash and is NOT scoped by
+          # SafeMode group, so a deployed .so picks up the re-derived critical
+          # addresses on its next boot and self-heals WITHOUT this release. That is
+          # the intended effect, and it is a deliberate change in what this path
+          # means: it used to leave every user inert until a tested release shipped.
+          # The addresses are safe to publish unreviewed because reaching this step
+          # already required check_patterns to come back CLEAN, which for DepotKey
+          # means its RTTI walk found exactly one CConfigStore vtable slot matching
+          # the re-derived pattern (NO_SLOT_MATCH / AMBIGUOUS / VTABLE_WALK_FAILED
+          # are all BLOCKING). The release is still needed for the byte patterns
+          # themselves — the feed only covers builds it has a file for.
           NEW_GROUP=$(date -u +%Y%m%d%H%M%S)
           echo "$NEW_GROUP" > res/version.txt
           CAPS=$(python3 -c "import json;print(json.load(open('recheck.json')).get('caps_str',''))" 2>/dev/null || true)
           python3 tools/whitelist_hash.py "$SHA" --create-group \
             --steam-version "$VER" --caps "$CAPS" \
             --note "critical patterns re-derived by watch-steam.yml $(date -u +%Y-%m-%d); takes effect in the release built from this PR"
-          git add src/patterns.hpp res/version.txt res/updates.yaml
+          git add src/patterns.hpp res/version.txt res/updates.yaml res/rvas
           git commit -m "fix(patterns): re-derive critical hooks + new SafeMode group $NEW_GROUP for client $SHORT"
           git push -u origin "$BR"
           {
@@ -406,14 +441,19 @@ jobs:
             echo
             echo "This PR carries the full bookkeeping: new patterns **and** a bumped"
             echo "\`res/version.txt\` (new SafeMode group \`$NEW_GROUP\`) with this build whitelisted"
-            echo "under it. It still **needs a rebuild + release** — the new pattern-set only"
-            echo "takes effect in a \`.so\` compiled from this \`version.txt\`; merging alone does"
-            echo "not fix Decks."
+            echo "under it, plus \`res/rvas/<sha>.yaml\` with the re-derived addresses."
             echo
-            echo "**Safe to merge ahead of the release:** deployed \`.so\`s key on their own"
-            echo "compiled group, so they never see this hash (SafeMode keeps blocking, correct),"
-            echo "and LumaDeck reads the *release's* \`version.txt\`, so it won't offer this build"
-            echo "until the matching release ships."
+            echo "**Merging fixes THIS Steam build without the release.** Deployed \`.so\`s fetch"
+            echo "the RVA feed by steamclient hash on every boot — it is not scoped by SafeMode"
+            echo "group — so they pick up the re-derived critical addresses and self-heal on next"
+            echo "boot. Publishing them unreviewed is gated by \`check_patterns\` having come back"
+            echo "CLEAN, which for DepotKey means the RTTI walk found exactly one CConfigStore"
+            echo "vtable slot matching the new pattern."
+            echo
+            echo "**The release is still needed** for every OTHER build: the feed only covers the"
+            echo "hash below, while the compiled byte patterns are the fallback everywhere else."
+            echo "LumaDeck reads the *release's* \`version.txt\`, so it won't offer this build until"
+            echo "the matching release ships."
             echo
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
