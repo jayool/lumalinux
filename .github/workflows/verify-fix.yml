@@ -66,10 +66,19 @@ jobs:
       - name: Fetch CURRENT SLSsteam + CloudRedirect, build fix_atexit shim
         run: |
           mkdir -p sos && cd sos
-          # SLSsteam (latest release): SLSsteam.so + library-inject.so
+          # SLSsteam (latest release): SLSsteam.so + library-inject.so.
+          # The asset name changed upstream (SLSsteam-Any.7z -> per-variant
+          # SLSsteam-Any-release.7z / -debug.7z, first shipped in 20260819131545),
+          # so try the current name and fall back to the legacy one instead of
+          # 404ing. Mirrors resolve_slssteam_asset() in setup.sh.
           TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" "https://github.com/AceSLS/SLSsteam/releases/latest")
           TAG="${TAG##*/}"; echo "SLSsteam latest: $TAG"
-          wget -q "https://github.com/AceSLS/SLSsteam/releases/download/$TAG/SLSsteam-Any.7z" -O SLSsteam.7z
+          for ASSET in SLSsteam-Any-release.7z SLSsteam-Any.7z; do
+            URL="https://github.com/AceSLS/SLSsteam/releases/download/$TAG/$ASSET"
+            if wget -q "$URL" -O SLSsteam.7z; then echo "SLSsteam asset: $ASSET"; break; fi
+            rm -f SLSsteam.7z
+          done
+          [ -s SLSsteam.7z ] || { echo "::error::No SLSsteam archive found in release $TAG (renamed again?)"; exit 1; }
           7z x -y SLSsteam.7z >/dev/null
           cp bin/SLSsteam.so SLSsteam.so
           cp bin/library-inject.so library-inject.so
