@@ -594,30 +594,9 @@ SRC="${1:-$HOME/LumaDeck}"
 [ -d "$SRC" ] || { echo "No está el repo en $SRC. git clone https://github.com/jayool/LumaDeck.git $SRC"; exit 1; }
 cd "$SRC"
 git pull --ff-only 2>/dev/null || true
-# Build with pnpm, not npm. The project is pnpm-based (pnpm-lock.yaml, and the
-# release workflow builds with pnpm), and `npm install` both resolves the tree
-# differently and currently dies outright on a peer conflict that @decky/rollup
-# pulls in. Using pnpm here also means a source deploy is built from the same
-# dependency versions as the published zip. The image ships nodejs+npm only, so
-# fetch pnpm on first use.
-if ! command -v pnpm >/dev/null 2>&1; then
-    echo "== instalando pnpm (el proyecto usa pnpm-lock.yaml) =="
-    corepack enable pnpm 2>/dev/null \
-        || npm i -g pnpm >/dev/null 2>&1 \
-        || sudo npm i -g pnpm >/dev/null 2>&1 \
-        || true
-fi
-command -v pnpm >/dev/null 2>&1 || {
-    echo "ERROR: no hay pnpm y no he podido instalarlo. 'npm i -g pnpm' y reintenta."
-    exit 1
-}
-echo "== pnpm install + build =="
-# confirmModulesPurge=false: a clone that was built with npm before (this script
-# used to) has an npm-shaped node_modules, and pnpm stops to ask before replacing
-# it — which hangs with no TTY. There is nothing to lose by purging: node_modules
-# is generated and gitignored.
-pnpm install --config.confirmModulesPurge=false
-pnpm run build
+echo "== npm install + build =="
+npm install
+npm run build
 DEST="$HOME/homebrew/plugins/LumaDeck"
 echo "== deploy -> $DEST =="
 rm -rf "$DEST"
