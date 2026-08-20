@@ -3318,3 +3318,135 @@ regla de tipos (no leemos por máscaras en ningún sitio, y somos nosotros los q
 formas), y la URL `master` del schema (el redirect de GitHub devuelve 200 y contenido idéntico).
 El patrón es consistente y vale como lección: **el hallazgo sobrevive si se mide o se lee el
 código; muere si se razona por analogía con lo que hizo upstream.**
+
+
+---
+
+### 7.8 Ventana `20260815201341` → `20260820085507` (2026-08-15 … 2026-08-20)
+
+34 commits en 5 días activos y tres tags: `20260819120840` (sin release publicada),
+`20260819131545` y `20260820085507`. Ventana corta y de bajo voltaje comparada con
+§7.7 — no da para barrido día a día, así que va por temas.
+
+#### 7.8.1 Panorama — más cimientos de SDK, y dos arreglos que sí importan
+
+| Tema | Commits | Efecto para nosotros |
+|---|---|---|
+| Expansión del SDK | 9 (16 y 19-ago) | Ninguno hoy; confirma la dirección de §7.7.0 |
+| `isUserSubscribedAppInTicket` con la firma mal | 1 (20-ago) | **Regalo gratis**: DLC en juegos con AuthSessions |
+| Validación del feed de SafeMode | 1 (17-ago) | **Espejo de un fallo nuestro**, §7.8.3 |
+| Logging: toggles y saltos de línea | 3 (19-ago) | Ninguno; no toca la superficie de config |
+| Renombrado de assets de release | 1 (16-ago) | Nos rompió el instalador 44 h; ya arreglado |
+| `chore(PKGBUILDs)` / `style` / docs de la API | 19 | Ninguno |
+
+**El SDK sigue creciendo.** `CSteamClient` y `CValidator` nuevos, `CServerPipe`
+ampliado, `SDK_Class`/`SDK_Struct` para fijar alineación y packing, y un repaso de
+tipos por todas las interfaces `IClient*`. Es continuación directa del hilo
+conductor de §7.7.0: sustituir hooking por patrones de bytes por navegación
+estructural. Nada accionable, pero cuanto más se apoye en estructuras menos le
+rompen los updates de Steam — y menos ruido de re-derivación para el ecosistema.
+
+#### 7.8.2 `isUserSubscribedAppInTicket` — la firma estaba mal [REGALO GRATIS]
+
+`6546411` (20-ago, release `20260820085507`). El hook estaba declarado con la
+firma equivocada:
+
+```c
+- (IClientUser*, uint32_t steamId, uint32_t a2, uint32_t a3, AppId_t appId)
++ (IClientUser*, uint64_t steamId,                           AppId_t appId)
+```
+
+Un `SteamId` de 64 bits leído como tres argumentos de 32, así que el `appId` que
+llegaba al hook era basura. Sus notas de release: *"Fix DLC unlocker in games using
+AuthSessions"*.
+
+**Nada que implementar.** Llega solo al instalar la release del 20-ago, que es la
+que `setup.sh` resuelve hoy. Afecta a juegos que validan por ticket de sesión, no
+al camino de instalación de LumaDeck.
+
+#### 7.8.3 Validación del feed de SafeMode — el mismo agujero en `src/update.cpp`, y peor [BAJA, cosmético]
+
+`aa27169` (17-ago), con el comentario del propio Ace: *"today github decided to do
+some trolling by returning a wholly different message"*.
+
+```cpp
+- if (res == 0 && data.size() > 0)
++ if (res == 0 && data.starts_with("SafeModeHashes:\n"))
+```
+
+GitHub le devolvió **200 con un cuerpo que no era el feed**, y su comprobación de
+tamaño lo dejó pasar.
+
+**Nuestro `src/update.cpp:39-51` no tiene ni la comprobación de tamaño** en el
+camino de éxito: solo valida en el camino de caché.
+
+```cpp
+int res = Curl::getString(url, data);
+if (res != 0) { data = loadFromCache(); if (data.size() < 1) return false; }
+// res == 0 -> se usa `data` tal cual, sea lo que sea
+```
+
+Y hay una segunda mitad que SLSsteam no tiene: `saveToCache(data)` (línea 80) se
+ejecuta **incondicionalmente** tras un parseo sin excepción.
+
+**Medido** (compilando contra yaml-cpp, no razonado por analogía — el parseo es
+independiente de la arquitectura):
+
+| Cuerpo recibido con HTTP 200 | `YAML::Load` | Entradas | ¿Se cachea? |
+|---|---|---|---|
+| Vacío | parsea | 0 | **sí** |
+| Página de error HTML | parsea | 0 | **sí** |
+| JSON de error de la API | parsea | 0 | **sí** |
+| Texto plano (`Not Found`) | lanza | — | no |
+| Feed bueno | parsea | 1 | sí |
+
+O sea: tres de los cuatro cuerpos basura plausibles **parsean sin lanzar**, dejan
+`clientHashMap` vacío, y **sobrescriben una caché buena**. Solo el texto plano
+suelto se salva, porque `operator[]` sobre un escalar lanza.
+
+**Severidad: baja, cosmética — y conviene decir por qué.** En lumalinux el hash de
+SafeMode es **advisory, no un gate**: `main.cpp:150` solo dispara un toast, los
+hooks se instalan igual y el gate real es el escaneo de patrones (a diferencia de
+SLSsteam, donde `SafeMode: yes` aborta la carga). El daño máximo es un toast
+diciendo *"steamclient.so hash not in the verified list (Steam may have updated)"*
+cuando no ha pasado nada — y que persista en arranques sin red, por la caché
+envenenada.
+
+No rompe instalaciones. Pero es exactamente el tipo de mensaje que manda a
+perseguir un problema inexistente, así que merece las cuatro líneas que cuesta.
+
+**Accionable:** copiar el `starts_with` en el camino de éxito y no cachear lo que
+no valide.
+
+#### 7.8.4 `Notifications` — `setup.sh` escribe una clave que ya no existe [BAJA, cosmético]
+
+La opción desapareció de `config_default.hpp` en la release del 15-ago (§7.7.19);
+ahora se controla vía `LogLevels`. Verificado contra el upstream de hoy: `NotifyInit`
+y `LogLevels` siguen; `Notifications` no.
+
+`setup.sh:210` sigue haciendo `sed -i "s/^Notifications:.*/Notifications: yes/"`.
+
+**Inocuo**, y conviene ser preciso sobre por qué: SLSsteam solo reporta claves
+**faltantes** (`ELoadError::MissingKey`, `config.cpp:121`), no sobrantes, así que
+un `Notifications:` residual en una config vieja se ignora en silencio; y en una
+config nueva el `sed` simplemente no casa.
+
+Lo que sí está mal es el mensaje de la línea 234, que anuncia
+*"NotifyInit/Notifications=yes"*: dice haber hecho algo que no hace.
+
+LumaDeck ya está al día por otra vía — `slssteam_schema.py` refrescó su config de
+referencia en `a061b00` y no lleva `Notifications`.
+
+**Accionable:** quitar el `sed` muerto y corregir el mensaje.
+
+#### 7.8.5 Balance de la ventana
+
+| # | Qué | Estado |
+|---|---|---|
+| 1 | DLC en juegos con AuthSessions | **Gratis** al actualizar SLSsteam |
+| 2 | Validación del feed de SafeMode en `src/update.cpp` | Abierto, baja |
+| 3 | `sed` muerto de `Notifications` en `setup.sh` | Abierto, baja |
+
+Sin hallazgos de prioridad media o alta. El accionable de §7.7.12.a (`std::realloc`
+sobre memoria de Steam) sigue siendo el único abierto de peso, y esta ventana no
+aporta nada nuevo sobre él.
