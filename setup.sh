@@ -36,7 +36,7 @@
 #
 # Overrides (reversible self-testing):
 #   LUMALINUX_SO_URL   install a specific liblumalinux.so (e.g. a -test asset)
-#   SLSSTEAM_7Z_URL    install a specific SLSsteam-Any.7z
+#   SLSSTEAM_7Z_URL    install a specific SLSsteam release archive
 #   CLOUDREDIRECT_URL  install a specific cloud_redirect.so
 #   NETSOCK_SO_URL     install a specific netsock fix.so
 #   LUMA_SKIP_CR_APP=1 skip the CloudRedirect flatpak (GUI sign-in) install
@@ -58,7 +58,14 @@ ENSURE_SCRIPT="${SLS_DIR}/ensure-desktop-coverage.sh"
 
 LL_SO_NAME="liblumalinux.so"
 LL_SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/download/${LL_SO_NAME}}"
-SLS_7Z_URL="${SLSSTEAM_7Z_URL:-https://github.com/AceSLS/SLSsteam/releases/latest/download/SLSsteam-Any.7z}"
+# SLSsteam's release asset was renamed upstream: the single `SLSsteam-Any.7z`
+# became per-variant `SLSsteam-Any-release.7z` / `-debug.7z` (AceSLS 6a06652,
+# first published in the 20260819131545 release). We want the plain release
+# build. Both names are tried, newest first, so older pinned releases still
+# resolve. Filled in by resolve_slssteam_asset() at fetch time.
+SLS_7Z_ASSETS=("SLSsteam-Any-release.7z" "SLSsteam-Any.7z")
+SLS_7Z_URL=""
+SLS_TAG=""
 CR_URL="${CLOUDREDIRECT_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so}"
 CR_CLI_URL="${CLOUDREDIRECT_CLI_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect_cli}"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
@@ -377,6 +384,63 @@ install_dotnet9() {
         warn ".NET 9 installer download failed (non-fatal)."
     fi
     return 0
+}
+
+# ── SLSsteam release asset + tag ───────────────────────────────────────────
+# Resolves which archive to download AND which release it is.
+#
+# Why not api.github.com: rate-limited for unauthenticated callers, and a 403
+# there would leave us unable to install at all. We use the release redirects
+# instead — but in two steps, because of a GitHub behaviour that is easy to get
+# wrong:
+#
+#   /releases/latest/download/<name>  ->  302  /releases/download/<TAG>/<name>
+#
+# GitHub issues that 302 for ANY <name>, whether or not the release publishes an
+# asset with that name; the 404 only appears at the SECOND hop. So the redirect
+# is a reliable way to learn the tag and a useless way to test the asset.
+#
+# Step 1 therefore reads the tag off the redirect, and step 2 asks for the pinned
+# URL with -L and checks the FINAL status to pick the name this release really
+# ships. Both come out of the same resolution, so the version we record can never
+# describe a different build than the one we install (the previous code resolved
+# the two independently, and the tag lookup could fail on its own — leaving the
+# plugin permanently unable to detect SLSsteam updates, silently).
+resolve_slssteam_asset() {
+    # Explicit override: use it verbatim and record no tag — it need not be an
+    # AceSLS release at all, so any tag we invented would be a lie.
+    if [[ -n "${SLSSTEAM_7Z_URL:-}" ]]; then
+        SLS_7Z_URL="$SLSSTEAM_7Z_URL"
+        SLS_TAG=""
+        return 0
+    fi
+
+    local base="https://github.com/AceSLS/SLSsteam/releases"
+    local loc tag asset url code
+
+    # Step 1 — the tag. No -f/-L: we want the 302 itself, not the body.
+    loc="$(curl -sS --connect-timeout 15 --max-time 30 -o /dev/null \
+           -w '%{redirect_url}' "${base}/latest/download/${SLS_7Z_ASSETS[0]}" \
+           2>/dev/null || true)"
+    [[ "$loc" == *"/releases/download/"* ]] || return 1
+    tag="${loc#*/releases/download/}"
+    tag="${tag%%/*}"
+    # AceSLS tags releases with a build timestamp (YYYYMMDDHHMMSS). Anything else
+    # — the stale rolling `update` tag, an error page — is rejected, so we never
+    # record a "version" the plugin's compare cannot order.
+    [[ "$tag" =~ ^[0-9]{14}$ ]] || return 1
+
+    # Step 2 — which asset name this release actually publishes.
+    for asset in "${SLS_7Z_ASSETS[@]}"; do
+        url="${base}/download/${tag}/${asset}"
+        code="$(curl -sS -I -L --connect-timeout 15 --max-time 60 -o /dev/null \
+                -w '%{http_code}' "$url" 2>/dev/null || true)"
+        [[ "$code" == "200" ]] || continue
+        SLS_7Z_URL="$url"
+        SLS_TAG="$tag"
+        return 0
+    done
+    return 1
 }
 
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
@@ -853,19 +917,23 @@ fi
 install_os_deps
 
 SEVENZIP="$(first_cmd 7z 7za 7zr || true)"
-[[ -n "$SEVENZIP" ]] || die "7z is required to extract SLSsteam-Any.7z (install p7zip / 7zip)."
+[[ -n "$SEVENZIP" ]] || die "7z is required to extract the SLSsteam archive (install p7zip / 7zip)."
 
 # ── fetch ──────────────────────────────────────────────────────────────────
 info "Installing lumalinux unlock stack (self-contained, wrapper injection)..."
 TMP_DIR="$(mktemp -d)"
 mkdir -p "$SLS_DIR" "$SLS_CFG_DIR" "$CR_DIR" "$LL_DIR" "$KEYS_DIR" "$WRAPPER_DIR"
 
-# SLSsteam + library-inject (bundled in SLSsteam-Any.7z under bin/).
+# SLSsteam + library-inject (bundled in the release archive under bin/).
 info "Downloading SLSsteam..."
+resolve_slssteam_asset || die "Could not resolve the SLSsteam release asset (tried: ${SLS_7Z_ASSETS[*]}). Upstream may have renamed it again — see SLS_7Z_ASSETS."
+if [[ -n "$SLS_TAG" ]]; then
+    info "SLSsteam release: ${SLS_TAG}"
+fi
 curl -fL --progress-bar -o "${TMP_DIR}/sls.7z" "$SLS_7Z_URL" \
-    || die "Failed to download SLSsteam-Any.7z ($SLS_7Z_URL)."
+    || die "Failed to download the SLSsteam archive ($SLS_7Z_URL)."
 "$SEVENZIP" x -aoa -o"${TMP_DIR}/sls" "${TMP_DIR}/sls.7z" >/dev/null \
-    || die "Failed to extract SLSsteam-Any.7z."
+    || die "Failed to extract the SLSsteam archive."
 [[ -f "${TMP_DIR}/sls/bin/SLSsteam.so" ]] \
     || die "SLSsteam.so not found in the archive (upstream layout changed?)."
 install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/SLSsteam.so"
@@ -878,30 +946,19 @@ else
 fi
 
 # Record the installed SLSsteam version so LumaDeck can detect updates. SLSsteam
-# embeds its version (a build timestamp) ONLY inside the compiled .so and writes
-# nothing readable to disk — unlike lumalinux, whose injected .so drops a
-# status.json with its version. So we capture the release tag we just pulled from
-# /releases/latest/ (its tag IS that timestamp) and stash it where the plugin's
-# get_sls_version() reads it. Best-effort: on API failure we write nothing (the
-# plugin then reports "no update", the safe default). Skipped when a custom
-# SLSSTEAM_7Z_URL is set, since the AceSLS 'latest' tag would not describe it.
-if [[ -z "${SLSSTEAM_7Z_URL:-}" ]]; then
-    # Resolve the release tag the SAME way headcrab does: follow the /releases/latest
-    # redirect and read the FINAL url (.../releases/tag/<tag>), then strip to the tag
-    # with pure shell. This deliberately avoids api.github.com (rate-limited) and has
-    # no pipe (so no SIGPIPE under `set -o pipefail`). `|| true` keeps a network
-    # failure from aborting the install; the guards below reject a non-redirect
-    # (offline → url still ends in "latest") so we never record a bogus tag.
-    _sls_tag="$(curl -sSL --connect-timeout 15 --max-time 30 -o /dev/null \
-        -w '%{url_effective}' "https://github.com/AceSLS/SLSsteam/releases/latest" 2>/dev/null || true)"
-    _sls_tag="${_sls_tag##*/}"
-    if [[ -n "$_sls_tag" && "$_sls_tag" != "latest" ]]; then
-        printf '%s\n' "$_sls_tag" > "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null \
-            && ok "Recorded SLSsteam version: $_sls_tag" \
-            || warn "Could not write SLSsteam version file (update detection will be skipped)."
-    else
-        info "Could not resolve SLSsteam release tag — update detection will be skipped."
-    fi
+# embeds its version ONLY inside the compiled .so and writes nothing readable to
+# disk — unlike lumalinux, whose injected .so drops a status.json with its
+# version — so "which release is installed" has to be remembered at install time,
+# the way a package manager does.
+#
+# SLS_TAG comes from the SAME redirect that produced SLS_7Z_URL (see
+# resolve_slssteam_asset), so it always describes the archive we just unpacked.
+# It is empty only when SLSSTEAM_7Z_URL pinned a custom archive, which the AceSLS
+# release tags do not describe; we then record nothing rather than a wrong value.
+if [[ -n "$SLS_TAG" ]]; then
+    printf '%s\n' "$SLS_TAG" > "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null \
+        && ok "Recorded SLSsteam version: $SLS_TAG" \
+        || warn "Could not write the SLSsteam version file (update detection will be skipped)."
 fi
 
 # Config: seed from the template if absent, else merge (preserving your values);
