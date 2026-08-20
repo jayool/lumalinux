@@ -191,23 +191,27 @@ merge_slssteam_config() {
     fi
 }
 
-# Flip SLSsteam's config values to what the wrapper stack needs. FLIP-IN-PLACE
-# ONLY — every key we set exists in SLSsteam's current default config (which the
-# seed/merge above always produces), so a bare sed always matches; we never append
-# a key. Deprecated keys (e.g. PlayNotOwnedGames, removed in SLSsteam 20260707) are
-# already GONE here — the template-based merge drops anything not in the current
-# template — so there is nothing to handle for them. What we flip and why:
+# Flip SLSsteam's config values to what the wrapper stack needs. Every key here
+# must exist in the CURRENT SLSsteam default config — the seed/merge above tracks
+# the template's key set, so a key upstream has removed is already gone from the
+# file and a bare sed for it would be dead code (that is what happened to
+# `Notifications`, see below). Deprecated keys (e.g. PlayNotOwnedGames, removed in
+# SLSsteam 20260707) need no handling for the same reason. What we flip and why:
 #   SafeMode: no        — undo headcrab's update "freno" (also SLSsteam's own default;
 #                          lets it hook fresh Steam builds, matches main.cpp advisory hash)
 #   DisableCloud: no    — we bundle CloudRedirect, so cloud stays on
 #   DisableUpdates: no  — AdditionalApps (unowned) games must be allowed to update
-#   NotifyInit/Notifications: yes — UX toasts
+#   NotifyInit: yes     — the "SLSsteam is up" toast
+#
+# NOT flipped, deliberately: `Notifications`. It was the other half of the toast
+# config until SLSsteam removed it in the 20260815 release; that behaviour now
+# lives in the LogLevels bitmask (NotifyShort 0x40 / NotifyLong 0x80), whose
+# default 0xff already enables both. We leave LogLevels alone.
 edit_slssteam_config() {
     local cfg="$1"; [[ -f "$cfg" ]] || return 0
 
-    # Cosmetic toasts — flip in place, best-effort (a miss only loses a toast).
+    # Cosmetic toast — flip in place, best-effort (a miss only loses a toast).
     sed -i "s/^NotifyInit:.*/NotifyInit: yes/" "$cfg"
-    sed -i "s/^Notifications:.*/Notifications: yes/" "$cfg"
 
     # Functional keys — flip in place, and if the flip DIDN'T take (the key was
     # absent or not top-level: e.g. the SLSsteam template was missing so the
@@ -231,7 +235,7 @@ edit_slssteam_config() {
         grep -qE "^${_key}:[[:space:]]*no([[:space:]]|\$)" "$cfg" || bad="${bad:+$bad, }${_key}"
     done
     if [[ -z "$bad" ]]; then
-        ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit/Notifications=yes)."
+        ok "Applied SLSsteam config (SafeMode/DisableCloud/DisableUpdates=no, NotifyInit=yes)."
     else
         warn "SLSsteam config: ${bad} could NOT be set to 'no' in $cfg — SLSsteam's update-freeze/block may still be active. Check the file by hand."
     fi
