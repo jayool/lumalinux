@@ -594,9 +594,30 @@ SRC="${1:-$HOME/LumaDeck}"
 [ -d "$SRC" ] || { echo "No está el repo en $SRC. git clone https://github.com/jayool/LumaDeck.git $SRC"; exit 1; }
 cd "$SRC"
 git pull --ff-only 2>/dev/null || true
-echo "== npm install + build =="
-npm install
-npm run build
+# Build with pnpm, not npm. The project is pnpm-based (pnpm-lock.yaml, and the
+# release workflow builds with pnpm), and `npm install` both resolves the tree
+# differently and currently dies outright on a peer conflict that @decky/rollup
+# pulls in. Using pnpm here also means a source deploy is built from the same
+# dependency versions as the published zip. The image ships nodejs+npm only, so
+# fetch pnpm on first use.
+if ! command -v pnpm >/dev/null 2>&1; then
+    echo "== instalando pnpm (el proyecto usa pnpm-lock.yaml) =="
+    corepack enable pnpm 2>/dev/null \
+        || npm i -g pnpm >/dev/null 2>&1 \
+        || sudo npm i -g pnpm >/dev/null 2>&1 \
+        || true
+fi
+command -v pnpm >/dev/null 2>&1 || {
+    echo "ERROR: no hay pnpm y no he podido instalarlo. 'npm i -g pnpm' y reintenta."
+    exit 1
+}
+echo "== pnpm install + build =="
+# confirmModulesPurge=false: a clone that was built with npm before (this script
+# used to) has an npm-shaped node_modules, and pnpm stops to ask before replacing
+# it — which hangs with no TTY. There is nothing to lose by purging: node_modules
+# is generated and gitignored.
+pnpm install --config.confirmModulesPurge=false
+pnpm run build
 DEST="$HOME/homebrew/plugins/LumaDeck"
 echo "== deploy -> $DEST =="
 rm -rf "$DEST"
@@ -605,6 +626,47 @@ mkdir -p "$DEST"
 for p in plugin.json main.py package.json dist backend defaults assets LICENSE; do
     [ -e "$p" ] && cp -r "$p" "$DEST"/
 done
+
+# Stamp the version from git, the way the release workflow stamps it from the tag.
+#
+# The plugin reports its own version out of the package.json it was deployed with
+# (self_update._installed_version) and compares that against the latest release
+# tag. Since the release workflow became the one that sets the version, the
+# repo's package.json is no longer the source of truth and just carries whatever
+# it last happened to say — so copying it verbatim makes a source deploy report a
+# stale number and the plugin offers an update that installing can never clear.
+#
+# git describe gives e.g. v0.7.3-2-g9bbc123: _parse_version() reads the first
+# three numbers and ignores the rest, so this compares equal to the v0.7.3
+# release (no phantom offer) while still showing at a glance how far ahead of the
+# tag the build is. If a NEWER release exists, describe still reports the older
+# tag and the update offer appears — which is correct.
+#
+# No --always: with no tags describe would return a bare sha like 9bbc123, which
+# parses as version 9.123 and would silently claim to be newer than every
+# release. Better to leave the file alone and say so.
+ver="$(git -C "$SRC" describe --tags --dirty 2>/dev/null || true)"
+ver="${ver#v}"
+case "$ver" in
+    [0-9]*.[0-9]*.[0-9]*)
+        python3 - "$DEST/package.json" "$ver" <<'PY'
+import json, sys
+path, version = sys.argv[1], sys.argv[2]
+with open(path) as fh:
+    pkg = json.load(fh)
+pkg["version"] = version
+with open(path, "w") as fh:
+    json.dump(pkg, fh, indent=2)
+    fh.write("\n")
+PY
+        echo "== version -> $ver (desde git describe) =="
+        ;;
+    *)
+        echo "== aviso: git describe no dio una version usable ('$ver'); package.json"
+        echo "   queda como este en el repo, asi que el plugin puede ofrecerte un"
+        echo "   update fantasma. Comprueba que el clon tiene tags (git fetch --tags). =="
+        ;;
+esac
 echo "== hecho. Si Decky ya corre, reinícialo (~/start-decky.sh) para que lo recoja. =="
 DLD
 chmod +x "$HOME/deploy-lumadeck.sh"
