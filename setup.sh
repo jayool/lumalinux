@@ -499,9 +499,12 @@ resolve_cloudredirect_asset() {
     # No jq, no python: this installer deliberately depends on nothing but the
     # shell, curl and 7z. GitHub pretty-prints this response one field per line,
     # with "draft"/"prerelease" ahead of their release's assets, which is enough
-    # for a small state machine. The url line is matched STRICTLY so that a
-    # differently-formatted response yields nothing rather than a lucky wrong
-    # guess — the caller then dies with a clear message.
+    # for a small state machine. The url line is matched strictly (nothing but
+    # that field on the line) to pin the layout this relies on: on a response
+    # shaped differently it matches nothing and the caller dies with a clear
+    # message, rather than parsing a format it was not written for. It is not
+    # what stops a url quoted inside a release body from being picked up — JSON
+    # escaping already does that, since the inner quotes arrive as \".
     CR_URL="$(printf '%s\n' "$json" | awk -v asset="$CR_SO_ASSET" '
         /^[[:space:]]*"draft":/      { skip_d = ($0 ~ /true/); next }
         /^[[:space:]]*"prerelease":/ { skip_p = ($0 ~ /true/); next }
