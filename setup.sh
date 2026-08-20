@@ -66,8 +66,21 @@ LL_SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/downlo
 SLS_7Z_ASSETS=("SLSsteam-Any-release.7z" "SLSsteam-Any.7z")
 SLS_7Z_URL=""
 SLS_TAG=""
-CR_URL="${CLOUDREDIRECT_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so}"
-CR_CLI_URL="${CLOUDREDIRECT_CLI_URL:-https://github.com/Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect_cli}"
+# CloudRedirect's Linux build ships as a `cloud_redirect.so` asset on its own
+# semver releases. We used to take it from Selectively11/h3adcr-b's `linux-test`
+# tag (what headcrab wgets), but that is a rolling tag on a fork whose script has
+# been frozen since May: the file is replaced in place, so the URL says nothing
+# about which version is behind it, and it has been seen lagging the real
+# releases. Tracking the release means what we install is the same thing LumaDeck
+# compares against. Resolved by resolve_cloudredirect_asset() at fetch time.
+#
+# The companion cloud_redirect_cli is NOT published in the releases; it comes out
+# of the flatpak, which bundles both files from the same build (see
+# deploy_cloudredirect_cli).
+CR_RELEASES="https://github.com/Selectively11/CloudRedirect/releases"
+CR_API_RELEASES="https://api.github.com/repos/Selectively11/CloudRedirect/releases?per_page=10"
+CR_SO_ASSET="cloud_redirect.so"
+CR_URL=""
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
 NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
@@ -441,6 +454,89 @@ resolve_slssteam_asset() {
         return 0
     done
     return 1
+}
+
+# ── CloudRedirect .so: which release actually has a Linux build ────────────
+# /releases/latest is not enough on its own. CloudRedirect cuts Windows-only
+# releases — v2.1.9, v2.2.4, v2.5.3, v2.6.1 and v2.6.2 carry CloudRedirect.exe
+# and no cloud_redirect.so — so during those windows "latest" has nothing for us.
+#
+# Optimistic, so the common case costs no API call: ask for the asset on the
+# latest release and take it if it is really there; only when it is not do we
+# spend a request listing releases to walk back. (Note the 302 from
+# /releases/latest/download/<name> fires for ANY name, existing or not — the 404
+# only appears at the second hop — so the check has to follow redirects and look
+# at the FINAL status.)
+resolve_cloudredirect_asset() {
+    if [[ -n "${CLOUDREDIRECT_URL:-}" ]]; then
+        CR_URL="$CLOUDREDIRECT_URL"
+        return 0
+    fi
+
+    local loc code
+    # Fast path: does the newest release publish a Linux build?
+    loc="$(curl -sS --connect-timeout 15 --max-time 30 -o /dev/null \
+           -w '%{redirect_url}' "${CR_RELEASES}/latest/download/${CR_SO_ASSET}" \
+           2>/dev/null || true)"
+    if [[ "$loc" == *"/releases/download/"*"/${CR_SO_ASSET}" ]]; then
+        code="$(curl -sS -I -L --connect-timeout 15 --max-time 60 -o /dev/null \
+                -w '%{http_code}' "$loc" 2>/dev/null || true)"
+        if [[ "$code" == "200" ]]; then
+            CR_URL="$loc"
+            return 0
+        fi
+    fi
+
+    # Slow path: the newest release is Windows-only, so walk back through the
+    # release list for the newest one that does ship the asset.
+    info "Newest CloudRedirect release has no Linux build; looking further back..."
+    local json
+    json="$(curl -sS --connect-timeout 15 --max-time 30 \
+            -H 'Accept: application/vnd.github+json' "$CR_API_RELEASES" \
+            2>/dev/null || true)"
+    [[ -n "$json" ]] || return 1
+
+    # No jq, no python: this installer deliberately depends on nothing but the
+    # shell, curl and 7z. GitHub pretty-prints this response one field per line,
+    # with "draft"/"prerelease" ahead of their release's assets, which is enough
+    # for a small state machine. The url line is matched STRICTLY so that a
+    # differently-formatted response yields nothing rather than a lucky wrong
+    # guess — the caller then dies with a clear message.
+    CR_URL="$(printf '%s\n' "$json" | awk -v asset="$CR_SO_ASSET" '
+        /^[[:space:]]*"draft":/      { skip_d = ($0 ~ /true/); next }
+        /^[[:space:]]*"prerelease":/ { skip_p = ($0 ~ /true/); next }
+        /^[[:space:]]*"browser_download_url": "[^"]*"[,]?[[:space:]]*$/ {
+            if (skip_d || skip_p) next
+            line = $0
+            sub(/^[^"]*"browser_download_url": "/, "", line)
+            sub(/".*$/, "", line)
+            if (line ~ ("/download/[^/]+/" asset "$")) { print line; exit }
+        }
+    ')"
+    [[ -n "$CR_URL" ]]
+}
+
+# cloud_redirect_cli — the 32-bit shim the CloudRedirect UI uses to reach the
+# 32-bit .so from a 64-bit process. It is not published in the releases, but the
+# flatpak bundles it next to the .so from the same build, so we take it from
+# there instead of reintroducing a second download source. Best-effort: nothing
+# in LumaDeck drives the CLI yet, and CloudRedirect itself works without it.
+deploy_cloudredirect_cli() {
+    local loc cli
+    loc="$(flatpak info --user --show-location "$CR_FLATPAK_ID" 2>/dev/null \
+           || flatpak info --show-location "$CR_FLATPAK_ID" 2>/dev/null || true)"
+    if [[ -z "$loc" || ! -d "$loc" ]]; then
+        info "CloudRedirect app not installed — skipping cloud_redirect_cli."
+        return 0
+    fi
+    cli="${loc}/files/share/cloud_redirect/cloud_redirect_cli"
+    if [[ -f "$cli" ]]; then
+        install -m 0755 "$cli" "${CR_DIR}/cloud_redirect_cli" \
+            && ok "Deployed ${CR_DIR}/cloud_redirect_cli (from the flatpak)" \
+            || warn "Could not copy cloud_redirect_cli out of the flatpak (non-fatal)."
+    else
+        info "cloud_redirect_cli not bundled in this CloudRedirect app build — skipping."
+    fi
 }
 
 # CloudRedirect GUI app via flatpak. Best-effort, skippable, never fatal.
@@ -980,18 +1076,16 @@ edit_slssteam_config "${SLS_CFG_DIR}/config.yaml"
 # helper and the sign-in GUI app stay best-effort (CR is inert until a provider
 # signs in, and those are only needed at that point).
 info "Downloading CloudRedirect..."
+resolve_cloudredirect_asset \
+    || die "Could not find a CloudRedirect release publishing ${CR_SO_ASSET}. It ships with the stack and cloud is enabled; aborting rather than leaving cloud on without it."
 curl -fL --progress-bar -o "${TMP_DIR}/cloud_redirect.so" "$CR_URL" \
     || die "Failed to download CloudRedirect ($CR_URL) — it ships with the stack and cloud is enabled; aborting rather than leaving cloud on without it."
 install -m 0755 "${TMP_DIR}/cloud_redirect.so" "${CR_DIR}/cloud_redirect.so"
 ok "Deployed ${CR_DIR}/cloud_redirect.so"
-# cloud_redirect_cli — headcrab fetches this alongside the .so (crinstall).
-if curl -fL -o "${CR_DIR}/cloud_redirect_cli" "$CR_CLI_URL" 2>/dev/null; then
-    chmod 0755 "${CR_DIR}/cloud_redirect_cli"
-    ok "Deployed ${CR_DIR}/cloud_redirect_cli"
-else
-    warn "cloud_redirect_cli download failed (non-fatal)."
-fi
+# The app first: it is where cloud_redirect_cli comes from, so the copy below
+# needs it in place.
 install_cloudredirect_app
+deploy_cloudredirect_cli
 
 # netsock (required on disk for LumaDeck's per-game online fixes).
 info "Downloading netsock..."
