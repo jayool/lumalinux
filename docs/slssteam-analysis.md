@@ -3390,33 +3390,56 @@ Y hay una segunda mitad que SLSsteam no tiene: `saveToCache(data)` (línea 80) s
 ejecuta **incondicionalmente** tras un parseo sin excepción.
 
 **Medido** (compilando contra yaml-cpp, no razonado por analogía — el parseo es
-independiente de la arquitectura):
+independiente de la arquitectura). Corrige una versión anterior de esta tabla que
+daba el HTML por parseable: depende de la forma del cuerpo, y hay que medirlo caso
+a caso.
 
-| Cuerpo recibido con HTTP 200 | `YAML::Load` | Entradas | ¿Se cachea? |
-|---|---|---|---|
-| Vacío | parsea | 0 | **sí** |
-| Página de error HTML | parsea | 0 | **sí** |
-| JSON de error de la API | parsea | 0 | **sí** |
-| Texto plano (`Not Found`) | lanza | — | no |
-| Feed bueno | parsea | 1 | sí |
+| Cuerpo recibido con HTTP 200 | `YAML::Load` | Entradas | ¿Envenena la caché? | ¿Toast? |
+|---|---|---|---|---|
+| Vacío / solo espacios | parsea | 0 | **sí** | sí |
+| JSON de error de la API | parsea | 0 | **sí** | sí |
+| Página HTML (cualquier forma probada) | **lanza** | — | no | sí |
+| Error de CDN (`Guru Meditation:`) | **lanza** | — | no | sí |
+| Texto plano (`Not Found`) | **lanza** | — | no | sí |
+| Feed bueno | parsea | 1 | — | no |
 
-O sea: tres de los cuatro cuerpos basura plausibles **parsean sin lanzar**, dejan
-`clientHashMap` vacío, y **sobrescriben una caché buena**. Solo el texto plano
-suelto se salva, porque `operator[]` sobre un escalar lanza.
+Dos lecturas distintas, y conviene no mezclarlas:
 
-**Severidad: baja, cosmética — y conviene decir por qué.** En lumalinux el hash de
-SafeMode es **advisory, no un gate**: `main.cpp:150` solo dispara un toast, los
-hooks se instalan igual y el gate real es el escaneo de patrones (a diferencia de
-SLSsteam, donde `SafeMode: yes` aborta la carga). El daño máximo es un toast
-diciendo *"steamclient.so hash not in the verified list (Steam may have updated)"*
-cuando no ha pasado nada — y que persista en arranques sin red, por la caché
-envenenada.
+* **Envenenar la caché** solo lo consiguen el cuerpo vacío y el JSON de error —
+  los dos parsean sin lanzar, dejan `clientHashMap` vacío y llegan a
+  `saveToCache()`. El HTML no: `operator[]` sobre un escalar lanza, cae en el
+  `catch` y `saveToCache()` no se ejecuta. Que sea la superficie estrecha no la
+  hace teórica: el JSON de error es exactamente lo que devuelve el CDN de GitHub
+  cuando se pone tonto, que es el caso que describe Ace.
+* **Disparar el toast** lo consiguen *todos*, por caminos distintos: los que
+  parsean porque `clientHashMap` queda vacío y `verifySafeModeHash()` no encuentra
+  el grupo; los que lanzan porque `init()` devuelve `false`. `main.cpp:150` es un
+  `||`, así que cualquiera de los dos basta.
+
+**Severidad: baja, cosmética.** En lumalinux el hash es **advisory, no un gate**:
+`main.cpp:150` solo dispara un toast, los hooks se instalan igual y el gate real es
+el escaneo de patrones. El daño máximo es un aviso de *"steamclient.so hash not in
+the verified list (Steam may have updated)"* cuando no ha pasado nada — y, en los
+dos casos que envenenan, que persista en arranques sin red.
+
+**Esto NO es una diferencia con SLSsteam.** Una versión anterior de esta sección
+decía que allí el fallo sería más grave porque `SafeMode: yes` aborta la carga.
+Es engañoso: `SafeMode: no` es el **default de upstream**, y `setup.sh:224` lo
+fuerza a `no` de todas formas (`_sls_ensure_kv SafeMode no`), así que en nuestro
+despliegue SLSsteam arranca exactamente igual que lumalinux cuando el hash no
+cuadra — lo dice el propio comentario de `setup.sh:200` y el de `main.cpp:145`
+(*"Mirrors SLSsteam's SafeMode=no"*). La única asimetría real que queda es que
+SLSsteam **ofrece** el toggle y lumalinux no lo tiene; irrelevante aquí.
 
 No rompe instalaciones. Pero es exactamente el tipo de mensaje que manda a
-perseguir un problema inexistente, así que merece las cuatro líneas que cuesta.
+perseguir un problema inexistente, así que merece las líneas que cuesta.
 
-**Accionable:** copiar el `starts_with` en el camino de éxito y no cachear lo que
-no valide.
+**Accionable:** validar el cuerpo en el camino de éxito y, si no valida, tratarlo
+como un fallo de fetch (tirar de caché) en vez de usarlo y guardarlo. Ojo con la
+forma del validador: el `starts_with("SafeModeHashes:\n")` de Ace **no vale tal
+cual** para nosotros, porque nuestro `res/updates.yaml` empieza por 26 líneas de
+comentarios; y un `find("SafeModeHashes")` a secas casaría con la línea 3 de
+nuestro propio encabezado. Tiene que ir anclado a principio de línea.
 
 #### 7.8.4 `Notifications` — `setup.sh` escribe una clave que ya no existe [BAJA, cosmético]
 

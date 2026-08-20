@@ -33,17 +33,70 @@ namespace { constexpr uint64_t VERSION = LUMALINUX_SAFEMODE_VERSION; }
 
 std::map<uint64_t, std::unordered_set<std::string>> Updater::clientHashMap = std::map<uint64_t, std::unordered_set<std::string>>();
 
+// Does this body actually look like the feed?
+//
+// Divergence from upstream, and the reason for it: SLSsteam added
+// `data.starts_with("SafeModeHashes:\n")` in 20260819224703 after GitHub served
+// it a 200 with an unrelated body. That exact check would reject OUR feed —
+// res/updates.yaml opens with 26 lines of comment before the key — and a bare
+// find() would match the word inside that very header. So: the key, anchored to
+// column 0. Accepts both layouts, ours and upstream's.
+//
+// Measured against yaml-cpp rather than assumed (tools/test_update_feed_guard.cpp):
+// an empty body and an API error JSON both parse WITHOUT throwing, leave
+// clientHashMap empty, and reach saveToCache() — overwriting a good cache with
+// garbage. HTML and plain text throw instead, so they never cached, but they
+// still cost the toast. Validating here covers all of them.
+static bool looksLikeFeed(const std::string& data)
+{
+	for(size_t pos = 0; pos != std::string::npos; )
+	{
+		if(data.compare(pos, 15, "SafeModeHashes:") == 0)
+		{
+			return true;
+		}
+
+		pos = data.find('\n', pos);
+		if(pos != std::string::npos)
+		{
+			++pos;
+		}
+	}
+
+	return false;
+}
+
 bool Updater::init()
 {
 	std::string data;
 	int res = Curl::getString("https://raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml", data);
 	Log::Info("Curl Res: %u", res);
 
+	// A curl res of 0 means the TRANSFER succeeded, not that the feed arrived: a
+	// 200 carrying an error page is a perfectly successful transfer. Treat a body
+	// that is not the feed as a fetch failure, so we fall back to the cache we
+	// know is good instead of parsing garbage and then saving it over that cache.
+	if(res == 0 && !looksLikeFeed(data))
+	{
+		Log::Warn("updates.yaml fetched but the body is not the feed (%zu bytes) "
+		          "— falling back to the cache", data.size());
+		res = -1;
+	}
+
 	if(res != 0)
 	{
 		data = loadFromCache();
 		if(data.size() < 1)
 		{
+			return false;
+		}
+
+		// The cache is written only from a body that passed looksLikeFeed(), so a
+		// pre-existing cache from before that guard is the one thing that can still
+		// be garbage. Re-check it rather than trust its provenance.
+		if(!looksLikeFeed(data))
+		{
+			Log::Warn("Cached updates.yaml is not the feed — discarding it");
 			return false;
 		}
 
