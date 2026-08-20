@@ -175,11 +175,12 @@ retirará `install.sh` cuando esté probado.
   Añadidos respecto al diseño original: **config template-based** (seed/merge +
   edit in-place de SafeMode/DisableCloud/DisableUpdates/NotifyInit/Notifications),
   **grabado de la versión de SLSsteam** en `~/.config/SLSsteam/.slssteam.version`
-  (tag de release vía el truco de redirect de `releases/latest`; lo lee LumaDeck
-  para detectar updates de SLSsteam), y **migración** (`neutralize_steam_sh` +
+  (el tag sale del **mismo** redirect que resuelve la URL de descarga, así que no
+  puede describir un build distinto del que se instala; lo lee LumaDeck para
+  detectar updates de SLSsteam), y **migración** (`neutralize_steam_sh` +
   `sweep_headcrab_leftovers`).
 - **`7z` es dependencia asumida, no un problema.** Es el único formato `.7z` del
-  flujo (el `SLSsteam-Any.7z`); los fixes de luatools son `.zip` (Python `zipfile`,
+  flujo (el archivo de release de SLSsteam); los fixes de luatools son `.zip` (Python `zipfile`,
   `fixes.py`). headcrab ya asume `7z`, así que `setup.sh` lo exige y aborta claro si
   falta. (Opcional a futuro: extraer con `py7zr` desde LumaDeck para el path del
   plugin; no es necesario.)
@@ -206,11 +207,28 @@ retirará `install.sh` cuando esté probado.
   Game Mode se hace por el **drop-in de systemd en `steam-launcher.service`**, no por
   PATH. (Divergencia de moon, análoga a la de WS3.)
 
-**Fuentes de descarga confirmadas** (verificadas 2026-08-08):
-- SLSsteam + `library-inject.so`: `SLSsteam-Any.7z` de
-  `AceSLS/SLSsteam/releases/latest/download/` → `bin/{SLSsteam,library-inject}.so`
-  + `res/config.yaml`. **Requiere `7z`.**
-- CloudRedirect: `Selectively11/h3adcr-b/releases/download/linux-test/cloud_redirect.so`
+**Fuentes de descarga confirmadas** (revisadas 2026-08-20; las dos primeras han
+cambiado desde el 2026-08-08 original, ver notas):
+- SLSsteam + `library-inject.so`: el archivo de release de
+  `AceSLS/SLSsteam` → `bin/{SLSsteam,library-inject}.so` + `res/config.yaml`.
+  **Requiere `7z`.**
+  El nombre del asset **ya no es fijo**: AceSLS pasó del único `SLSsteam-Any.7z`
+  a uno por variante, `SLSsteam-Any-release.7z` / `-debug.7z` (commit `6a06652`,
+  publicado por primera vez en la release `20260819131545`). Dejó la instalación
+  en 404 durante ~44 h. `resolve_slssteam_asset()` en `setup.sh` prueba el nombre
+  actual y cae al antiguo, y de paso saca el tag de release del mismo redirect.
+- CloudRedirect: el asset `cloud_redirect.so` de la release de
+  `Selectively11/CloudRedirect`, **no** el tag rodante
+  `Selectively11/h3adcr-b/…/linux-test` que usa headcrab. Ese tag es un cajón: el
+  fichero se reemplaza in situ, la URL no dice qué versión hay detrás, vive en un
+  fork con el script congelado desde mayo y se le ha visto ir por detrás de las
+  releases. Tomarlo de la release lo alinea con lo que LumaDeck compara.
+  Ojo: **no vale `releases/latest` a secas** — CloudRedirect saca releases solo de
+  Windows (v2.1.9, v2.2.4, v2.5.3, v2.6.1, v2.6.2 traen el `.exe` y no el `.so`),
+  así que `resolve_cloudredirect_asset()` retrocede hasta la más reciente que sí
+  publique el asset.
+  El `cloud_redirect_cli` **no** se publica en las releases: sale del flatpak, que
+  empaqueta los dos ficheros del mismo build.
 - lumalinux: `jayool/lumalinux/releases/latest/download/liblumalinux.so`
 - Rutas: SLSsteam `~/.local/share/SLSsteam/`, config `~/.config/SLSsteam/config.yaml`,
   CR `~/.local/share/CloudRedirect/`, wrapper `~/.local/share/SLSsteam/path/steam`.
