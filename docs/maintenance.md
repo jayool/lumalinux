@@ -109,6 +109,8 @@ first (`CConfigStore` slot 6, RESEARCH §15), so its byte pattern is only a
 fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
 pattern failed (rare; read the `RTTI:` log lines first). You only re-derive
 DepotKey's pattern to refresh that fallback, using the indirect anchor below.
+To tell which of the two broke, `tools/experiment_rtti_depotkey.py` compares the
+RTTI walk against the byte pattern on the new binary (see E).
 
 > **Automated first (`watch-steam.yml`).** You rarely run the steps below by hand.
 > When a Steam update moves a **critical** hook, the daily monitor runs the same
@@ -233,7 +235,9 @@ Manual re-derivation in Ghidra:
    get_pc_thunk `call` rel32 and the following PIC `add` immediates as
    described in RESEARCH §8.1 ("the wildcarding gotcha" — DepotKey uses
    the `0x81` form for the `add`, GMRC uses `0x05`).
-3. Verify the pattern is **unique** in the new binary.
+3. Verify the pattern is **unique** in the new binary. If you wildcarded
+   anything in step 2, `tools/verify_mask.py` is the stronger check — unique is
+   not enough, it also has to be the *same* site (see E).
 4. Paste into `src/patterns.hpp`, then continue with A.2 step 4 onwards.
 
 Note (v0.13.1+): the **LoadPackage** hook is opt-in (`LUMA_LOADPKG_DEBUG=1`).
@@ -400,6 +404,74 @@ target and jump to a garbage address → `SIGILL` → 5 fast exits → gamescope
 `~/.local/share/Steam`. Full postmortem in RESEARCH §17.3–17.4. (The since-removed
 `sls_update_unblock`'s immediate write was hardened the same way in v0.16.8; the
 same discipline applies to any future in-memory patch.)
+
+---
+
+## E) Dormant workbench tools
+
+Three tools in `tools/` belong to no flow: nothing imports them, no workflow runs
+them, and they are not steps in any procedure above. They were written as gates
+for specific questions, those questions got answered, and they have sat unused
+since. They are kept — and listed here — because the questions come back every
+time Steam moves a pattern, and rediscovering the tools from scratch costs more
+than a paragraph each.
+
+Each is a standalone CLI (`--help` works) and needs a real `steamclient.so`
+(`tools/fetch_steamclient.py --output current-steamclient.so`). Each also has a
+unit test beside it that runs in a second with no binary and no network. **Run
+the test first** when you pick one up after months away: it tells you the tool
+still behaves before you trust a verdict from it.
+
+### `verify_mask.py` — is this mask still safe?
+
+The safety gate for masking pattern bytes (issue #16). `check_patterns.py`
+confirms a pattern is UNIQUE, but it cannot catch the dangerous case: a mask that
+uniquely matches a **different** function at a different site still reads as
+"UNIQUE / CLEAN". Given the old (shipping) and new (masked) `patterns.hpp`, for
+every changed pattern it asserts against a real binary that the old one resolves
+to exactly one site, the new one resolves to exactly one site, and it is the
+**same address**. Non-zero exit rejects the mask.
+
+Reach for it any time you loosen a pattern by hand — A.2 and A.3 step 3 both end
+in "verify the pattern is unique", and this is the stronger version of that
+check. Test: `tools/test_verify_mask.py`.
+
+### `experiment_framesize_mask.py` — can we wildcard the frame size?
+
+An empirical re-check of the RESEARCH §8.1 claim that wildcarding the
+stack-frame immediate (`sub esp, imm`) makes patterns collide. §8.1 says not to
+do it, but does not record which mask strength it tested, so this runs both
+against a real binary: high-keep (wildcard only the low bytes, keep the high
+`00 00`) and full (wildcard the whole immediate). It prints the baseline match
+count and site, then per variant the new count and whether the match stayed
+on-site.
+
+Reach for it if a Steam build breaks patterns *only* through the frame size: a
+variant that stays unique and on-site would reopen #16 for that pattern and save
+a re-derive. Test: `tools/test_experiment_framesize.py`.
+
+### `experiment_rtti_depotkey.py` — do RTTI and the byte pattern agree?
+
+This was the ground-truth gate for the DepotKey→RTTI migration, and that
+migration **shipped** (2026-07-06, RESEARCH §15) — the hook resolves via RTTI
+first today, with the byte pattern as fallback (see A.2). The tool walks Itanium
+RTTI on the static file (type-name string → `type_info` → vtable header → slot 6)
+and asserts it lands on the same RVA the byte pattern finds.
+
+So its use now is diagnostic rather than exploratory: when DepotKey reports
+`method=none`, both the RTTI walk and the pattern failed, and this tells you
+which of the two broke on the new build instead of leaving you to guess. Test:
+`tools/test_experiment_rtti.py`.
+
+### Why these are not in CI
+
+Deliberately. They guard code nothing else executes, so running them on every
+push buys a signal that can only change when someone edits the tool itself — and
+whoever does that can run the test in the same second. The rule this repo already
+follows is `watch-steam-selftest.yml`'s: fire when the thing being protected is
+edited. That workflow covers the production chain (`run_ghidra_derive.sh` →
+`apply_derived_pattern.py` → `check_patterns.py`) on PRs that touch it. These
+three are not in that chain.
 
 ---
 
