@@ -210,9 +210,10 @@ Recorded prominently because `slsdeck-findings.md` claimed all three:
    `HotReload` generation reaches `PackagePatch`'s processed runtime
    package-change state *and* Steam accepts the live appinfo request, with
    defer/timeout falling back to the restart path.
-   **[inferred]** This is arguably more rigorous than ours: it *verifies*
-   readiness against explicit success criteria, where lumalinux's
-   `license_reconcile` broadcasts and assumes. Parity at minimum.
+   **[inferred]** Parity, with **different failure coverage** — an earlier draft
+   of this document conceded more than the code supports, and the correction is
+   recorded because §2.4 exists to catch exactly that kind of error in both
+   directions. See §3.4.
 
 2. **Native achievements.** **[read]** `slssteam.py:2991-2992` — moon exposes an
    `Achievements:` key in `config.yaml` and *"fetches the real achievement
@@ -343,7 +344,7 @@ function by function and remains current to `d3402a1`.
 | 2 — PICS / appinfo | Depends on the ownership spoof yielding a full appinfo | **Anonymous appinfo provisioning** + `appinfo.vdf` splice (`appinfo_provision.cpp`, 4.269 L) | **Theirs** |
 | 3 — depot surfacing (package-0) | **Active finder**, polls the cache BST | `LoadPackage` hook | **Ours** |
 | 4 — manifest pinning | BuildDep, function layer, patch-only-primary | PICS response, message layer | Parity |
-| 5 — depot keys | `LoadDepotDecryptionKey` ← `keys.txt` | Reads keys from `stplug-in/<appid>.lua` | Parity |
+| 5 — depot keys | `LoadDepotDecryptionKey` ← `keys.txt`, **watched live** | Lua import **at startup only**; plugin-side cache workaround | **Ours** (engine design); parity delivered |
 | 5b — bad-key detection | **None, by construction** | **Depot quarantine** (`depotquarantine.cpp`) | **Theirs** |
 | 6 — GMRC | Function hook + 3-provider cascade | Three message-layer hooks + disk-staging fallback | Parity |
 
@@ -376,6 +377,31 @@ with its own anchor-resolution failure mode (*"Install hangs at 0 target
 depots"*, `docs/maintenance.md` §C). The advantage is in timing robustness, not
 in having no failure mode.
 
+**Gate 5 — live key ingestion, an engine-design advantage found in the second
+pass.** **[read]** lumalinux runs an inotify watcher on the `keys.txt` directory
+(`key_store.cpp:172-213`, `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE`), reloads
+the store in-process and signals `LicenseReconcile::NotifyKeysChanged()`. A game
+added while Steam is running has its keys immediately.
+
+**[read]** moon does not: SLSDeckUniversal's own code documents the limitation at
+`slssteam.py:822-834` — *"The moon imports Lua depot keys only once, at startup
+(`DepotKey::onStartup -> importLuaScripts` is idempotent), so a game added while
+Steam is already running never gets its keys — and the moon then hands Steam a
+**zero key** for the AdditionalApps depot, which downloads but can't decrypt
+(empty folder)."*
+
+**[read]** Their workaround is competent: the plugin writes directly into moon's
+private key cache (`<config>/cache/depotkey_<depotId>.yaml`, base64 of the raw 32
+bytes, `managed:true`), *"mirrors `DepotKey::saveKeyToCache` exactly"*, relying on
+`getCachedKey()`'s on-demand fallback. moon reads that directory back in
+`packagepatch.cpp:190-205`.
+
+**[inferred]** So the delivered outcome is parity while the engine design is ours,
+and their fix carries a coupling ours does not: a plugin reaching into the
+engine's private on-disk format. If moon changes `saveKeyToCache`, the workaround
+breaks silently — the failure mode is a game that downloads and cannot decrypt,
+which is precisely the symptom the workaround exists to prevent.
+
 **Gate 5b — a real gap.** **[read]** `depotquarantine.cpp` hooks `OnChunkUnpacked`
 (in two calling conventions) and detects when a key *they supplied* fails to
 decrypt a chunk, identifying each failed chunk by its 20-byte SHA; the depot is
@@ -398,8 +424,28 @@ time Steam runs, every artefact is already on disk in the shape Steam expects.
 Theirs defers to the engine, which is less to go wrong at add time and more to go
 wrong at runtime. Both are coherent; the practical difference shows in §3.6.
 
-On no-restart, see §2.4: parity, with their verification arguably stricter than
-our broadcast-and-assume.
+**No-restart: both verify, at opposite ends of the operation.** **[read]**
+
+- **Ours verifies capability before acting, as a cross-component interlock.**
+  `license_reconcile.cpp:39-51` resolves `NotifyLicensesUpdated` RVA-feed-first,
+  cross-checks it against the byte pattern and warns on drift, and requires a
+  **unique** match — a wrong-build pattern caches 0 and the feature *no-ops
+  rather than calling a garbage address* (`:126-131`). lumalinux then publishes
+  that outcome as `status.json` hook `"Reconcile"`, and LumaDeck reads it:
+  `slssteam_ops.py:38-60` (`_hot_reload_active`) **suppresses every config poke**
+  when the engine reports `"failed"`, because poking a just-added game into a
+  live view whose reconcile is dead would *"surface a game whose appinfo has no
+  depot list -> it installs 0 files ('installed but broken' trap)"*. The unknown
+  case is explicitly not suppressed — *"we never suppress on a guess"*.
+- **Theirs verifies effect after acting.** `live_refresh.py` parses moon's log
+  for the `HotReload` generation reaching `PackagePatch`'s processed state and
+  the live appinfo request being accepted, deferring to the restart path on
+  timeout.
+
+**[inferred]** Neither dominates. Ours prevents the bad state and cannot enter
+it; theirs detects a fire that resolved and dispatched but did not land — a case
+ours would not notice. Ours is an interlock, theirs is an observation. The
+earlier framing of this as "they verify, we assume" was wrong.
 
 ### §3.5 Surviving a Steam client update — **the decisive axis, and closer than expected**
 
