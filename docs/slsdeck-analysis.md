@@ -1,10 +1,10 @@
 # SLSDeckUniversal vs the LumaDeck stack — exhaustive analysis
 
-*Phase 1 of 5 (inventory, provenance, trust). Phases 2–4 — the layer-by-layer
-install-path comparison, the weighted score and the per-profile verdicts — are
-marked **PENDING** in place. Nothing here is a recommendation to change LumaDeck
-or lumalinux; the actionable list in §8 is preliminary and deliberately
-unimplemented.*
+*Phases 1–2 of 5 complete: inventory and provenance (§1–§2), the layer-by-layer
+comparison (§3), non-functional axes (§4) and trust/risk (§5). The weighted score
+(§6) and the per-profile verdicts (§7) are marked **PENDING** in place. Nothing
+here is a recommendation to change LumaDeck or lumalinux; the actionable list in
+§8 is preliminary and deliberately unimplemented.*
 
 ---
 
@@ -265,11 +265,6 @@ engineering.
 
 ## §3 Layer-by-layer comparison
 
-*§3.2–§3.8 are **PENDING** (Phase 2): ownership/licensing, the six install
-gates, the add-game pipeline, post-Steam-update maintenance, failure modes, the
-plugin/UX layer and the auxiliary ecosystem. §3.1 is complete because the
-evidence surfaced during inventory.*
-
 ### §3.1 Injection and boot coverage — **LumaDeck wins, on their own evidence**
 
 The problem both stacks solve: export `LD_AUDIT`/`LD_PRELOAD` before Steam
@@ -308,6 +303,219 @@ built on that engine has reimplemented it.
 Our wrapper cannot be reverted by a Steam self-update because the file Steam
 rewrites is not the file we depend on.
 
+### §3.2 Ownership and licensing layer
+
+| | Ours | Theirs |
+|---|---|---|
+| Ownership engine | **Stock SLSsteam, unmodified** (AceSLS upstream) | **slsteam-moon**, a fork |
+| Who maintains it | AceSLS | swwayps |
+| Our/their own code in it | One reversible in-memory patch | The whole layer |
+
+**[read]** moon is 42.630 hand-written lines (excluding generated protobufs).
+That figure is not comparable to lumalinux's 5.590 — moon *is* SLSsteam plus the
+install core, where our equivalent is stock SLSsteam (a third party's binary we
+do not count) plus lumalinux. The comparable subset is §3.3.
+
+**[inferred]** The fork/no-fork decision is the root of most differences below.
+Forking lets moon hook anywhere — including the protobuf message dispatch — and
+own features outright (§2.4, native achievements). Not forking forces lumalinux
+onto function-layer hook points that SLSsteam does not touch, which is why
+DepotKey hooks the local KeyValues accessor rather than the depot-key network
+message, and why gates 2, 4 and 6 below repeat the same "not portable, would
+collide" conclusion.
+
+The cost is symmetric and worth stating: moon also inherits the *maintenance* of
+the entire ownership layer, where we inherit AceSLS's upstream for free.
+
+### §3.3 The install path — gate by gate
+
+Comparable subsets: moon's install core (`depotkey`, `pics`, `packagepatch`,
+`manifestbind`, `manifestcode`, `manifestid`, `manifeststore`, `appinfo_*`,
+`hotreload`, `prewarm`, `depotquarantine`, `reconcilepin`, `cmclient`) is
+**15.846 L**; lumalinux is **5.590 L**. **[read]**
+
+Gate-by-gate conclusions are carried forward from
+[`slsteam-moon-findings.md`](slsteam-moon-findings.md), which analysed these
+function by function and remains current to `d3402a1`.
+
+| Gate | Ours | Theirs | Lead |
+|---|---|---|---|
+| 2 — PICS / appinfo | Depends on the ownership spoof yielding a full appinfo | **Anonymous appinfo provisioning** + `appinfo.vdf` splice (`appinfo_provision.cpp`, 4.269 L) | **Theirs** |
+| 3 — depot surfacing (package-0) | **Active finder**, polls the cache BST | `LoadPackage` hook | **Ours** |
+| 4 — manifest pinning | BuildDep, function layer, patch-only-primary | PICS response, message layer | Parity |
+| 5 — depot keys | `LoadDepotDecryptionKey` ← `keys.txt` | Reads keys from `stplug-in/<appid>.lua` | Parity |
+| 5b — bad-key detection | **None, by construction** | **Depot quarantine** (`depotquarantine.cpp`) | **Theirs** |
+| 6 — GMRC | Function hook + 3-provider cascade | Three message-layer hooks + disk-staging fallback | Parity |
+
+Three of these deserve expanding.
+
+**Gate 2 — their clearest engine-layer advantage.** lumalinux cannot fabricate a
+depot list: injecting depots into BuildDep SIGSEGVs Steam, so it can only *patch*
+GIDs of depots Steam already surfaced. If the CM returns a stripped appinfo
+despite the ownership spoof, we have no depot list and the install fails. moon
+opens its **own anonymous CM session** (`cmclient.cpp`) — product info is public
+anonymously — mines the depots and gids, and splices synthetic entries into
+`appinfo.vdf` for the next start. **[inferred]** This is portable to us in
+principle (an outbound CM connection plus an offline file write, neither a
+message hook), and it is the one engine-layer capability that closes a case we
+currently cannot survive.
+
+**Gate 3 — our clearest engine-layer advantage.** Both projects hit the same
+cold-cache/late-load problem with package 0. moon patched *around* its hook with
+a manual re-inject; lumalinux dropped the hook and polls the cache BST until
+package 0 appears. Ours catches it whenever it arrives, including on a slow
+login. Nothing to port.
+
+**Gate 5b — a real gap.** **[read]** `depotquarantine.cpp` hooks `OnChunkUnpacked`
+(in two calling conventions) and detects when a key *they supplied* fails to
+decrypt a chunk, identifying each failed chunk by its 20-byte SHA; the depot is
+quarantined and `ManifestBind` stops offering it. Our key hook validates *shape*
+only (`key_store.cpp:45`: `hex.size() != 64`) — a good key and a bad key are 32
+indistinguishable bytes until a chunk decrypts. We cannot distinguish "wrong key"
+from "no key" by construction.
+
+### §3.4 Add-game pipeline
+
+| | Ours | Theirs |
+|---|---|---|
+| Model | **Offline pre-seed** before Steam starts | Runtime read by the engine |
+| What is written | manifests → `depotcache`, `keys.txt`, `config.vdf` keys, `.acf` stub, `AdditionalApps`, `stplug-in` lua, ACCELA markers | `AdditionalApps` + `<appid>.lua` into `stplug-in` |
+| Who parses the `.lua` | `steamidra_lite.py`, offline | moon, at startup |
+| No-restart add | `license_reconcile` (broadcast) | `live_refresh` (verified against moon's log) |
+
+**[inferred]** Ours front-loads work into a deterministic offline step: by the
+time Steam runs, every artefact is already on disk in the shape Steam expects.
+Theirs defers to the engine, which is less to go wrong at add time and more to go
+wrong at runtime. Both are coherent; the practical difference shows in §3.6.
+
+On no-restart, see §2.4: parity, with their verification arguably stricter than
+our broadcast-and-assume.
+
+### §3.5 Surviving a Steam client update — **the decisive axis, and closer than expected**
+
+This is axis A2 (15%), the highest-weighted single axis, and the honest answer is
+that **moon is structurally ahead on the hard case while we are ahead on
+detection**.
+
+| | lumalinux | slsteam-moon |
+|---|---|---|
+| Feed content | **RVAs** per build (`res/rvas/<sha256>.yaml`) | **Full locator catalog** — signatures *and* addresses |
+| Feed authenticity | Hardcoded HTTPS source, own repo, **no signature** | **Ed25519 detached signature**, public key baked in at build time |
+| Validation before use | Hash-match ⟹ correct-by-construction (CI derived them from that exact binary) | **Runtime probe evidence** — `locator-resolved`, `hook-installed`, `hook-invoked` |
+| Fallback | **Own baked `patterns.hpp`** — a stale feed never leaves a hook with nothing | Baked patterns |
+| Detection of a new Steam build | **Daily CI cron** (`watch-steam.yml`) fetches the new `steamclient.so` and validates every hook | Their own `swwayps/steam-monitor` infrastructure |
+| Escalation | **Automatic**: clean → auto-PR bumping `updates.yaml`; blocking → auto-issue | Manual |
+| Recovery from a *moved prologue* | **Human re-derivation + release** | **Ship a new signature in the signed catalog** |
+
+**[read]** Their mechanism is fully wired, not a dev aid: `src/patterns.cpp:101,160,189`
+loads the catalog at runtime and reads `entry->signature`; `bin/pattern-refresh`
+is a companion binary built alongside `SLSsteam.so`; the Makefile **fails the
+build** if `res/pattern-public-key.hex` is absent. `tools/pattern-refresh/catalog.cpp:775-776`
+fetches from `raw.githubusercontent.com/swwayps/steam-monitor/main/` with a
+jsDelivr mirror. `res/runtime-probes.toml` gates activation on real-Steam
+evidence and is explicitly data-only — *"they cannot execute code or supply
+commands."* `d3402a1` made an ambiguous signature match **fail closed**.
+
+**[read]** The structural asymmetry: our RVA derivation is
+`scan_rvas(segments, patstr)` (`tools/check_patterns.py:226`) — it locates the
+function **by scanning with the existing pattern**. When a prologue changes, the
+scan finds nothing, no RVA can be emitted, the cron exits 3 and opens a blocking
+issue for manual Ghidra re-derivation (`docs/maintenance.md` §A.2/A.3). Their
+catalog carries signatures, so the same case is a data update.
+
+**Where we lead, and it is not nothing.** **[read]** `watch-steam.yml` runs daily,
+gates cheaply on a version check, then downloads the new `steamclient.so` and
+runs the full hook validation, opening either a hash-bump PR (which propagates to
+every Deck on next boot with **no release**) or a blocking issue. moon has **no
+`.github/` directory at all** **[read]** — their monitoring lives in separate
+infrastructure whose cadence is not observable from the repository. We find out
+that Steam broke something before a user does; whether they do is unverifiable
+from here.
+
+**[read]** Recorded for fairness: `res/updates.yaml` is still fetched from
+`AceSLS/SLSsteam` by moon — it consumes upstream's SafeMode feed while having
+dropped its own hash whitelist (M2).
+
+**[inferred]** Net: on the common case (bytes moved, prologue intact) both
+recover server-side without a rebuild. On the hard case moon recovers as a data
+update and we do not. Against that, our detection and escalation are automated
+and theirs is not visible. This axis does **not** resolve cleanly in our favour,
+and the previous document's claim that *"our patterns survived where moon had to
+re-adapt"* was a single data point, not a structural advantage.
+
+### §3.6 Failure modes and recovery
+
+| Failure | Ours | Theirs |
+|---|---|---|
+| Bad Steam update bricks boot | Wrapper crash-loop fail-safe boots vanilla | Failsafe counter around the `steam.sh` patch (§3.1) |
+| Injection coverage lost | systemd guardian re-affirms `.desktop` | Re-patch loop (§3.1) |
+| Ambiguous pattern match | Byte-pattern fallback to baked patterns | **Fail closed** (`d3402a1`) |
+| Key that does not decrypt | **Not detectable** (§3.3, gate 5b) | Depot quarantine |
+| Unknown `steamclient.so` hash | SafeMode is **advisory**, not a gate | Catalog miss → baked patterns |
+| Broken `config.yaml` | `slssteam_schema.py` append-only completion | `confighealer.py` (476 L), `audit.py`, `watchdog.py` |
+
+**[inferred]** Both stacks are defensive, with different emphases: ours prevents
+bad states at the engine layer and self-heals coverage; theirs detects bad states
+at runtime and repairs config at the plugin layer. Their `audit`/`watchdog`/
+`confighealer` trio has no counterpart in LumaDeck beyond `components.py`.
+
+### §3.7 Plugin and UX layer
+
+**[read]** The asymmetry here is the largest in the document: 366 RPCs vs 106,
+18.242 L of frontend vs 5.911, 20 UI sections vs 6 pages.
+
+Theirs and not ours: an 8-badge system (library, game page, store page,
+including emoji mode), store-page injection, a gamebar row/panel, a floating
+status window, per-game sections injected into the Steam library, CDP-driven
+capture flows (§5.5), and an in-plugin help hub.
+
+Ours and not theirs: the Desktop hand-off (`desktop_handoff.py` +
+`quick_install_cli.py`) — arming a one-shot KDE autostart for work Game Mode
+cannot perform — in-plugin self-update from our own releases, and a unified
+component-health model (`components.py`) shared by all three components.
+
+**[inferred]** On breadth of user-facing surface this is theirs by a wide margin,
+and §2.5's shim inflation does not close the gap.
+
+### §3.8 Auxiliary ecosystem
+
+Fully inventoried in §2.3 and §2.6. Summary of leads:
+
+- **DLC**: theirs, decisively (§2.6) — three layers to our one.
+- **Acquisition breadth**: theirs — native *and* DepotDownloader, plus specific
+  older builds and unowned DLC depots the native path cannot reach.
+- **Cloud saves**: parity in capability, theirs in redundancy (§2.5, two live
+  parallel systems).
+- **Offline emulation**: ours — Goldberg has no counterpart.
+- **Achievements**: parity (§2.4).
+- **Online multiplayer**: parity (netsock both sides).
+- **Portability beyond SteamOS**: ours — `platform_info.py` and the CachyOS port
+  notes vs their `is_steamos()`.
+
+### §3.9 The layer where the quality gap actually sits
+
+**[inferred]** The single most important structural conclusion of Phase 2, and it
+cuts against reading either stack as a monolith:
+
+**slsteam-moon is a disciplined project.** **[read]** ~55 test targets in its
+Makefile, 19 test shell scripts in `scripts/`, ABI-compatibility checks
+(`check-sls-abi.sh`, `check-pattern-refresh-abi.sh`), a cryptographically signed
+pattern feed, fail-closed ambiguity handling, and every one of its four most
+recent pattern fixes shipped with a test.
+
+**SLSDeckUniversal is not.** **[read]** Zero tests (§4.1); its only CI builds the
+frontend on a `test` branch and runs `python3 -m compileall` — a **syntax check**,
+not a test — then commits the bundle.
+
+So the comparison is really two comparisons. **lumalinux vs moon is a fair fight
+between two serious engineering projects**, and moon leads on several axes
+(§3.3 gate 2, §3.3 gate 5b, §3.5 hard case, test coverage) while we lead on others
+(§3.1, §3.3 gate 3, §3.5 detection). **LumaDeck vs SLSDeckUniversal is not a fair
+fight on engineering discipline** — but SLSDeckUniversal wins on delivered
+breadth anyway (§3.7, §3.8).
+
+Any verdict in §7 that averages these two layers into one number will mislead.
+
 ---
 
 ## §4 Non-functional axes
@@ -315,7 +523,10 @@ rewrites is not the file we depend on.
 ### §4.1 Verification and test coverage
 
 **[read]** SLSDeckUniversal: **zero test files** in the repository. The only CI
-is `.github/workflows/build-test.yml`. Their CHANGELOG's *"280 assertions across
+is `.github/workflows/build-test.yml`, which builds the frontend and runs
+`python3 -m compileall` — a syntax check, not a test. This finding applies to the
+**plugin layer only**: slsteam-moon, the engine beneath it, is comprehensively
+tested (§3.9). Their CHANGELOG's *"280 assertions across
 10 suites"* **[their claim]** is not reproducible by anyone.
 
 **[read]** Ours: 9 Python suites in `LumaDeck/tests/`, plus C++ self-tests
@@ -600,12 +811,29 @@ B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
 3. `setup.sh` verifies no checksums (§5.1). Provenance discipline is not a
    substitute for verification.
 
-**Gaps where they lead:**
+**Gaps where they lead — plugin layer:**
 
 4. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
    does not require adopting any of their risk surface.
 5. Direct-download acquisition as a fallback for what the native path cannot do:
    specific older builds, unowned DLC depots (§2.3).
+
+**Gaps where they lead — engine layer (lumalinux vs moon):**
+
+6. **Anonymous appinfo provisioning** (§3.3, gate 2). The one capability that
+   closes an install case we cannot currently survive, and portable in principle:
+   an outbound CM session plus an offline `appinfo.vdf` write, neither of which
+   collides with SLSsteam's message hooks.
+7. **Bad-key detection** (§3.3, gate 5b). We cannot distinguish a wrong key from
+   a missing key by construction. Investigate whether `content_log.txt` already
+   carries the signal before considering a chunk-level hook.
+8. **Signing the RVA feed** (§3.5). The feed decides where hooks are installed
+   inside Steam's process; ours is authenticated only by a hardcoded HTTPS source.
+   moon bakes an Ed25519 public key in at build time and fails the build without
+   it.
+9. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
+   existing pattern, so the case that most needs a server-side fix is the one
+   case we cannot fix server-side.
 
 **Explicitly not recommended for adoption:** the prebuilt kernel module (§5.2),
 the generic CDP credential interceptor (§5.5), and the `steam.sh` patching model
