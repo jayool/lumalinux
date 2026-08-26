@@ -738,6 +738,72 @@ documentation fell behind the code within days.
 `py7zr`. Ours: none — `http_client.py:1` is a stdlib-only client written
 specifically to avoid a runtime dependency.
 
+### §4.4 Privilege hygiene — both plugins run as root
+
+Recorded as its own axis because it is the one place where the two projects'
+**shared** design decision (the Decky `root` flag, §5 preamble) creates
+symmetric obligations, and both discharge them incompletely — in opposite
+proportions.
+
+#### Ownership of files created in the user's home
+
+A plugin running as root that *creates* a file or directory produces a
+root-owned one. Writing to an already-existing user-owned file preserves
+ownership, so the exposure is confined to newly created paths.
+
+**[read]** Theirs: 21 `os.makedirs` calls resolve into user-home paths;
+**20 have no ownership fix**, among them `buildarchive.py:40`, `backup.py:136`,
+`cloudsave.py:128`, `luatools.py:86`, `opensave.py:469`, `creamysteamy.py:68`,
+`compat.py:252` and `denuvo.py:64`. Across the whole backend there are 87
+`makedirs` and 84 write-opens against 19 `chown` sites
+(`slssteam.py:1370,2093`, `ubisoft_packages.py:152`).
+
+**[inferred]** They are aware of the class — `_chown_to_user` exists and is used
+after the headcrab fetch — so this reads as incomplete application rather than
+ignorance. The concrete failure mode is visible inside their own code:
+`opensave.py:87` de-escalates the OpenSave daemon to the real user
+(`sudo -u <user> env HOME=…`), while `opensave.py:469` creates directories for
+it as root. A root-owned `0755` directory is traversable but not writable by
+that daemon.
+
+**[read]** Ours: only 2 `makedirs` resolve into user-home paths.
+`paths.py:664` is followed by an explicit `chown` of both the directory and the
+file (`:671-672`). `self_update.py:217` creates `~/Downloads` when missing and
+does **not** chown it — a real, if minor, instance of the same defect on our
+side. `dotnet.py:144-162` goes further than either project elsewhere: it runs
+`chown -R` over the installed tree and, on failure, logs the exact command for
+the user to repair it themselves.
+
+**[inferred]** Asymmetric but not one-sided: 20 unfixed against 1. Root-owned
+artefacts also **outlive the plugin that created them**, so this is part of what
+a user inherits after trying one stack and returning to the other (§5.6).
+
+#### Credentials at rest — **theirs is better, ours has a gap**
+
+**[read]** Theirs restricts the files holding secrets: `settings.py:100,105`
+`chmod`s both the temp file and the final settings store to `0o600`, and
+`luatools.py:108` does the same for the token file. Their settings store holds
+the manifest-source API keys and the Ryuu browser session captured over CDP
+(§5.5).
+
+**[read]** Ours does not. There is **no `0o600` anywhere in `LumaDeck/backend/`**.
+`api_manifest.py:189-203` (`save_ryu_cookie`) writes the Ryuu session cookie to
+`data/ryuu_cookie.txt` with a plain `open(path, "w")` and no mode change, then
+mirrors it to the settings directory; `update_hubcap_key` (`:247`) follows the
+same pattern.
+
+**[inferred]** On a single-user Deck the practical exposure is limited, but
+these are live session credentials written by a root process at default
+permissions, and the counterpart project — with every other quality signal
+against it — handles this correctly and we do not. Listed in §8.
+
+#### Branch note
+
+**[read]** `origin/tokeer-automation`, named in their README as *"active Tokeer
+automation development and rolling builds"*, is **zero commits ahead of
+`origin/main`**. There is no unreleased work there; the branch is a label on the
+same tip.
+
 ---
 
 ## §5 Trust and risk
@@ -1072,31 +1138,37 @@ B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
    path.
 3. `setup.sh` verifies no checksums (§5.1). Provenance discipline is not a
    substitute for verification.
+4. **Credentials at rest are unrestricted** (§4.4). No `0o600` anywhere in
+   `backend/`; the Ryuu session cookie and Hubcap key are written by a root
+   process at default permissions. Their plugin does this correctly and ours
+   does not.
+5. `self_update.py:217` creates `~/Downloads` as root without chowning it
+   (§4.4).
 
 **Gaps where they lead — plugin layer:**
 
-4. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
+6. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
    does not require adopting any of their risk surface.
-5. Direct-download acquisition as a fallback for what the native path cannot do:
+7. Direct-download acquisition as a fallback for what the native path cannot do:
    specific older builds, unowned DLC depots (§2.3).
 
 **Gaps where they lead — engine layer (lumalinux vs moon):**
 
-6. **Anonymous appinfo provisioning** (§3.3, gate 2). The one capability that
+8. **Anonymous appinfo provisioning** (§3.3, gate 2). The one capability that
    closes an install case we cannot currently survive, and portable in principle:
    an outbound CM session plus an offline `appinfo.vdf` write, neither of which
    collides with SLSsteam's message hooks.
-7. **Bad-key detection** (§3.3, gate 5b). We cannot distinguish a wrong key from
+9. **Bad-key detection** (§3.3, gate 5b). We cannot distinguish a wrong key from
    a missing key by construction. Investigate whether `content_log.txt` already
    carries the signal before considering a chunk-level hook.
-8. **Signing the RVA feed** (§3.5). The feed decides where hooks are installed
+10. **Signing the RVA feed** (§3.5). The feed decides where hooks are installed
    inside Steam's process; ours is authenticated only by a hardcoded HTTPS source.
    moon bakes an Ed25519 public key in at build time and fails the build without
    it.
-9. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
+11. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
    existing pattern, so the case that most needs a server-side fix is the one
    case we cannot fix server-side.
-10. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
+12. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
     inside the `LaunchApp` hook, so it applies to the currently planned build
     after any re-plan; our `steamless.py` is a one-shot manual action against
     whatever was on disk at the time.
