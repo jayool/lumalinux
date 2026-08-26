@@ -1104,20 +1104,158 @@ user's own accounts, where LumaDeck cannot contain it. This is the one item in
 
 ## §6 Weighted scoring matrix
 
-**PENDING (Phase 4).** Axes and weights were fixed in advance:
-A1 install end-to-end 15%, A2 Steam-update survival 15%, A3 injection 8%,
-A4 game updates/pinning 7%, A5 failure modes 10%, B1 game features 12%,
-B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
+### §6.1 The scores
 
-## §7 Verdicts by user profile
+Weights are those fixed in Phase 0, **before any of their code was read** (§0).
+Scores are 0–10, assigned from the sections cited, and are the author's
+judgement — the sensitivity analysis in §6.3 exists because that judgement is
+the weakest link in this document.
 
-**PENDING (Phase 4).**
+| Axis | Weight | Ours | Theirs | Basis |
+|---|---|---|---|---|
+| A1 Install end-to-end | 15% | 6.5 | **8.0** | §2.3, §3.3. Theirs: native *and* direct-download, specific older builds, unowned DLC depots, gate 2 covered, bad-key quarantine. Ours: one path, gate 2 exposure, §3.9 unresolved. |
+| A2 Steam-update survival | 15% | 7.0 | **8.0** | §3.5. Theirs: signed catalog recovers a moved prologue as a data update. Ours: automated daily detection and escalation, but that case needs a human. |
+| A3 Injection & boot coverage | 8% | **9.0** | 4.0 | §3.1. `steam.sh` vanilla vs a patch with a re-patch loop and three overlapping mechanisms. |
+| A4 Game updates & pinning | 7% | 6.0 | **8.0** | §3.10, §2.3. Theirs adds build archive, SteamDB history and rollback. |
+| A5 Failure modes & recovery | 10% | **7.5** | 6.5 | §3.4, §3.6. Ours: cross-component interlock, fail-closed resolution. Theirs: quarantine and plugin-layer self-heal, offset by zero tests (§4.1) and an endpoint that reports false success (§4.2). |
+| B1 Game features | 12% | 5.0 | **9.0** | §2.6, §3.8. DLC in three layers vs one; Workshop, artwork, backups, Denuvo. Ours: Goldberg, achievements. |
+| B2 UX / Steam integration | 8% | 6.0 | **8.0** | §3.7. 366 RPCs vs 106; badges, store injection, gamebar. |
+| C1 User risk | 10% | **7.5** | 3.0 | §5.1, §5.2, §5.5, §5.7. Kernel module from a throwaway account, a third-party activation service transacted on the user's own accounts, a generic credential interceptor — against our unverified downloads and one third-party `extractall`. |
+| C2 Quality & maintainability | 8% | **7.0** | 5.0 | §4.1, §4.2, §3.11. Split by layer: their engine is better tested than ours, their plugin has no tests at all, and the plugin is where 32k of their lines live. |
+| C3 Project health | 7% | **7.0** | 5.0 | §4.3. Continuous history, licence files, CI, docs vs a 7-day squashed drop, no `LICENSE`, a stale CHANGELOG and a release tag on the first commit. |
+
+**Totals: ours 6.79, theirs 6.70.**
+
+### §6.2 The aggregate is not usable, and that is the finding
+
+A margin of **0.09 on a 10-point scale** is far below the resolution of the
+scoring judgement behind it. **[inferred]** It should not be reported as a win,
+quoted as a result, or used to choose a stack.
+
+### §6.3 Sensitivity
+
+A two-point revision on **any single axis** — including the 7%-weighted ones —
+moves the total by more than 0.09 and reverses the ordering:
+
+| Axis | Weight | Swing from a 2-point revision | Reverses? |
+|---|---|---|---|
+| A1, A2 | 15% | 0.30 | yes |
+| B1 | 12% | 0.24 | yes |
+| A5, C1 | 10% | 0.20 | yes |
+| A3, B2, C2 | 8% | 0.16 | yes |
+| A4, C3 | 7% | 0.14 | yes |
+
+Ten out of ten axes are individually decisive. **[inferred]** That is the
+signature of two systems that are genuinely comparable in aggregate and
+different in composition — which is why §7 does not report a winner.
+
+### §6.4 The two-level view
+
+Per §3.11, the same numbers separated by layer:
+
+**Engine — lumalinux vs slsteam-moon.** A fair fight between two serious
+projects, and moon leads on more axes than we do.
+
+| Ours leads | Theirs leads |
+|---|---|
+| Injection model (§3.1) | Gate 2, anonymous appinfo (§3.3) |
+| Gate 3, package-0 timing (§3.3) | Gate 5b, bad-key quarantine (§3.3) |
+| Gate 5, live key ingestion (§3.3) | Moved-prologue recovery (§3.5) |
+| Automated update detection (§3.5) | Test coverage (§3.11) |
+| Cross-component interlock (§3.4) | Manifest durability (§3.9) |
+
+**Plugin — LumaDeck vs SLSDeckUniversal.** Not a fair fight on engineering
+discipline, and they win on delivered breadth regardless.
+
+| Ours leads | Theirs leads |
+|---|---|
+| Tests, 9 suites vs 0 (§4.1) | Feature surface, 366 RPCs vs 106 (§3.7) |
+| Risk posture (§5) | DLC depth (§2.6) |
+| Provenance discipline (§5.1) | Acquisition breadth (§2.3) |
+| Project health (§4.3) | Self-heal tooling (§3.6) |
+| Privilege hygiene, 20:1 (§4.4) | Credentials at rest (§4.4) |
 
 ---
 
-## §8 Preliminary actionables
+## §7 Verdicts by user profile
 
-*Not implemented. Listed here as findings only; prioritisation belongs to §7.*
+**[inferred]** Re-weighting the same ten axis scores for four realistic priority
+sets. The base row is §6.1. The spread between profiles (−1.70 to +2.52) is an
+order of magnitude larger than the spread in the aggregate (+0.09), which is the
+whole argument for reporting it this way.
+
+| Profile | Ours | Theirs | Verdict |
+|---|---|---|---|
+| Base (agreed weights) | 6.79 | 6.70 | **Too close to call** |
+| Wants it to work and not touch it | 7.15 | 6.75 | **Ours**, moderately |
+| Wants features | 6.13 | 7.83 | **Theirs**, decisively |
+| Concerned about their account | 7.35 | 4.83 | **Ours**, decisively |
+| Maintainer — they fix it when it breaks | 7.28 | 5.92 | **Ours**, clearly |
+
+### §7.1 "I want it to work and I don't want to think about it"
+
+**Ours.** Weighting A2, A3 and A5 heavily is what this profile means, and that is
+where the injection model (§3.1) and the interlock design (§3.4) pay. The
+counterweight is honest: they now have no-restart add too (§2.4), and if Valve
+moves a prologue they may be back before we are (§3.5).
+
+### §7.2 "I want the features"
+
+**Theirs, and it is not close** — the largest single margin in the table. DLC in
+three layers (§2.6), specific older builds, unowned DLC depots (§2.3), Workshop,
+artwork, backups, and Denuvo. Nothing in our roadmap closes this in one step, and
+§8 marks only part of it as worth closing at all.
+
+### §7.3 "I care about Denuvo"
+
+**Theirs, as the only option** — and this document declines to score it as a
+feature win. The mechanism is §5.7: ownership credentials of unestablished origin
+injected into the user's prefix, requested through the user's own Discord
+account, presented from the user's own Steam account. It works. What it costs is
+not visible in a feature matrix.
+
+### §7.4 "I don't want to risk my accounts"
+
+**Ours, decisively** — the largest margin in our favour. Not because our supply
+chain is clean (§5.1 says plainly that it is not), but because the failure modes
+differ in kind: ours are bounded by what a bad `.so` can do to a Steam install,
+theirs include a kernel module (§5.2) and an activation service transacting on
+the user's own credentials (§5.7).
+
+### §7.5 "I am the one who fixes it when it breaks"
+
+**Ours** — and this is the profile the author occupies, which is worth naming as
+a bias rather than leaving implicit. lumalinux's hooks, patterns, feed and
+maintenance procedure are ours to repair; moon's are not. The mirror image is
+that moon's maintainers are demonstrably competent (§3.11), so "not ours" is not
+the same as "unreliable".
+
+### §7.6 Running both
+
+**Do not.** §5.6: installing theirs renames our key store with no return path,
+their model of our injection is three iterations out of date so the handover
+leaves a broken hybrid, and the two config schemas have forked (`ManifestIds` vs
+`ManifestPins`). Root-owned artefacts from either plugin outlive it (§4.4). This
+is the one recommendation in the document that applies to every profile.
+
+---
+
+## §8 Findings list
+
+*Nothing below is implemented, and this document does not implement it. The
+ordering is by what §6 and §7 say actually moves a verdict, not by effort.*
+
+**What the scoring says about priority.** The axes where we are weakest (A1
+install breadth 6.5, B1 features 5.0, A4 pinning 6.0) are also the axes this
+document argues are theirs by strategy rather than by our neglect (§2.2:
+aggregation vs engineering). Chasing them means competing on their terms. The
+axes where we lead — A3 injection 9.0, C1 risk 7.5, A5 failure modes 7.5 — are
+cheap to defend and expensive for them to match.
+
+**[inferred]** So the defensible reading of §6.3 is not "close a 0.09 gap". It is:
+answer item 0 because it may be a live defect, close items 1–5 because they are
+small and they erode the axes we actually win, and treat 6–12 as strategic
+choices rather than a backlog.
 
 **Ours to answer first — a question, not a fix:**
 
