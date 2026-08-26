@@ -360,11 +360,21 @@ principle (an outbound CM connection plus an offline file write, neither a
 message hook), and it is the one engine-layer capability that closes a case we
 currently cannot survive.
 
-**Gate 3 — our clearest engine-layer advantage.** Both projects hit the same
-cold-cache/late-load problem with package 0. moon patched *around* its hook with
-a manual re-inject; lumalinux dropped the hook and polls the cache BST until
-package 0 appears. Ours catches it whenever it arrives, including on a slow
-login. Nothing to port.
+**Gate 3 — our clearest engine-layer advantage, re-verified against `d3402a1`.**
+**[read]** moon still captures package 0 via the `LoadPackage` hook
+(`packagepatch.cpp:47,67-68`: the `PackageInfo*` is *"captured the first time
+LoadPackage is called with PackageId == 0"*). Much of that module's 1.290 lines is
+scaffolding around the hook's timing: a gated `LicensesUpdated_t` broadcast to
+force a licence re-read (`:117-121,160`), an explicit cold-cache path
+(`:141,167`), and a snapshot kept *"even while package 0 is unavailable so a later
+LoadPackage(0) can reconcile the exact latest state"* (`:100-101`). lumalinux
+dropped the hook and polls the cache BST until package 0 appears, catching it
+whenever it arrives including on a slow login. Nothing to port.
+
+**[inferred]** Fairness: ours is not free either — the finder is a worker thread
+with its own anchor-resolution failure mode (*"Install hangs at 0 target
+depots"*, `docs/maintenance.md` §C). The advantage is in timing robustness, not
+in having no failure mode.
 
 **Gate 5b — a real gap.** **[read]** `depotquarantine.cpp` hooks `OnChunkUnpacked`
 (in two calling conventions) and detects when a key *they supplied* fails to
@@ -492,7 +502,87 @@ Fully inventoried in §2.3 and §2.6. Summary of leads:
 - **Portability beyond SteamOS**: ours — `platform_info.py` and the CachyOS port
   notes vs their `is_steamos()`.
 
-### §3.9 The layer where the quality gap actually sits
+### §3.9 Manifest durability — an unverified assumption in our own stack
+
+Reading moon's manifest handling surfaced a concrete risk in **our** design. It
+is recorded here because the chain is specific and testable, not because it is
+proven.
+
+**The Steam behaviour both projects are working around.** **[their claim]**
+`manifeststore.hpp:5-7`: *"Steam purges `depotcache/<depot>_<gid>.manifest` after
+a base commit and on re-plans."* moon builds two subsystems on that premise:
+
+- **`ManifestStore`** — a durable archive under `~/.config/SLSsteam/manifests/`
+  that *"Steam never touches"*, restored into `depotcache` on demand, no network
+  needed. All versions are kept.
+- **`prewarm`** (754 L) — a background worker that keeps every AddedApp's depot
+  manifests staged **for every OS a key is held for**, re-staging to heal the
+  post-commit purge. **[their claim]** `prewarm.hpp:12-18` names the two triggers
+  precisely: *"forcing a Proton compat tool on a native-Linux AddedApp re-plans
+  to the WINDOWS build, but its manifests were purged after the native commit ->
+  BYldRequestDepotManifest -> 'Access Denied' -> one ~30s retry (confirmed in
+  testing)"*, and *"Steam re-validating files hits the same gap."*
+
+**What we do.** **[read]** `tools/steamidra_lite.py:274-286` (`_write_manifest_both`)
+writes each manifest to **both** `depotcache/` and `config/depotcache/`, with this
+rationale, inherited from SteaMidra and not independently verified:
+
+> *"Steam lee de cualquiera de los dos según la fase, y sincronizarlos evita un
+> 'Missing manifest' intermitente."*
+> (Steam reads from either one depending on the phase.)
+
+**[read]** Nothing restores them. lumalinux never touches `depotcache` at
+runtime; LumaDeck reads it for lua enrichment (`downloads.py:796-851`) and
+deletes from it on uninstall (`slssteam_ops.py:961`), and there is no
+`config/depotcache` → `depotcache` copy anywhere in either project.
+
+**The contradiction.** **[read]** moon does **not** appear to share our
+assumption: `depotkey.hpp:17,84` and `depotkey.cpp:344` copy
+`<Steam>/config/depotcache/*.manifest` **into** `depotcache` at startup. If Steam
+read the config location directly, that copy would be pointless.
+
+**Why this matters for us specifically.** **[read]** `downloads.py:1403` calls
+`steam_utils.set_compat_tool_for_app(appid)`, which writes a `CompatToolMapping`
+entry pinning the app to `proton_experimental` (`steam_utils.py:440`). That is
+**exactly** the first trigger `prewarm.hpp` documents: forcing Proton on an app
+re-plans to a different build whose manifests may have been purged.
+
+**[inferred]** So the chain is: we force a compat tool → Steam re-plans → if Steam
+purged `depotcache`, our only remaining copy is in `config/depotcache` → whether
+that copy saves us rests entirely on an inherited claim that moon's own
+implementation contradicts. If the claim is wrong, the symptom is a manifest
+fetch falling through to `BYldRequestDepotManifest` and an Access Denied retry —
+which would present to a user as an install or re-validate that stalls, not as an
+obvious lumalinux failure.
+
+**This is not proven.** moon may simply be belt-and-braces, and our comment may
+be correct. It is recorded as the highest-value *testable* question this analysis
+produced about our own stack: instrument a purge, then re-plan, and observe
+whether Steam finds the manifest in `config/depotcache`. Until that is answered,
+neither "we are covered" nor "we have a bug" is supportable.
+
+### §3.10 Engine capabilities with no LumaDeck counterpart
+
+Found by reading moon modules that the previous analysis never opened. Recorded
+as inventory, not as recommendations.
+
+| moon module | Capability | Our position |
+|---|---|---|
+| `manifeststore` (414 L) | Durable, purge-proof manifest archive with on-demand restore; keeps **all** gids | Partial — we write a second copy, never restore (§3.9) |
+| `prewarm` (754 L) | Background re-staging across every OS a key is held for | None |
+| `steamstub` (644 L) | **Automatic** Steamless run inside the `LaunchApp` hook, under a dedicated Wine prefix, before Proton starts | `steamless.py` — manual, user-initiated |
+| `ticket` | `EncryptedAppTicket` capture and replay; ownership-ticket eresult stamping covering added apps *and* provisioned DLC ids | None — this is the Denuvo path |
+| `parental` | Local parental-controls unlock | None (noted as D4 previously, still not applicable) |
+| `appinfostate` (1.338 L) | Explicit appinfo state machine with policy separation | None — we depend on Steam's own appinfo |
+| `ownerqueue` (726 L) | Owner-thread dispatch discipline for client calls | Equivalent by construction — our inotify thread only touches `NotifyKeysChanged` |
+
+**[inferred]** `steamstub` is the most interesting of these for feature parity:
+running Steamless automatically at launch rather than as a button is a UX
+difference, but it also means their DRM removal is applied to the *currently
+planned* build after any re-plan, where ours is applied once, manually, to
+whatever was on disk at the time.
+
+### §3.11 The layer where the quality gap actually sits
 
 **[inferred]** The single most important structural conclusion of Phase 2, and it
 cuts against reading either stack as a monolith:
@@ -526,7 +616,7 @@ Any verdict in §7 that averages these two layers into one number will mislead.
 is `.github/workflows/build-test.yml`, which builds the frontend and runs
 `python3 -m compileall` — a syntax check, not a test. This finding applies to the
 **plugin layer only**: slsteam-moon, the engine beneath it, is comprehensively
-tested (§3.9). Their CHANGELOG's *"280 assertions across
+tested (§3.11). Their CHANGELOG's *"280 assertions across
 10 suites"* **[their claim]** is not reproducible by anyone.
 
 **[read]** Ours: 9 Python suites in `LumaDeck/tests/`, plus C++ self-tests
@@ -800,6 +890,15 @@ B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
 
 *Not implemented. Listed here as findings only; prioritisation belongs to §7.*
 
+**Ours to answer first — a question, not a fix:**
+
+0. **Does Steam read `config/depotcache`?** (§3.9). Our manifest durability rests
+   on an inherited, unverified claim that it does; moon's startup copy implies it
+   does not. We force a compat tool (`downloads.py:1403`), which is exactly the
+   re-plan trigger their `prewarm` was built for. Instrument a purge and a
+   re-plan before deciding whether anything needs building. Every other item
+   below is subordinate to this answer.
+
 **Ours to fix, surfaced by this analysis:**
 
 1. `LumaDeck/backend/downloads.py:956` — `extractall()` on a third-party archive
@@ -834,6 +933,10 @@ B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
 9. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
    existing pattern, so the case that most needs a server-side fix is the one
    case we cannot fix server-side.
+10. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
+    inside the `LaunchApp` hook, so it applies to the currently planned build
+    after any re-plan; our `steamless.py` is a one-shot manual action against
+    whatever was on disk at the time.
 
 **Explicitly not recommended for adoption:** the prebuilt kernel module (§5.2),
 the generic CDP credential interceptor (§5.5), and the `steam.sh` patching model
