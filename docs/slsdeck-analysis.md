@@ -1,8 +1,9 @@
 # SLSDeckUniversal vs the LumaDeck stack — exhaustive analysis
 
-*Phases 1–2 of 5 complete: inventory and provenance (§1–§2), the layer-by-layer
-comparison (§3), non-functional axes (§4) and trust/risk (§5). The weighted score
-(§6) and the per-profile verdicts (§7) are marked **PENDING** in place. Nothing
+*Phases 1–3 of 5 complete: inventory and provenance (§1–§2), the layer-by-layer
+comparison (§3), non-functional axes (§4) and trust/risk (§5, including the
+Tokeer activation path in §5.7). The weighted score (§6) and the per-profile
+verdicts (§7) are marked **PENDING** in place. Nothing
 here is a recommendation to change LumaDeck or lumalinux; the actionable list in
 §8 is preliminary and deliberately unimplemented.*
 
@@ -872,7 +873,7 @@ mechanism: a general-purpose credential interceptor operating inside the user's
 authenticated browser context. It exfiltrates nothing today (§5.4); a
 compromised update would not need to build the harvester.
 
-*Tokeer's activation workflow itself is analysed in §5.7 — **PENDING** (Phase 3).*
+*Tokeer's activation workflow itself is analysed in §5.7.*
 
 ### §5.6 Coexistence — they disable our stack on install
 
@@ -916,6 +917,122 @@ fail only over injection; the configuration files are mutually unintelligible.
 **[read]** We implement no detection of their presence and no handling of
 `*.slsdeck-disabled` artefacts. A user returning from their plugin lands in a
 non-working state with no diagnostic. See §8.
+
+### §5.7 Tokeer — the Denuvo activation path
+
+The largest single feature in SLSDeckUniversal by frontend line count
+(`tokeerDiscordCapture.ts` alone is 1.633 L) and the one with the most
+consequential risk profile. Analysed here mechanically; the portability
+assessment is at the end.
+
+#### What it is
+
+**[read]** `tokeer.py:1-6`, `docs/TOKEER_IMPLEMENTATION.md:3`: SLSDeck does not
+vendor Tokeer. It fetches the upstream Linux runtime from
+`Tesla697/TokeerDRM-App` at the moment the user prepares a game
+(`RUNTIME_ZIP`, `tokeer.py:29`) and orchestrates the upstream verifier and
+redeemer locally.
+
+**[their claim]** `docs/TOKEER_IMPLEMENTATION.md:21-30` describes the upstream
+model: a native hook (`ost_native_hook.so`) appended to `LD_PRELOAD` by a launch
+wrapper, a validator that emits a signed setup report, and a redeemer that POSTs
+a 6-character activation code to `/drm/redeem` and receives `app_id`,
+`appticket` and `eticket`.
+
+#### The transaction, step by step
+
+1. **A signed setup report is produced locally.** **[read]** `tokeer.py:627-644`
+   runs the upstream validator and extracts a `TLX1.<payload>.<signature>` token,
+   decoding the base64url payload locally to show which setup checks passed
+   (`_decode_tlx`, `:616-624`). **[their claim]** the checks cover install folder,
+   Proton prefix, native hook, launch option and Proton mapping.
+2. **That report is uploaded into a Discord ticket, by the plugin, as the user.**
+   **[read]** `tokeerDiscordCapture.ts` drives the user's signed-in Discord
+   session over CDP: sign-in state detection (`getDiscordSignInState`), ticket
+   discovery, composer focus, and `cdpSetDiscordFileInput` (`:121`) — programmatic
+   population of a file input to attach the report. Target guild
+   `1464130182364270696`, invite `discord.gg/denuvo`, named "DeDevision"
+   (`:4-14`).
+3. **A 6-character code comes back and is redeemed.** **[read]**
+   `tokeer.py:429` overwrites the upstream `server_config.py` with
+   `SERVER_URL = "https://luastools.xyz"`, so the redeem request goes to that
+   host rather than upstream's default.
+4. **Real Steam ownership tickets are written into the game's prefix.**
+   **[their claim]** `docs/TOKEER_IMPLEMENTATION.md:45-52`: the redeemer writes
+   `AppTicket` and `ETicket` as `REG_BINARY` under
+   `HKCU\Software\Valve\Steam\Apps\<appid>` inside
+   `steamapps/compatdata/<appid>/pfx`.
+
+**[read]** A separate, folder-based **Ubisoft mode** exists: no native hook, no
+launch-option rewrite; `upc_r2` + `dbdata` folders. SLSDeck hosts its own "care
+packages" for it (`ubisoft_packages.py:19-21`) from its own GitHub release,
+indexed by `assets/ubisoft-packages/hostedgames.json` with per-game
+`carePackageId`, `ubisoftProductIds`, `tokenRequestIds` and a `sourceSha256`.
+
+#### Recorded in their favour
+
+**[read]** `cc8d1f5` ("Generate genuine Ubisoft Tokeer verification codes") is
+**not** code forgery, despite how the subject reads. The upstream `verify-ubi`
+wrapper occupies a positional slot such that the validator silently fell back to
+Steam mode; the fix passes the correct arguments and adds a guard that
+**refuses to submit** a code whose actual mode does not match the requested one
+(`tokeer.py:634-639` and the mismatch branch). It is a correctness fix with a
+fail-closed check.
+
+**[read]** `hostedgames.json` pins a `sourceSha256` per care package — the one
+place in the codebase where a fetched artefact carries a recorded hash (contrast
+§5.1).
+
+#### Risk assessment
+
+**[inferred]** Five distinct exposures, listed by severity:
+
+1. **Ownership tickets of unknown provenance.** The `appticket`/`eticket` pair
+   written into the user's prefix is a *real* Steam ownership credential that the
+   user did not obtain from Valve. Nothing in the reviewed code establishes where
+   the issuing service sources them. This is the substance of the feature and the
+   irreducible risk in it.
+2. **The user's own Steam account carries it.** The tickets are presented from
+   the user's machine and prefix. Any correlation by Valve or the publisher lands
+   on the user's account, not on the service's.
+3. **The user's own Discord account transacts it.** The automation acts *as the
+   user* in a piracy-oriented guild — sign-in, ticket creation, attachment
+   upload. The account bearing that activity is theirs.
+4. **A third-party service receives a signed machine report.** The `TLX1` payload
+   is produced by an upstream binary that SLSDeck fetches rather than vendors, so
+   its exact contents cannot be established from this repository alone. What is
+   established is that it is uploaded off-machine.
+5. **Fetch-and-execute, again.** **[read]** The runtime zip is fetched from a
+   GitHub releases URL and executed; if the bundle carries no prebuilt hook,
+   `tokeer.py` **compiles one on the device** (`_run_as_user(["bash", build])`).
+   §5.1 and §5.3 apply in full.
+
+**[read]** Licensing, from their own planning document
+(`docs/TOKEER_IMPLEMENTATION.md:59-62`): *"The upstream repository currently
+exposes no repository license. Avoid copying/vendoring its Python/C source into
+SLSDeck unless the upstream author supplies compatible licensing/permission."*
+They followed their own advice — the runtime is fetched, not vendored. Recorded
+in their favour, and noted as a live constraint for anyone considering the port.
+
+#### Portability
+
+**Technically**: high. SLSDeck's own layer here is orchestration — process
+invocation, CDP automation, file placement. There is no reverse engineering in
+it, and no part of it depends on their architecture.
+
+**In substance**: the feature is not a capability that can be built, it is a
+*relationship* that must be entered. Porting it means becoming a client of a
+third-party activation service, driving the user's authenticated Discord session
+on their behalf, and injecting Steam ownership credentials of unestablished
+origin into their prefix. The engineering is the small part; the three exposures
+above are the feature.
+
+**Assessment for LumaDeck: do not port.** Not on legal or moral grounds, which
+are the user's to weigh, but on the same engineering grounds this document
+applies elsewhere — it fails the test that §5.1, §5.2 and §5.3 apply to every
+other fetched artefact, and it moves the blast radius of a failure onto the
+user's own accounts, where LumaDeck cannot contain it. This is the one item in
+§8 recorded as a red line rather than a gap.
 
 ---
 
@@ -984,9 +1101,22 @@ B2 UX 8%, C1 user risk 10%, C2 quality/maintainability 8%, C3 project health 7%.
     after any re-plan; our `steamless.py` is a one-shot manual action against
     whatever was on disk at the time.
 
-**Explicitly not recommended for adoption:** the prebuilt kernel module (§5.2),
-the generic CDP credential interceptor (§5.5), and the `steam.sh` patching model
-(§3.1).
+**Red lines — not gaps, and not recommended at any priority:**
+
+- **Tokeer** (§5.7). The only item here classed a red line rather than a
+  declined gap. Its engineering is orchestration and would port easily; its
+  substance is a relationship with a third-party activation service, transacted
+  through the user's own Discord and Steam accounts, delivering ownership
+  credentials of unestablished origin. It fails the same supply-chain test this
+  document applies to every other fetched artefact, and it puts the blast radius
+  somewhere LumaDeck cannot contain it.
+- **The prebuilt kernel module** (§5.2) — an unsigned `.ko` from a throwaway
+  account, `insmod`-ed as root.
+- **The generic CDP credential interceptor** (§5.5) — a `fetch`/XHR wrapper
+  capturing keys from any JSON response inside the user's authenticated session.
+  Note that our own `cef_cdp.py` is the narrow, single-purpose version of this
+  same mechanism; the objection is to the general form, not to CDP as such.
+- **The `steam.sh` patching model** (§3.1).
 
 ---
 
