@@ -5,9 +5,10 @@ comparison (§3), non-functional axes (§4), trust and risk (§5, including the
 Tokeer activation path in §5.7), the weighted score (§6) and the per-profile
 verdicts (§7). **§10 records the adversarial pass** over the conclusions that
 favour our own stack: it revised two of them and reversed the §6 aggregate. §11
-adds field reports — the only observed-outcome evidence in the document. Nothing
-here is a recommendation to change LumaDeck or lumalinux — §8 is a findings list
-and remains deliberately unimplemented.*
+adds field reports — the only observed-outcome evidence in the document.
+**Read §12 first**: nothing was executed, and it separates what was measured from
+what was judged. Nothing here is a recommendation to change LumaDeck or lumalinux
+— §8 is a findings list and remains deliberately unimplemented.*
 
 ---
 
@@ -641,8 +642,13 @@ whatever was on disk at the time.
 **[inferred]** The single most important structural conclusion of Phase 2, and it
 cuts against reading either stack as a monolith:
 
-**slsteam-moon is a disciplined project.** **[read]** ~55 test targets in its
-Makefile, 19 test shell scripts in `scripts/`, ABI-compatibility checks
+**slsteam-moon's repository contains the artefacts of a disciplined process.**
+> **Qualified by §12.2–§12.3.** An earlier wording read *"slsteam-moon is a
+> disciplined project"*. Nothing here was executed: these are artefacts of
+> process, not evidence of delivered reliability, and the only outcome evidence
+> available disputes the stronger claim.
+
+**[read]** ~55 test targets in its Makefile, 19 test shell scripts in `scripts/`, ABI-compatibility checks
 (`check-sls-abi.sh`, `check-pattern-refresh-abi.sh`), a cryptographically signed
 pattern feed, fail-closed ambiguity handling, and every one of its four most
 recent pattern fixes shipped with a test.
@@ -1326,6 +1332,9 @@ the weakest link in this document.
 | C2 Quality & maintainability | 8% | **7.0** | 5.0 | §4.1, §4.2, §3.11. Split by layer: their engine is better tested than ours, their plugin has no tests at all, and the plugin is where 32k of their lines live. |
 | C3 Project health | 7% | **7.0** | 5.0 | §4.3. Continuous history, licence files, CI, docs vs a 7-day squashed drop, no `LICENSE`, a stale CHANGELOG and a release tag on the first commit. |
 
+> **Read with §12.4.** These scores mix measured properties with quality
+> judgements that §12.2 shows are weakly grounded, and nothing was executed.
+
 **Totals: ours 6.72, theirs 6.78** — revised downward for us in §10.2 after
 the adversarial pass; as first computed they were 6.79 / 6.70, i.e. the other
 way round.
@@ -1844,4 +1853,94 @@ these reports describes a failure our stack would be immune to by luck.** Report
 all, report 4 by not having a rename-based disable path. Reports 2 and 3's gate-2
 variant we would *not* survive better — §3.3 records that gap as theirs to our
 disadvantage, and §11 does not change it.
+
+---
+
+## §12 Limits of this analysis
+
+Written last, and the section most likely to matter to anyone reusing this
+document.
+
+### §12.1 Nothing was executed
+
+**Not one line of either codebase was run.** No install was performed, no game
+was added, no Steam client was launched, no hook was observed resolving. Every
+finding in §1–§10 is static: reading, counting, and measuring source.
+
+That is a hard boundary, and several conclusions above cross it without saying
+so. They are corrected here rather than quietly softened in place.
+
+### §12.2 Process artefacts were used as a proxy for reliability, and they are not one
+
+The specific error: **§3.11 and §4.5 infer engineering quality from the presence
+of quality machinery.**
+
+- *"~55 test targets in its Makefile"* — a Makefile target is not a passing test.
+  Nothing here ran them.
+- *"a cryptographically signed pattern feed"* — a signature proves authenticity,
+  not that the locators inside resolve correctly on a device.
+- *"six signed build catalogs"* (§10.1) — six published files. Whether any of
+  them made a Deck work is not established here.
+- *"fail-closed ambiguity handling"* — read in the diff of one commit.
+
+**[inferred]** From these, §3.11 concluded moon is *"a disciplined project"* and
+that lumalinux vs moon is *"a fair fight between two serious engineering
+projects."* That is a jump from **has the machinery** to **the machinery
+delivers**, and this document contains no evidence for the second.
+
+### §12.3 The only outcome evidence points the other way
+
+**[field, unverified]** Everything in this document that touches delivered
+behaviour rather than source contradicts the competence inference of §12.2:
+
+- The version this repository replaced was published and **withdrawn** under user
+  problems, corroborated in their own code (`diagnostics.py`: *"only made sense
+  for a public tool taking bug reports… this build is private"*, §1.2).
+- §11's field reports describe injection that would not activate, games that
+  installed nothing, and a Steam left unlaunchable — across at least two
+  different devices.
+- The upstream author of SLSsteam calls moon *"broken features and breaking
+  existing ones"* (§4.5), and his one **verifiable** charge — removed safety
+  mechanisms — checked out.
+- moon's own commit log runs **112 `fix` to 74 `feat`** (§4.5).
+
+**[inferred]** Where static analysis and outcome evidence disagree, outcome
+evidence wins. §3.11's characterisation of moon should be read as *"the
+repository contains the artefacts of a disciplined process"* — which is
+verifiable and true — and **not** as *"the software is reliable"*, which is not
+established and which the available evidence disputes.
+
+### §12.4 What this does and does not undermine
+
+Distinguishing the two matters, because discarding the whole document would
+discard the half that does not depend on the author's judgement.
+
+**Unaffected — measurements, reproducible from the frozen refs:**
+
+- §5.9's copy analysis: 53 shared sequences, all present in DeckTools, zero
+  exclusive above four lines. A computation, not an opinion.
+- Counts: LOC, module coupling (275 edges, mean 4.6), 366 vs 106 RPCs, 12
+  workflows running zero tests, 20 of 21 `makedirs` without `chown`, zero
+  `0o600` in our backend, 1 RVA catalog against their 6.
+- Presence facts: the `.ko` from a throwaway account `insmod`-ed as root, eight
+  raw `extractall` calls, `_download`'s unused `sha256` parameter, the
+  `disable_foreign_engines` rename path with no return.
+- §11's mapping of field symptoms onto named code paths — the symptoms are
+  reported, the paths are read, the correspondence is checkable.
+
+**Affected — judgement, and to be read at lower confidence:**
+
+- Every 0–10 score in §6.1, and both totals. They mix measured properties with
+  assessments of quality that §12.2 shows are weakly grounded.
+- §3.11's two-layer conclusion, as qualified in §12.3.
+- The A2 revision in §10.2, which moved half a point to them on the strength of
+  infrastructure this analysis never saw work.
+
+### §12.5 What would actually settle it
+
+**[inferred]** One instrumented install of each stack on the same device, adding
+the same game, across one Steam client update. That single experiment outranks
+every inference in §1–§10, and this document is not a substitute for it. The
+open question in §8 item 0 — whether Steam reads `config/depotcache` — is the
+same kind of thing: not opinable, and unanswered here for the same reason.
 
