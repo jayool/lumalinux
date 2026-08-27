@@ -1221,6 +1221,12 @@ its own knowledge without the operator ever reading a line of it — including t
 outdated `steam.sh` model (§5.6), which is precisely the kind of stale detail a
 model reproduces and a person tracking the project would not.
 
+> **Revised by §11.3.** The reading below was written before a second field
+> report surfaced, in which a reviewer names LumaDeck to the developer twice — by
+> repository path — in a review whose every other technical point was subsequently
+> implemented. The innocent explanation survives as *possible*; it is no longer
+> the *likely* one. Read this paragraph with §11.3.
+
 **[inferred]** So the plain reading is available and defensible: the code knows;
 the person plausibly does not. The public statement and the codebase are
 consistent with a human who has never looked at LumaDeck shipping a tool that
@@ -1760,6 +1766,65 @@ error, the one `confighealer.py:8,344` was written to suppress: SLSsteam
 rename-based enable/disable paths leave references pointing at moved files, with
 no automatic repair. §5.6 documents them doing this to *our* artefacts; this
 report has them doing it to their own.
+
+### §11.3 A second field report — and it revises §5.8
+
+A longer, more technical public review of the withdrawn version, relayed to this
+analysis. **[field, unverified]**, undated, same provenance caveat as §11.1.
+
+#### Its technical points, and their fate
+
+**[read]** Three of its complaints are implemented in `c243cf3`:
+
+| Reviewer's point | State at freeze |
+|---|---|
+| *"GE proton is bundled with the .zip, but the tooltip states it is not… a 500MB archive isn't fun to download… place it in your github and make a call for it"* | `proton.py:3-11`: *"The ~505 MB build is **NOT bundled** with the plugin. It is obtained on demand"*, from a configurable GitHub location, with a manual fallback |
+| *"for the fixes… how about newer game versions that came after the fix, how do you deal with downloading games that work with said fix versions?"* | `pinsource.py:1-8`, a *"layered pin-lua resolver"* that pins to the exact build a fix targets, plus `pin_for_fix` / `pin_for_luatools_fix` RPCs (`main.py:1555,1565`) |
+| *"Play button got activated in a second… it did not download game files and there was no button to force the redownload"* | `is_phantom_install`, `provision_depots`, `provision_and_restart` (`main.py:1032-1050`) — the repair path, named after the symptom |
+
+**[inferred]** The review was read and acted on. A substantial part of the
+current feature surface is a direct response to it.
+
+**[field, unverified]** Its other observations — inconsistent injection status
+across three UI locations, a Denuvo fix list described as *"misleading as there is
+no download of HV bypasses made"*, and a factory-reset LegionGo where the first
+installed game would not launch — restate §11.1's failures on different hardware.
+
+#### Why this changes §5.8
+
+**[field, unverified]** The same reviewer raised LumaDeck twice, by name and by
+repository path:
+
+> *"I'm wondering why you just didn't fork, or PR, **jayool/LumaDeck** instead of
+> reinventing the wheel? You got lots of great ideas and I'm sure that if you guys
+> worked together we'd end up with a masterpiece."*
+
+> *"**Like LumaDeck**, you should incorporate a web browser so you can fetch the
+> API or cookie information the easy way."*
+
+**[read]** The second suggestion describes, precisely, what
+`hubcapCapture.ts` / `keyCapture.ts` now do (§5.5) — and the commit that
+introduced the auth half of it, `65232aa`, carried a docstring stating it
+*"mirrors the useful part of **LumaDeck's** auth model"*, since deleted (§5.8).
+
+**[inferred]** §5.8 concluded that *"the code knows; the person plausibly does
+not"*, on the strength of machine authorship. That reading is no longer the more
+likely one. A knowledgeable reviewer named LumaDeck to the developer twice, in a
+review whose **every other technical point was implemented** — so the review was
+demonstrably read. The specific feature suggested by reference to LumaDeck was
+then built, and the code that built it cited LumaDeck in a comment that did not
+survive.
+
+**What still cannot be established.** **[inferred]** The ordering. The
+*"What is lumadeck?"* remark is undated here, and may predate this review
+entirely, in which case it was accurate when written. Nothing available dates the
+two against each other, and this document does not assert a sequence it cannot
+show.
+
+**[inferred]** The honest revision: §5.8's innocent explanation stands as
+*possible* and no longer as *probable*. The developer was told about LumaDeck, by
+name, in a review he acted on. Whether he had been told before saying he did not
+know of it is unresolved and is left unresolved.
 
 ### §11.2 What this changes
 
