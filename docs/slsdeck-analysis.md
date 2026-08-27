@@ -1495,38 +1495,43 @@ choices rather than a backlog.
    does not.
 5. `self_update.py:217` creates `~/Downloads` as root without chowning it
    (§4.4).
+6. **Shared-depot detection is enumerated, not derived** (§14.5). We exclude
+   owned depots via a `-- SHARED DEPOTS` comment header plus a static 228980 id
+   list; a shared depot from another app, in a `.lua` without the header, still
+   reaches `keys.txt` — the condition that empirically corrupts Steam's heap.
+   moon's `depotkey_scope` decides from a live signal instead and cannot be
+   defeated that way.
 
 **Gaps where they lead — plugin layer:**
 
-6. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
+7. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
    does not require adopting any of their risk surface.
-7. Direct-download acquisition as a fallback for what the native path cannot do:
+8. Direct-download acquisition as a fallback for what the native path cannot do:
    specific older builds, unowned DLC depots (§2.3).
 
 **Gaps where they lead — engine layer (lumalinux vs moon):**
 
-8. **Anonymous appinfo provisioning** (§3.3, gate 2). The one capability that
+9. **Anonymous appinfo provisioning** (§3.3, gate 2). The one capability that
    closes an install case we cannot currently survive, and portable in principle:
    an outbound CM session plus an offline `appinfo.vdf` write, neither of which
    collides with SLSsteam's message hooks.
-9. **Bad-key detection** (§3.3, gate 5b). We cannot distinguish a wrong key from
+10. **Bad-key detection** (§3.3, gate 5b). We cannot distinguish a wrong key from
    a missing key by construction. Investigate whether `content_log.txt` already
    carries the signal before considering a chunk-level hook.
-10. **Signing the RVA feed** (§3.5). The feed decides where hooks are installed
-   inside Steam's process; ours is authenticated only by a hardcoded HTTPS source.
-   moon bakes an Ed25519 public key in at build time and fails the build without
-   it.
-11. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
+11. **Sign and widen the RVA feed** (§3.5, §10.1, §14.5). Three findings that
+    are one finding. The feed decides where hooks are installed inside Steam's
+    process and is authenticated only by a hardcoded HTTPS source; it covers one
+    build against their six; and §14.5 shows that signing is what would let us
+    restore the env overrides `9438567` had to delete. moon bakes an Ed25519
+    public key in at build time and fails the build without it.
+12. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
    existing pattern, so the case that most needs a server-side fix is the one
    case we cannot fix server-side.
-12. **Beta-channel lookahead** (§10.1). `fetch_steamclient.py` tracks
+13. **Beta-channel lookahead** (§10.1). `fetch_steamclient.py` tracks
     `steamdeck_stable` by design and correctly so, but they hold derived, signed
     locators for Beta builds *before* promotion. Watching beta as an
     early-warning input — deriving without whitelisting — is the cheapest item
     on this list and directly targets A2, the axis §10.2 revised against us.
-13. **Signing and widening the RVA feed** (§10.1). One build covered against
-    six. The feed is young and the channel has been quiet, so this is not
-    neglect, but it is also not yet the mechanism §3.5 describes it as.
 14. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
     inside the `LaunchApp` hook, so it applies to the currently planned build
     after any re-plan; our `steamless.py` is a one-shot manual action against
@@ -2235,4 +2240,91 @@ circular. This section has no such problem:
 
 **[inferred]** It still predicts rather than observes. Confirming §14.2 or §14.3
 needs the same thing everything else here needs: the device experiment of §12.5.
+
+### §14.5 The engine layer — lumalinux's lessons against moon
+
+Same method as §14.1, applied to lumalinux's `fix:` history against `d3402a1`.
+The result is the inverse of §14.2–§14.3: **moon is covered on both checkable
+lessons, and on both its solution generalises better than ours.**
+
+| Our lesson | Paid at | moon's status |
+|---|---|---|
+| The pattern/RVA feed decides **where hooks are installed inside Steam's process**, so its source must not be redirectable by an environment variable | `9438567` | **Not exposed, and better founded** |
+| Never serve keys or pins for a depot Steam **already owns** — doing so corrupts Steam's heap | `b745bd6` + the empirical crash | **Covered, and generalises** |
+
+#### The feed source
+
+**[read]** We removed `LUMA_RVAS_DIR` and `LUMA_RVAS_URL` because both shipped in
+release builds and anything able to add an environment variable to Steam's launch
+— a modified `.desktop`, a launcher script, another Decky plugin — could point the
+feed at a server it controlled and choose our hook targets.
+
+**[read]** moon reads an environment variable too: `patterns.cpp:47`,
+`std::getenv("SLSSTEAM_PATTERN_CACHE")`. But `pattern_cache.cpp:550-563`
+(`PatternCache::enabled`) parses **only** `0/no/false/off` and `1/yes/true/on`. It
+is an on/off switch; it cannot change the source. **[read]** The catalog *path*
+does come from the environment (`patterns.cpp:296`, `$XDG_CONFIG_HOME/SLSsteam/patterns`)
+— and that is safe for them because the catalog is **Ed25519-signed with the key
+baked in at build time** (§3.5): redirecting the path yields a directory whose
+contents must still verify.
+
+**[inferred]** Their answer is better than ours, and the comparison names why:
+**we removed the override because our feed is unsigned.** `9438567` was a
+workaround for the absence of signing. Signing the RVA feed (§8, item 10) would
+let us restore the testing convenience we had to delete — the two findings are the
+same finding.
+
+#### Owned depots
+
+**[read]** Our rule is empirical and severe: shared depots are written to
+`keys.txt` in LEGACY form and **never injected**, because intercepting
+`LoadDepotDecryptionKey` for a depot Steam already owns *"corrupts Steam's heap
+(verified empirically — the codespace reproduction crashed with `free(): invalid
+pointer` while serving 228989/228990, and stopped crashing… the moment those two
+were removed)"* (`steamidra_lite.py:147-158`).
+
+**[read]** Detection is two-layered: the `-- SHARED DEPOTS` header Hubcap emits
+(`:158,163-178`), plus a **static fallback list** of app 228980's depot ids added
+by `b745bd6`, because *"LuaTools/FreeTP .luas often don't"* carry the header.
+
+**[read]** moon reached the same conclusion independently, and states the same
+severity. `depotkey_scope.hpp`:
+
+> *"must engage ONLY for content WE supply. A depot key that Steam returned
+> legitimately (an owned game, or a Proton Steam Linux Runtime) is cached for
+> substitution but is NOT a trigger: engaging there fires a needless synchronous
+> third-party fetch on a Steam worker thread and overwrites Steam's own request
+> code, which is wasteful at best and a **pipe-stall / SIGABRT vector** at worst."*
+
+**[inferred]** A prediction that they would be exposed here **would have been
+wrong**, and is recorded as such. Worse for us, their mechanism is the better
+one: the predicate is **pure, unit-tested** (`tools/test_depotkey_scope.cpp`, one
+of the 42 passing in §13.1) and decides from a **live signal** — did Steam return
+this key legitimately? Ours decides from a **comment header the source may omit,
+plus an enumerated id range**.
+
+**[inferred]** So a shared depot belonging to some app other than 228980, arriving
+in a `.lua` without the header, still slips through on our side. Their design
+cannot be defeated that way. **This is a finding against us, produced by looking
+for one against them**, and it belongs in §8.
+
+### §14.6 Net of the predictive pass
+
+**[inferred]** Eight lessons checked, four at the plugin layer and four at the
+engine layer:
+
+- **Two live exposures on their side** (§14.2 subprocess environment, 5 of 16;
+  §14.3 desktop-user resolution by name list), both predicted from defects we
+  paid for on real hardware.
+- **Two where they were already right and one where they are better than we
+  were** (SafeMode, `curl | bash`, and the signed feed making an env-configurable
+  path safe).
+- **Two where moon is covered and generalises better than we do** (feed source,
+  owned depots).
+- **One inverse defect** (extraction guards: we tuned ours too strict and fixed
+  it; they have none).
+
+**[inferred]** The scoreboard is not the point. The point is that this method
+produced findings in both directions from ground truth rather than judgement,
+which is what §12 and §13.5 said the rest of the document could not do.
 
