@@ -666,8 +666,12 @@ Any verdict in §7 that averages these two layers into one number will mislead.
 ### §4.1 Verification and test coverage
 
 **[read]** SLSDeckUniversal: **zero test files** in the repository. The only CI
-is `.github/workflows/build-test.yml`, which builds the frontend and runs
-`python3 -m compileall` — a syntax check, not a test. This finding applies to the
+comprises **12 workflow files**, and **not one of them runs a test**: seven
+invoke `python3 -m compileall` (a syntax check) and the rest only build the
+frontend bundle. Most are single-purpose per-branch pipelines
+(`fix-tokeer-snapshot`, `swap-qam-section-labels`, `wire-tokeer-guided-flow`,
+`release-ui-redesign`…) left in place after their branch was merged — itself a
+signature of the development process described in §1.2. This finding applies to the
 **plugin layer only**: slsteam-moon, the engine beneath it, is comprehensively
 tested (§3.11). Their CHANGELOG's *"280 assertions across
 10 suites"* **[their claim]** is not reproducible by anyone.
@@ -1152,6 +1156,81 @@ applies elsewhere — it fails the test that §5.1, §5.2 and §5.3 apply to eve
 other fetched artefact, and it moves the blast radius of a failure onto the
 user's own accounts, where LumaDeck cannot contain it. This is the one item in
 §8 recorded as a red line rather than a gap.
+
+### §5.8 What their code knows about LumaDeck
+
+Prompted by a public statement from the SLSDeck author, relayed to this analysis
+(undated, and not independently sourced):
+
+> *"What is lumadeck? With dlcs you just add them as another game with sls. In
+> newer versions sls deck has smoke api integration but it wasn't tested yet."*
+
+Their codebase is not neutral about LumaDeck. The complete inventory, and then
+the part that matters — which is the alternative explanation.
+
+#### Every reference, and when it arrived
+
+**[read]** In the current tree, outside the compiled bundle:
+
+| Location | Content |
+|---|---|
+| `slssteam.py:3558` | *"is a **different** depot-key engine (e.g. **LumaDeck's lumalinux**) already managing injection?"* |
+| `slssteam.py:3562,3564,3621,3622` | Our three install paths, by name: `~/.local/share/lumalinux`, `~/.config/lumalinux`, `keys.txt` |
+| `slssteam.py:3574` | A grep of `steam.sh` for the literal string `lumalinux` |
+| `slssteam.py:3612` | *"a steam.sh-hook engine like **lumalinux** is disabled by renaming its deployed artifacts"* |
+| `src/sections/Archive.tsx:21` | *"**Modelled on LumaDeck's** list → detail layout (GameList → GameDetail)"* |
+| `depot_history.py:6`, `hvauto.py:5,11` | *"Ported/adapted from **SteaMidra's** `depot_history.py`"* — our lineage |
+| `dist/index.js` | One surviving `LumaDeck` string in the shipped bundle |
+
+**[read]** Timeline: `disable_foreign_engines`, the detection paths, and the UI
+copy *"Detected lumalinux — Install will disable it (reversibly)"* are all
+present in **`6da03a1`, the first commit of the repository** (2026-08-20,
+v0.9.59). None was added later. The knowledge arrived complete, with the code
+drop.
+
+**[read]** One reference was **removed**. Commit `65232aa`, *"feat: add
+**Luma-style** session and header auth transport"*, added an `httpc.py` docstring
+reading *"This mirrors the useful part of **LumaDeck's** auth model without
+duplicating auth logic throughout every downloader call site."* The feature was
+Ryuu-session capture over Steam's CEF — our `ryuu_cookie.py`. The docstring no
+longer exists in `httpc.py`; it survives only in history.
+
+**[read]** A development branch was named **`lumainject`**, with its own CI
+workflow (`.github/workflows/build-lumainject.yml`, still present; the branch is
+gone from the remote). Merged as `c4b5a81` on 2026-08-21, it carried
+`live_refresh.py` — the no-restart hot-add — plus `cloudredirect_reinstall.py`,
+`survival_backup.py`, `depot_cleanup.py`, and edits to
+`SlsSteamCompact.tsx`/`Dependencies.tsx`, the two files that render the
+foreign-engine notice.
+
+#### What this does and does not establish
+
+**[inferred]** **Established:** the codebase knows LumaDeck in operational
+detail. It knows where lumalinux installs, what its key store is called, how it
+used to hook Steam, that it is a depot-key engine rather than an ownership one,
+and it ships a feature whose sole purpose is to switch it off. One UI component
+cites LumaDeck as its design reference.
+
+**Not established: that any person knew.** This is the honest limit, and it is
+load-bearing. §1.2 records that this code is machine-generated at a rate of up to
+125 commits per day, by an author handle of "Vibe-coder Jimmy", in a sandbox whose
+own stub files complain that *"the mount blocks deletion"*. A model assembling a
+Decky plugin for the SLSsteam ecosystem would surface LumaDeck and lumalinux from
+its own knowledge without the operator ever reading a line of it — including the
+outdated `steam.sh` model (§5.6), which is precisely the kind of stale detail a
+model reproduces and a person tracking the project would not.
+
+**[inferred]** So the plain reading is available and defensible: the code knows;
+the person plausibly does not. The public statement and the codebase are
+consistent with a human who has never looked at LumaDeck shipping a tool that
+has. That reading also explains the deleted attribution better than concealment
+does — a later generation pass rewrote a docstring without preserving a citation
+it never understood as one.
+
+**[inferred]** What survives regardless of who knew: the disable path is real, it
+is aimed at us by name, its model of our stack is three iterations out of date,
+and it has no return path (§5.6). That is a defect to document whether it was
+authored deliberately or generated incidentally.
 
 ---
 
