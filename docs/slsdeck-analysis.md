@@ -1,11 +1,12 @@
 # SLSDeckUniversal vs the LumaDeck stack — exhaustive analysis
 
-*Phases 1–3 of 5 complete: inventory and provenance (§1–§2), the layer-by-layer
-comparison (§3), non-functional axes (§4) and trust/risk (§5, including the
-Tokeer activation path in §5.7). The weighted score (§6) and the per-profile
-verdicts (§7) are marked **PENDING** in place. Nothing
-here is a recommendation to change LumaDeck or lumalinux; the actionable list in
-§8 is preliminary and deliberately unimplemented.*
+*Complete, all five phases: inventory and provenance (§1–§2), the layer-by-layer
+comparison (§3), non-functional axes (§4), trust and risk (§5, including the
+Tokeer activation path in §5.7), the weighted score (§6) and the per-profile
+verdicts (§7). **§10 records the adversarial pass** over the conclusions that
+favour our own stack: it revised two of them and reversed the §6 aggregate.
+Nothing here is a recommendation to change LumaDeck or lumalinux — §8 is a
+findings list and remains deliberately unimplemented.*
 
 ---
 
@@ -480,14 +481,19 @@ scan finds nothing, no RVA can be emitted, the cron exits 3 and opens a blocking
 issue for manual Ghidra re-derivation (`docs/maintenance.md` §A.2/A.3). Their
 catalog carries signatures, so the same case is a data update.
 
-**Where we lead, and it is not nothing.** **[read]** `watch-steam.yml` runs daily,
-gates cheaply on a version check, then downloads the new `steamclient.so` and
-runs the full hook validation, opening either a hash-bump PR (which propagates to
-every Deck on next boot with **no release**) or a blocking issue. moon has **no
-`.github/` directory at all** **[read]** — their monitoring lives in separate
-infrastructure whose cadence is not observable from the repository. We find out
-that Steam broke something before a user does; whether they do is unverifiable
-from here.
+**Where we lead, and it is narrower than it first looked.** **[read]**
+`watch-steam.yml` runs daily, gates cheaply on a version check, then downloads the
+new `steamclient.so`, runs the full hook validation, and opens either a hash-bump
+PR (which propagates to every Deck on next boot with **no release**) or a blocking
+issue. That automated escalation has no counterpart on their side.
+
+> **Revised by §10.1.** This section originally added that moon has no `.github/`
+> directory and that their detection cadence was *"unverifiable from here"*. That
+> was an assumption, and it was wrong: their feed names its own source, and
+> `swwayps/steam-monitor` publishes every 3–8 days, most recently the day before
+> this freeze, carrying **six signed build catalogs across Stable and Beta**
+> against our **one, unsigned, Stable-only**. See §10.1 for the full comparison
+> and §10.2 for the score revision it forced.
 
 **[read]** Recorded for fairness: `res/updates.yaml` is still fetched from
 `AceSLS/SLSsteam` by moon — it consumes upstream's SafeMode feed while having
@@ -1114,7 +1120,7 @@ the weakest link in this document.
 | Axis | Weight | Ours | Theirs | Basis |
 |---|---|---|---|---|
 | A1 Install end-to-end | 15% | 6.5 | **8.0** | §2.3, §3.3. Theirs: native *and* direct-download, specific older builds, unowned DLC depots, gate 2 covered, bad-key quarantine. Ours: one path, gate 2 exposure, §3.9 unresolved. |
-| A2 Steam-update survival | 15% | 7.0 | **8.0** | §3.5. Theirs: signed catalog recovers a moved prologue as a data update. Ours: automated daily detection and escalation, but that case needs a human. |
+| A2 Steam-update survival | 15% | 6.5 | **8.5** | §3.5. Theirs: signed catalog recovers a moved prologue as a data update. Ours: automated daily detection and escalation, but that case needs a human. |
 | A3 Injection & boot coverage | 8% | **9.0** | 4.0 | §3.1. `steam.sh` vanilla vs a patch with a re-patch loop and three overlapping mechanisms. |
 | A4 Game updates & pinning | 7% | 6.0 | **8.0** | §3.10, §2.3. Theirs adds build archive, SteamDB history and rollback. |
 | A5 Failure modes & recovery | 10% | **7.5** | 6.5 | §3.4, §3.6. Ours: cross-component interlock, fail-closed resolution. Theirs: quarantine and plugin-layer self-heal, offset by zero tests (§4.1) and an endpoint that reports false success (§4.2). |
@@ -1124,11 +1130,13 @@ the weakest link in this document.
 | C2 Quality & maintainability | 8% | **7.0** | 5.0 | §4.1, §4.2, §3.11. Split by layer: their engine is better tested than ours, their plugin has no tests at all, and the plugin is where 32k of their lines live. |
 | C3 Project health | 7% | **7.0** | 5.0 | §4.3. Continuous history, licence files, CI, docs vs a 7-day squashed drop, no `LICENSE`, a stale CHANGELOG and a release tag on the first commit. |
 
-**Totals: ours 6.79, theirs 6.70.**
+**Totals: ours 6.72, theirs 6.78** — revised downward for us in §10.2 after
+the adversarial pass; as first computed they were 6.79 / 6.70, i.e. the other
+way round.
 
 ### §6.2 The aggregate is not usable, and that is the finding
 
-A margin of **0.09 on a 10-point scale** is far below the resolution of the
+A margin of **0.06 on a 10-point scale** is far below the resolution of the
 scoring judgement behind it. **[inferred]** It should not be reported as a win,
 quoted as a result, or used to choose a stack.
 
@@ -1180,17 +1188,17 @@ discipline, and they win on delivered breadth regardless.
 ## §7 Verdicts by user profile
 
 **[inferred]** Re-weighting the same ten axis scores for four realistic priority
-sets. The base row is §6.1. The spread between profiles (−1.70 to +2.52) is an
-order of magnitude larger than the spread in the aggregate (+0.09), which is the
+sets. The base row is §6.1. The spread between profiles (−1.75 to +2.42) is an
+order of magnitude larger than the spread in the aggregate (−0.06), which is the
 whole argument for reporting it this way.
 
 | Profile | Ours | Theirs | Verdict |
 |---|---|---|---|
-| Base (agreed weights) | 6.79 | 6.70 | **Too close to call** |
-| Wants it to work and not touch it | 7.15 | 6.75 | **Ours**, moderately |
-| Wants features | 6.13 | 7.83 | **Theirs**, decisively |
-| Concerned about their account | 7.35 | 4.83 | **Ours**, decisively |
-| Maintainer — they fix it when it breaks | 7.28 | 5.92 | **Ours**, clearly |
+| Base (agreed weights) | 6.72 | 6.78 | **Too close to call** |
+| Wants it to work and not touch it | 7.03 | 6.88 | **Ours**, narrowly |
+| Wants features | 6.11 | 7.86 | **Theirs**, decisively |
+| Concerned about their account | 7.30 | 4.88 | **Ours**, decisively |
+| Maintainer — they fix it when it breaks | 7.15 | 6.05 | **Ours**, clearly |
 
 ### §7.1 "I want it to work and I don't want to think about it"
 
@@ -1306,7 +1314,15 @@ choices rather than a backlog.
 11. **Recovery from a moved prologue** (§3.5). Our RVA derivation scans with the
    existing pattern, so the case that most needs a server-side fix is the one
    case we cannot fix server-side.
-12. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
+12. **Beta-channel lookahead** (§10.1). `fetch_steamclient.py` tracks
+    `steamdeck_stable` by design and correctly so, but they hold derived, signed
+    locators for Beta builds *before* promotion. Watching beta as an
+    early-warning input — deriving without whitelisting — is the cheapest item
+    on this list and directly targets A2, the axis §10.2 revised against us.
+13. **Signing and widening the RVA feed** (§10.1). One build covered against
+    six. The feed is young and the channel has been quiet, so this is not
+    neglect, but it is also not yet the mechanism §3.5 describes it as.
+14. **Automatic DRM removal at launch** (§3.10). Their `steamstub` runs Steamless
     inside the `LaunchApp` hook, so it applies to the currently planned build
     after any re-plan; our `steamless.py` is a one-shot manual action against
     whatever was on disk at the time.
@@ -1347,7 +1363,136 @@ of our stack three iterations out of date.
   `plugin.json`.
 - **slsteam-moon**: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon) @ `d3402a1` (v2.8);
   see [`slsteam-moon-findings.md`](slsteam-moon-findings.md), especially M7.
+- **steam-monitor**: [`swwayps/steam-monitor`](https://github.com/swwayps/steam-monitor) @ `e82030d`
+  — the signed per-build locator feed moon consumes (§10.1).
 - **SLSsteam (stock)**: [`slssteam-analysis.md`](slssteam-analysis.md).
 - **Ours**: `jayool/LumaDeck` @ `eea30e5`, `jayool/lumalinux` @ `87ee544`.
 - **Superseded**: `slsdeck-findings.md` (2026-07-22) — analysed a repository
   that no longer exists (§1.1).
+
+---
+
+## §10 Adversarial pass
+
+Phase 5. Each conclusion favouring our own stack was attacked with their code in
+hand. Four claims were tested; **two were revised, one was narrowed, one held.**
+The revisions changed the §6 result, which is recorded rather than smoothed over.
+
+### §10.1 REVISED — "their monitoring cadence is not observable"
+
+**The claim (§3.5, as originally written):** moon has no `.github/` directory, so
+whether they detect a Steam update before their users do *"is unverifiable from
+here."*
+
+**The attack:** their pattern feed names its own source — `swwayps/steam-monitor`
+(`catalog.cpp:775`) — and that repository was never opened. Unverifiable was an
+assumption, not a finding.
+
+**Result: the claim was wrong.** **[read]** `swwayps/steam-monitor` publishes
+`chore(patterns): publish Steam locator metadata` on **2026-08-01, 08-08 (×2),
+08-11, 08-13, 08-19 and 08-27** — every 3–8 days, most recently the day before
+this document's freeze. Its `linux32/steamclient/` holds **6 build catalogs, each
+with a detached `.toml.sig`**, keyed by `module_sha256`, `module_size`,
+`gnu_build_id` and `steam_version`, marked `source = "deterministic"`. Its README
+tracks both **Stable and Beta** channels and is auto-generated.
+
+**The comparison this forces.** **[read]** Our `res/rvas/` holds **one** build
+catalog. `res/updates.yaml` whitelists 10 hashes, but the whitelist is advisory
+(`maintenance.md` §A.1); only the RVA feed gives prologue-independent resolution,
+and it covers one build.
+
+**Mitigation, verified.** **[read]** The RVA feed landed 2026-08-12 (`2efd3ea`),
+15 days before the freeze, and `watch-steam.yml:94,229,373` does wire
+`--emit-rvas`. Steam's **Stable channel has not moved since 2026-08-03**
+(steam-monitor's own README), so one entry is a young feed on a quiet channel,
+not a neglected one.
+
+**What survives as a real difference.** **[read]** `tools/fetch_steamclient.py:55-60`
+defaults to `steamdeck_stable` deliberately — *"tracks exactly what Decks run"* —
+and that choice is correct for our target. But it means we have **no lookahead**:
+they hold derived, signed locators for Beta builds before those promote to
+Stable; on promotion day they are already covered and we begin deriving. Cheap to
+close without whitelisting beta (§8).
+
+### §10.2 REVISED — the A2 score
+
+**[inferred]** §10.1 makes the original A2 scoring (ours 7.0, theirs 8.0)
+untenable. Their maintenance infrastructure is not merely structurally better on
+the hard case (§3.5) but demonstrably better resourced: six signed catalogs
+against one unsigned, two channels against one, and a publishing cadence that is
+now observable and current. Revised to **ours 6.5, theirs 8.5**.
+
+**This reverses the aggregate.** Base totals become **ours 6.72, theirs 6.78** —
+theirs, by 0.06.
+
+**[inferred]** That is the single most useful result in this document, and not
+because of who is ahead. §6.3 predicted that a two-point revision on any one axis
+would reverse the ordering. A one-point revision on one axis, made by the author
+against his own side, did exactly that. The aggregate is confirmed unusable as a
+decision tool; the per-profile verdicts (§7) barely moved, which is why they are
+the output.
+
+### §10.3 NARROWED — "the injection model is ours, decisively"
+
+**The claim (§3.1):** their `steam.sh` patch is reverted by Steam and needs a
+re-patch loop; our wrapper cannot be reverted.
+
+**The attack:** we also run a re-assertion loop. **[read]** `setup.sh:97-99,765`
+installs `lumalinux-desktop-guardian.{service,path,timer}` running
+`ensure-desktop-coverage.sh --guardian`. A `.path` unit plus a `.timer` is
+structurally the same shape as their re-patch loop, and our own README lists
+*"a Steam update regenerated a `.desktop`"* as a live failure mode.
+
+**Result: the claim holds, narrowed.** Two differences survive the attack and
+both are load-bearing:
+
+1. **What is being re-asserted, and how often it breaks.** Steam rewrites
+   `steam.sh` from its own bootstrap as designed — their reversion is routine and
+   injection is off until re-patched. `.desktop` regeneration is an occasional
+   event, not a designed one.
+2. **Redundancy.** **[read]** We have three independent paths — patched
+   `.desktop`, a PATH drop-in, and a systemd drop-in on `steam-launcher.service`.
+   `setup.sh:967-971` records that **Game Mode rides the systemd drop-in**, not
+   the `.desktop` path (*"Game Mode launched steam-launcher.service vanilla while
+   Desktop — which uses the .desktop/PATH path, not systemd — worked"*). The
+   guardian therefore protects the Desktop path; the primary platform's injection
+   does not depend on the mechanism the guardian repairs.
+
+**[inferred]** The honest statement is not "we never need re-assertion" — we do.
+It is that our re-assertion covers one of three redundant paths, and the one Game
+Mode actually uses is not the fragile one. A3 stands at 9.0/4.0.
+
+### §10.4 HELD — the risk axis
+
+**The claim (§6.1, C1):** ours 7.5, theirs 3.0.
+
+**The attack:** our supply chain is unverified too (§5.1, conceded), lumalinux is
+itself a `.so` injected into Steam, and a compromised lumalinux release would be
+severe. Is the gap in kind, or is it self-flattery?
+
+**Result: held.** **[inferred]** The blast radii differ in kind, not degree. Our
+worst case is bounded by what a malicious `.so` can do inside a Steam process on
+that machine. Theirs includes a kernel module fetched unsigned from a throwaway
+GitHub account and `insmod`-ed as root (§5.2), and an activation service
+transacting on the user's own Steam and Discord credentials (§5.7) — a failure
+there follows the user off the machine and onto accounts LumaDeck could not
+contain even in principle. The concession that we do not verify our downloads is
+already in §5.1 and does not close that distance.
+
+### §10.5 Errors corrected during the analysis
+
+Recorded so the document's own reliability can be judged. Six claims were wrong
+when first written, four found before Phase 5 and two by it:
+
+| Claim | Direction | Where |
+|---|---|---|
+| Gate verdicts carried forward as "still current" without re-verification | Method failure | §3.3, re-verified |
+| "Their no-restart verifies where ours assumes" | Against us | §3.4 |
+| Gate 5 scored as parity | For them | §3.3 |
+| Their `steam.sh` regression treated as their only injection model | Overstated | §3.1 |
+| "Their monitoring cadence is unverifiable" | For us | §10.1 |
+| A2 scored 7.0/8.0 | For us | §10.2 |
+
+**[inferred]** Five of the six favoured our own stack before correction. That
+rate is the strongest available argument for reading §6 and §7 as estimates with
+error bars rather than as measurements.
