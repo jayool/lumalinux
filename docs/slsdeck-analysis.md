@@ -2132,3 +2132,107 @@ have none at all (§4.1). That is worth something — a weak check still catches
 regressions against its own baseline — but it is not the evidence of quality
 §13.3 presented it as.
 
+---
+
+## §14 Our own defect history, applied predictively
+
+The strongest method available here, and the one that escapes §13.5's
+circularity. LumaDeck and lumalinux carry **43 `fix:` commits** whose bodies
+record what broke on real hardware and why. Each is ground truth paid for in the
+field — not a judgement of this analysis, and not an assertion either project's
+authors chose to make about themselves.
+
+**Method.** Every `fix:` commit was read. Those describing defects **specific to
+this environment** — Decky-as-root, SteamOS paths, the Steam client's own
+behaviour — were turned into checks and run against `c243cf3`.
+
+### §14.1 Results
+
+| Our lesson | Paid at | Their status |
+|---|---|---|
+| `SafeMode: yes` makes SLSsteam refuse any unlisted `steamclient.so` hash, so a **new but compatible** Steam build degrades the whole stack | `e80463e` | **Already right.** `defaults/slssteam/config.default.yaml:77` ships `SafeMode: no`, and `slssteam.py:3306,3457,3478` reason about the same failure |
+| `curl \| bash` without `pipefail` masks a 404: curl fails, bash reads empty stdin and exits 0 | `88739c7` | **Better than we were.** No `curl \| bash` anywhere; `_run_headcrab_shimmed` downloads to a temp file first, then executes |
+| Bare `openssl` fails when `PATH` lacks `/usr/sbin` | `72a43e8` | Not exposed — they resolve binaries via `shutil.which` |
+| A systemd `--user` drop-in can be correct on disk yet **never loaded** | `4fd4aa4`, `38d335f`, `dbc0327` | Not applicable — they install no systemd units |
+| **Decky's PyInstaller `LD_LIBRARY_PATH` poisons every subprocess** | `42d5a07` → `backend/subprocess_env.py` | **Partially exposed — see §14.2** |
+| **Never hardcode `deck` / uid 1000 as the desktop user** | `0cb6e83`, `51a6180`, `b5f81a4` | **Exposed — see §14.3** |
+| A Zip Slip guard must still accept members with a leading `/` (FreeTP / online-fix package that way) | `a2baf04` | **Opposite defect.** They have no guard on eight extraction sites at all (§5.3) |
+| Compare component versions by semver, not string inequality | `c70e2b9` | Same class documented in their own CHANGELOG (gids sorted as strings) |
+
+**[inferred]** Three lessons they had already learned or never needed, one where
+their design is better than ours was, two live exposures, one where they have the
+inverse defect. That is not the result of a project that has no idea what it is
+doing.
+
+### §14.2 Exposure — subprocess environment, 5 of 16
+
+**[read]** Decky's PluginLoader is a PyInstaller one-file bundle: it sets
+`LD_LIBRARY_PATH=/tmp/_MEIxxxxxx/`, every subprocess inherits it, and the dynamic
+linker then resolves e.g. `libssl.so.3` from PyInstaller's older bundled copy.
+The binary aborts with `version 'OPENSSL_3.x' not found`. We hit this on `curl`
+and on `openssl` (`42d5a07`) and centralised the remedy in
+`backend/subprocess_env.py`, now used by **8 modules covering all 14 of our
+subprocess call sites**.
+
+**[read]** They know the failure — `hypervisor.py:88` states it almost exactly:
+*"Steam's `LD_LIBRARY_PATH` breaks the system curl (it loads a cut-down…)"* — and
+scrub `LD_LIBRARY_PATH`/`LD_PRELOAD`/`LD_AUDIT` in `fixes.py:453`,
+`hypervisor.py:91` and three other modules.
+
+**[executed]** But the remedy is local, not central. Of **16 modules that launch
+subprocesses, 5 scrub the environment**:
+
+| Scrubs | Does not |
+|---|---|
+| `slssteam` (12 calls), `assella` (5), `fixes` (2), `hypervisor` (1), `tokeer` (1) | `opensave` (5), `steam` (4), `cloudredirect` (4), `creamysteamy` (2), `proton` (2), `workshop`, `ryuu`, `hvauto`, `custom_fixes`, `crakfiles`, `steamstub` (1 each) |
+
+**[inferred]** **Prediction:** the eleven unscrubbed modules will fail on any
+invoked binary that links a library PyInstaller ships an older copy of. The
+sharpest case is `creamysteamy.py`, which invokes a downloaded **`zig cc`** to
+compile a per-game proxy — a compiler run inheriting a poisoned linker path.
+`proton.py`, `steamstub.py` and `opensave.py`'s daemon launch are the others most
+likely to bite.
+
+This is a prediction, not an observation. It is derived from a failure we
+actually experienced, diagnosed and fixed on this exact platform.
+
+### §14.3 Exposure — desktop-user resolution
+
+**[read]** `paths.py:52-70` (`get_user_home`): `DECKY_USER_HOME`, else `HOME`.
+**When that resolves to `/root` — which is what Decky-as-root gives** — it falls
+through to guesswork:
+
+1. hardcoded `/home/deck` if the directory exists;
+2. a **fixed username list**: `("deck", "steam", "gamer", "fedora", "ubuntu", "arch")`;
+3. otherwise **`return "/home/deck"` unconditionally** — a path that need not exist.
+
+**[read]** Our `0cb6e83` fixed the weaker version of this same bug: under
+Decky-as-root with no `SUDO_USER` and euid 0, our resolver had *"only ONE live
+signal — uid 1000's name"*. `platform_info.py:125` now takes ordered live signals
+(`SUDO_USER` when non-root, `LOGNAME`/`USER` when not root, then the Steam
+directory's actual owner) and is a pure function so it can be tested.
+
+**[inferred]** **Prediction:** on any device where `DECKY_USER_HOME` is unset and
+the desktop user is not one of those six names, every path they derive from
+`get_user_home()` points at a non-existent `/home/deck`. Their own de-escalation
+(`sudo -u`, §4.4) and the Steam-root discovery build on it.
+
+**[inferred]** Note the shape: ours failed because it had one weak signal; theirs
+substitutes a **name list** for a signal. A list cannot be extended by the device
+telling the truth about itself.
+
+### §14.4 Why this section carries more weight than §13
+
+**[inferred]** §13.5 established that self-authored passing tests are close to
+circular. This section has no such problem:
+
+- The lessons are **not judgements**: each is a defect that occurred on real
+  hardware, was diagnosed, and was fixed, with the commit body as the record.
+- The checks are **mechanical**: counting scrub coverage, reading a fallback
+  chain.
+- The results **cut both ways** — three lessons they already had, one where they
+  were right and we were wrong, two exposures.
+
+**[inferred]** It still predicts rather than observes. Confirming §14.2 or §14.3
+needs the same thing everything else here needs: the device experiment of §12.5.
+
