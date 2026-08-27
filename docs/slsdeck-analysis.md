@@ -4,9 +4,10 @@
 comparison (§3), non-functional axes (§4), trust and risk (§5, including the
 Tokeer activation path in §5.7), the weighted score (§6) and the per-profile
 verdicts (§7). **§10 records the adversarial pass** over the conclusions that
-favour our own stack: it revised two of them and reversed the §6 aggregate.
-Nothing here is a recommendation to change LumaDeck or lumalinux — §8 is a
-findings list and remains deliberately unimplemented.*
+favour our own stack: it revised two of them and reversed the §6 aggregate. §11
+adds field reports — the only observed-outcome evidence in the document. Nothing
+here is a recommendation to change LumaDeck or lumalinux — §8 is a findings list
+and remains deliberately unimplemented.*
 
 ---
 
@@ -1687,3 +1688,95 @@ when first written, four found before Phase 5 and two by it:
 **[inferred]** Five of the six favoured our own stack before correction. That
 rate is the strongest available argument for reading §6 and §7 as estimates with
 error bars rather than as measurements.
+
+---
+
+## §11 Field reports
+
+Everything above is static analysis: it measures the *probability* of failure.
+This section is the only place the document touches observed outcomes.
+
+**Provenance.** User-relayed public comments from before the current release,
+undated and not independently sourced. They are tagged **[field, unverified]**
+and carry no weight on their own. What gives them weight is that each one names
+a symptom traceable to a specific code path identified independently, by reading,
+before these reports were seen.
+
+### §11.1 The reports, mapped to mechanism
+
+**1. Injection refuses to activate.**
+> *[field, unverified]* *"When I click Activate Injection, I get a pop up that says Could not back up steam.sh… I did a reinstall and it activated."*
+
+**[read]** `slssteam.py:2634` returns the string verbatim:
+`{"success": False, "error": "Could not back up steam.sh"}`. The guard above it
+(`:2628`) explains the trigger — *"Only back up steam.sh when it's genuinely
+pristine"* — so an already-modified `steam.sh` (headcrab's own patch, or a prior
+run of theirs) makes the backup refuse and injection fail. This is §3.1's model
+failing in the field for §3.1's reason: three agents contending for one file.
+
+**2. Game added, ownership visible, library empty.**
+> *[field, unverified]* *"I have Injection enabled and when I go to the Store and add a game then restart, it does not show in my library but if I find it in the store it has the SLS label."*
+
+**[inferred]** The SLS label means the ownership write succeeded — the appid is in
+`AdditionalApps`. The library entry missing means the app has no usable appinfo
+or the depots were not surfaced. That is a gate 2 / gate 3 outcome (§3.3), the
+two gates where their engine's coverage differs most from ours.
+
+**3. Install completes instantly; nothing on disk. ★**
+> *[field, unverified]* *"The 'install' shows up alright but when I press the button it's done instantly and the game fails to launch with no executable found… trying to check the files and reinstalling the game shows 0 B on disk."* Logs: manifest downloaded, *"installed lua"*, then *"slssteam: added appid to additional apps"*.
+
+**[read]** This is the failure their own code documents at `slssteam.py:822-834`:
+*"a game added while Steam is already running never gets its keys — and the moon
+then hands Steam a **zero key** for the AdditionalApps depot, which downloads but
+can't decrypt (**empty folder**)"* — or its sibling, an appinfo carrying no depot
+list, which Steam reports as zero target depots.
+
+**[read]** It is also, precisely, the trap LumaDeck's cross-component interlock
+exists to prevent. `LumaDeck/backend/slssteam_ops.py:38-60` suppresses every live
+config poke when lumalinux reports the reconcile is broken, because otherwise
+*"poking a just-added game into SLSsteam's live view would surface a game whose
+appinfo has no depot list -> it installs 0 files (**'installed but broken'
+trap**)"*.
+
+**[inferred]** The symptom their users report is the exact state our §3.4 design
+refuses to enter. This is the strongest single validation in the document, and it
+lands on the axis (§3.4, A5) that the adversarial pass had already corrected in
+our favour.
+
+**4. Broken teardown leaves Steam unlaunchable.**
+> *[field, unverified]* *"Steam is no longer launching in desktop mode: 'Could not find the program /home/deck/.local/share/SLSsteam/path/steam'. The file is in the path with a .bak extension added on. I removed the '.bak' and now Steam launches but gives 'missing key' flags."*
+
+**[read]** `slssteam.py:45` defines `BACKUP_SUFFIX = ".bak"` and `:2534` writes
+`.bak.<timestamp>` copies. `~/.local/share/SLSsteam/path/steam` is the injection
+wrapper itself (`_NATIVE_LIB_DIR`, `:48`) — the launcher had been pointed at it
+and then the target was renamed out from under the reference, leaving a dangling
+launcher and an unbootable Steam in Desktop mode.
+
+**[read]** The residual *"missing key"* notifications are SLSsteam's own config
+error, the one `confighealer.py:8,344` was written to suppress: SLSsteam
+*"silently falls back to its own compiled-in defaults"* on an incomplete config.
+
+**[inferred]** Same defect class as §5.6, seen from the other side: their
+rename-based enable/disable paths leave references pointing at moved files, with
+no automatic repair. §5.6 documents them doing this to *our* artefacts; this
+report has them doing it to their own.
+
+### §11.2 What this changes
+
+**[inferred]** Nothing in §6 or §7 — no score was revised on the strength of
+unverified reports, and none should be.
+
+What it changes is the standing of the analysis itself. Four independent
+symptoms, each tracing to a code path this document had already identified from
+source: the `steam.sh` contention model (§3.1), the gate 2/3 coverage difference
+(§3.3), the zero-key/no-depot-list trap (§3.3, §3.4), and rename-based teardown
+without repair (§5.6). Static analysis predicted the failure modes; the field
+reports name them.
+
+**[inferred]** The reverse also holds and is worth stating plainly: **none of
+these reports describes a failure our stack would be immune to by luck.** Report
+3 is prevented by a designed interlock, report 1 by not touching `steam.sh` at
+all, report 4 by not having a rename-based disable path. Reports 2 and 3's gate-2
+variant we would *not* survive better — §3.3 records that gap as theirs to our
+disadvantage, and §11 does not change it.
+
