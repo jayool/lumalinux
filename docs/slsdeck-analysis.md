@@ -1993,8 +1993,10 @@ test_thread_start: 1 failure(s)
 **[read]** `tools/test_thread_start.cpp:118-121` — a concurrency invariant: after
 a failed thread join, the state must not reopen before the worker exits.
 
-**[inferred]** 42 passing tests is real evidence of engineering discipline, and
-upgrades §12.2's "targets in a Makefile" to demonstrated behaviour. But **one
+**[inferred]** 42 passing tests upgrades §12.2's "targets in a Makefile" to
+demonstrated behaviour — but see **§13.5**: passing *self-authored* tests are
+close to circular and are much weaker evidence than this sentence originally
+claimed. But **one
 committed test fails on a clean checkout**, which means the suite is not a gate:
 either it is not run before committing, or it is knowingly red. That is exactly
 what having no CI produces.
@@ -2042,6 +2044,10 @@ workflow of theirs runs (§4.1: 12 workflows, zero tests).
 
 ### §13.3 LumaDeck — its own suite, run
 
+*Subject to §13.5: our suite is self-authored alongside the code it covers, so
+its green result carries the same circularity discounted for theirs, and
+arguably more.*
+
 **[executed]** `python3 -m pytest tests/ -q`:
 
 ```
@@ -2075,4 +2081,54 @@ workflow of theirs runs (§4.1: 12 workflows, zero tests).
 - **[inferred]** §12.5's experiment — one instrumented install of each stack on
   the same hardware across a Steam update — remains the only thing that would
   settle the question, and remains undone.
+
+### §13.5 The circularity problem — why "42 pass" is worth much less than it looks
+
+Raised against a draft of §13 and conceded: the section as first written treated
+passing self-authored tests as evidence of correctness. They are not, and the
+error is symmetric — it applies to our suite at least as much as to theirs.
+
+**The argument.** A test written by the same author, in the same session, as the
+code it covers encodes **what that author believed the code should do**. Where
+the belief is wrong, the test enshrines the wrong behaviour and passes. A green
+suite of self-authored tests demonstrates that an implementation is *internally
+consistent with its author's model* — not that the model matches reality. For
+machine-authored code the effect is sharper still, because the model writes the
+assertions immediately after writing the behaviour they assert.
+
+**This cuts at us harder than at them.** **[inferred]** LumaDeck's 108 tests
+(§13.3) were written alongside the code they cover, by the same process. moon's
+authorship profile (§4.5: 226 commits over three months, one primary author,
+1–6 per day) is *less* consistent with same-session generation than ours is.
+Reporting "108 pass" against "42 pass" as though the first were the stronger
+result was not supportable, and §13.3 should not be read that way.
+
+**What survives the objection.** Evidence that does not depend on any author's
+beliefs:
+
+- **[executed]** `pyflakes` findings. An external ruleset, not a self-authored
+  expectation. `slssteam.py:1266`'s undefined name (§13.2) is a defect whoever
+  wrote it — and no test of theirs would have caught it, because no test of
+  theirs covers that function.
+- **[executed]** The **failing** test. `test-thread-start` is worth more than the
+  42 passing ones combined: a red self-authored test is the author's own model
+  detecting a deviation from itself, which is a real signal. A green one is
+  nearly none.
+- **[executed]** The import sweep: 59 modules loading is a property of the code,
+  not of an assertion someone chose to write.
+- Every count and measurement in §5.9, §2.1, §4.2 and §4.4.
+
+**What does not survive.** **[inferred]** The inference from "42 tests pass" to
+"moon is engineering-disciplined". §12.2 had already flagged the weaker version
+of this error (Makefile targets are not passing tests); §13.1 corrected that and
+then committed the next one (passing tests are not correctness). The chain
+`declared → runs → passes → correct` breaks at the last link, in both
+directions, for both projects.
+
+**[inferred]** The residual difference between the two plugin-layer projects is
+therefore narrower than §13 first implied, and it is a difference in *process*
+rather than in demonstrated correctness: we have a weak check that runs, they
+have none at all (§4.1). That is worth something — a weak check still catches
+regressions against its own baseline — but it is not the evidence of quality
+§13.3 presented it as.
 
