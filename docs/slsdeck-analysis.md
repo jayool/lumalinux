@@ -1232,6 +1232,69 @@ is aimed at us by name, its model of our stack is three iterations out of date,
 and it has no return path (§5.6). That is a defect to document whether it was
 authored deliberately or generated incidentally.
 
+### §5.9 Is any code copied from LumaDeck? — measured, and no
+
+`slsdeck-findings.md` answered this by grepping for names and concluded
+"convergence, not copying" with the caveat that re-implementation leaves no
+trace. That caveat is now unnecessary: the question was measured.
+
+#### Method
+
+Both Python backends were normalised — comments, docstrings, imports and
+whitespace stripped, lines under 12 characters dropped — and reduced to sets of
+*n* consecutive identical lines originating in the same file. The same was done
+for both frontends. **[read]**
+
+The decisive control is the third corpus: **`lopesleo/DeckTools`**, which
+LumaDeck is a declared fork of. Any sequence shared by LumaDeck and
+SLSDeckUniversal that *also* appears in DeckTools is inherited from a common
+ancestor, not copied between them.
+
+#### Result
+
+| Threshold | Shared LumaDeck ↔ SLSDeck | Also in DeckTools | **Exclusive** |
+|---|---|---|---|
+| 3 lines | 105 | 99 | 6 |
+| 4 lines | 73 | 72 | 1 |
+| 8 lines | 23 | 23 | **0** |
+| 12 lines | 11 | 11 | **0** |
+| Frontend, 4 lines | 1 | 1 | **0** |
+| Frontend, 8 lines | 0 | — | **0** |
+
+**[read]** The seven "exclusive" hits at the 3- and 4-line thresholds are
+`appid = int(appid)`, bare `except Exception:` blocks, and equivalents — the
+noise floor of two Python codebases doing similar work. Above four lines the
+exclusive count is **zero**, in the backend and in the frontend alike.
+
+**[inferred]** **No code was copied from LumaDeck.** Every non-trivial shared
+sequence traces to DeckTools. The frontends — 5.911 lines against 18.242 — share
+nothing at all beyond one four-line fragment that is itself inherited.
+
+#### The shared inheritance, sized
+
+**[read]** Measured against DeckTools at the 8-line threshold:
+
+| | Sequences shared with DeckTools |
+|---|---|
+| LumaDeck (declared fork) | **1.226** |
+| SLSDeckUniversal | **22** |
+
+**[read]** Their 22 are concentrated in `utils.py` (19), `downloads.py` (2) and
+`config.py` (1) — the manifest-text normalisation helpers and the
+`DEFAULT_HEADERS` constant, whose `User-Agent` still points at
+`BossSloth/Steam-SteamDB-extension`.
+
+**[inferred]** So the resemblance §5.8 catalogues is not derivation from us. Both
+projects independently carry a small set of DeckTools helpers, and everything
+else was arrived at separately. This is the ecosystem-convergence reading the
+previous document reached by inference, now established by measurement — and it
+should be stated at least as plainly as the §5.8 findings that cut the other way.
+
+**[read]** One asymmetry worth recording: their README credits h3adcr-b,
+SLSsteam/moon, Ryuu and perondepot, and does **not** credit DeckTools, whose code
+it carries. DeckTools is MIT, so the use is unencumbered; the attribution is a
+separate matter. LumaDeck credits it in its opening line.
+
 ---
 
 ## §6 Weighted scoring matrix
@@ -1493,6 +1556,8 @@ of our stack three iterations out of date.
   — the signed per-build locator feed moon consumes (§10.1).
 - **SLSsteam (stock)**: [`slssteam-analysis.md`](slssteam-analysis.md).
 - **Ours**: `jayool/LumaDeck` @ `eea30e5`, `jayool/lumalinux` @ `87ee544`.
+- **DeckTools**: [`lopesleo/DeckTools`](https://github.com/lopesleo/DeckTools)
+  — the common ancestor, used as the control corpus in §5.9.
 - **Superseded**: `slsdeck-findings.md` (2026-07-22) — analysed a repository
   that no longer exists (§1.1).
 
