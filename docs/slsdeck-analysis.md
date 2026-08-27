@@ -810,6 +810,53 @@ automation development and rolling builds"*, is **zero commits ahead of
 `origin/main`**. There is no unreleased work there; the branch is a label on the
 same tip.
 
+### §4.5 The upstream author's assessment of moon
+
+**[their claim]** AceSLS, author of SLSsteam — the project moon forked — has
+described it as *"a vibecoded piece of shit adding broken features and breaking
+existing ones."* Relayed to this analysis second-hand, not sourced from a
+citable post.
+
+Recorded because it is the only outside assessment of the engine layer available,
+and tested because **the source is the most interested party in the ecosystem**:
+the upstream author of a fork he did not make. Interest does not make a claim
+false; it makes it worth checking. Three separable charges:
+
+**"Vibecoded" — not supported for moon.** **[read]** 226 commits spanning
+2026-05-31 to 2026-08-23, ~3 months, at 1–6 commits per day, with one primary
+author (`unplausible`, 218) and three occasional contributors. Every one of the
+four most recent pattern fixes shipped with a test (§3.11), and the Makefile
+carries ~55 test targets. That is not the profile of bulk unreviewed generation.
+
+**[inferred]** The label fits the *plugin* precisely — SLSDeckUniversal is 369
+commits in 7 days, up to 125 in one day, by an author self-identified as
+"Vibe-coder Jimmy", with zero tests (§1.2, §4.1). A pejorative accurate about one
+layer appears to be travelling across the ecosystem onto the other.
+
+**"Adding broken features" — partially supported.** **[read]** moon's own commit
+subjects run **112 `fix` to 74 `feat`**, and several describe real breakage in
+their own new work: *"drop empty depots that crash the client on reconfigure"*,
+*"drop the app-info build pin that stalled startup"*, *"drop unsupported content
+dlcs"*. **[inferred]** A 1.5:1 fix-to-feature ratio is high, though not
+anomalous for a project hooking a target Valve keeps moving — the same pressure
+produces our own `maintenance.md`.
+
+**"Breaking existing ones" — supported, with a concrete instance.** **[read]**
+moon dropped SLSsteam's hash-whitelist SafeMode
+([`slsteam-moon-findings.md`](slsteam-moon-findings.md) M2), a safety mechanism
+that existed upstream, and `chore: remove flatpak installation support` removes
+another upstream capability. **[read]** moon still fetches
+`AceSLS/SLSsteam/.../res/updates.yaml` at runtime while having discarded its own
+equivalent (§3.5) — consuming upstream's safety feed after removing the local one.
+
+**Assessment.** **[inferred]** Two of the three charges carry evidence; the
+headline pejorative does not fit moon's development profile. The quote is
+overstated as a whole and not baseless in its parts. Nothing in it displaces the
+findings of §3 — the signed feed, the runtime probe validation and the test
+coverage are in the repository and were read there — but §4.5 is the honest place
+to record that the upstream author's view of this engine is sharply negative, and
+that his specific complaint about removed safety mechanisms is correct.
+
 ---
 
 ## §5 Trust and risk
