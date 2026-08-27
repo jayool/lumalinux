@@ -1863,6 +1863,11 @@ document.
 
 ### §12.1 Nothing was executed
 
+> **Partly remedied by §13.** After this section was written, both counterpart
+> test suites and our own were compiled and executed, and static analysis was run
+> over all three. §13 replaces several inferences below with results; §12.1's
+> central limitation — no install, no Steam client, no device — still holds.
+
 **Not one line of either codebase was run.** No install was performed, no game
 was added, no Steam client was launched, no hook was observed resolving. Every
 finding in §1–§10 is static: reading, counting, and measuring source.
@@ -1943,4 +1948,131 @@ the same game, across one Steam client update. That single experiment outranks
 every inference in §1–§10, and this document is not a substitute for it. The
 open question in §8 item 0 — whether Steam reads `config/depotcache` — is the
 same kind of thing: not opinable, and unanswered here for the same reason.
+
+---
+
+## §13 Executed testing
+
+§12 recorded that nothing had been run. This section is the partial remedy: code
+from both counterpart projects, and from ours, was compiled and executed. It does
+not lift §12's central limitation — no install, no Steam client, no device — but
+it replaces several inferences with results.
+
+**Environment.** x86-64 Linux container, gcc/g++ 13, cmake, Python 3.11, no Steam,
+no GPU, no 32-bit OpenSSL, no libcurl headers.
+
+### §13.1 slsteam-moon — its own test suite, run
+
+**[executed]** `make` defines **51 `test-*` targets**. All were invoked.
+
+| Outcome | Count |
+|---|---|
+| **Pass** | **42** |
+| **Fail (assertion)** | **1** |
+| Unrunnable — this environment's fault | 6 |
+| Unrunnable — needs a real `steamclient.so` | 2 |
+
+**[executed]** The 6 are blocked by missing 32-bit OpenSSL and libcurl headers —
+`fatal error: openssl/opensslv.h`, `curl/curl.h`. **None is a defect in their
+code**, and this is recorded explicitly because an earlier count of "9 don't
+compile" would have misrepresented them.
+
+**[executed]** The 2 — `test-optional-locators`, `test-manifestpin-patterns` —
+abort with `could not open …/ubuntu12_32/steamclient.so`. They require a real
+Steam installation, so they cannot run in any CI without one. Consistent with
+moon having no `.github/` (§3.5).
+
+**[executed]** The one real failure is `test-thread-start`, standalone, no
+external dependency, on a clean checkout:
+
+```
+FAIL: join failure does not reopen state before worker exit
+test_thread_start: 1 failure(s)
+```
+
+**[read]** `tools/test_thread_start.cpp:118-121` — a concurrency invariant: after
+a failed thread join, the state must not reopen before the worker exits.
+
+**[inferred]** 42 passing tests is real evidence of engineering discipline, and
+upgrades §12.2's "targets in a Makefile" to demonstrated behaviour. But **one
+committed test fails on a clean checkout**, which means the suite is not a gate:
+either it is not run before committing, or it is knowingly red. That is exactly
+what having no CI produces.
+
+### §13.2 SLSDeckUniversal — nothing to run, so: static analysis and import
+
+**[executed]** No tests exist (§4.1), so the suite could not be run. Two
+substitutes:
+
+**All 59 backend modules import cleanly** under a stubbed `decky`. Their
+CHANGELOG's equivalent claim (for 27 modules) holds at 59. Recorded in their
+favour.
+
+**[executed]** `pyflakes` over both backends:
+
+| | Findings | `undefined name` |
+|---|---|---|
+| SLSDeckUniversal (32.157 L) | 36 | **1** |
+| LumaDeck (13.393 L) | 11 | **0** |
+
+#### The undefined name is a live, silent defect
+
+**[executed]** `py_modules/lt/slssteam.py:1266`:
+`undefined name 'ensure_http_client'`.
+
+**[read]** The identifier occurs exactly once in the file — at the call site. It
+is never imported; every other module that uses it imports it from `.httpc`. The
+call sits inside `headcrab_compatible_client()` (`:1255-1276`), whose docstring
+states its purpose:
+
+> *"The client build headcrab currently downgrades to, read **LIVE** from the
+> upstream script… (it's bumped on every Steam client update, so **the hardcoded
+> constant goes stale and makes our 'client matches?' check wrong**)."*
+
+**[inferred]** The function therefore raises `NameError` on every call. Three
+lines below, `except Exception as exc: logger.debug(...)` swallows it at debug
+level, and the function returns `HEADCRAB_COMPATIBLE_CLIENT` — **the hardcoded
+constant it exists to avoid**. It fails silently, always, and returns precisely
+the stale value its own comment warns about.
+
+**[inferred]** This is the same failure shape their CHANGELOG documents for
+Denuvo detection — *"a bare except swallowed it"* — still present, in a different
+function, in the shipped tree. It is detectable in seconds by a linter that no
+workflow of theirs runs (§4.1: 12 workflows, zero tests).
+
+### §13.3 LumaDeck — its own suite, run
+
+**[executed]** `python3 -m pytest tests/ -q`:
+
+```
+108 passed, 23 subtests passed in 0.17s
+```
+
+**[executed]** `pyflakes`: 11 findings, **zero** undefined names.
+
+### §13.4 What this changes, and what it does not
+
+**Changes.**
+
+- §12.2's criticism is partly answered for moon: its tests are not merely
+  declared, they run and 42 pass. §3.11's "artefacts of a disciplined process"
+  is now supported by execution, not just by file listings.
+- SLSDeckUniversal's zero-test finding gains a consequence rather than remaining
+  a metric: a guaranteed-failing function, silent, in shipped code, that any
+  linter catches instantly.
+- Our own suite is verified green rather than merely counted.
+
+**Does not change.**
+
+- **[inferred]** Unit tests passing is not field reliability, and the distance is
+  precisely where §11's reports live. `test-thread-start` aside, nothing in
+  moon's suite exercises an install against a real Steam client; the failures
+  users reported — injection not activating, zero-byte installs, an unlaunchable
+  Steam — are integration outcomes no unit test here touches.
+- §12.3 stands: where static and executed analysis disagree with field evidence,
+  field evidence wins. Executing their unit tests moves the analysis closer to
+  the code, not closer to the device.
+- **[inferred]** §12.5's experiment — one instrumented install of each stack on
+  the same hardware across a Steam update — remains the only thing that would
+  settle the question, and remains undone.
 
