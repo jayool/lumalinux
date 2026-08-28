@@ -1915,7 +1915,8 @@ behaviour rather than source contradicts the competence inference of §12.2:
 - moon's own commit log runs **112 `fix` to 74 `feat`** (§4.5).
 
 **[inferred]** Where static analysis and outcome evidence disagree, outcome
-evidence wins. §3.11's characterisation of moon should be read as *"the
+evidence wins — **refined by §15.4**: that applies to field *observations*, not to
+field *analyses*, which are peer claims and get checked like any other. §3.11's characterisation of moon should be read as *"the
 repository contains the artefacts of a disciplined process"* — which is
 verifiable and true — and **not** as *"the software is reliable"*, which is not
 established and which the available evidence disputes.
@@ -2327,4 +2328,99 @@ engine layer:
 **[inferred]** The scoreboard is not the point. The point is that this method
 produced findings in both directions from ground truth rather than judgement,
 which is what §12 and §13.5 said the rest of the document could not do.
+
+---
+
+## §15 Community claims, checked
+
+§11 and §12.3 lean heavily on field evidence, and §12.3 states that where it
+disagrees with static analysis, field evidence wins. That rule needs calibrating:
+**field evidence is not uniformly reliable either.** Three specific technical
+claims circulating about these projects were checked against source. Two hold;
+one does not, and the one that does not was about to cost this document a correct
+conclusion.
+
+### §15.1 CORRECT — "can't even set proper bearer auth on custom manifest sources"
+
+**[read]** SLSDeckUniversal's manifest-source schema (`defaults/api.json`) is
+`{name, url, success_code, unavailable_code, enabled}`. `apis.py` contains **no
+`headers` key at all**, and its docstring confirms the model: *"Sources may embed
+API-key placeholders in their URLs (e.g. `<moapikey>`)"* — the key goes in the
+query string.
+
+**[read]** Header auth exists only as a **hardcoded per-host special case**:
+`httpc.py:48-59` rewrites `hubcapmanifest.com`'s `?api_key=` into
+`Authorization: Bearer`. A user-added source cannot obtain the same treatment.
+
+**[inferred]** The claim is accurate. Recorded as a genuine limitation, and note
+the irony against §5.8: the Bearer transport was added in the same commit whose
+deleted docstring credited *"LumaDeck's auth model"*, and it was generalised to
+exactly one host.
+
+### §15.2 INCORRECT — "it verifies a pattern found in a code section was in a code section"
+
+The claim, verbatim: *"first sls moon scans code sections, then if a pattern is
+found in a code section it then verifies if it was inside a code section.
+brilliant design."* It targets `d3402a1`, which §3.5 of this document cited
+approvingly as evidence of fail-closed rigour. It was tested precisely because
+it threatened one of our own favourable conclusions.
+
+**[read]** The commit does two separable things, and both survive.
+
+**The ambiguity half is a real fix.** Previously `patternScan` returned the first
+hit unless `extendedLogging` was on, so an ambiguous signature silently bound to
+whichever range came first. It now sweeps every range, returns the count, and
+`refuses to resolve` unless it is exactly 1 — *"Signature for '%s' matched %zu
+times; refusing to resolve it"*.
+
+**The validation half does not validate the matched address.** **[read]** The
+added block is gated on the **derived** address, and the comment states why:
+
+> *"The hooked address is usually **NOT the matched one**: `Relative` follows a
+> call/jmp operand and `PrologueUpwards` walks backwards, so the derived address
+> **carries none of the scan's guarantees**. Prove it lands in this module's
+> executable memory before anyone detours it."*
+
+**[inferred]** The scan finds A inside an executable range; the resolver then
+derives B from A by following a relative operand or walking backwards to a
+prologue. B is a *different address*, and a drifted operand can put it anywhere.
+Checking B is not tautological — it is the only point at which B is checked at
+all.
+
+**[read]** The other executable-memory checks in `patterns.cpp:176-205` are on a
+third path again: they validate `targetRva` and `matchRva` **loaded from the
+signed catalog file**, then re-verify the signature bytes against live memory
+(`signatureMatches`). Validating RVAs that arrived in a downloaded file is
+mandatory, not circular.
+
+**[inferred]** The claim describes a check that does not exist in any of the
+three paths. §3.5's assessment stands unchanged.
+
+### §15.3 UNRESOLVED — "forked before I added it and told his llm to copy the one from OST"
+
+**[field, unverified]** Attributed to a developer of the referenced project,
+about moon's version-locking. No ordering can be established from here.
+
+**[read]** What is on record: **both** projects drew on OpenSteamTool.
+`docs/rva-feed-design.md:5-6` states our own RVA feed is *"Modeled on
+OpenSteamTool's `PatternLoader` (RVA-first, sig fallback) and
+OpenSteam001/steam-monitor's per-DLL-hash TOML feed"*. Shared upstream influence
+is documented on our side and is not by itself evidence of anything about theirs.
+
+### §15.4 What this means for §12.3
+
+**[inferred]** §12.3's rule — field evidence beats static analysis — was written
+about *outcome* reports: a withdrawal, an install that produced zero bytes, a
+Steam that would not launch. Those are observations of behaviour, and they
+outrank inference about behaviour.
+
+**[inferred]** §15.2 is a different kind of claim: a **technical assertion about
+what code does**, offered in the same channels. That is not an observation, it is
+an analysis — and it can be wrong in exactly the way this document can be wrong.
+Here it was, and checking it took ten minutes.
+
+**The refined rule:** field *observations* outrank this document's inferences.
+Field *analyses* are peer claims and get checked like any other. Conflating the
+two would have led this document to retract a conclusion that was correct, on the
+authority of a remark that was not.
 
