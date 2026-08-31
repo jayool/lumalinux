@@ -460,15 +460,17 @@ For a game you have a `.lua` + `.manifest` set for (e.g. ManifestHub zip):
   (`cb_disk_original`, protobuf metadata magic `0x1F4812BE`, field 5).
 - Adds the app + depot ids to SLSsteam's `config.yaml` `AdditionalApps`.
 - **Ecosystem interop** (best-effort, beyond SteaMidra's flow): copies the
-  `.lua` to `config/stplug-in/<appid>.lua`, and writes ACCELA-compatible
-  markers — an in-game `.DepotDownloader/` dir in
-  `steamapps/common/<installdir>/` plus a `~/.local/share/ACCELA/depots/<appid>.depot`
-  tracker. ACCELA's scanner (`game_manager.py:_get_accela_marker_path`) only
-  checks the marker folder *exists* next to real content — it doesn't parse
-  anything. Because the game isn't downloaded at deploy time, the marker is
-  finalised post-install by the **`--accela-mark <appid>`** mode, which reads
-  the real `installdir` from the `.acf` and re-creates the marker + tracker in
-  place (LumaDeck triggers this on library refresh).
+  `.lua` to `config/stplug-in/<appid>.lua`.
+
+  It used to also write ACCELA-compatible markers — an in-game
+  `.DepotDownloader/` dir in `steamapps/common/<installdir>/` plus a
+  `~/.local/share/ACCELA/depots/<appid>.depot` tracker, which ACCELA's scanner
+  (`game_manager.py:_get_accela_marker_path`) checks for existence next to real
+  content without parsing. **Both are gone in practice.** They are derived from
+  the `installdir`, which only the `.acf` knows, and since the deploy stopped
+  seeding an `.acf` there is nothing to read at that point. `--accela-mark
+  <appid>` still recreates them from a real post-install manifest, but nothing
+  invokes it — LumaDeck removed its caller along with the stub (its issue #41).
 
 `tools/vdf_inject_keys.py` writes keys into `config.vdf` without the `vdf` python
 module — but those get pruned (§6), so it's only a belt-and-suspenders helper.

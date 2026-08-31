@@ -349,12 +349,19 @@ at the cost of a future update possibly adding a depot/key you don't have).
 
 ### How an available update is detected
 
-`steamidra_lite` writes `~/.local/share/ACCELA/depots/<appid>.depot` recording
-the manifest GID you currently hold. ACCELA's / LumaDeck's update check compares
-that against the current public GID from SteamCMD; if they differ it surfaces an
-**"Update available"** badge. That's the cue to grab the new Hubcap zip.
+`steamidra_lite` *can* write `~/.local/share/ACCELA/depots/<appid>.depot`
+recording the manifest GID you currently hold, and the standalone **ACCELA** app
+compares that against the current public GID from SteamCMD to surface an
+**"Update available"** badge.
 
-That badge is a convenience layer. **Steam itself** decides whether to update by
+Neither half applies to us any more. The tracker is no longer written on a deploy
+(it needs the `installdir`, which came from the `.acf` stub we stopped seeding),
+and **LumaDeck never read it**: it has no update-detection badge of its own by
+design — a saved snapshot goes stale the moment Steam auto-updates a game behind
+its back, producing false "update available" (LumaDeck DESIGN.md decision 11).
+Updates are left to Steam.
+
+**Steam itself** decides whether to update by
 comparing, **per depot**, the installed manifest GID (in the `.acf`
 `InstalledDepots`) against PICS's current GID — **not** by `buildid` alone.
 Observed directly: both validation games carried Steam's *current* `buildid` in

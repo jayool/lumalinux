@@ -70,15 +70,21 @@ operational "what".
 
 7. **Ecosystem interop** (best-effort, each piece logged, never aborts the run):
    copies the parsed `.lua` to `~/.local/share/Steam/config/stplug-in/<appid>.lua`
-   so SteaMidra-style scanners and LumaDeck's library list find the game; drops a
-   `.DepotDownloader/` marker in the game's `steamapps/common/<installdir>/` and a
-   `~/.local/share/ACCELA/depots/<appid>.depot` tracker so the standalone **ACCELA**
-   desktop app recognises it.
+   so SteaMidra-style scanners and LumaDeck's library list find the game.
+
+   The ACCELA markers (`.DepotDownloader/` in the game folder + a
+   `~/.local/share/ACCELA/depots/<appid>.depot` tracker) are **skipped at this
+   point**: both are derived from the `installdir`, which only the `.acf` knows,
+   and at add time there is no `.acf` yet. `--accela-mark` still recreates them
+   once the game's files exist, but nothing calls it — LumaDeck dropped its
+   caller with the stub (issue #41).
 
 **Backups.** Files that already exist get a `.bak` next to the original before any
-change: `config.yaml`, `config.vdf`, and (when pre-existing) the `.acf`, the
-stplug-in `.lua`, and the `.depot` tracker. `keys.txt` is merged in place without
-a `.bak`.
+change: `config.yaml`, `config.vdf`, and (when pre-existing) the stplug-in `.lua`.
+The `.acf` gets one only when the error-state patch actually changes something —
+an already-clean manifest is left alone, so a run no longer litters `.acf.bak`
+files. `keys.txt` is merged in place without a `.bak`. The `.depot` tracker isn't
+written at add time any more (see step 7), so nothing backs it up either.
 
 Press **Install** on the game; it downloads natively, with progress shown in the
 Steam library. **No Steam restart needed** since v0.16.16: the license reconcile
@@ -109,7 +115,7 @@ Main install (zip in, full deploy):
 | `<appid>.zip` | Hubcap-style zip (`.lua` + `.manifest` files). The default input. |
 | `--manifests-dir <dir>` | Legacy input: a loose `.lua` + manifests directory instead of a zip. |
 | `--pin` | Write the zip's manifest gid into `keys.txt` (default is no-pin, which auto-updates). Note: this no longer freezes on its own — its only consumer, the BuildDep hook, is disabled by default; the supported freeze is `--pin-installed` via SLSsteam `ManifestIds`. |
-| `--name <name>` | Canonical game name used for the `.acf` `name` + `installdir`, skipping the store-API fetch (avoids the appid-as-installdir fallback). LumaDeck passes it. |
+| `--name <name>` | **Accepted and ignored.** It fed the `installdir` of the `.acf` stub, which we no longer write (Steam writes the manifest on Install). Still accepted because LumaDeck caches per session whether this script supports the flag, so removing it would break an add on a Deck that updated lumalinux without reloading the plugin. |
 | `--token APPID:HEX` | AppToken for a game that needs one (repeatable). |
 | `--no-vdf` | Skip the `config.vdf` DecryptionKeys injection. |
 | `--steam-root <dir>` / `--sls-config <file>` / `--luma-keys <file>` | Override the default Steam root, SLSsteam config, and `keys.txt` locations. |
@@ -118,7 +124,7 @@ Modes that operate on an **already-deployed** game (no zip, install nothing new)
 
 | Mode | Effect |
 |---|---|
-| `--accela-mark <appid>` | Recreate the ACCELA `.DepotDownloader` marker + `.depot` tracker once the game's files exist. Reads the real `installdir` from the `.acf` and recovers the depot/manifest from the stplug-in `.lua`. Idempotent. |
+| `--accela-mark <appid>` | Recreate the ACCELA `.DepotDownloader` marker + `.depot` tracker once the game's files exist. Reads the real `installdir` from the `.acf` and recovers the depot/manifest from the stplug-in `.lua`. Idempotent. **No caller left** — LumaDeck stopped invoking it when the `.acf` stub went away; kept for manual use. |
 | `--pin-installed <appid>` | Freeze an already-installed game to its current manifest by writing its depot→gid map into SLSsteam `config.yaml` `ManifestIds` (touches none of `keys.txt` / stplug-in / depotcache). |
 | `--unpin <appid>` | Un-freeze an installed game so it auto-updates again. |
 | `--pin-status <appid>` | Report whether an installed game is pinned. |
