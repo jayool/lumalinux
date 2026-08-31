@@ -689,6 +689,58 @@ def _vdf_load_acf(path):
     return parse_block()
 
 
+def _all_library_paths(steam_root):
+    """Every Steam library folder, `steam_root` first.
+
+    Games do not all live under the Steam install: a second drive (SD card,
+    external partition) is a library of its own, with its own steamapps/ and its
+    own appmanifest_<appid>.acf. `steam_root` is the INSTALL root — config.vdf,
+    stplug-in, depotcache all hang off it and there is exactly one — so it must
+    not be repurposed as "the library". This is the separate list.
+
+    Steam keeps two copies of libraryfolders.vdf in sync and LOADS the one under
+    steamapps/ (its own content_log says so). We read both and union them: a
+    stale or missing copy then cannot HIDE a library from us. The reverse — a
+    dead entry surviving in one copy — is harmless, since all we do with a path
+    is look for a manifest under it. Order matters: the root is checked first,
+    which is where a single-library user's manifest lives."""
+    roots, seen = [], set()
+
+    def add(path):
+        try:
+            key = os.path.realpath(str(path))
+        except Exception:
+            return
+        if key not in seen:
+            seen.add(key)
+            roots.append(Path(path))
+
+    add(steam_root)
+    for vdf in (Path(steam_root) / "steamapps" / "libraryfolders.vdf",
+                Path(steam_root) / "config" / "libraryfolders.vdf"):
+        if not vdf.exists():
+            continue
+        try:
+            folders = _vdf_load_acf(vdf).get("libraryfolders", {})
+        except Exception:
+            continue
+        if not isinstance(folders, dict):
+            continue
+        for entry in folders.values():
+            if isinstance(entry, dict) and entry.get("path"):
+                add(entry["path"])
+    return roots
+
+
+def _find_acf(steam_root, app_id):
+    """The appmanifest for `app_id`, in whichever library holds it, or None."""
+    for lib in _all_library_paths(steam_root):
+        acf = lib / "steamapps" / f"appmanifest_{app_id}.acf"
+        if acf.exists():
+            return acf
+    return None
+
+
 def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=None):
     """Step 6 of the install flow (replicates sff/lua/writer.py:_patch_acf_error_state).
 
@@ -699,11 +751,15 @@ def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=
 
     Returns "patched", "clean", "none (...)" or "error".
 
+    Looks in EVERY library, not just the install root: a game on an SD card or a
+    second partition has its manifest there, and only there. Missing that meant
+    the one job this function has silently not happening for those games.
+
     manifest_gids / name_override: kept for call compatibility, unused. They fed
     the stub this function used to seed; that behaviour is gone (see the tail of
     the function, and LumaDeck/docs/dev-multi-library.md)."""
-    acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
-    if acf_path.exists():
+    acf_path = _find_acf(steam_root, app_id)
+    if acf_path is not None:
         try:
             data = _vdf_load_acf(acf_path)
             app_state = data.get("AppState", {})
