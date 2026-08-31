@@ -605,11 +605,25 @@ def parse_token_arg(s):
 # (regardless of whether the network is actually up). The fix SteaMidra applies
 # is to reset those fields to 0 before the user clicks Install again. See the
 # verbatim comment in sff/lua/writer.py:113 ("this is what causes 'NO INTERNET
-# CONNECTION'").
+# CONNECTION'"), corroborated by our own end-to-end run (RESEARCH.md §12.6: after
+# a completed install Steam queues an auto-update that returns UpdateResult=8).
+#
+# Two fields SFF resets are DELIBERATELY not here, because they are not error
+# residue — they are work Steam scheduled for itself, and zeroing them cancels it:
+#
+#   ScheduledAutoUpdate          a future appointment. Measured on a real library:
+#                                Halo: Campaign Evolved (2806050) carried
+#                                "1788144179" with StateFlags=6.
+#   FullValidateAfterNextUpdate  an instruction Steam left itself. Measured:
+#                                Steamworks Common Redistributables (228980)
+#                                carried "1".
+#
+# In SFF the list was safe because it applied to a manifest SFF had just written
+# for a game DepotDownloaderMod had just downloaded — every counter was zero by
+# construction and there was nothing of Steam's to overwrite. Applied to a live
+# Steam manifest it is not the same operation.
 _ACF_ERROR_FIELDS = (
     ("UpdateResult", "0"),
-    ("FullValidateAfterNextUpdate", "0"),
-    ("ScheduledAutoUpdate", "0"),
     ("BytesToDownload", "0"),
     ("BytesDownloaded", "0"),
     ("BytesToStage", "0"),
@@ -743,12 +757,16 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids, name_override=None):
     acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
     if acf_path.exists():
         try:
-            shutil.copy2(acf_path, acf_path.with_suffix(".acf.bak"))
             data = _vdf_load_acf(acf_path)
             app_state = data.get("AppState", {})
             patched = False
+            # Only correct keys that are PRESENT and wrong. A missing key is not
+            # an error to clean: adding it would rewrite Steam's manifest on
+            # every add of an already-installed game (measured: 12 of 13 real
+            # manifests across two machines carry no FullValidateAfterNextUpdate,
+            # so the old `.get(k) != clean` test never returned "clean").
             for k, clean in _ACF_ERROR_FIELDS:
-                if app_state.get(k) != clean:
+                if k in app_state and app_state[k] != clean:
                     app_state[k] = clean
                     patched = True
             try:
@@ -759,6 +777,9 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids, name_override=None):
             except (ValueError, TypeError):
                 pass
             if patched:
+                # Back up only when we are actually going to write. Doing it
+                # unconditionally left an .acf.bak per game on every add.
+                shutil.copy2(acf_path, acf_path.with_suffix(".acf.bak"))
                 _vdf_dump_acf(acf_path, data)
                 return "patched"
             return "clean"
