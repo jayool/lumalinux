@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# Tests for write_or_patch_acf's PATCH branch — the one that runs when Steam
-# already wrote an appmanifest and we clear its stale error state.
+# Tests for patch_acf_error_state — it runs when Steam already wrote an
+# appmanifest and clears its stale error state. It never creates one.
 #
 # See LumaDeck/docs/dev-multi-library.md, defect D5. Three properties:
 #   1. Real error residue IS cleared (UpdateResult, the Bytes* counters, and the
@@ -44,7 +44,7 @@ def run(app_state):
         acf.parent.mkdir(parents=True)
         S._vdf_dump_acf(acf, {"AppState": app_state})
         before = acf.read_text(encoding="utf-8")
-        result = S.write_or_patch_acf(S.Path(tmp), APPID, {}, name_override="Fake")
+        result = S.patch_acf_error_state(S.Path(tmp), APPID)
         after = acf.read_text(encoding="utf-8")
         bak = acf.with_suffix(".acf.bak").exists()
         return result, before, after, bak, S._vdf_load_acf(acf).get("AppState", {})
@@ -52,7 +52,7 @@ def run(app_state):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-print("write_or_patch_acf — patch branch\n")
+print("patch_acf_error_state\n")
 
 # --- 1. residuo de error real: se limpia ------------------------------------
 res, _, _, bak, st = run({
@@ -100,6 +100,17 @@ res, before, after, bak, _ = run({
 check(res == "clean", "healthy manifest missing the optional keys: reports 'clean'")
 check(before == after, "  file left byte-identical (no round-trip through our writer)")
 check(not bak, "  no .acf.bak litter")
+
+# --- 4. sin .acf: no se crea nada -------------------------------------------
+tmp = tempfile.mkdtemp(prefix="acf_none_")
+try:
+    (S.Path(tmp) / "steamapps").mkdir(parents=True)
+    res = S.patch_acf_error_state(S.Path(tmp), APPID)
+    made = list((S.Path(tmp) / "steamapps").glob("appmanifest_*.acf"))
+    check(res.startswith("none"), "no .acf at all: reports 'none', writes nothing")
+    check(not made, "  and the steamapps dir is still empty (Steam seeds it, not us)")
+finally:
+    shutil.rmtree(tmp, ignore_errors=True)
 
 print("")
 if fails:

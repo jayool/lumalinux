@@ -27,12 +27,13 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
      Cierra Steam ANTES de correr el script (Steam reescribe config.vdf al
      salir).
   5. (opcional, --token APPID:HEX) Añade un AppToken al config.yaml de SLSsteam.
-  6. Resetea el error-state del .acf (sff/lua/writer.py:_patch_acf_error_state).
-     UpdateResult, Bytes*, StagingSize → 0; StateFlags &= ~16. Sin este paso,
-     Steam suele mostrar "NO INTERNET CONNECTION" al primer Install tras
-     cualquier fallo previo (el bug está en cómo Steam interpreta UpdateResult
-     stale, no en la red — verbatim del comment del propio SteaMidra). Si no
-     hay .acf todavía, escribimos uno limpio.
+  6. Resetea el error-state del .acf SI YA EXISTE (sff/lua/writer.py:
+     _patch_acf_error_state). UpdateResult, Bytes*, StagingSize → 0;
+     StateFlags &= ~16. Sin este paso, Steam suele mostrar "NO INTERNET
+     CONNECTION" al primer Install tras cualquier fallo previo (el bug está en
+     cómo Steam interpreta UpdateResult stale, no en la red — verbatim del
+     comment del propio SteaMidra). Si no hay .acf, NO escribimos ninguno:
+     lo crea Steam al pulsar Install, en la biblioteca que elija el usuario.
 
 Uso:
   python3 steamidra_lite.py 2379780.zip            # no-pin (auto-update, DEFAULT)
@@ -688,72 +689,19 @@ def _vdf_load_acf(path):
     return parse_block()
 
 
-def _fetch_game_name(app_id, timeout=3.0):
-    """Fetch the canonical game name from the Steam Web API
-    (store.steampowered.com/api/appdetails). Returns the name string on
-    success, None on any failure (network error, timeout, app not found,
-    malformed response, etc.). Used by write_or_patch_acf to populate
-    installdir + name in the stub so Steam shows 'Install' instead of
-    'Update' (matches what SFF does via sff/http_utils.py:get_game_name)."""
-    import urllib.request
-    import urllib.error
-    import time
-    url = f"https://store.steampowered.com/api/appdetails/?appids={app_id}"
-    # Retry transient failures (a single-shot fetch is what left Dave the Diver
-    # with the appid as installdir → re-download on the next .acf regeneration).
-    # A definitive "not found" (success=false) returns immediately, no retry.
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "steamidra_lite"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            entry = data.get(str(app_id), {})
-            if not entry.get("success"):
-                return None
-            name = entry.get("data", {}).get("name")
-            return name if isinstance(name, str) and name.strip() else None
-        except (urllib.error.URLError, OSError, ValueError, KeyError, TypeError):
-            if attempt < 2:
-                time.sleep(0.5 * (attempt + 1))
-                continue
-            return None
+def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=None):
+    """Step 6 of the install flow (replicates sff/lua/writer.py:_patch_acf_error_state).
 
+    Clears stale error residue from an appmanifest Steam already wrote, so a
+    failure from a previous attempt doesn't surface as 'NO INTERNET CONNECTION'
+    on the next Install. Never creates a manifest: if there is no .acf, Steam
+    writes its own on Install and we stay out of the way.
 
-def _sanitize_installdir(name):
-    """Strip filesystem-unsafe characters from a game name so it can be used as
-    an installdir (steamapps/common/<installdir>/). Removes characters illegal
-    on Windows/macOS/exFAT (\\/:*?\"<>|) plus trailing dots/spaces. Returns
-    None if the result would be empty."""
-    sanitized = re.sub(r'[\\/:*?"<>|]', '', name)
-    sanitized = sanitized.strip().rstrip('.')
-    return sanitized or None
+    Returns "patched", "clean", "none (...)" or "error".
 
-
-def write_or_patch_acf(steam_root, app_id, manifest_gids, name_override=None):
-    """Step 6 of the install flow (replicates sff/lua/writer.py:write_acf +
-    _patch_acf_error_state). Without this step Steam often shows 'NO INTERNET
-    CONNECTION' on the next install attempt after any failure, even with the
-    network actually up.
-
-    - If the .acf already exists → patch the error-state fields (UpdateResult,
-      Bytes*, etc.) back to 0 and clear the Update-Required bit (StateFlags
-      AND 0xFFEF). This matches _patch_acf_error_state verbatim.
-    - If the .acf doesn't exist yet → write a clean stub mirroring SFF's
-      write_acf when called without manifest_override (the Linux + SLS path
-      in sff/ui.py:1074). The stub sets all error-state fields to 0 and
-      StateFlags=4, but DELIBERATELY OMITS InstalledDepots / MountedDepots —
-      that omission is what an earlier version of this function got wrong.
-      Writing those keys with StateFlags=4 made Steam read the .acf as
-      "fully installed, depots already in place" and surface a Play button
-      instead of Install (the Formula Legends regression). Without them
-      Steam sees StateFlags=4 but zero installed depots and zero bytes on
-      disk → correctly shows Install. The reason the stub helps despite
-      Steam still doing the actual download is that UpdateResult / Bytes*
-      are already 0 from the start, so a transient hiccup during download
-      doesn't surface as "No internet" in the UI.
-
-    manifest_gids: kept for API compatibility; deliberately unused — see
-    above for why writing them was a bug."""
+    manifest_gids / name_override: kept for call compatibility, unused. They fed
+    the stub this function used to seed; that behaviour is gone (see the tail of
+    the function, and LumaDeck/docs/dev-multi-library.md)."""
     acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
     if acf_path.exists():
         try:
@@ -787,55 +735,21 @@ def write_or_patch_acf(steam_root, app_id, manifest_gids, name_override=None):
             print(f"  [WARN] No pude patchar {acf_path}: {e}")
             return "error"
 
-    # No .acf yet — write a clean stub. Mirrors sff/lua/writer.py:write_acf
-    # called without manifest_override (the Linux + SLS path at
-    # sff/ui.py:1074). See docstring for why we omit InstalledDepots.
-    #
-    # Use the canonical game name as `name` + `installdir`. If we use str(app_id)
-    # instead, Steam sees the installdir as non-canonical and surfaces an
-    # "Update" button instead of "Install" — AND, worse, a later .acf
-    # regeneration (Steam or LumaDeck's Repair) rewrites the .acf with the
-    # OFFICIAL installdir, so Steam no longer recognises the files under
-    # steamapps/common/<app_id>/ and re-downloads the whole game. Prefer a
-    # caller-supplied name (LumaDeck passes --name from its local applist cache,
-    # more reliable than a live store lookup); fall back to fetching it; and only
-    # fall back to str(app_id) if both fail (install still works, just with the
-    # "Update" verb + the re-download-on-repair caveat).
-    acf_path.parent.mkdir(parents=True, exist_ok=True)
-    fetched_name = name_override or _fetch_game_name(app_id)
-    installdir = _sanitize_installdir(fetched_name) if fetched_name else None
-    if not installdir:
-        installdir = str(app_id)
-    app_state = {
-        "appid":     str(app_id),
-        "Universe":  "1",
-    }
-    if fetched_name:
-        app_state["name"] = fetched_name
-    app_state.update({
-        "StateFlags":      "1",
-        "installdir":      installdir,
-        "LastUpdated":     "0",
-        "UpdateResult":    "0",
-        "SizeOnDisk":      "0",
-        "BytesToDownload": "0",
-        "BytesDownloaded": "0",
-    })
-    _vdf_dump_acf(acf_path, {"AppState": app_state})
-    status = f"created (stub, installdir='{installdir}'"
-    if fetched_name:
-        status += f", name='{fetched_name}'"
-    else:
-        status += ", name fetch failed — falling back to appid (button may say 'Update' instead of 'Install')"
-    status += ")"
-    return status
+    # No .acf: nothing to do. Steam writes its own manifest when the user clicks
+    # Install, in whichever library they pick, with the canonical installdir from
+    # appinfo. We used to seed a stub here; it was measured to buy nothing (the
+    # button reads "Install" either way) and to cost a real bug: a game installed
+    # to a second library ends up with our orphan in the default one, and after
+    # the next Steam restart Steam honours the orphan and reports the game as not
+    # installed — issue #41. See LumaDeck/docs/dev-multi-library.md.
+    return "none (no .acf yet — Steam writes it on Install)"
 
 
 # ── Ecosystem interop (stplug-in / ACCELA) ────────────────────────────────────
 #
 # These helpers write breadcrumbs that other tools in the ecosystem look for to
-# decide a game is "managed". Functionally redundant with our keys.txt + .acf
-# stub flow — SLSsteam and lumalinux don't need any of this — but they make the
+# decide a game is "managed". Functionally redundant with our keys.txt flow —
+# SLSsteam and lumalinux don't need any of this — but they make the
 # game visible to:
 #   - SteaMidra-style tools that scan <steam>/config/stplug-in/*.lua
 #   - DeckTools / LumaDeck (their has_lua_for_app check)
@@ -884,12 +798,11 @@ def install_lua_to_stplugin(steam_root, app_id, lua_contents, pin):
 def _read_installdir_from_acf(steam_root, app_id):
     """Read the REAL `installdir` Steam will use from appmanifest_<appid>.acf.
 
-    This is the single source of truth: Steam writes/normalises this field (it
-    may rewrite it to the canonical PICS name on first sync), and it's the exact
-    folder name under steamapps/common/ where the game lives. Reading it here —
-    instead of re-guessing the name with a second _fetch_game_name() call — means
-    the ACCELA marker always lands in the same directory Steam downloads into.
-    Returns None if the .acf doesn't exist yet or has no installdir."""
+    This is the single source of truth: Steam writes/normalises this field, and
+    it's the exact folder name under steamapps/common/ where the game lives.
+    Returns None if the .acf doesn't exist yet or has no installdir — which is
+    the normal case BEFORE the user has installed the game, since we no longer
+    seed a manifest of our own."""
     acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
     if not acf_path.exists():
         return None
@@ -931,10 +844,8 @@ def mark_game_for_accela(steam_root, app_id, installdir):
     Also drops the wrapper metadata json ASSella uses for selected-DLC
     tracking (empty list — we don't preselect DLCs).
 
-    Caveat: 'installdir' is whatever we put in the .acf stub. Steam usually
-    respects it but in edge cases it picks the canonical name from PICS and
-    our marker lands in a stale directory. That's harmless — ACCELA simply
-    doesn't detect the game, no other tool cares. Returns the marker dir for
+    'installdir' comes from Steam's own manifest (we no longer write one), so
+    it is by definition the directory Steam uses. Returns the marker dir for
     logging."""
     game_dir = steam_root / "steamapps" / "common" / installdir
     marker_dir = game_dir / ".DepotDownloader"
@@ -1360,10 +1271,11 @@ def main():
     ap.add_argument("--luma-keys", type=Path, default=Path.home()/".config/lumalinux/keys.txt",
                     help="keys.txt de lumalinux")
     ap.add_argument("--name", type=str, default=None, metavar="GAME_NAME",
-                    help="nombre canónico del juego, usado como `name` + `installdir` del .acf "
-                         "stub. Si se pasa, se salta el fetch al store API (que puede fallar y "
-                         "caer al appid como installdir, lo que provoca re-descarga si el .acf se "
-                         "regenera). LumaDeck lo pasa desde su applist cache local.")
+                    help="IGNORADO. Alimentaba el `installdir` del .acf stub, que ya no "
+                         "escribimos (lo escribe Steam al instalar). Se sigue aceptando "
+                         "porque LumaDeck cachea por sesión si este script soporta la flag: "
+                         "quitarla rompería un add si se actualiza lumalinux sin reiniciar "
+                         "el plugin. Eliminar cuando nadie la mande.")
     ap.add_argument("--no-vdf", action="store_true",
                     help="NO escribir las DecryptionKeys en Steam config.vdf. "
                          "Por defecto SÍ se escriben (SteaMidra Linux también lo hace; "
@@ -1595,7 +1507,7 @@ def main():
     # Bytes* fields in the .acf from a previous failure. Verbatim from
     # sff/lua/writer.py:113: "this is what causes 'NO INTERNET CONNECTION'".
     print(f"== Reseteando error-state del .acf (paso que evita 'no internet') ==")
-    acf_result = write_or_patch_acf(args.steam_root, app_id, manifests, name_override=args.name)
+    acf_result = patch_acf_error_state(args.steam_root, app_id)
     print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
     print()
 
@@ -1616,26 +1528,27 @@ def main():
     print()
 
     # In-game marker. The installdir MUST match the folder Steam actually
-    # downloads into, so we read it straight from the .acf we just wrote (single
-    # source of truth via _read_installdir_from_acf) instead of re-guessing the
-    # name with a second _fetch_game_name() call — two independent network
-    # guesses could disagree and leave the marker orphaned in a stale directory.
+    # downloads into, so we read it from the .acf — the single source of truth.
     #
-    # At this point (pre-Install) the game folder has no content yet, so ACCELA
-    # won't LIST it until Steam finishes downloading into this same dir. If Steam
-    # later renames the dir to its canonical PICS name, re-run with
-    # `--accela-mark <appid>` after install to (re)place the marker correctly.
-    installdir_for_marker = _read_installdir_from_acf(args.steam_root, app_id) or str(app_id)
+    # Since we stopped seeding a manifest, on a fresh add there is no .acf yet
+    # and no folder to mark: we skip instead of guessing. Guessing str(app_id)
+    # would only create an empty steamapps/common/<appid>/ nobody ever reads.
+    # `--accela-mark <appid>` after the install places it correctly.
+    installdir_for_marker = _read_installdir_from_acf(args.steam_root, app_id)
 
     print(f"== Creando markers para ACCELA/ASSella (interop Desktop Mode) ==")
-    try:
-        marker_dir = mark_game_for_accela(args.steam_root, app_id, installdir_for_marker)
-        has_content = _game_dir_has_content(
-            args.steam_root / "steamapps" / "common" / installdir_for_marker)
-        ready = "sí" if has_content else "todavía no — re-ejecuta --accela-mark tras instalar"
-        print(f"  [+] {marker_dir} (in-game marker, installdir='{installdir_for_marker}', contenido={ready})")
-    except Exception as exc:
-        print(f"  [!] no pude crear el in-game marker: {exc}")
+    if not installdir_for_marker:
+        print("  [-] sin .acf todavía (el juego aún no está instalado) — "
+              "marker omitido; usa --accela-mark tras instalar")
+    else:
+        try:
+            marker_dir = mark_game_for_accela(args.steam_root, app_id, installdir_for_marker)
+            has_content = _game_dir_has_content(
+                args.steam_root / "steamapps" / "common" / installdir_for_marker)
+            ready = "sí" if has_content else "todavía no — re-ejecuta --accela-mark tras instalar"
+            print(f"  [+] {marker_dir} (in-game marker, installdir='{installdir_for_marker}', contenido={ready})")
+        except Exception as exc:
+            print(f"  [!] no pude crear el in-game marker: {exc}")
 
     main_depot = _pick_main_depot_for_accela(depot_keys, manifests, app_id)
     if main_depot:
