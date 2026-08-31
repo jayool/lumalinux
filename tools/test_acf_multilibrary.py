@@ -6,17 +6,14 @@
 #
 # See LumaDeck/docs/dev-multi-library.md, defect D1.
 #
-# The function looks for the manifest under `steam_root` alone, so a game
-# already installed in a SECOND library is invisible and never gets its stale
-# error state cleared — the one job the function has. That is the live defect.
+# The function used to look for the manifest under `steam_root` alone, so a game
+# already installed in a SECOND library was invisible and never got its stale
+# error state cleared — the one job the function has. It now searches every
+# library (_all_library_paths), and these checks pin that.
 #
-# (It used to ALSO plant an orphan stub in the root when it found nothing. That
+# It also used to plant an orphan stub in the root when it found nothing. That
 # branch is gone — we no longer write manifests at all — so the "nothing is
-# created" checks below now pass by construction and guard the removal.)
-#
-# The remaining defect is marked XFAIL: reported, but it does not fail the run,
-# and the run DOES fail if it starts passing — so the fix cannot land without
-# updating this test.
+# created" checks guard the removal.
 #
 #   python3 tools/test_acf_multilibrary.py     # from the repo root
 import os
@@ -61,18 +58,22 @@ def check(cond, msg, xfail=False):
         fails += 1
 
 
-def build(tmp, installed_in):
-    """installed_in: 'lib2' | 'root' | None"""
+def build(tmp, installed_in, vdf_in=("config",)):
+    """installed_in: 'lib2' | 'root' | None
+    vdf_in: dónde escribir libraryfolders.vdf — 'config', 'steamapps' o ambos.
+    Steam CARGA el de steamapps/ y mantiene los dos sincronizados; leemos los dos."""
     root = os.path.join(tmp, "Steam")
     lib2 = os.path.join(tmp, "sdcard")
     os.makedirs(os.path.join(root, "steamapps"))
     os.makedirs(os.path.join(root, "config"))
     os.makedirs(os.path.join(lib2, "steamapps"))
-    with open(os.path.join(root, "config", "libraryfolders.vdf"), "w",
-              encoding="utf-8") as fh:
-        fh.write('"libraryfolders"\n{\n'
-                 '\t"0"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n'
-                 '\t"1"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n}\n' % (root, lib2))
+    vdf_text = ('"libraryfolders"\n{\n'
+                '\t"0"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n'
+                '\t"1"\n\t{\n\t\t"path"\t\t"%s"\n\t}\n}\n' % (root, lib2))
+    for where in vdf_in:
+        with open(os.path.join(root, where, "libraryfolders.vdf"), "w",
+                  encoding="utf-8") as fh:
+            fh.write(vdf_text)
     if installed_in:
         target = {"root": root, "lib2": lib2}[installed_in]
         S._vdf_dump_acf(
@@ -87,10 +88,10 @@ def state(path):
     return S._vdf_load_acf(p).get("AppState", {})
 
 
-def scenario(installed_in):
+def scenario(installed_in, vdf_in=("config",)):
     tmp = tempfile.mkdtemp(prefix="acf_multilib_")
     try:
-        root, lib2 = build(tmp, installed_in)
+        root, lib2 = build(tmp, installed_in, vdf_in)
         S.patch_acf_error_state(S.Path(root), APPID)
         return (state(os.path.join(root, "steamapps", "appmanifest_%d.acf" % APPID)),
                 state(os.path.join(lib2, "steamapps", "appmanifest_%d.acf" % APPID)))
@@ -105,8 +106,19 @@ root_acf, lib2_acf = scenario("lib2")
 check(root_acf is None,
       "game in lib2: nothing is written to the root (no seeding any more)")
 check(lib2_acf is not None and lib2_acf.get("UpdateResult") == "0",
-      "game in lib2: the real manifest in lib2 gets its error state cleared",
-      xfail=True)
+      "game in lib2: the real manifest in lib2 gets its error state cleared")
+check(lib2_acf is not None and lib2_acf.get("StateFlags") == "6",
+      "game in lib2: its Update-Required bit is cleared too (22 -> 6)")
+
+# --- the library list lives in steamapps/, which is the copy Steam LOADS ----
+root_acf, lib2_acf = scenario("lib2", vdf_in=("steamapps",))
+check(lib2_acf is not None and lib2_acf.get("UpdateResult") == "0",
+      "library list only in steamapps/libraryfolders.vdf: still found")
+
+# --- no library list at all -> degrade to the root, never crash --------------
+root_acf, lib2_acf = scenario("root", vdf_in=())
+check(root_acf is not None and root_acf.get("UpdateResult") == "0",
+      "no libraryfolders.vdf anywhere: the root still gets patched")
 
 # --- control: single library, game installed there ---------------------------
 root_acf, lib2_acf = scenario("root")
@@ -127,4 +139,4 @@ if xfails:
 if fails:
     print("%d CHECK(S) FAILED" % fails)
     sys.exit(1)
-print("all checks passed (D1 still open: see the xfail line)")
+print("all checks passed")
