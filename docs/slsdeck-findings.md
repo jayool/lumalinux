@@ -12,9 +12,13 @@ the pin helpers) were mapped but not read line-by-line — flagged where relevan
 > **Update 2026-08-02.** LumaDeck now implements **netsock** (per-game
 > SteamNetworkingSockets fix) plus a full native online route (FakeAppId 480 +
 > netsock, in a dedicated Online Fixes tab) — so the netsock gap this doc flagged
-> against SLSDeck (§4, §6.2, §7) is **closed**. The only borrowable idea still open
-> is the **gamescope `sessions.d` injection** (§6.1), which is a headcrab-layer
-> change.
+> against SLSDeck (§4, §6.2, §7) is **closed**.
+>
+> **Update 2026-08-31.** The other open borrow, the gamescope `sessions.d`
+> injection (§6.1), is **closed too — and it closed by us moving first, not by
+> copying them.** This doc was written when we still injected by patching
+> `steam.sh`. We don't: `setup.sh` runs `neutralize_steam_sh`, which restores
+> `steam.sh` to vanilla, and injects through three surfaces instead. See §6.1.
 
 This is the **"pelada" (stripped) build** — `plugin.json`: *"add games via
 slsteam-moon, apply game fixes (ryuu + perondepot), manifest version pinning.
@@ -120,8 +124,8 @@ session. **Client downgrade** for "Steam too new" is headcrab shimmed
 | Runtime backend | SLSsteam **vanilla + lumalinux** (2 `.so`) | **slsteam-moon** (1 `.so`, fork) |
 | Gate 5 (depot keys) | lumalinux `DepotKey` hook ← `keys.txt` | moon reads keys from the `.lua` in stplug-in |
 | Ownership | SLSsteam `AdditionalApps` | moon `AdditionalApps` (identical) |
-| Add data | steamidra **pre-seeds** (keys.txt + manifests→depotcache + config.vdf + .acf) | writes `AdditionalApps` + `.lua`→stplug-in |
-| Injection | headcrab patches **steam.sh** | **gamescope sessions.d** (preferred, survives Steam updates) → steam.sh fallback |
+| Add data | steamidra **pre-seeds** (keys.txt + manifests→depotcache + config.vdf + AdditionalApps + `.lua`→stplug-in). No `.acf`: it seeded a stub until its issue #41, where the stub was orphaned by an install to another library | writes `AdditionalApps` + `.lua`→stplug-in |
+| Injection | wrapper model, three surfaces: patched `.desktop` (Desktop), PATH drop-in (terminals), systemd drop-in on `steam-launcher.service` (Game Mode), plus a `.path`-unit guardian that re-asserts `.desktop` coverage. `steam.sh` is left VANILLA — `neutralize_steam_sh` restores it | **gamescope sessions.d** (preferred, survives Steam updates) → **steam.sh wrapper** fallback |
 | Steam-too-new | headcrab downgrade | headcrab shimmed (same) |
 | No-restart add | **reconcile** (lumalinux) | ❌ requires Steam reload |
 | Robustness to Steam updates | **SafeMode + cron auto-whitelist**; our patterns survived the 2026-07-21 build | depends on **moon** re-adapting its patterns (it had to, 07-22) |
@@ -165,15 +169,20 @@ SteamTools/SLSsteam→Decky tree, not parent-child.
 
 ## 6. What's borrowable (actionable)
 
-1. **★ gamescope `sessions.d` injection — a fix for our M7.** SLSDeck injects via
-   a rootless gamescope `sessions.d` override that *"Steam cannot overwrite"*,
-   instead of patching `steam.sh`. Our M7 (moon-findings) documented that
-   `steam.sh` injection is fragile because **Steam re-extracts `steam.sh` when its
-   size changes** (a Steam update wipes the hook). moon/luatools jumped to
-   `.desktop`; SLSDeck uses gamescope `sessions.d`. This is a **more update-robust
-   injection point**. It is **headcrab's layer** (lumalinux is only the payload
-   `steam.sh`/the wrapper preloads), so the borrow is an upstream headcrab note,
-   not a lumalinux change.
+1. ~~**★ gamescope `sessions.d` injection — a fix for our M7.**~~ — **NO LONGER
+   APPLICABLE (2026-08-31).** The premise was that we patch `steam.sh` and that a
+   Steam update wipes the hook when the file's size changes (M7, moon-findings).
+   That stopped being true with the wrapper model: `setup.sh` calls
+   `neutralize_steam_sh` to restore `steam.sh` to **vanilla**, and injects through
+   a patched `.desktop` (Desktop), a PATH drop-in (terminals) and a systemd
+   drop-in on `steam-launcher.service` (Game Mode), with a `.path`-unit guardian
+   that re-asserts `.desktop` coverage when Steam regenerates it.
+
+   Re-comparing on today's code, their override buys us nothing: it covers Game
+   Mode only, where our systemd drop-in already sits, and their own fallback when
+   there is no gamescope session is **the `steam.sh` wrapper we abandoned**. What
+   they do have is one surface where we have three plus a guardian — simpler to
+   maintain, and covering less.
 2. ~~**netsock (`steamnetsock-patch`)**~~ — **DONE (2026-08-02).** Implemented in
    LumaDeck as the native online route (FakeAppId 480 + netsock launch option),
    applied alongside online fixes and via a dedicated Online Fixes tab, with an
@@ -189,11 +198,23 @@ Nothing here touches lumalinux's own hooks — it's all plugin/headcrab layer.
 SLSDeck (pelada) is a **competent but thin frontend for slsteam-moon**: it does
 the ownership write (`AdditionalApps`) + `.lua` keys for moon, and leans on moon
 for everything hard. It is **not a LumaDeck copy** — convergent ecosystem design.
-LumaDeck leads on robustness, no-restart, and maturity; SLSDeck's one still-open
-useful idea for us is the **gamescope injection** (M7) — **netsock is now done
-(2026-08-02)**. The
-announced "heavy" build (root + hypervisor + Denuvo) is the only place they aim
-higher, at a real cost in risk — and it isn't in this repo.
+LumaDeck leads on robustness, no-restart, and maturity. **Both borrows this doc
+opened are now closed**: netsock was implemented (2026-08-02), and the gamescope
+injection stopped applying when we moved off `steam.sh` to the wrapper model
+(2026-08-31) — so nothing here is outstanding. The announced "heavy" build (root
++ hypervisor + Denuvo) is the only place they aim higher, at a real cost in risk
+— and it isn't in this repo.
+
+**Where they are genuinely ahead of nobody, and where they aren't.** Their
+`add_app` is a careful atomic YAML edit and their Denuvo detection is
+conservative (badge only when Steam confirms, no bypass claimed). Their one real
+weak point is the add flow: when no manifest source has the game it adds it
+anyway on ownership alone and reports `success` with a green "Installed ✓ (no
+manifest found)" — a gamble that works for some titles and, when it doesn't,
+leaves the user with a game that never appears and no error to read. Their own
+reason for shipping moon rather than vanilla SLSsteam is that ownership without
+depot keys isn't enough; that fallback path writes no `.lua`, which is where moon
+reads the keys from.
 
 ## References
 
