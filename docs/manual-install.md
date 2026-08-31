@@ -55,14 +55,18 @@ operational "what".
 5. **AppToken** (optional, `--token APPID:HEX`, repeatable) for games whose PICS
    appinfo Valve won't return without a token. Most games don't need it.
 
-6. **Writes or resets the `.acf`** (`appmanifest_<appid>.acf`):
-   - **`.acf` exists** (re-run or prior attempt): patches the error-state fields
-     back to clean (`UpdateResult` / `BytesToDownload` / `Bytes*` / `StagingSize`
-     to 0, clears the Update-Required bit of `StateFlags`). Stale state here is
-     what surfaces as "NO INTERNET CONNECTION", not a real network problem.
-   - **`.acf` absent** (brand-new): writes a clean stub with `StateFlags=1`
-     (Uninstalled) and every byte/error counter at 0, deliberately omitting
-     `InstalledDepots` / `MountedDepots`, so Steam shows **Install**.
+6. **Resets the `.acf` error state** (`appmanifest_<appid>.acf`), only if one
+   already exists: patches the error-state fields back to clean (`UpdateResult` /
+   `BytesToDownload` / `Bytes*` / `StagingSize` to 0, clears the Update-Required
+   bit of `StateFlags`). Stale state here is what surfaces as "NO INTERNET
+   CONNECTION", not a real network problem. `ScheduledAutoUpdate` and
+   `FullValidateAfterNextUpdate` are left alone — they are work Steam scheduled
+   for itself, not error residue.
+
+   **If there is no `.acf`, nothing is written.** Steam creates it when you click
+   Install, in whichever library you pick. We used to seed a stub here; it was
+   measured to buy nothing and to cost a real bug when the game went to a second
+   library (LumaDeck issue #41).
 
 7. **Ecosystem interop** (best-effort, each piece logged, never aborts the run):
    copies the parsed `.lua` to `~/.local/share/Steam/config/stplug-in/<appid>.lua`

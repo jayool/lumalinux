@@ -111,7 +111,9 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
    `depot;parent_app;manifest_gid;size;AES_key`.
 4. Add the AppID to SLSsteam's `config.yaml` `AdditionalApps`.
 5. Mirror the keys into `config.vdf` (a belt-and-suspenders backup).
-6. Write a clean `.acf` stub so Steam shows **Install** (not "No internet").
+6. If an `.acf` already exists, reset its stale error state (that is what shows
+   as "No internet"). If there is none, write nothing — Steam creates it on
+   Install, in the library the user picks.
 
 **Phase 1 — Steam start (hooks load):**
 7. The **wrapper** at `~/.local/share/SLSsteam/path/steam` exports
@@ -274,7 +276,7 @@ zip**:
 - Re-run `steamidra_lite --pin` with the new zip (LumaDeck's **"Re-download
   Manifest"** does exactly this). It rewrites `keys.txt` with the **new** GID
   (plus any new depots/keys the update added), pre-seeds the new manifest into
-  `depotcache`, and re-stubs the `.acf`. To actually hold the game on that
+  `depotcache`, and resets the `.acf` error state. To actually hold the game on that
   version, follow with `--pin-installed` (SLSsteam `ManifestIds`) — the zip
   `--pin` alone doesn't freeze while BuildDep is disabled.
 
