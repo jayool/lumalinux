@@ -1077,24 +1077,51 @@ Cuando el patrón y la xref discrepan, `patterns.cpp:212` avisa y **usa el patr�
 igual** (*"(disagree) — using pattern; investigate the anchor"*). El cruce por RTTI de
 DepotKey sí falla cerrado (`rtti.cpp:276`), pero es el camino alternativo.
 
-**b) El caso de convergencia NO lo modela nuestro auditor. [BAJA, pero es el que puede
-morder]** `classify_hit_count()` devuelve `AMBIGUOUS` para **cualquier** n>1, sin
-distinguir "veinte llamadores del mismo destino" de "dos funciones distintas". Si un
-día un patrón crítico nuestro cae en el primer caso —exactamente lo que le pasó a moon
-el 26-08— `check_patterns.py` daría **exit 3 BLOCKING** sobre un build perfectamente
-sano, y nos bloquearía la whitelist hasta que alguien lo investigara a mano.
+**b) El caso de convergencia no lo modela nuestro auditor — y con nuestra técnica de
+anclaje no puede darse. [SIN ACCIÓN, condicional a futuro]**
 
-Ya tenemos un precedente que lo confirma, y lo resolvimos por otra vía: **LoadPackage**
-está clasificado como `DIAGNOSTIC` precisamente porque su multi-match es *esperado*
-(*"3 candidates, runtime picks index 0"*). O sea que el caso ya nos apareció una vez y
-lo tratamos degradando el tier del hook, no analizando la convergencia. Eso vale para
-un hook opcional; para un crítico no habría esa salida.
+`classify_hit_count()` devuelve `AMBIGUOUS` para **cualquier** n>1, sin distinguir los
+dos motivos por los que una huella aparece varias veces:
 
-**Accionable, barato y preventivo:** enseñar a `classify_hit_count()` (o a su llamador)
-a seguir cada coincidencia cuando el patrón es una llamada/salto relativo y devolver
-`CONVERGENT` en vez de `AMBIGUOUS` si todas apuntan al mismo destino. Son unas decenas
-de líneas en el auditor, no tocan el `.so`, y nos ahorran el falso bloqueo el día que
-pase. Moon ya se comió ese ciclo entero; el valor de este delta es no repetirlo.
+| Motivo | Qué significa | ¿Bloquear? |
+|---|---|---|
+| **A — ambigüedad** | La huella casa con **dos funciones distintas**. No sabes cuál quieres | **Sí**, y es lo que hacemos |
+| **B — convergencia** | La huella es de **la instrucción que llama**, y N llamadores apuntan al mismo destino | No: es una función con muchos llamadores |
+
+Una versión anterior de esta sección presentaba el motivo B como el hallazgo que "puede
+morder", con un accionable preventivo sobre `classify_hit_count()`. **Está retirado, y
+la razón importa más que el hallazgo**: el motivo B sólo puede darse si la huella ancla
+en un **sitio de llamada**, y nuestros dos patrones críticos anclan en **prólogos de
+función**:
+
+- `kDepotKeyFnPattern` (`patterns.hpp:37-39`): *"Prologue (PIC get_pc_thunk; sub
+  esp,0x24; then the 5-arg load sequence…). **Verified UNIQUE.**"*
+- `kGmrcFunctionPattern` (`patterns.hpp:138-145`): `call get_pc_thunk` / `add eax,GOT` /
+  `push ebp` / `push edi,esi,ebx` / `sub esp,0x110` / los dos `mov` de argumentos.
+
+**Un prólogo es la función**: aparece una vez porque la función existe una vez. Cuando
+un prólogo casa dos veces significa que dos funciones **distintas** comparten forma de
+prólogo — motivo A, ambigüedad real, y ahí bloquear es la respuesta correcta. El
+auditor acierta.
+
+También se retira el precedente que se citaba. **LoadPackage no es un caso de
+convergencia**: su comentario (`patterns.cpp:246`) dice *"el prólogo … **puede casar con
+varias funciones**. Enumera todas las coincidencias; elige por índice con
+`LUMA_LOADPKG_IDX`"* — funciones distintas, o sea motivo A otra vez, resuelto eligiendo
+índice a mano y degradando el hook a `DIAGNOSTIC`. No es el mismo problema que el de
+moon.
+
+**Por qué a moon sí le pasó y a nosotros no:** su localizador anclaba en un sitio de
+llamada, que es una técnica legítima y distinta de la nuestra. No es que ellos lo
+hicieran peor; es que anclan en otro sitio, y ese sitio tiene este modo de fallo.
+
+**La condición que lo volvería relevante, que es lo único que hay que retener de aquí:**
+si algún día se ancla un hook **crítico** en un sitio de llamada en vez de en un
+prólogo —por ejemplo si un rebuild de Steam deja el prólogo de GMRC irreconocible y hay
+que anclar en sus llamadores—, entonces hay que enseñarle convergencia al auditor
+**antes** de ese cambio, no después de comerse el `BLOCKING` falso. La ruta de rescate
+de GMRC por xref (`gmrc_xref.cpp`) es de esa naturaleza, pero no pasa por
+`classify_hit_count()`, así que hoy no la roza.
 
 ### D12 — sus dos commits de patrones "menores" son la lección de `verify_mask.py`
 
@@ -1184,15 +1211,17 @@ motivo fechado para no hacerlo, con el commit ajeno que tuvo que arreglarlo.
 
 | # | Qué | Prioridad | Estado |
 |---|---|---|---|
-| 1 | `classify_hit_count()` no distingue convergencia de ambigüedad → falso BLOCKING posible | Baja | **Abierto**, preventivo y barato |
+| 1 | `classify_hit_count()` no distingue convergencia de ambigüedad | — | **Cerrado sin acción**: anclamos en prólogos, el caso no puede darse. Reabrir sólo si un crítico pasa a anclar en un sitio de llamada |
 | 2 | El conteo de coincidencias no existe en runtime (la garantía es sólo offline) | Baja | Anotado; defensa en profundidad, no agujero |
 | 3 | El cruce de GMRC avisa y usa el patrón igual al discrepar | Baja | Anotado, va con el 2 |
 | 4 | Caso real de comodín de más resolviendo al campo vecino | — | Munición para `verify_mask.py` |
 | 5 | Escalada por wrapper en `$HOME` ejecutado con privilegios | — | **Verificado y no aplicable**: no ponemos nada de root en el PATH |
 
-Ninguno urge. El único que produce trabajo es el 1, y es preventivo: nos ahorra el
-falso bloqueo del cron el día que un patrón crítico caiga en el caso de convergencia,
-que a moon le costó abortar la carga y dos commits arreglarlo.
+**Ninguno produce trabajo.** El 1 se cerró al comprobar en qué anclan nuestros patrones
+críticos: la conclusión útil de este delta no es un accionable, es que la disciplina de
+unicidad que moon acaba de construir la teníamos ya, y por partida doble (derivación +
+auditor + cron). Lo que queda es la condición de §D11.b para cuando se cambie la técnica
+de anclaje, y la munición fechada de §D12 para `verify_mask.py`.
 
 *Fuentes de esta ventana: `swwayps/slsteam-moon` @ `997a1a3`, ficheros
 `src/memhlp.cpp`, `src/memhlp.hpp`, `src/pattern_scan.hpp`, `src/patterns.cpp`,
