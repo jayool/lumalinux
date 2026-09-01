@@ -997,3 +997,205 @@ demás es su infraestructura, o cosas que ya resolvemos de otra forma.
   `src/main.cpp` (M6). Compared against lumalinux `src/patterns.hpp`,
   `src/hooks/gmrc_hook.cpp`, `src/gmrc_store.hpp`, `src/update.cpp`,
   `.github/workflows/watch-steam.yml`, `tools/steamidra_lite.py`.
+
+---
+
+## Delta — 2026-09-01 (desde el delta del 2026-08-18)
+
+*24 commits, 2026-08-15 → 2026-08-29, rama `slsteam-moon` (la principal), hasta
+`997a1a3`. Sin tag nuevo: el último sigue siendo v2.8. El grueso vuelve a ser suyo
+—recarga en caliente, provisión de `appinfo`, y una tanda de rendimiento con olor a
+biblioteca gigante— pero esta ventana trae **la primera aportación de método** desde
+que seguimos el proyecto: cinco commits sobre disciplina de patrones que documentan un
+ciclo completo (endurecer → romperse → afinar) que nosotros nos podemos ahorrar.*
+
+**Profundidad de lectura, para que se sepa qué respalda cada afirmación:** leídos a
+fondo los cinco de `patterns` (`memhlp.cpp`, `pattern_scan.hpp`) y los dos de
+`runtime` (incluido `launcher-shim.lib.sh` entero), y contrastados contra nuestro
+`src/patterns.cpp`, `tools/derive_patterns.py`, `tools/check_patterns.py` y
+`setup.sh`. Los de `hotreload` / `manifests` / `stats` / `dlc`, sólo mensaje,
+diffstat y ficheros tocados. Los de `perf` / `config` / `ui` / `library`, sólo el
+mensaje. Nada compilado.
+
+### ★ D11 — su cliente se pone al día con su propio auditor, y de paso enseña el caso que el nuestro no modela
+
+Cinco commits (23 y 26 de agosto) que cuentan una historia en dos actos.
+
+**Acto 1 — `d3402a1` (23-08): prohibir la firma ambigua.** Su `patternScan` **paraba
+en la primera coincidencia**; sólo contaba duplicados si `extendedLogging` estaba
+puesto, o sea nunca en producción. Pasa a barrer el módulo entero y exigir
+exactamente una. El comentario que dejan en `pattern_scan.hpp` es la mejor
+formulación del riesgo que he leído en ningún sitio:
+
+> *"Keeping the first hit out of several silently binds whichever site happens to sit
+> at the lower address: a locator can then be wildcarded just enough to also match a
+> neighbouring function or field, and the wrong one gets hooked with no diagnostic at
+> all. The offline auditor already refuses that; this is the same rule inside the
+> client."*
+
+Nótese la última frase: **su auditor offline ya lo rechazaba.** Esto no era un agujero
+de diseño, era el cliente yendo por detrás de su propia herramienta.
+
+**Acto 2 — `a2cef85` (26-08): y entonces la regla estricta les rompe la carga.** Un
+localizador alcanzado desde **veinte sitios de llamada** tenía veinte coincidencias
+legítimas, y exigir una sola abortaba el arranque. La afinan a lo que llaman
+*convergencia*: si hay varias coincidencias, se sigue cada una y se exige que **todas
+resuelvan al mismo destino**. Eso es una función con muchos llamadores, no una firma
+infra-especificada. Destinos distintos, o nada que seguir, siguen siendo ambigüedad.
+Con tope (`kMaxConvergenceCandidates = 256`) para que un patrón patológico no haga
+caminar al resolutor sin límite durante la carga.
+
+**Lo nuestro, comprobado antes de escribir nada — y sale mejor de lo que parecía.**
+La unicidad **ya es nuestra invariante**, y en dos sitios:
+
+| Herramienta | Qué garantiza |
+|---|---|
+| `derive_patterns.py:317,400` | Sólo acepta un patrón derivado si casa **exactamente una vez**. *"Auto-derivation is only trustworthy when there's exactly ONE referencing function and its fresh prologue matches UNIQUELY"* |
+| `check_patterns.py` | `classify_hit_count()` marca `AMBIGUOUS` cualquier n>1. En un hook **CRITICAL** eso es **exit 3 = BLOCKING**: abre issue y **no mete el hash en la whitelist** |
+| `.github/workflows/watch-steam.yml` | Cron diario (`17 7 * * *`) que lo corre contra el `steamclient.so` nuevo |
+
+Así que la pregunta "¿nuestros patrones enganchan una única función?" tiene respuesta
+**sí, verificada por build y de forma automática**, y el equivalente del acto 1 lo
+tenemos cubierto desde antes. Una versión anterior de esta sección lo daba por
+agujero abierto; era una lectura de `FindInSteamclient` sin mirar el tooling que lo
+respalda.
+
+Quedan **dos deltas reales**, los dos pequeños, y conviene no inflarlos:
+
+**a) La garantía es offline y no viaja a la máquina del usuario. [BAJA]**
+`FindInSteamclient` (`patterns.cpp:95`) sigue cogiendo la primera coincidencia sin
+contar; los tres hooks críticos la usan. En la práctica está respaldada por el cron,
+pero la ventana existe: un build de Steam nuevo que llega a la Deck de alguien **antes**
+de que el cron lo bendiga o lo bloquee. Y en esa ventana nuestro gate de hash es
+**advisory** (`main.cpp:150` sólo lanza un toast; `SafeMode: no` es el default), así
+que los hooks se instalan igual. Añadir el conteo en el runtime sería defensa en
+profundidad, no tapar un agujero. Coste bajo; valor bajo. **No accionable hoy**, se
+anota para cuando se toque `patterns.cpp` por otro motivo.
+
+Relacionado, y esto sí conviene tenerlo presente: el cruce de GMRC **no bloquea**.
+Cuando el patrón y la xref discrepan, `patterns.cpp:212` avisa y **usa el patrón
+igual** (*"(disagree) — using pattern; investigate the anchor"*). El cruce por RTTI de
+DepotKey sí falla cerrado (`rtti.cpp:276`), pero es el camino alternativo.
+
+**b) El caso de convergencia NO lo modela nuestro auditor. [BAJA, pero es el que puede
+morder]** `classify_hit_count()` devuelve `AMBIGUOUS` para **cualquier** n>1, sin
+distinguir "veinte llamadores del mismo destino" de "dos funciones distintas". Si un
+día un patrón crítico nuestro cae en el primer caso —exactamente lo que le pasó a moon
+el 26-08— `check_patterns.py` daría **exit 3 BLOCKING** sobre un build perfectamente
+sano, y nos bloquearía la whitelist hasta que alguien lo investigara a mano.
+
+Ya tenemos un precedente que lo confirma, y lo resolvimos por otra vía: **LoadPackage**
+está clasificado como `DIAGNOSTIC` precisamente porque su multi-match es *esperado*
+(*"3 candidates, runtime picks index 0"*). O sea que el caso ya nos apareció una vez y
+lo tratamos degradando el tier del hook, no analizando la convergencia. Eso vale para
+un hook opcional; para un crítico no habría esa salida.
+
+**Accionable, barato y preventivo:** enseñar a `classify_hit_count()` (o a su llamador)
+a seguir cada coincidencia cuando el patrón es una llamada/salto relativo y devolver
+`CONVERGENT` en vez de `AMBIGUOUS` si todas apuntan al mismo destino. Son unas decenas
+de líneas en el auditor, no tocan el `.so`, y nos ahorran el falso bloqueo el día que
+pase. Moon ya se comió ese ciclo entero; el valor de este delta es no repetirlo.
+
+### D12 — sus dos commits de patrones "menores" son la lección de `verify_mask.py`
+
+`a8029de` (23-08) relaja con comodines el desplazamiento relativo al GOT y el offset
+del campo de propiedad *"para que ambos sigan resolviendo en el cliente actual"*.
+`0fb590f`, **el mismo día**, lo revierte a medias: *"the neighbouring field shares the
+emitter shape, so relaxing the displacement resolved to the wrong offset on the newer
+client"*. Acaban fijando el campo y poniendo el comodín sólo en el registro base, y
+añadiendo un test contra el cliente anterior además del nuevo.
+
+Es exactamente el terreno de `tools/verify_mask.py` (*"¿sigue siendo segura esta
+máscara?"*) y `tools/experiment_framesize_mask.py`. La lección, en una línea:
+**relajar de más y no relajar fallan de formas distintas, y la primera falla en
+silencio.** Un patrón que deja de casar sale en el log y en `maintenance.md`; un
+patrón que casa en el campo vecino no lo ve nadie.
+
+Sin accionable — nuestras herramientas ya existen para esto. Se anota como munición
+para la nota de cabecera de `verify_mask.py`: hay un caso real, fechado y con commit,
+de un comodín de más resolviendo al vecino.
+
+### D13 — endurecen el shim del lanzador contra escalada, y nosotros salimos limpios por diseño
+
+`74b6b1b` y `821e8cb` (27-08). El problema, en sus palabras:
+
+> *"This script is root-owned and sits on the system PATH, but the wrapper it delegates
+> to lives in a user's home directory and is writable by that user. That inversion is
+> only safe while the two identities agree."*
+
+Una invocación elevada (`sudo -E`, `sudoers env_keep += HOME`, un helper que hereda el
+entorno) hacía que su shim de root ejecutara un script escribible por un usuario sin
+privilegios. Lo tapan exigiendo que el wrapper sea fichero normal (no symlink),
+propiedad del UID efectivo, y sin bit de escritura de grupo ni de otros. El segundo
+commit extiende la misma comprobación al `steam.sh` de último recurso, porque si no el
+guardia era decorativo: *"refusing a wrapper the effective account does not own and
+then executing a steam.sh from the same directory tree is the identical escalation by
+a different path."*
+
+**Verificado: no nos aplica, y no por suerte.** Nuestro modelo de wrapper viene de
+moon, así que había que mirarlo. La diferencia es que **no instalamos nada propiedad
+de root en el PATH del sistema** — `setup.sh:29` lo dice como propiedad de diseño
+(*"No root required"*). Los tres caminos hasta nuestro wrapper son de usuario:
+`.desktop` parcheados, un drop-in de PATH en el rc del shell, y un drop-in systemd
+`--user` sobre `steam-launcher.service`. Ni el autostart del sistema se toca:
+`setup.sh:732` hace sombra en el directorio del usuario en vez de editar
+`/etc/xdg/autostart`.
+
+**Valor de anotarlo:** el día que alguien proponga un shim en `/usr/local/bin` para
+simplificar la cobertura —que es una idea que se le ocurre a cualquiera—, aquí está el
+motivo fechado para no hacerlo, con el commit ajeno que tuvo que arreglarlo.
+
+### Verificado y NO aplicable (o suyo y no nuestro)
+
+- **Recarga en caliente (`a138c0b`, `d748367`, `997a1a3`)** — su equivalente del Add
+  Game sin reiniciar, construido como una máquina de estados con generaciones,
+  "preparación en vivo" y publicación diferida: refrescan `appinfo` tras actualizarse
+  los paquetes y no publican una generación hasta confirmar los mapeos de
+  compatibilidad. Es mucho más complejo que nuestro reconcile, y la explicación
+  probable es que resuelven un problema más difícil: ellos **sintetizan** entradas de
+  biblioteca desde manifiestos Lua propios, nosotros dejamos que Steam escriba las
+  suyas. Nada que portar. *Lectura superficial — es la parte de esta ventana con menos
+  respaldo, y si algún día el reconcile da guerra, es el primer sitio donde volver.*
+- **`348eed5` descompresión en proceso** — dejan de lanzar un hijo para descomprimir el
+  zip *"para evitar carreras al recoger procesos hijos dentro de Steam"*. Nosotros
+  lanzamos `steamidra_lite.py` como subproceso, pero **desde Decky, no desde dentro del
+  proceso de Steam**, así que la carrera que describen no se da. Anotado por si algún
+  día algo nuestro corre dentro de Steam.
+- **`b43b317` caídas del proveedor** — reintentos vivos y un estado de "se puede
+  instalar" que falla en abierto. Nuestra cascada de GMRC (`opensteamtool` → `wudrm` →
+  `steamrun`, RESEARCH §7) ya cubre la indisponibilidad por otra vía.
+- **`ce71798` enrutado de logros** — condicionan el manejo local de estadísticas a
+  evidencia de licencia nativa y correlacionan respuestas por petición. Contiene una
+  línea que merece seguimiento aparte si alguna vez tocamos esa zona: *"Share
+  eligibility with CloudRedirect"* — se están coordinando explícitamente con CR.
+- **Rendimiento y topes (`b26737e`, `efa77b8`, `29097d8`, `1729c6a`)** — escaneos
+  cuadráticos al buscar depots, un tope `MaxManagedApps` porque soltar decenas de miles
+  de scripts *"stalled the client for minutes"*, 199 recargas de config en una sola
+  copia de directorio (lo agrupan en una ventana de silencio), y 133 notificaciones en
+  una pasada. Todo consecuencia de su modelo de importación masiva, que no tenemos.
+  Curiosidad: su arreglo de agrupar eventos del vigilante es el mismo problema que
+  SLSsteam tocó en `29097d8`-equivalente; nuestro watcher de `keys.txt` no lo sufre
+  porque escribimos un fichero, no volcamos directorios.
+- **`e459276` fechas de inclusión, `08c5af8` DLC configurados, `a3fdf1b` CDN** — suyos.
+- **`465a420`** — recortan el README de 48 líneas a 4 para dejar claro que son un fork
+  de SLSsteam.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | `classify_hit_count()` no distingue convergencia de ambigüedad → falso BLOCKING posible | Baja | **Abierto**, preventivo y barato |
+| 2 | El conteo de coincidencias no existe en runtime (la garantía es sólo offline) | Baja | Anotado; defensa en profundidad, no agujero |
+| 3 | El cruce de GMRC avisa y usa el patrón igual al discrepar | Baja | Anotado, va con el 2 |
+| 4 | Caso real de comodín de más resolviendo al campo vecino | — | Munición para `verify_mask.py` |
+| 5 | Escalada por wrapper en `$HOME` ejecutado con privilegios | — | **Verificado y no aplicable**: no ponemos nada de root en el PATH |
+
+Ninguno urge. El único que produce trabajo es el 1, y es preventivo: nos ahorra el
+falso bloqueo del cron el día que un patrón crítico caiga en el caso de convergencia,
+que a moon le costó abortar la carga y dos commits arreglarlo.
+
+*Fuentes de esta ventana: `swwayps/slsteam-moon` @ `997a1a3`, ficheros
+`src/memhlp.cpp`, `src/memhlp.hpp`, `src/pattern_scan.hpp`, `src/patterns.cpp`,
+`tools/launcher-shim.lib.sh`. Contrastado contra lumalinux `src/patterns.cpp`,
+`src/rtti.cpp`, `tools/derive_patterns.py`, `tools/check_patterns.py`,
+`.github/workflows/watch-steam.yml` y `setup.sh`.*
