@@ -3512,7 +3512,7 @@ abiertos.*
 |---|---|---|
 | 08-21 | Se saca `process.cpp`: "¿qué proceso se acaba de conectar?" deja de vivir dentro de FakeAppIds | §7.9.2 |
 | 08-22 | Detección de SteamDRM y Denuvo leyendo el binario del juego. `SmartTickets` pasa de apagado a `0x1` **en un día** | §7.9.3 |
-| 08-23 | **`library-inject` vaciado**, y el bug de excepciones que lo causó | **★ §7.9.4** |
+| 08-23 | El bug de excepciones que ya arrastramos, y `library-inject` vaciado | **★ §7.9.4** |
 | 08-24 | **Nace la API de plugins Lua**: LuaJIT + LuaBridge, hooking desde script | **★ §7.9.5** |
 | 08-26 | Plugins **desactivados por defecto** (`Plugins: no`) + aviso de código arbitrario | §7.9.7 |
 | 08-27 | `setAdditionalApps`: el batch se comía las altas previas | **§7.9.8** |
@@ -3651,7 +3651,37 @@ excepciones de C++: los `catch` tipados dejaban de capturar. Resultado: un
 **tumbaba SLSsteam**. Ace lo tapó por los dos lados — quitó la herramienta y ensanchó
 las capturas a `catch (...)`.
 
-**a) Lo que nos llega: un `.so` de 0 bytes, y nuestro `setup.sh` lo instalará. [MEDIA]**
+**a) Lo que ya estamos enviando: el manejo de excepciones de SLSsteam está roto hoy. [BAJA, pero presente — no futuro]**
+
+Esta es la mitad que importa, y va primero porque **no llega con el merge: ya está
+desplegada en todos nuestros usuarios**.
+
+`lumalinux` no está expuesto: implementa `la_version`, `la_preinit` y `la_objopen`
+(`main.cpp:377-399`) pero **no `la_objsearch`**, que es la interfaz culpable, y además
+corre por `LD_PRELOAD` a propósito (§0.1).
+
+Pero `library-inject` **sí** la implementa, y somos nosotros quienes lo instalamos
+(`setup.sh:1044`) y quienes lo ponemos **el primero** del `LD_AUDIT`
+(`setup.sh:881`). O sea que en nuestro despliegue, ahora mismo, SLSsteam corre con el
+despacho de excepciones corrompido: sus `catch` tipados no capturan. Y hasta que llegue
+una release con el `catch (...)` de `1f10312`, tampoco tiene la red que Ace le puso.
+
+Consecuencia concreta, la que él mismo encontró: un `config.yaml` mal formado, en vez
+de caer en el manejador y tirar de defaults, **tumba SLSsteam entero**. Superficie
+estrecha —hace falta que la config se corrompa o que una conversión falle— pero real y
+activa hoy, no hipotética.
+
+**Valor operativo:** si alguna vez aparece un SLSsteam que muere en el arranque sin
+explicación, `~/.config/SLSsteam/config.yaml` pasa a ser una hipótesis concreta y
+comprobable. Antes de esto no teníamos ninguna.
+
+Y una lectura de rebote sobre nosotros mismos: llevamos meses instalando un componente
+cuyo efecto secundario nadie había caracterizado. No lo escribió Ace en ningún sitio
+hasta que lo rompió — pero el punto es que lo desplegamos sin saber qué hacía más allá
+de *"redirige libcurl"*, que es lo único que dice nuestro
+`decouple-headcrab-plan.md:84`.
+
+**b) Lo que nos llegará: un `.so` de 0 bytes, y nuestro `setup.sh` lo instalará. [BAJA, cosmético]**
 
 No es que deje de construirse — **construye un fichero vacío**:
 
@@ -3687,10 +3717,10 @@ siguientes de forma independiente y el proceso arranca: **SLSsteam se carga igua
 inyección no se pierde**. Verificado también que una entrada inválida no arrastra a la
 otra.
 
-Lo que produce es (a) un `ERROR:` con todas las letras en el stderr de Steam **en cada
-arranque**, que es justo la línea que manda a un usuario a abrir un issue por un
-problema inexistente, y (b) un `ok "Deployed …"` nuestro que afirma haber desplegado
-algo útil. El mismo pecado que corregimos en §7.8.4 con el mensaje de `Notifications`:
+Lo que produce es, por un lado, un `ERROR:` con todas las letras en el stderr de Steam
+**en cada arranque** —justo la línea que manda a un usuario a abrir un issue por un
+problema inexistente—, y por otro un `ok "Deployed …"` nuestro que afirma haber
+desplegado algo útil. El mismo pecado que corregimos en §7.8.4 con el mensaje de `Notifications`:
 decir que has hecho algo que no has hecho.
 
 **Accionable:** `-f` → `-s` (existe **y no vacío**) en `setup.sh:1044` y `setup.sh:881`.
@@ -3703,12 +3733,6 @@ del merge.
 **No** conviene borrar el soporte de `library-inject`: Ace lo ha *comentado*, no
 eliminado, y su propio comentario dice *"for some reason"*. Es una desactivación de
 diagnóstico, no una decisión cerrada; si vuelve, `-s` lo reacepta sin tocar nada.
-
-**b) El bug de las excepciones no nos toca. [verificado]**
-
-lumalinux implementa `la_version`, `la_preinit` y `la_objopen` (`main.cpp:377-399`),
-pero **no `la_objsearch`**, que es la interfaz que lo causaba. Y de todas formas corre
-por `LD_PRELOAD` a propósito (§0.1). Sin exposición.
 
 El resto del día: `82a9e85` mete `lib/libluajit.a` al repo sin usarlo aún —el aviso de
 lo que viene—, `49186e7` pasa los `CFileWatcher*` a smart pointers, `5f9d9b4` acelera
@@ -3994,7 +4018,7 @@ viva dentro de Steam.
 
 | # | Qué | Prioridad | Estado |
 |---|---|---|---|
-| 1 | `-f` → `-s` para `library-inject.so` en `setup.sh:1044` y `:881` | **Media** | **Abierto** — nos llega solo el día del merge |
+| 1 | `-f` → `-s` para `library-inject.so` en `setup.sh:1044` y `:881` | Baja | **Abierto** — nos llega solo el día del merge |
 | 2 | `SLSsteam::initialized` como sustituto de la captura de rebote del `CUser` | Alta a futuro | Vigilar; **no** planificar hasta que haya tag |
 | 3 | Doble mecanismo de refresco de licencias (suyo `0xf90be` + nuestro `0x7d`) | Baja | Anotado, sin acción |
 | 4 | `LaunchOptions` vs. nuestras opciones de compatibilidad | Baja | Anotado, sin acción |
