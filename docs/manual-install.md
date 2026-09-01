@@ -86,12 +86,19 @@ an already-clean manifest is left alone, so a run no longer litters `.acf.bak`
 files. `keys.txt` is merged in place without a `.bak`. The `.depot` tracker isn't
 written at add time any more (see step 7), so nothing backs it up either.
 
-Press **Install** on the game; it downloads natively, with progress shown in the
-Steam library. **No Steam restart needed** since v0.16.16: the license reconcile
-(method.md §8) refreshes ownership/appinfo live so the game appears and downloads
-right after it's added. (If the reconcile pattern is broken on your build it
-no-ops and you fall back to needing a restart — `LUMA_NO_RECONCILE` forces that
-old behaviour on purpose.)
+Start Steam again and press **Install** on the game; it downloads natively, with
+progress shown in the Steam library.
+
+The **no-restart** behaviour (the license reconcile, method.md §8) does not apply
+to this flow, and this doc used to claim it did. The reconcile lives inside the
+injected `.so`: the `keys.txt` inotify watcher arms it and the package-0 finder
+fires it, both on threads inside a **running** Steam. With Steam closed — as every
+command above requires — there is nothing loaded to arm, so starting Steam is what
+picks the new game up, exactly as before v0.16.16. What the reconcile removes is
+the restart when a game is added while Steam is **up**: LumaDeck's Add Game, and
+equally any `keys.txt` write from a manual run with Steam running. (If the
+reconcile pattern is broken on your build it no-ops and even that path falls back
+to a restart — `LUMA_NO_RECONCILE` forces that old behaviour on purpose.)
 
 ## Pinning: auto-update vs frozen
 
