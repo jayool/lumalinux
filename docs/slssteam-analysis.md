@@ -3473,3 +3473,567 @@ referencia en `a061b00` y no lleva `Notifications`.
 Sin hallazgos de prioridad media o alta. El accionable de §7.7.12.a (`std::realloc`
 sobre memoria de Steam) sigue siendo el único abierto de peso, y esta ventana no
 aporta nada nuevo sobre él.
+
+---
+
+### 7.9 Ventana `20260820085507` → `dev@3f8e429` — barrido día a día (rama `dev`, **sin publicar**)
+
+*Método: lectura de diffs commit a commit sobre el clon de `AceSLS/SLSsteam`, desde
+`65b6ee1` (= tag `20260820085507`, donde acaba §7.8) hasta `3f8e429`. **112 commits,
+2026-08-20 → 2026-09-01**, +22k/−1.2k líneas —de las que ~16k son la sustitución de
+LuaBridge del 31-ago—. Cero releases y cero tags en el rango.*
+
+> **⚠️ Esta sección NO documenta una release. Documenta la rama `dev`.**
+>
+> `main` sigue clavado en `65b6ee1`, exactamente donde lo dejó §7.8: ni un commit, ni
+> un tag, ni una release en trece días. Los 112 commits viven **solo en `dev`**, y
+> `setup.sh` resuelve la release publicada — la del 20-ago. **Nada de esto ha llegado
+> a un usuario todavía.**
+>
+> Todos los §7.x anteriores documentan código desplegado; éste documenta código que
+> *va a* desplegarse. Léelo como aviso, no como delta. **Lo que hay que vigilar es el
+> merge de `dev` a `main` y el tag que venga detrás**: ese día aterriza todo de golpe,
+> y es cuando los accionables de §7.9.13 pasan de "pendientes" a "urgentes".
+>
+> Corolario de método, y por eso esta ventana casi se nos pasa entera: los barridos de
+> §7.4 a §7.8 se definieron siempre **de tag a tag**, y los tags de SLSsteam se ponen
+> en `main`. Mirando solo ahí, esta ventana parecía vacía. **La rama `dev` no había
+> aparecido nunca en este documento.** De aquí en adelante, un barrido que solo mire
+> `main` está incompleto por construcción.
+
+*Cierre de la ventana anterior: los dos accionables abiertos de §7.8 se cerraron el
+20-ago, antes de que empezara ésta — `49e4279` (validación del cuerpo del feed) y
+`51297c4` (el `sed` muerto de `Notifications`). La tabla de §7.8.5 todavía los da por
+abiertos.*
+
+#### 7.9.0 Panorama — dos hilos, y uno de ellos cambia la naturaleza del proyecto
+
+| Fecha | Hito | Efecto para nosotros |
+|---|---|---|
+| 08-21 | Se saca `process.cpp`: "¿qué proceso se acaba de conectar?" deja de vivir dentro de FakeAppIds | §7.9.2 |
+| 08-22 | Detección de SteamDRM y Denuvo leyendo el binario del juego. `SmartTickets` pasa de apagado a `0x1` **en un día** | §7.9.3 |
+| 08-23 | **`library-inject` vaciado**, y el bug de excepciones que lo causó | **★ §7.9.4** |
+| 08-24 | **Nace la API de plugins Lua**: LuaJIT + LuaBridge, hooking desde script | **★ §7.9.5** |
+| 08-26 | Plugins **desactivados por defecto** (`Plugins: no`) + aviso de código arbitrario | §7.9.7 |
+| 08-27 | `setAdditionalApps`: el batch se comía las altas previas | **§7.9.8** |
+| 08-29 | Refactor de `Hooks` a jerarquía de clases (579 líneas) | verificación en §7.9.10 |
+| 08-31 → 09-01 | Quita y devuelve API pública publicada hace 7 días | **§7.9.11, §7.9.12** |
+
+**Dos hilos conductores.** El primero continúa el de §7.7.0 y §7.8.1: sustituir bytes
+por estructura, ahora extendido a *analizar el binario del juego* en vez de adivinar
+por su nombre. El segundo es nuevo y es el que importa: **SLSsteam deja de ser una
+librería con hooks y empieza a ser una plataforma con API de plugins.** 34 de los 112
+commits son Lua.
+
+**Regalos gratis en esta ventana:** ninguno. A diferencia de §7.7 y §7.8, aquí no hay
+nada que nos llegue arreglado por actualizar — porque no hay nada que actualizar.
+
+#### 7.9.1 Día 2026-08-20 — 2 commits (nada)
+
+**`7186151` `feat(API): Change confirmations to LOG_API & add support for multiline
+commands`** — su canal de comandos (`/tmp/SLSsteam.API`) leía **una** línea de 128
+bytes; ahora lee el fichero entero y ejecuta línea a línea. De paso sustituye la
+cadena de `goto done` por `return` y mueve el `lock_guard` al principio de
+`parseCmd()` en vez de repetirlo en cada rama.
+
+**`5d01066` `chore(PKGBUILDs): Update`** — plumbing de release.
+
+**Nos afecta:** nada. `API: no` es el default y no lo usamos.
+
+#### 7.9.2 Día 2026-08-21 — 7 commits (cimientos de tickets)
+
+**`d056fda` `refactor(process): Move process logic out of FakeAppIds`** — saca de
+`fakeappid.cpp` los ~86 líneas que leían `/proc/<pid>/comm` y `/proc/<pid>/environ`
+para averiguar el `SteamAppId` del proceso conectado, y las lleva a un `process.cpp`
+nuevo con un `g_processMap` global indexado por pipe. Su mensaje dice el porqué: *"lo
+vamos a necesitar también para los tickets"*.
+
+**`5882bed` `feat(apps): Hide family shared state from games`** — engancha
+`IClientAppManager::GetAppStateInfo` y, tras llamar al original, reescribe el
+resultado: pone `ownerAccountId` al usuario actual, `realOwner` a 0 y limpia
+`k_EAppOwnershipFlagsBorrowed` de `ownershipFlags`. Gated en `DisableFamilyShareLock`
+y en que haya un appId de pipe activo. Trae de paso el enum `EAppOwnershipFlags`
+completo y la struct `AppStateInfo_t` con su padding documentado.
+
+**`1b9b556` + `91a4336` `feat(ticket): Add analysis for 32 & 64 bit PE/ELF targets`** —
+parsers de cabeceras de ejecutables Windows y Linux, en `process.cpp`.
+
+**`de8d555` `feat(ticket): Add SmartTickets config option`** — clave nueva. **Nace
+`SmartTickets: no`**, o sea apagada. Retener este detalle para §7.9.3.
+
+`6dfaf3d` y `861b342` son README y estilo.
+
+**Nos afecta:** nada. Capa de tickets y propiedad = frontera suya (§5). El
+family-share ni nos roza.
+
+#### 7.9.3 Día 2026-08-22 — 20 commits (el día más cargado: Denuvo, y dos que sí nos tocan)
+
+El grueso es afinar el análisis de binarios:
+
+- **`0fec99d` + `c1a958f`** — detección de Denuvo: cuenta secciones características
+  **y** exige que `.text` tenga entropía > 7.0 (código ofuscado). Dos condiciones, para
+  no disparar falsos positivos.
+- **`9571cdc` `Scan open files to detect DRM in them aswell`** — no basta con el
+  ejecutable: recorre los descriptores abiertos del proceso, porque muchos juegos
+  meten la protección en una librería aparte.
+- **`4aa94a7` `Probe file header instead of relying on file extensions`** — añade
+  `checkMagic()` y deja de fiarse de la extensión.
+- **`79a45a7`, `cd10f2c`** — más secciones de código, y `Elf_Sheader` → `Section_t`.
+- **`95d56fd` `Make LogLevel dynamic`** — `IExecutableFile::load()` recibe ahora un
+  `LogLevelFlags_t`: los fallos de lectura de ficheros que van a fallar siempre bajan
+  de nivel, los del ejecutable principal se quedan. Buen detalle de higiene.
+
+**`2febc71` `Change SmartTickets to bitwise flags`** — y aquí el cambio que hay que
+anotar:
+
+```cpp
+- smartTickets = getSetting<bool>(rootNode, "SmartTickets", false);
++ smartTickets = getSetting<SmartTicketsFlags>(rootNode, "SmartTickets", 1);
+```
+
+`0x1` = SteamDRM, `0x2` = Denuvo. **En un solo día pasó de apagada a venir encendida
+en su mitad barata.** Su propia medición, en el comentario de `config_default.hpp`:
+*"less than 10ms for SteamDRM, up to 20-2000ms for Denuvo on my SSD"* — por eso Denuvo
+se queda fuera del default. El análisis se dispara en `ConnectPipe`
+(`hooks.cpp:499-506`), o sea **una vez por proceso que se conecta al cliente**.
+
+**`f20ef6c` `Remove denuvo pipe counting for now`** — se arrepiente de una parte y la
+retira, con una frase que retrata cómo trabaja: *"It only works on new games. I'd
+rather have consistent & predictable behaviour than something that sometimes works"*.
+
+**`79a67ac` `feat(achievements): Add cooldown when no achievements were fetched`** —
+`Achievements::setCooldown()` marca el appId 10 minutos cuando no encuentra schema,
+y `getReviewersForGame()` sale temprano mientras dure. Motivo: hay juegos que se
+atragantan con `k_EResultNoConnection` repetido y provocan stutter. Las llamadas
+nuevas caen dentro de `sendAndRecvGetPlayerStats` y `sendAndRecvGetUserStats` — las
+dos funciones que ancla `sls_achievement_unblock` (ver §7.9.10).
+
+**`1bbcbc8` `feat(apps): Add LaunchOptions config option`** — opciones de arranque por
+juego con `%command%`, resueltas en `Apps::spawnGame` (`apps.cpp:396-410`) con dos
+comodines: `UINT32_MAX-1` para todos los no poseídos, `UINT32_MAX` para todos (el
+primero gana).
+
+El resto (`ba13afd`, `2ce4ee3`, `8861fd7`, `ec7b3c2`, `cc6bb96`, `b963f31`, `ab39e8b`,
+`0c84eba`, `3c8ebc7`) es logging, renombrados y un merge de `main`.
+
+**Nos afecta:**
+- El análisis de binarios: nada. No toca instalación, depot keys ni manifests.
+  Operativamente: **si alguien reporta arranques lentos tras actualizar SLSsteam,
+  `SmartTickets` es el primer sitio donde mirar**; se apaga con `SmartTickets: 0`.
+- El cooldown de logros: inocuo, pero toca nuestras funciones ancla. Verificado en
+  §7.9.10.
+- `LaunchOptions`: **a vigilar**. LumaDeck también escribe opciones de compatibilidad
+  (`steam_utils.py`). Hoy no chocan porque nadie usa la clave nueva, pero ahora hay
+  dos sitios que pueden querer mandar sobre lo mismo.
+
+#### 7.9.4 Día 2026-08-23 — 6 commits ★ (`library-inject` vaciado, y el bug que lo explica)
+
+**Dos commits que parecen independientes son el mismo problema**, y esa conexión es lo
+que hace útil este día.
+
+**`148b9a1` `fix(library-inject): Replace with empty file`**, con el cuerpo: *"la_objsearch
+messes up exceptions in a way that they do not get caught anymore"*. Comenta
+`tools/library-inject/main.cpp` **entero**, de la primera línea a la última.
+
+**`1f10312` `fix(config): Fix crashes when config is malformed/conversions are
+invalid`**, el mismo día:
+
+```cpp
+- catch (YAML::BadFile& bf)        →  catch (...)
+- catch (YAML::ParserException& pe)→  (fusionado en el anterior)
+- catch (YAML::BadConversion& er)  →  catch (...)
+```
+
+Son el mismo bug visto por los dos extremos. `library-inject` se cargaba como
+**auditor** del loader implementando `la_objsearch`, y eso rompía el despacho de
+excepciones de C++: los `catch` tipados dejaban de capturar. Resultado: un
+`config.yaml` mal formado, en vez de caer en el `catch` y tirar de defaults,
+**tumbaba SLSsteam**. Ace lo tapó por los dos lados — quitó la herramienta y ensanchó
+las capturas a `catch (...)`.
+
+**a) Lo que nos llega: un `.so` de 0 bytes, y nuestro `setup.sh` lo instalará. [MEDIA]**
+
+No es que deje de construirse — **construye un fichero vacío**:
+
+```make
+library-inject.so: main.cpp
+	#g++ main.cpp -O3 -m32 -fPIC -shared -std=c++20 -o library-inject.so
+	#Disabled, since having a la_objsearch fucks up exceptions for some reason
+	-rm "library-inject.so"
+	touch "library-inject.so"
+```
+
+Y la cadena hasta nuestro disco está entera, porque **todos los controles preguntan
+"¿existe?" y ninguno "¿tiene algo dentro?"**:
+
+| Eslabón | Test | ¿Pasa un fichero de 0 bytes? |
+|---|---|---|
+| `Makefile` raíz → `audit-libs` | llama a `library-inject` | sí |
+| `Makefile:63` → `link-bins` | `test -f tools/library-inject/library-inject.so && ln -f … bin/` | **sí** |
+| `make-releases.sh` | empaqueta `bin/` | sí |
+| `setup.sh:1044` | `[[ -f "${TMP_DIR}/sls/bin/library-inject.so" ]]` | **sí** → `install` + `ok "Deployed …"` |
+| `setup.sh:881` | `[ -f "$SLS_DIR/library-inject.so" ]` | **sí** → `LD_AUDIT="…/library-inject.so:…/SLSsteam.so"` |
+
+**Medido, no razonado.** Fichero de 0 bytes en `LD_AUDIT`, solo y acompañado:
+
+```
+$ LD_AUDIT="$PWD/empty.so" /bin/true
+ERROR: ld.so: object '…/empty.so' cannot be loaded as audit interface: file too short; ignored.
+exit=0
+```
+
+**No es fatal.** El loader lo descarta con `ignored.`, procesa las entradas
+siguientes de forma independiente y el proceso arranca: **SLSsteam se carga igual y la
+inyección no se pierde**. Verificado también que una entrada inválida no arrastra a la
+otra.
+
+Lo que produce es (a) un `ERROR:` con todas las letras en el stderr de Steam **en cada
+arranque**, que es justo la línea que manda a un usuario a abrir un issue por un
+problema inexistente, y (b) un `ok "Deployed …"` nuestro que afirma haber desplegado
+algo útil. El mismo pecado que corregimos en §7.8.4 con el mensaje de `Notifications`:
+decir que has hecho algo que no has hecho.
+
+**Accionable:** `-f` → `-s` (existe **y no vacío**) en `setup.sh:1044` y `setup.sh:881`.
+El camino de "no está" ya existe y ya hace lo correcto —
+`warn "library-inject.so not in the archive — the wrapper will load SLSsteam.so alone."`
+y `LD_AUDIT="$SLS_DIR/SLSsteam.so"` a secas—, así que con `-s` un `.so` vacío cae por
+ahí solo. Dos caracteres, y cubre tanto hoy (release buena, nada cambia) como el día
+del merge.
+
+**No** conviene borrar el soporte de `library-inject`: Ace lo ha *comentado*, no
+eliminado, y su propio comentario dice *"for some reason"*. Es una desactivación de
+diagnóstico, no una decisión cerrada; si vuelve, `-s` lo reacepta sin tocar nada.
+
+**b) El bug de las excepciones no nos toca. [verificado]**
+
+lumalinux implementa `la_version`, `la_preinit` y `la_objopen` (`main.cpp:377-399`),
+pero **no `la_objsearch`**, que es la interfaz que lo causaba. Y de todas formas corre
+por `LD_PRELOAD` a propósito (§0.1). Sin exposición.
+
+El resto del día: `82a9e85` mete `lib/libluajit.a` al repo sin usarlo aún —el aviso de
+lo que viene—, `49186e7` pasa los `CFileWatcher*` a smart pointers, `5f9d9b4` acelera
+`MTVariable` y `78789fb` limpia la config.
+
+#### 7.9.5 Día 2026-08-24 — 18 commits ★ (nace la API de plugins)
+
+El día que cambia el proyecto. `0420645 feat(lua): Add rudimentary API` mete LuaBridge
+(~7k líneas de librería ajena en `include/`) y construye encima una API que expone las
+tripas de SLSsteam a scripts en `config/plugins`.
+
+Lo que suelta ese día, en orden: hooking de funciones arbitrarias desde Lua
+(`a17692e` añade además vigilancia del directorio), un sistema de callbacks
+(`07be566`), acceso al decompilador para resolver por nombre (`f4a6b9f`), y dos piezas
+que apuntan directamente a lo nuestro:
+
+- **`0168c7d` `feat(lua): Add CUser::postCallback & MemHlp::hexdump`**
+- El callback **`SLSsteam::initialized`**, documentado como *"Fired when Steam has
+  finished initializing `CUser`, making it safe to access"*.
+
+También `6f7e0d1 fix(vft): Fix bug, overwriting vft` — un bug real: `VFTableInfo_t::init()`
+tomaba **referencia** a `Decompiler::vftables[typeName]` y la machacaba al aplicar
+`subClassIndex`; ahora hace copia. Y `1e6b96f` reconstruye `libluajit.a` con GCC 4 para
+casar con la ABI antigua (`_GLIBCXX_USE_CXX11_ABI=0`) que usa Steam.
+
+**Nos afecta — el hallazgo estructural de la ventana [PRESTABLE, alto]:**
+
+| Expuesto | Qué resuelve de lo nuestro |
+|---|---|
+| `SLS.registerCallback("SLSsteam::initialized", fn)` | Hoy capturamos el `CUser*` **de rebote**, como efecto lateral del guard de logros que parcheamos (RESEARCH §18). Esto es un aviso soportado |
+| `CUser::postCallback(type, ptr, size)` | Es lo que hace `license_reconcile.cpp` — **pero ver el matiz de abajo** |
+| `LuaHook` + `place()`/`remove()` | El andamiaje que nos cuesta `lmhook.cpp` |
+| `VFTableInfo_t` | La resolución por RTTI de §15 |
+
+**Matiz importante sobre `postCallback`, y corrige una lectura inicial de esta
+sección.** No es resolución por nombre. Así lo resuelve SLSsteam
+(`src/sdk/CUser.cpp:48-52`):
+
+```cpp
+void CUser::postCallback(const ECallbackType type, void* pCallback, const uint32_t callbackSize)
+{
+    const static auto fn = reinterpret_cast<...>(Patterns::CUser::PostCallback.address);
+    fn(this, type, pCallback, callbackSize, 0);
+}
+```
+
+**Busca bytes, igual que nosotros** — `Patterns::CUser::PostCallback` está en su
+`patterns.cpp:145`, con el mismo modo de fallo que nuestro `NotifyLicensesUpdated`. Y
+el `example.lua` lo confirma por el otro lado: para engancharse a esa misma función
+escanea a mano, `memhlp.patternScan("E8 ? ? ? ? 8B 75 ? 89 D8", modSteamClient)`.
+
+Así que la lectura correcta es: **no elimina la fragilidad, la traslada**. Pasaríamos
+de mantener *nuestro* patrón a depender de que él mantenga *el suyo*. Lo que se gana
+es mantenimiento compartido —él re-deriva en cada release y eso lo aprovecha todo el
+ecosistema—, que no es poco, pero no es lo mismo. **El único punto genuinamente limpio
+sigue siendo `SLSsteam::initialized`**, porque ahí no hay patrón de por medio.
+
+**Las pegas, que son serias y ninguna descartable:**
+
+1. **Está en `dev`, sin release.** Y ver §7.9.11 y §7.9.12: la API cambia de semana a
+   semana.
+2. **`Plugins: no` por defecto** (§7.9.7), con el aviso *"SLSsteam plugins can run
+   arbitrary code! So only run plugins you trust"*. Usarlo obligaría a `setup.sh` a
+   **activar en la máquina del usuario la ejecución de Lua arbitrario desde un
+   directorio**, por nuestra comodidad. Es un cambio de superficie de ataque que no se
+   hace a la ligera ni en silencio.
+3. **El propio README desaconseja el hot reload**: *"While hot reloading Luas is
+   possible it's highly advised against doing so. You have been warned."*
+4. **Reintroduce la dependencia dura que §0.1 celebra no tener.** Hoy la repartición
+   `LD_AUDIT` (SLSsteam) / `LD_PRELOAD` (lumalinux) hace que lumalinux funcione
+   *aunque SLSsteam cambie por dentro*. Como plugin, dependeríamos de que la API de
+   otro no se mueva: cambiaríamos fragilidad ante los updates de **Steam** por
+   fragilidad ante los de **SLSsteam** — y la segunda la controla quien hace 112
+   commits en trece días.
+
+**No accionable, con intención.** Si la API sobrevive al merge y se estabiliza, el
+candidato **no es migrar lumalinux**: es un plugin mínimo que haga *una* cosa —
+entregarnos el `CUser*` por `SLSsteam::initialized`— y dejar el `.so` como está. Eso
+quita un hack sin crear una dependencia estructural. Revisar cuando haya tag.
+
+#### 7.9.6 Día 2026-08-25 — 14 commits (la API se llena)
+
+Callbacks nuevos: `8b9ccf6` `SLSsteam::luaReload` (*"úsalo para limpiar tus cambios en
+memoria antes de que borre el estado"*), `ac0b16b` `SLSsteam::configLoaded` más lectura
+del `rootNode`, `2b628b2` `Network::recvPkt` / `Network::sendPkt` con las clases
+`CNetPacket` / `CNetPacketBody` expuestas. `81252c8` amplía la lectura de config a
+tipos arbitrarios. Higiene: `d62707c` crea el directorio de plugins si falta,
+`3ea3b87` solo ejecuta `.lua`, `0453823` en orden alfabético (recogidos en un
+`std::set` porque `directory_iterator` no está ordenado), `7faec87` más niveles de
+log, `1306feb` deja de escribir rutas completas al log.
+
+**Nos afecta:** nada. Es su casa.
+
+#### 7.9.7 Día 2026-08-26 — 12 commits (se echa el candado, y muere la herramienta)
+
+**`c9c0bbb` `fix(library-inject): Disable`** — segunda mitad de §7.9.4: el día 23 vació
+el fuente, hoy desactiva la compilación en el `Makefile`.
+
+**`2432a37` `feat(lua): Disable plugins by default & add config option`** — clave nueva
+`Plugins: no` en `config_default.hpp`, `g_config.plugins` gateando `Lua::runLua()`. El
+comentario de `c0f42f2` lo completa: *"SLSsteam plugins can run arbitrary code! So only
+run plugins you trust"*. Nota de diseño: **el gate está en ejecutar el fichero, no en
+montar el sistema** — *"the rest of the system stays active to allow for hot
+reloading"*.
+
+**`60a60db` `fix(filewatcher): Fix stop`** — su `watchLoop` era un `for(;;)` bloqueado en
+`read()` que no se podía parar; ahora hay flag `running` y un manejador de señal para
+desbloquear la lectura. Relevante porque ese mismo `CFileWatcher` es el que sirve el
+hot-reload de `config.yaml` del que depende nuestro Add Game.
+
+`3f9c705` hace configurable el `eventMask` del watcher (ver el bug del día siguiente),
+`85dac66` añade `reloadlua` al canal de comandos, `ee2620c` arregla que `Utils::exec`
+se comiera el primer argumento (`argv[0]` debe ser el nombre del ejecutable),
+`d648297` impide colocar un `LuaHook` cuando el target es `LM_ADDRESS_BAD`, `56bc770`
+y `7d7a5e6` son movimientos de código.
+
+**Nos afecta:** confirma §7.9.4. Y `Plugins` es la tercera clave nueva de la ventana
+(ver §7.9.13).
+
+#### 7.9.8 Día 2026-08-27 — 13 commits (el arreglo que más cerca nos pilla)
+
+**`cf63d67` `fix(config): Fix batch setAdditionalApps`:**
+
+```cpp
+- auto _newApps = newApps.empty();
+- auto _removedApps = removedApps.empty();
++ auto _newApps = newApps.get();
++ auto _removedApps = removedApps.get();
+```
+
+`MTVariable::empty()` no pregunta "¿está vacío?": **vacía la variable** y devuelve el
+resultado. O sea que cada recarga de config **descartaba las altas pendientes** que
+Steam aún no había consumido, y solo sobrevivían las de la última pasada. El escenario
+que lo dispara es exactamente el nuestro: **dos Add Game lo bastante seguidos** como
+para que la segunda recarga pise a la primera.
+
+**No afirmo que explique ningún síntoma nuestro**, y conviene no llevárselo así:
+nuestro camino de no-reinicio no depende del callback de SLSsteam sino del reconcile
+propio (`LicensesUpdated_t`, disparado por el watcher de `keys.txt`, RESEARCH §18),
+que es independiente de este bug. Queda como **hipótesis a descartar** si vuelve a
+aparecer un "añadí dos y solo salió uno", no como causa identificada.
+
+**`9c9de32` `fix(filewatcher): Fix eventMask not getting used in add watch`** — el
+`eventMask` que `3f9c705` hizo configurable el día anterior **se ignoraba**:
+`inotify_add_watch` seguía recibiendo la constante `WATCH_MASK`. Dos bugs de "el
+código dice una cosa y hace otra" en dos días.
+
+**`407b572` `fix(lua): Only full reload on DEBUG build`** — decisión prudente: en
+release **no** recrea el `lua_State` al recargar, para no colocar hooks sobre código
+que se está ejecutando. `f497d6d` añade recarga silenciosa de config en cada reload de
+Lua (con un flag `silent` que evita disparar el callback y re-emitir los toasts de
+error), `14034de` + `5d22865` meten `stateMutex`, `8397c56`/`df92dc5`/`9a4f779` pulen
+el `YAMLNode` expuesto, `f801adb` amplía los eventos que disparan recarga.
+
+**Nos afecta:** ver arriba. Y saca a la luz algo que no estaba escrito en ningún sitio
+nuestro: **hay dos mecanismos de refresco de licencias en vuelo a la vez.** SLSsteam
+emite `AppLicensesChanged_t` (`0xf90be`) al cambiar `AdditionalApps`; lumalinux emite
+`LicensesUpdated_t` (`0x7d`) vía `NotifyLicensesUpdated`. Callbacks distintos, caminos
+distintos, y ninguno sabe del otro. Funciona porque son idempotentes, pero es
+coincidencia arquitectónica, no diseño — y es la clase de solape que un día da un
+doble refresco raro. Frontera a vigilar, sin acción.
+
+#### 7.9.9 Día 2026-08-28 — 4 commits
+
+**`f03ad94` `fix(config): Do not track changes to AdditionalApps before
+GetSubscribedApps was called`:**
+
+```cpp
+- if (!firstLoad)
++ //No need to post a AppLicenseChanged_t callback
++ //when GetSubscribedApps hasn't been called yet
++ if (!firstLoad && Apps::applistRequested)
+```
+
+Estrechamiento sensato. `76d9c7c` expone un `LuaMutex` RAII sobre el `stateMutex`
+recursivo para que los plugins se protejan.
+
+**Nos afecta:** inocuo. LumaDeck añade juegos con la sesión hecha desde hace rato, muy
+por detrás de `GetSubscribedApps`.
+
+#### 7.9.10 Día 2026-08-29 — 7 commits (el refactor grande, y la verificación de nuestro parche)
+
+**`913a431` `refactor(hooks): Add proper class inheritation, automatic place & remove,
+etc`** — 579 líneas de `hooks.cpp` y 196 de `hooks.hpp`. Aparece una interfaz `IHook`
+con `std::unordered_set<IHook*> hooks` que se autopuebla desde el constructor, y
+`DetourHook`/`VFTHook`/`LuaHook` heredan de `Hook<T>`; los constructores aceptan ya un
+`Pattern_t&` o un `VFTableInfo_t&`. Efecto colateral visible en todo el árbol: los
+objetos pasan a punteros.
+
+```cpp
+- return Hooks::CUser_CheckAppOwnership.tramp.fn(this, appId, pInfo);
++ return Hooks::CUser_CheckAppOwnership->tramp.fn(this, appId, pInfo);
+```
+
+`0a77412` borra acto seguido un comentario que decía que eso no podía funcionar
+(*"This does not work! GCC sees no path to the hk* functions…"*) — el equivalente
+exacto de lo que hicimos en `70e941e`/`67ff43f`.
+
+También `f932133` mete `LOG_IF_EXISTS(g_pLog)` en **todas** las macros de log (el
+cuerpo del commit dice *"Seems like SLSsteam was trying to preload libc.so.6"*; pese al
+"preload" es un error de enlazado suyo, sin relación con nuestro orden de
+`LD_PRELOAD`), `7850ab2` cambia `MTVariable` a `shared_ptr` con `.get()`→`.copy()` en
+todo el árbol, `3131c5f` arregla `operator=(MTVariable<T>&)` (asignaba el puntero en
+vez del valor) y `52bbe5e` pone inicializadores explícitos a las variables externas de
+`Achievements`.
+
+**Nos afecta: el parche `sls_achievement_unblock` sobrevive. [verificado]**
+
+Un refactor de este tamaño en el fichero central es justo lo que mueve nuestros
+anclajes, así que se comprobó pieza a pieza contra `src/sls_achievement_unblock.cpp`:
+
+| Lo que el parche necesita | Estado en `dev@3f8e429` |
+|---|---|
+| `_ZN5CUser12isSubscribedE` | Sigue (`sdk/CUser.cpp:37`), ni inline ni virtual |
+| `_ZN7CConfig12isAddedAppIdE` | Sigue (`config.cpp:324`) |
+| `g_config` | Sigue |
+| `_ZN12Achievements23sendAndRecvGetUserStatsE` | Sigue |
+| `_ZN12Achievements25sendAndRecvGetPlayerStatsE` | Sigue |
+| **Exactamente un `call isSubscribed` por función** (lo que exige `FindGuardCall`) | Se mantiene: `achievements.cpp:154` y `:236`, uno cada una |
+| Forma del guard (`call` + `test` + `jne`) | Intacta: `if (…->isSubscribed(x)) return …;` |
+
+El refactor no toca ninguno de los cinco símbolos, y los dos `setCooldown(appId)` que
+§7.9.3 metió dentro de esas funciones no introducen llamadas a `isSubscribed`, así que
+la unicidad que nos protege sigue en pie.
+
+**Verificado sobre el fuente, no sobre el binario.** No se ha compilado `dev` ni
+mirado el `.so` resultante: el orden de emisión y el inlining son cosa de GCC con
+`-O3 -flto`. Esto dice que *el fuente conserva la forma que buscamos*, no que los bytes
+vayan a caer igual. La red real es la que ya está puesta: `FindGuardCall` exige
+coincidencia única y, si no la halla, `Apply()` sale con `LOG_WARN` y los logros
+nativos se quedan apagados — fail-closed, nunca un crash (`maintenance.md` §D).
+
+#### 7.9.11 Días 2026-08-30 y 2026-08-31 — 7 commits (limpieza, y la API empieza a moverse)
+
+`d900d77` cierra el asunto de §7.9.4 arreglando que el `Makefile` fallara al borrar un
+fichero inexistente (`-rm` + `touch`).
+
+El 31 es el día de la inestabilidad: `32bb863` sustituye LuaBridge entero por una
+versión moderna (+16k/−4.7k líneas, con `Coroutine`, `Expected`, `Enum`, `Overload`…)
+y de paso `addConstant` → `addVariable`; `f4213e5` prepara el terreno para 64 bits y
+saca `place_lua_hook` a export de C. Y entonces **quita API publicada hacía siete
+días**: `2f9af1b` elimina `SLS.alloc/realloc/free` (que `957ece2` había añadido el
+24-ago), `3a3ee4a` elimina `memhlp.getUserDataPtr`, `1721312` fusiona
+`downloadStringWithHeaders` en `downloadString`.
+
+**Nos afecta:** nada funcional. Pero es **la señal de estabilidad que más conviene
+leer**: cualquier plugin escrito el 30-ago está roto el 31. Refuerza el "no planificar
+contra esta API hasta que haya release" de §7.9.5.
+
+#### 7.9.12 Día 2026-09-01 — 2 commits (y la pieza vuelve, en su tercera forma)
+
+**`ac52879` `feat(lua): Readd unpackUserData as C export`** — devuelve lo que el día
+anterior había quitado, pero con otra forma:
+
+```cpp
++ extern void* unpack_user_data(const void* pData)
++ {
++     return reinterpret_cast<const luabridge::detail::Userdata*>(pData)->getPointer();
++ }
+```
+
+Tercera encarnación de la misma capacidad en ocho días: función Lua puenteada
+(24-ago) → eliminada (31-ago) → **export de C** (01-sep). El porqué es técnico y
+razonable: LuaBridge envuelve cada objeto C++ en un `Userdata`, y no se puede pasar
+esa caja a un puntero a función crudo — hace falta desenvolverla. Como export de C se
+puede llamar desde el FFI de LuaJIT, que es donde hace falta; como función puenteada
+no servía para eso. Al quitarla el 31 rompió el camino de llamadas crudas y ha tenido
+que devolverla.
+
+**`3f8e429` `fix(docs): Fix example.lua & adjust Lua README`** — documenta el export
+(*"Use this to convert `SLS.steamEngine` to the real `CSteamEngine` pointer etc."*) y
+deja el `example.lua` como un plugin funcional, no un esqueleto. Merece leerse porque
+**enseña el patrón real de uso** y de paso confirma el matiz de §7.9.5: el ejemplo
+engancha `postCallback` **escaneando bytes de `steamclient.so` desde Lua**, usa
+`VFTableInfo_t` con subclases, y en `SLSsteam::initialized` coge el `CUser`, llama a
+`isSubscribed` y mete appIds en `AdditionalApps` vía `config:setAdditionalApps()`.
+
+Es, en miniatura y desde un script, buena parte de lo que hace lumalinux — con la
+diferencia de que **sigue habiendo patrones de bytes de por medio** para todo lo que
+viva dentro de Steam.
+
+#### 7.9.13 Cierre de la ventana — balance y qué vigilar
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | `-f` → `-s` para `library-inject.so` en `setup.sh:1044` y `:881` | **Media** | **Abierto** — nos llega solo el día del merge |
+| 2 | `SLSsteam::initialized` como sustituto de la captura de rebote del `CUser` | Alta a futuro | Vigilar; **no** planificar hasta que haya tag |
+| 3 | Doble mecanismo de refresco de licencias (suyo `0xf90be` + nuestro `0x7d`) | Baja | Anotado, sin acción |
+| 4 | `LaunchOptions` vs. nuestras opciones de compatibilidad | Baja | Anotado, sin acción |
+| 5 | `SmartTickets` como primer sospechoso de arranques lentos | Baja | Anotado, sin acción |
+| 6 | Snapshot embebido de `slssteam_schema.py` | Baja | Esperando release, deliberadamente |
+
+**Tres claves nuevas de config (`SmartTickets`, `LaunchOptions`, `Plugins`) y no nos
+toca hacer nada [YA].** En cualquier ventana anterior habría sido trabajo: SLSsteam
+solo escribe su config completa cuando el fichero **no existe**, y luego se queja por
+cada clave que le falte (`ELoadError::MissingKey`, `config.cpp:127`) — tres claves
+nuevas serían tres líneas de toast en cada arranque para todo usuario con config
+previa. Ya está cubierto por el mecanismo correcto: `slssteam_schema.py` completa la
+config contra el `config_default.hpp` de upstream **descargado en vivo**, añadiendo al
+final sin tocar un byte existente. Y apunta a `main`:
+
+```python
+_CONFIG_DEFAULT_URL = "https://raw.githubusercontent.com/AceSLS/SLSsteam/main/src/config_default.hpp"
+```
+
+que en esta ventana es exactamente lo que queremos: las claves están en `dev`, así que
+**no** las añade a nadie todavía, y las añadirá sola el día que se mergeen — que es el
+día en que SLSsteam empezará a echarlas de menos. La rama elegida hace el trabajo sin
+que intervengamos; el trabajo de `a061b00` se paga aquí. Solo queda desalineado el
+snapshot embebido, y únicamente importa en un Deck sin red con SLSsteam recién
+actualizada: se refresca cuando haya release, no antes (copiarlo de `dev` ahora sería
+escribir claves que la release publicada no conoce).
+
+El accionable de §7.7.12.a (`std::realloc` sobre memoria de Steam) sigue siendo el
+único abierto de peso y esta ventana tampoco aporta nada sobre él.
+
+**La conclusión no es ninguna de esas filas.** Es que **SLSsteam está dejando de ser
+una librería con hooks para convertirse en una plataforma con API de plugins**, y eso
+reordena la relación: hasta hoy la coexistencia se sostenía en que cada uno se quedaba
+con un mecanismo de inyección y no se pisaban (§0.1, §5). Si la API cuaja, aparece por
+primera vez un camino *soportado* para hacer desde dentro lo que hoy hacemos
+parcheando desde fuera — con la contrapartida de atarnos a la estabilidad de un
+proyecto que en nueve días quitó y devolvió su propia API pública dos veces.
+
+**Y por eso esta sección se cierra abierta.** No hay release que analizar. Lo que hay
+que vigilar es un evento concreto: **`dev` mergeado a `main` y tagueado.** Ese día
+todo lo de arriba pasa de hipotético a desplegado, el fila 1 se vuelve urgente, y
+tocará re-verificar §7.9.10 contra el binario publicado en vez de contra el fuente.
