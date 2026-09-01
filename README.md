@@ -124,8 +124,12 @@ python3 tools/steamidra_lite.py <appid>.zip
 
 Restart Steam; the game appears ready to **Install** and downloads natively. That
 one command does the full deploy (depotcache manifests, `keys.txt`, the SLSsteam
-`AdditionalApps` entry, `config.vdf` keys, a clean `.acf`, the `stplug-in` lua, and
-the ACCELA markers). The step-by-step and every flag are in
+`AdditionalApps` entry, `config.vdf` keys, and the `stplug-in` lua). It writes **no
+`appmanifest`**: Steam creates that when you press Install, in whichever library you
+pick — if one already exists the run only resets its error state. The ACCELA markers
+are skipped for the same reason (both derive from the `installdir`, which only the
+`.acf` knows); `--accela-mark` still recreates them once the game's files exist, but
+nothing calls it. The step-by-step and every flag are in
 [`docs/manual-install.md`](docs/manual-install.md).
 
 If you use **LumaDeck**, the plugin calls this for you when you tap "Download
