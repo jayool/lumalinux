@@ -757,7 +757,8 @@ DepotKey hook located by **RTTI vtable slot** (`RESEARCH.md` §15), on the same
 class they could not locate. SteamFlipper contains no RTTI-based resolution at all
 [measured: no `typeinfo`/RTTI machinery anywhere in the tree].
 
-The two techniques are **complementary, not competing**, and that is the useful
+There are **three** derivation techniques in play across this ecosystem, and they
+recover overlapping-but-different sets. That, not a two-way contest, is the useful
 conclusion:
 
 - **VProf scopes** recover functions Valve chose to profile — including
@@ -765,10 +766,17 @@ conclusion:
   derive automatically.
 - **RTTI vtable slots** recover virtual functions of classes carrying type info —
   including `CConfigStore::GetBinary`, which they cannot derive at all.
+- **Byte patterns** reach anything with a distinctive prologue, including the
+  message-layer dispatch SLSsteam detours (§4.4). They are also the most fragile
+  per build, which is why our own answer is patterns *plus* the RVA feed *plus*
+  RTTI rather than any one of them.
 
-Neither reaches the message layer, which is why gate 6 is closed for them and open
-for us only because we hook `BYieldingGetManifestRequestCode` as a *function*
-(`GMRC: 0x1371ac0` in the same feed).
+Note what that costs each side. Their toolchain has the first only, so gate 6 is
+closed for them despite the code being written and correct. Ours has the second
+and third, plus a per-build feed — and gate 6 is open for us because we hook
+`BYieldingGetManifestRequestCode` as a *function* (`GMRC: 0x1371ac0` in the same
+feed), located by a byte pattern with a job-name string xref as backup, never by
+touching the message layer at all.
 
 §5 takes this further: whether their VProf technique, run against binaries we
 already have, recovers anchors our own workflow needs a human and Ghidra for.
