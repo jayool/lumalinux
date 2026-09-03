@@ -1,8 +1,8 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
-*In progress. **§1–§4 complete** (provenance and inventory; the injection model;
-the gate-by-gate comparison). §5 (surviving a Steam update), §6 (trust and risk)
-and §7 (verdict + adversarial pass) are pending and are marked as such below. Nothing
+*In progress. **§1–§5 complete** (provenance and inventory; the injection model;
+the gate-by-gate comparison; surviving a Steam update). §6 (trust and risk) and
+§7 (verdict + adversarial pass) are pending and are marked as such below. Nothing
 here is a recommendation to change LumaDeck or lumalinux. **Read §0 first**:
 nothing was executed, and the evidence tags are load-bearing.*
 
@@ -698,12 +698,213 @@ for us only because we hook `BYieldingGetManifestRequestCode` as a *function*
 §5 takes this further: whether their VProf technique, run against binaries we
 already have, recovers anchors our own workflow needs a human and Ghidra for.
 
-## §5 Surviving a Steam client update — *pending*
+## §5 Surviving a Steam client update
 
-Planned: `gen_linux_patterns.py` (VProf + `.eh_frame`) against our RVA feed and
-`derive_patterns.py`, including running their script over the `steamclient.so`
-hashes already recorded in `res/rvas/` to see whether it recovers our anchors.
-§3.4 is the other half of this axis and feeds into it.
+The decisive axis for anything that hooks `steamclient.so`. §3.4 covered the
+injection half (their proxy sits in a file Valve overwrites); this is the address
+half.
+
+**The empirical test proposed for this section was not run.** Running their
+generator against binaries we hold falls under §0's excluded execution track.
+§5.9 states exactly what to run if that is ever reopened, and what it would
+settle. Everything below is from source.
+
+### §5.1 Both projects copied the same idea, in opposite directions
+
+Worth stating before any comparison, because it makes the section awkward to
+write in our favour: `docs/rva-feed-design.md` opens by naming its prior art —
+*"Modeled on OpenSteamTool's `PatternLoader` (RVA-first, sig fallback) and
+OpenSteam001/steam-monitor's per-DLL-hash TOML feed"* [read]. Our RVA feed **is**
+an adaptation of the mechanism SteamFlipper inherited by descent.
+
+So this is not our design against theirs. It is the same design — *precompute the
+RVA once per build, key it by the binary's SHA-256, resolve RVA-first* — reaching
+Linux twice: they ported the consumer and wrote a Linux producer; we ported the
+concept into our CI (`check_patterns.py --emit-rvas` → `res/rvas/`) and added the
+Linux-specific runtime translation. The differences below are in the producer and
+the delivery, not the idea.
+
+### §5.2 What their generator does on a build it has never seen
+
+Better than §4.1 suggests in isolation, and the last two commits in the repo are
+both about exactly this [read: `tools/gen_linux_patterns.py`]:
+
+1. **Three by VProf scope, on any build.** `CheckAppOwnership`,
+   `BuildDepotDependency`, `GetOrAddAppData`.
+2. **Three more by structural derivation, on any build.** `derive_from_call_site`
+   reads `CheckAppOwnership`'s own body for the byte sequence
+   `add eax,imm32 ; push eax ; call rel32`, which yields the `CPackageInfoCache`
+   subobject offset and `GetPackageInfo`'s address, then walks backwards through
+   the frame slot to the `lea reg,[GOT+disp32]` that produced the owner global.
+   *"Both addresses and the subobject offset fall out of those bytes, so they do
+   not need pinning to a SHA and survive a Steam update"* [read]. The call target
+   is rejected unless it is a real FDE start — it refuses rather than guesses.
+
+That is careful work and it deserves saying plainly: deriving a private global and
+a subobject offset out of a call site, from a stripped binary, with an FDE
+sanity-check, is the same class of thing `RESEARCH.md` §13 documents on our side.
+
+3. **Three still unresolved on a new build**: `CUtlMemoryGrow`,
+   `MarkLicenseAsChanged`, `ProcessPendingLicenseUpdates`.
+
+### §5.3 One function decides whether their tool works at all
+
+Of those three, one is load-bearing, and they say so in the code:
+
+> *"`CUtlMemoryGrow` is load-bearing: without it the injected package cannot grow
+> its app list, so ownership silently does nothing. […] Installing without it
+> would give a hook set that looks healthy and unlocks nothing. Refusing."*
+> [read: `gen_linux_patterns.py`]
+
+The generator exits non-zero and the installer stops, unless `--partial` is
+passed. **On any Steam build other than the one pinned, SteamFlipper does not
+install** — deliberately, and with a correct diagnosis. Refusing to ship a hook
+set that looks healthy and unlocks nothing is the right call; we made the opposite
+one for a while and `main.cpp` still carries the comment about it (per-hook
+`FAILED` status instead of a hard abort), which works for us only because our
+failure surfaces in a toast and `status.json` that LumaDeck reads.
+
+The asymmetry worth recording: **we do not need `CUtlMemoryGrow` at all.** Their
+ownership path grows Steam's `AppIdVec` by calling Steam's own vector-growth
+helper; our package-0 finder walks the cache and seeds the per-depot licence
+filter from a worker thread instead (`RESEARCH.md` §13.4), and never calls a
+growth function [read: `src/hooks/package_zero_finder.cpp`]. Their single blocking
+dependency is one our design has no use for. That is not cleverness on our part —
+it is a consequence of having solved gate 3 by walking rather than by injecting —
+but on this axis it is the difference between "needs a human before it works on a
+new build" and "does not".
+
+### §5.4 There is no delivery channel for Linux
+
+This is where the gap stops being about technique.
+
+Their six pinned addresses live in a **Python dict inside the repository**
+(`VERIFIED`, keyed by SHA-256) [read]. So the recovery path after a Steam update
+that moves them is: someone re-derives the addresses by hand (*"each independently
+re-derived by a second analyst before being written down"*), commits them to the
+repo, and every user pulls, re-runs `install_linux.sh`, and restarts Steam. There
+is no release artifact for Linux, no feed, and the self-updater is compiled out on
+this platform (§2.3). The remote pattern mirrors they *do* consult
+(`steam-monitor`, on both `OpenSteam001` and `madoiscool`) publish Windows DLL
+hashes, so on Linux those five requests always 404 (§4.1).
+
+Ours ships the addresses as data. `res/rvas/<sha256>.yaml` is fetched at runtime
+over the same path as `res/updates.yaml`, with a `~/.cache/lumalinux` fallback for
+offline, so **merging a PR propagates to every Deck on next boot with no release
+and no user action** [read: `docs/rva-feed-design.md`, `src/rva_feed.cpp`,
+`docs/maintenance.md` §A.1]. And that PR is opened by a bot: `watch-steam.yml`
+runs daily, detects a new Steam client, fetches its 32-bit `steamclient.so`, and
+branches on `check_patterns.py`'s exit code — clean → open the hash-bump PR;
+ShaderDepot moved → PR plus an issue; a critical hook or finder anchor moved →
+issue, and explicitly *do not whitelist* [read].
+
+They have no CI at all (§2.7). The comparison on this axis is not close, and it is
+the axis that decides how long a tool stays broken after a Tuesday Steam update.
+
+### §5.5 Three resolution mechanisms against one and a half
+
+| | lumalinux | SteamFlipper |
+|---|---|---|
+| Per-build RVA, hash-keyed | `res/rvas/*.yaml`, fetched at runtime, CI-generated | pattern TOML, generated locally at install |
+| Byte patterns | **compiled into the binary** (`src/patterns.hpp`), scan any build | `sig` field — but see below |
+| RTTI vtable slot | `src/rtti.cpp`, `depotkey_rtti` in the feed | none [measured: no RTTI machinery in the tree] |
+| Xref rescue | GMRC anchor cross-check, rescues a pattern miss and logs drift | none |
+
+**Their `sig` fallback cannot survive an update, by construction.** The generator
+does emit a byte signature next to each RVA, wildcarding PIC thunk calls and
+GOT-delta immediates — genuinely thoughtful. But the file it goes into is named
+`<sha256>.toml` and `PatternLoader` only ever loads the file matching the *current*
+binary's hash. On a new build there is no file, so there is no sig to fall back to;
+on the build it was generated from, the RVA already resolves. The fallback is
+reachable only in the case where it is not needed.
+
+Ours are compiled in, so they are always present and always apply to whatever
+build is running. `docs/maintenance.md` §A.1 records the empirical reason this
+matters: *"Valve usually moves byte offsets without moving the prologues we anchor
+on — so the hooks keep installing on their own"*, and an unknown hash stops
+nothing because SafeMode is advisory. That is the majority case, and on that
+majority case we need no human and no new data at all while they need both.
+
+### §5.6 Where they are not wrong, correcting an implication in our own docs
+
+`docs/rva-feed-design.md` says our `xlate_vaddr` is *"the Linux-specific piece […]
+correct even when segments load at different biases (where OST's naive `base +
+rva` would be wrong)"*. Reading their Linux backend, that criticism **does not
+carry over to this port**: `DynamicLibrary` resolves the module through
+`dlinfo(RTLD_DI_LINKMAP)` and returns `link_map::l_addr`, with the comment *"l_addr
+is the load bias; the ELF's link-time vaddrs start at 0 for a .so"* [read:
+`SFPlatform/Linux/DynamicLibrary.cpp:58-65`], and `PatternLoader` adds the RVA to
+that. Load bias plus link-time vaddr is the correct primitive, not the naive
+first-mapping base.
+
+Ours is still strictly more general — `VaddrXlate::Translate` goes file vaddr →
+file offset → runtime address via the file-offset column of `/proc/self/maps`, so
+it is right even if `l_addr + p_vaddr` does not hold for every segment [read:
+`src/vaddr_xlate.hpp`]. Whether that case actually occurs on any shipped
+`steamclient.so`, and therefore whether their approach would ever misresolve, is
+**not established here**: our tool was written and validated against a live
+translation, but nothing in this analysis shows the simpler form failing. Treat
+the generality as insurance, not as a demonstrated defect on their side.
+
+### §5.7 The two derivation techniques do not overlap
+
+Restating §4.6 as the conclusion of this axis, because it is the one place the
+comparison produces something we might actually use:
+
+- **VProf scopes** reach functions Valve profiles. That includes
+  `CheckAppOwnership` and `BuildDepotDependency` — which our CI does *not* derive
+  automatically today — and it needs no disassembler, only the string table and
+  `.eh_frame`. It is scriptable and CI-able; our `derive_patterns.py` path needs
+  Ghidra and a human (`maintenance.md` §A.2).
+- **RTTI vtable slots** reach virtual functions of classes with type info,
+  including `CConfigStore::GetBinary`, which they could not locate at all and
+  worked around by writing `config.vdf` from a Python script.
+- **Neither** reaches the message layer, which is why their gates 2 and 6 are
+  closed (§4.3) and why our GMRC hook exists as a *function* hook.
+
+The honest summary of the axis: **they lose it decisively on delivery and
+process, and they have one producer-side technique we do not have.**
+
+### §5.8 What their failure looks like, and what ours looks like
+
+Both projects thought about this, and the designs are near-opposites.
+
+**Theirs, fail-closed:** the generator refuses to emit, the installer exits
+non-zero, `PatternLoader` shows a popup naming the unsupported build with four
+suggested actions, and hooks for that module are disabled while the rest keeps
+running. Nothing is patched at a guessed address. The cost is that the user is
+stopped until an update to the repository arrives.
+
+**Ours, fail-degraded:** the hash check is advisory, hooks install per-hook with
+`ok`/`disabled`/`FAILED` reported into a toast and `status.json`, the wrapper has a
+crash-loop fail-safe that boots vanilla Steam, and `maintenance.md` sorts the
+outcomes into three tiers. The cost is that a partially-resolved hook set can look
+alive while unlocking nothing — precisely what their `CUtlMemoryGrow` refusal is
+designed to prevent — and what protects us there is that DepotKey and GMRC failing
+is loud rather than silent.
+
+Neither is wrong. Theirs suits a tool a user runs by hand from a clone; ours suits
+one that has to keep working on a Deck in Game Mode with no terminal.
+
+### §5.9 The test that was not run
+
+If §0's execution exclusion is ever lifted, this is the experiment, and it is
+cheap:
+
+1. Fetch the two `steamclient.so` builds we already have RVA files for
+   (`bc54101b…`, `d0c0ff6e…`) with `tools/fetch_steamclient.py`.
+2. Run `tools/gen_linux_patterns.py <binary>` (no `--install`) against each.
+3. Compare its output for `bc54101b…` against `res/rvas/bc54101b….yaml` — §4.5
+   already shows two values agree; this would extend that to everything both sides
+   name.
+4. The real question is `d0c0ff6e…`, which is **not** in their `VERIFIED` dict:
+   how much does the VProf + call-site path recover on a build they never
+   calibrated against, and does `derive_from_call_site` hold there?
+
+That fourth step is the one that decides F3. If the derivation holds across a
+build they have never seen, the technique is worth adding to `check_patterns.py`
+as a second automatic path. If it only works on the build it was written against,
+it is a curiosity. **Nothing should be implemented before that runs.**
 
 ## §6 Trust and risk — *pending*
 
@@ -729,8 +930,8 @@ change:
   derivation recover disjoint sets of functions (§4.6). VProf reaches
   `CheckAppOwnership` and `BuildDepotDependency`, which we do not derive
   automatically today. Whether it is worth adding as a second automatic path is
-  §5's question, and it is evidence-gated: do not implement before §5 runs their
-  generator against binaries we hold.
+  §5's question, and it is evidence-gated: §5.9 names the exact experiment, which
+  was **not run** (execution is out of scope). Do not implement before it does.
 - **F4 — cross-check, `res/rvas/`.** Their pinned `ProcessPendingLicenseUpdates`
   and cache-owner displacement match ours exactly on the same build (§4.5). Worth
   a line in `rva-feed-design.md` recording that an independent derivation agrees;
