@@ -1,8 +1,8 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
-*In progress. **§1–§5 complete** (provenance and inventory; the injection model;
-the gate-by-gate comparison; surviving a Steam update). §6 (trust and risk) and
-§7 (verdict + adversarial pass) are pending and are marked as such below. Nothing
+*In progress. **§1–§6 complete** (provenance and inventory; the injection model;
+the gate-by-gate comparison; surviving a Steam update; trust and risk). §7
+(verdict + adversarial pass) is pending and are marked as such below. Nothing
 here is a recommendation to change LumaDeck or lumalinux. **Read §0 first**:
 nothing was executed, and the evidence tags are load-bearing.*
 
@@ -906,11 +906,175 @@ build they have never seen, the technique is worth adding to `check_patterns.py`
 as a second automatic path. If it only works on the build it was written against,
 it is a curiosity. **Nothing should be implemented before that runs.**
 
-## §6 Trust and risk — *pending*
+## §6 Trust and risk
 
-Planned: group C (§2.3) — the Tokeer ticket mint, the `madoiscool`/`lua.tools`
-delivery chain, the `bst://` handler — plus the full network surface, what is
-written to `config.vdf`, and privilege hygiene.
+Two notes before the findings. First, most of what looked alarming in §2.3 is
+**dead code on Linux**, and this section says so rather than reusing the scare.
+Second, the one thing that is genuinely serious here is **inherited from
+OpenSteamTool, not invented by the fork** — the fork's contribution to it is two
+new entry points. Both facts are load-bearing for §7.
+
+### §6.1 Where the untrusted data comes from
+
+One input matters: the `.lua` manifest. Users do not write these — they come in
+zips from manifest sources, the same ecosystem our own stack draws on. The file
+lands in `<Steam>/config/stplug-in/`, and `LuaFileWatcher` picks up new ones
+**while Steam is running** (the README sells this as "Live manifest reload").
+
+So the question for the whole section is: what can a hostile `.lua` do?
+
+### §6.2 The Lua VM runs unsandboxed, with unrestricted HTTP
+
+`LuaConfig::Initialize` calls **`luaL_openlibs(g_lua_state)`** — the complete
+standard library — and then registers the config verbs [read:
+`src/Utils/Config/LuaConfig.cpp:499-527`]. Nothing is stripped: `os.execute`,
+`io.open`, `package.loadlib`, `load` and `dofile` are all reachable. On top of
+that it registers **`http_get` and `http_post` with no host restriction of any
+kind** [read: `LuaConfig.cpp:132-163`] — arbitrary method, arbitrary URL,
+caller-supplied headers.
+
+A `.lua` in a manifest zip is therefore **arbitrary code execution inside the
+32-bit Steam client process, with the user's privileges, at the moment the file
+is dropped in**, plus a general-purpose HTTP client to exfiltrate with.
+
+We have already written the comparison for this, against a third project.
+`lumacore-findings.md` Finding 8 records that **LumaCore hardens exactly this
+surface**: no `luaL_openlibs` (only `_G`/`table`/`string`/`math`), `dofile`/`load`/
+`require` stripped, and `lcHttpGet`/`lcHttpPost` gated to a hardcoded five-host
+allowlist *"against a malicious script exfiltrating via HTTP"*. Three projects,
+three positions:
+
+| | Lua interpreter | Standard library | HTTP from Lua |
+|---|---|---|---|
+| **LumaCore** (Windows) | yes | trimmed to four tables | allowlisted to 5 hosts |
+| **OpenSteamTool / SteamFlipper** | yes | **full `luaL_openlibs`** | **unrestricted** |
+| **Ours** | **no** — four regexes in `steamidra_lite.py` | n/a | n/a |
+
+Two things must be said in the fork's favour. This is **upstream's design**: OST's
+`LuaConfig.cpp` calls `luaL_openlibs` and registers the same two unrestricted HTTP
+functions [read: `OpenSteamTool@2a08b0b`]. The fork removed no sandbox, because
+there was none. And on the same evidence, LumaCore's hardening shows the ecosystem
+knows this is a problem — so the gap is upstream's to close, and the fork inherited
+it along with everything else in §2.1's 60 %.
+
+What the fork *did* add is four new Lua-callable verbs — `setlegacycdkey`,
+`addprocess`, `forcedenuvo` and **`seteticketurl`** [measured: diff against OST].
+The last one is the one that matters, and §6.4 picks it up.
+
+A note for our own users rather than about theirs, and deliberately shallow because
+coexistence is out of scope (§0): LumaDeck copies the `.lua` into `stplug-in/`
+*"for ecosystem interop"*. On a machine that also runs any SteamTools-lineage
+interpreter, a file we wrote is a file something else executes. We do not execute
+it; that is not the same as it never being executed.
+
+### §6.3 The network surface, live vs dead on Linux
+
+| Path | Endpoint | Live on Linux? | What leaves |
+|---|---|---|---|
+| `RemoteToml` pattern fetch | 5 mirrors (`OpenSteam001/steam-monitor`, `madoiscool/steam-monitor`, `git.lua.tools`) × 2 components, **every Steam start** | **yes** | the SHA-256 of your `steamclient.so`/`steamui.so` in the URL path; always 404s (§4.1) |
+| Lua `http_get` / `http_post` | anything the `.lua` names | **yes** | anything the `.lua` chooses |
+| `EticketClient` mint | `seteticketurl()` from the `.lua`, or `SF_ETICKET_URL` at compile time; **empty by default** | **yes, if configured** | `{app_id, nonce, existing_steam_id}` — including the SteamID already in the local ticket store |
+| `ManifestClient` GMRC | `opensteamtool` → `wudrm` → `steamrun` | no — NetPacket unresolved (§4.2) | — |
+| `StatsClient` donor lookup | `https://stats.steamflipper.com/<appid>` | no — only called from NetPacket | — |
+| `AppUpdater` / `Mirror` | `madoiscool/SteamFlipper`, jsDelivr, `git.lua.tools` | no — `#ifdef _WIN32` (§2.3) | — |
+| `TokeerBridge` `bst://` | Tokeer code server | no — `#ifdef _WIN32` | — |
+| CloudRedirect | `dlopen`s `<Steam>/cloud_redirect.so` if the user supplies it | yes, if present | nothing of its own |
+
+Two observations. The built-in endpoints are mostly inert on Linux, so **the
+network risk is not in their endpoint list — it is in §6.2**, where the endpoint
+list is written by whoever wrote the manifest. And TLS is not a finding: the Linux
+HTTP backend `dlopen`s libcurl and never touches `CURLOPT_SSL_VERIFYPEER` or
+`VERIFYHOST`, so verification is on at curl's defaults [read:
+`SFPlatform/Linux/Http.cpp:127-174`]. Worth saying because disabled verification is
+the common failure in this class of tool, and it is not present here.
+
+### §6.4 The Tokeer ticket mint
+
+`EticketClient` POSTs `{app_id, nonce, existing_steam_id}` to a configured endpoint
+and receives an `appticket` plus an `eticket` *"minted from an owning pool
+account"*, so that strict Denuvo titles which bind their encrypted app ticket to a
+launch-time nonce get a ticket carrying that exact nonce [read:
+`Utils/Tickets/EticketClient.{h,cpp}`]. The backend answers 409 with
+`foreign_account` when the local ticket belongs to an account it does not operate,
+and the client caches per app, evicting when the local SteamID changes.
+
+Three things are true at once and all three belong in the record:
+
+1. **It is off by default.** `SF_ETICKET_URL` is empty unless set at compile time,
+   and with no URL the code *"never touch[es] the network"* [read].
+2. **It is enabled from the manifest.** `seteticketurl()` is a Lua verb, so the
+   party who supplies the `.lua` chooses the endpoint. Given §6.2 that is barely an
+   escalation — a `.lua` that can call `os.execute` does not need a dedicated
+   exfiltration verb — but it means the ticket path's endpoint is untrusted input
+   by design, not configuration the user sets.
+3. **What it implies operationally is a pool of real Steam accounts** owning the
+   titles, minting tickets on demand for strangers. That is the same shape as the
+   Tokeer activation path recorded in `slsdeck-analysis.md` §5.7. Whether the two
+   are the same service is still unproven (§2.3); the name and the `bst://` scheme
+   are the only link, and neither is evidence.
+
+For a Linux user who never sets `seteticketurl`, none of this executes. For one who
+installs a manifest that sets it, their SteamID goes to a host they did not choose.
+
+### §6.5 The `config.vdf` writer is careful — credit where due
+
+`tools/sync_depot_keys.py` is the piece that compensates for the unresolved depot-key
+hook (§4.2), and it is the best-engineered file in the repository [read]:
+
+- refuses to run while Steam is up (`pgrep -x steam`), because *"Steam rewrites
+  config.vdf on exit and would discard edits"*;
+- reads and writes **byte-exact**, explicitly avoiding `errors="replace"` so it
+  cannot corrupt account names or install paths it does not understand;
+- sanity-checks the result (*"refusing to write: brace count did not change as
+  expected"*) and bails rather than writing a malformed VDF;
+- `--dry-run` to preview.
+
+It touches the file that holds every depot key Steam has ever cached, and it
+handles it the way that file deserves.
+
+### §6.6 Privilege hygiene — they win this one outright
+
+*"Everything lands under `$HOME` — nothing system-wide, no root, no `PATH`
+changes"* [their claim], and it holds: **no `sudo` anywhere in
+`install_linux.sh`** [measured]. Every write is under `$HOME`, including the Steam
+tree; `/usr/lib/millennium` is only ever read, on the opt-in path. The module runs
+as the user, in the Steam client process.
+
+Ours does not compare well. `slsdeck-analysis.md` §4.4 already recorded that
+LumaDeck, like every Decky plugin, **runs its backend as root** — and that backend
+is 13.682 lines of Python that parses third-party manifest zips. lumalinux itself
+runs as the user, so the engine layers are comparable; the plugin layer is not.
+This is a real asymmetry in their favour and it is not narrowed by anything in this
+document.
+
+### §6.7 Supply chain
+
+No CI, no signing, no reproducible build (§2.7). The install path is
+`git clone` → `gcc` on the user's machine, which at least means users compile what
+they can read; there is no prebuilt Linux binary to trust or verify. The delivery
+infrastructure that *does* exist points at accounts the repository never names —
+`madoiscool/SteamFlipper`, `madoiscool/steam-monitor`, `git.lua.tools` (§2.3) — and
+on Linux the only one reached is the pattern feed, which 404s.
+
+The Windows self-updater validates a staged DLL by size, MZ header and SHA-256
+against `latest.toml` from that same mirror chain [read: `AppUpdater.h`] — which is
+integrity against corruption, not authenticity: whoever controls the mirror
+controls both the hash and the payload. It is compiled out on Linux, so it is not a
+Linux finding. It is a fair description of the trust posture the project would have
+if a Linux artifact ever shipped.
+
+### §6.8 What this axis does and does not say
+
+It does **not** say SteamFlipper is malicious. Nothing read here exfiltrates
+anything on its own; the dangerous capability is a general one, inherited from
+upstream, that a hostile *manifest* would have to exploit — and the same hostile
+manifest reaching our stack would be defused by `steamidra_lite.py` parsing it
+instead of running it.
+
+It does say that the trust boundary sits in a different place for the two projects.
+Ours treats the `.lua` as **data**; theirs treats it as **a program**. Every other
+difference on this axis — the endpoints, the ticket mint, the mirrors — is smaller
+than that one.
 
 ## §7 Verdict and adversarial pass — *pending*
 
@@ -936,6 +1100,13 @@ change:
   and cache-owner displacement match ours exactly on the same build (§4.5). Worth
   a line in `rva-feed-design.md` recording that an independent derivation agrees;
   it is the only external confirmation our feed has.
+- **F5 — documentation, `lumacore-findings.md` Finding 8.** That finding treats
+  the hardened-Lua-VM threat model as LumaCore-specific and therefore not ours.
+  §6.2 shows the *unhardened* version is the ecosystem norm — OST and this fork
+  both run `luaL_openlibs` with unrestricted HTTP — so the finding is worth
+  widening from "LumaCore does this" to "we are the only one of four that does not
+  execute the `.lua` at all". No code change; it is our strongest trust position
+  and it is currently recorded as a footnote.
 
 ---
 
