@@ -676,18 +676,51 @@ layer while lumalinux must use function-layer seams, because SLSsteam already ow
 `CProtoBufMsgBase` on our side. We framed that as *our* constraint — a limitation
 imposed by not forking SLSsteam.
 
-This port inverts the reading. On Windows the message layer is cheap because the
-`steam-monitor` pattern database publishes addresses for `steamclient64.dll`
-keyed by hash, so `BBuildAndAsyncSendFrame` and `IPCProcessMessage` are just
-lookups. On Linux there is no such database, the binary is stripped, and the
-message-layer entry points carry **no VProf scope** — so the whole layer is
-unreachable, and with it gates 2 and 6.
+This port complicates the reading, and the first draft of this section got the
+conclusion wrong. It claimed the message layer is "unreachable on Linux". **It is
+not**, and our own documentation says so:
 
-The function-layer seams, meanwhile, survived the port: `CheckAppOwnership` and
-`BuildDepotDependency` are VProf-scoped and come out of a stripped binary
-automatically. **Our constraint turned out to be the portable choice**, though it
-is worth being honest that this is a fact about GCC's profiling instrumentation
-rather than foresight on our part.
+- SLSsteam hooks `CProtoBufMsgBase::Send` and `::InitFromPacket` on this exact
+  i386 binary, by **detour on a byte-pattern-scanned address** (`DetourHook`,
+  `hooks.cpp:203`) [read: `slssteam-analysis.md` §1.5, §2 inventory].
+- slsteam-moon builds on that to hook the depot-key **protobuf message**
+  (`CMsgClientGetDepotDecryptionKey`), which is why `slsteam-moon-findings.md`
+  Finding 3 records the approach as *more* update-resilient than ours — the wire
+  format barely changes.
+
+So on Linux the message layer is reachable, in production, today. The correct
+statement is narrower and about them, not about the platform:
+
+> **SteamFlipper cannot reach the message layer because neither of its two
+> derivation techniques gets there.** VProf scopes do not cover
+> `BBuildAndAsyncSendFrame`, `RecvPkt` or `IPCProcessMessage`, and nobody has
+> hand-pinned them. A byte pattern would reach them — SLSsteam proves it — but
+> they have no Linux byte-pattern source: `steam-monitor` publishes Windows DLL
+> hashes only (§4.1), and their generator emits a `sig` solely for the functions
+> VProf already found.
+
+That leaves three projects on one binary, and the three-way split is the actual
+finding:
+
+| | Message layer | Why |
+|---|---|---|
+| **SLSsteam / moon** | **uses it** | byte-pattern detour on the protobuf dispatch |
+| **lumalinux** | **refuses it** | SLSsteam already owns that seam; double-wrapping it is a coexistence hazard (`slsteam-moon-findings.md` Finding 3: *"do not move lumalinux's DepotKey to the message layer while we run alongside vanilla SLSsteam"*) |
+| **SteamFlipper** | **wants it, cannot find it** | tooling gap, not platform |
+
+Our position is therefore unchanged and unvindicated: we avoid the message layer
+for the reason we always did — coexistence — not because it is unavailable. The
+function-layer seams did survive the port, and `CheckAppOwnership` and
+`BuildDepotDependency` do come out of a stripped binary automatically, but
+**"our constraint turned out to be the portable choice" was self-flattery**: the
+portable choice on Linux is a byte pattern, which is what SLSsteam uses on the
+seam we declined and what we use on the seams we took.
+
+What this *does* say about them is sharper than the wrong version was. Their two
+gates are not closed by anything about Linux. They are closed because a
+derivation toolchain limited to VProf scopes plus hand-pinned addresses cannot
+reach functions that carry neither — and the fix is a technique that has existed
+in this ecosystem all along.
 
 ### §4.5 Same binary, independent agreement
 
@@ -1287,9 +1320,12 @@ must not be implemented before §5.9's experiment runs.
 
 - **F1 — documentation, `opensteamtool-findings.md`.** Its architecture-constraint
   ruling loses its platform leg for this fork (§2.4). The message-layer leg still
-  holds, and §4.4 sharpens why: on Linux the message layer is unreachable for
-  *anyone*, so "not portable" should be restated as "not portable, and on this
-  platform not available to them either".
+  holds — but for the original reason only (coexistence with vanilla SLSsteam),
+  **not** because the layer is unavailable on Linux. §4.4 corrects a claim this
+  document made in an earlier revision: SLSsteam hooks `CProtoBufMsgBase` by byte
+  pattern on this same binary and moon hooks the depot-key protobuf on top of it.
+  So the restatement is "not portable to us while we run beside stock SLSsteam",
+  and nothing more.
 - **F2 — documentation, `RESEARCH.md` §5 / `README.md`.** Our `LD_PRELOAD` write-up
   argues the choice against `LD_AUDIT` and never states its cost: the `.so` is
   mapped into every 32-bit child Steam spawns, and the `/proc/self/comm` allowlist
