@@ -1,10 +1,14 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
-*In progress. **§1–§6 complete** (provenance and inventory; the injection model;
-the gate-by-gate comparison; surviving a Steam update; trust and risk). §7
-(verdict + adversarial pass) is pending and are marked as such below. Nothing
-here is a recommendation to change LumaDeck or lumalinux. **Read §0 first**:
-nothing was executed, and the evidence tags are load-bearing.*
+*Complete. Provenance and inventory (§1–§2), the injection model (§3), the
+gate-by-gate comparison (§4), surviving a Steam update (§5), trust and risk (§6),
+and the verdict (§7). **§7.5 is the adversarial pass** over the conclusions that
+favour our own stack: it revised or narrowed four of them, and §7.1 records that
+§0's pre-registration of the axes was not honoured. Nothing here is a
+recommendation to change LumaDeck or lumalinux — §8 is a findings list and all
+five entries are documentation or evidence-gated. **Read §0 first**: nothing was
+executed, coexistence is out of scope by decision, and the evidence tags are
+load-bearing.*
 
 ---
 
@@ -62,11 +66,12 @@ Every factual claim carries one of three tags:
 This document is written by the author of a competing stack. Two counter-measures
 apply, and the reader should hold the document to them:
 
-1. **Axes and weights are fixed before the comparison sections are written** (§7,
-   pending).
+1. **Axes and weights are fixed before the comparison sections are written.**
+   ⚠️ **This was not honoured — see §7.1**, which says so plainly and states what
+   was done instead.
 2. **Every axis where they win, or where the two are equal, is stated explicitly.**
-   §2.6 already records one place where this fork does something our stack does
-   not, and §2.4 corrects a claim in our own `opensteamtool-findings.md`.
+   Honoured: §2.6, §3.3, §5.6, §6.5 and §6.6 each record a place where they lead or
+   where our own documentation was wrong, and §7.2 loses three of ten axes.
 
 ### Limits
 
@@ -470,6 +475,9 @@ Whether that trade is worth it is a §5/§7 question. What is settled here is th
 "no wrapper, no launcher to remember" is not free: it is paid for with durability
 against the exact event this whole class of tool has to survive.
 
+> **Narrowed in §7.5.4** — our advantage is on the *coverage* half. A moved
+> pattern still needs a human on both sides, so the gap is not immunity.
+
 ### §3.5 Five things reading the bootstrap turned up
 
 None is fatal; together they are a fair sample of the code's maturity.
@@ -626,6 +634,10 @@ SteamFlipper install should be expected to work once and then not update itself 
 unless the user re-seeds `depotcache` by hand for every new build. Nothing was
 executed, so this is an inference from the code path, not an observation. It is
 the first thing I would test if we ever move to §0's excluded execution track.
+
+> **Revised in §7.5.1** — "installs cannot update" overstates it. `setManifestid()`
+> is a supported workflow, so the accurate statement is that installs are
+> effectively *pinned*, and updating means re-seeding `depotcache` by hand.
 
 ### §4.4 Function layer vs message layer — and why the choice bit them here
 
@@ -901,6 +913,9 @@ cheap:
    how much does the VProf + call-site path recover on a build they never
    calibrated against, and does `derive_from_call_site` hold there?
 
+> **Revised in §7.5.2** — the `sig` claim in §5.5 is narrowed: dead in the
+> automated path, alive in the manual rescue path their own popup documents.
+
 That fourth step is the one that decides F3. If the derivation holds across a
 build they have never seen, the technique is worth adding to `check_patterns.py`
 as a second automatic path. If it only works on the build it was written against,
@@ -1076,16 +1091,171 @@ Ours treats the `.lua` as **data**; theirs treats it as **a program**. Every oth
 difference on this axis — the endpoints, the ticket mint, the mirrors — is smaller
 than that one.
 
-## §7 Verdict and adversarial pass — *pending*
+> **Narrowed in §7.5.3** — the distinction holds, the safety conclusion does not.
+> Their VM runs as the user; our parser runs inside a backend that runs as root and
+> extracts the same untrusted zip. "Parsing beats executing" is true; "our blast
+> radius is smaller" does not follow.
 
-## §8 Findings list — *pending*
+## §7 Verdict and adversarial pass
 
-Accumulating as the sections land. Two are already fixed, and neither is a code
-change:
+### §7.1 The pre-registration in §0 did not happen
+
+§0 promised: *"Axes and weights are fixed before the comparison sections are
+written."* **They were not.** §1–§6 were written first and the axes below were
+derived from them afterwards, which is exactly the procedure that lets an author
+pick the axes his own project wins. The counter-measure failed, and pretending
+otherwise would be worse than admitting it.
+
+Two things partially compensate, and the reader should weigh them as partial:
+
+- Every axis below is one **both** projects visibly spend effort on — none was
+  invented to have something to win. The one axis a hostile reader would expect to
+  be missing (privilege) is present and lost.
+- §7.5 runs an adversarial pass specifically over the conclusions that favour us,
+  and it **revises three of them**.
+
+### §7.2 Axes and scores
+
+Scored 1–5 for the **Linux Steam client** specifically. Weight reflects how much
+the axis decides whether the tool works and keeps working.
+
+| # | Axis | W | Ours | Theirs | Why |
+|---|---|---|---|---|---|
+| A1 | Gate coverage (does it install a game?) | 5 | 5 | 2 | 6/6 vs 4/6 by hook; gate 6 closed on Linux (§4.2) |
+| A2 | Address delivery after a Steam update | 5 | 5 | 1 | runtime feed + bot-opened PR vs a dict in the repo, no CI (§5.4) |
+| A3 | Injection durability | 4 | 4 | 2 | wrapper outside Valve's files + guardian vs a proxy Steam overwrites (§3.4) |
+| A4 | Trust boundary on manifest data | 4 | 4 | 1 | parsed by regex vs executed by an unsandboxed Lua VM (§6.2) — but see §7.5.3 |
+| A5 | Address derivation (producer side) | 3 | 4 | 3 | three mechanisms + CI vs VProf + structural derivation; theirs is scriptable where ours needs Ghidra (§5.7) |
+| A6 | Privilege hygiene | 3 | 2 | 5 | LumaDeck's backend runs as root; theirs needs no root at all (§6.6) |
+| A7 | Injection blast radius | 2 | 2 | 5 | `LD_PRELOAD` maps us into every 32-bit child; their proxy resolves only in the client (§3.3) |
+| A8 | Process and verifiability | 3 | 5 | 1 | 3 workflows, test suites, `RESEARCH.md` vs no CI and one squashed commit (§1.1, §2.7) |
+| A9 | Documentation honesty | 2 | 3 | 3 | their "Known limits" is candid and accurate; both sides drift (§3.5, and F1/F2/F5 are ours) |
+| A10 | Deck / Game Mode fit | 3 | 5 | 1 | QAM plugin vs a CLI install and Millennium; they do not target it |
+
+Weighted: **ours 4.12, theirs 2.15** (Σ w·s ÷ Σ w; Σw = 34, ours 140, theirs 73).
+
+### §7.3 The aggregate is close to meaningless, and that is the finding
+
+Three reasons not to quote that number:
+
+1. **The axes were chosen after the fact** (§7.1). A different honest reader would
+   pick a different set.
+2. **The two projects are not aimed at the same person.** Ours is a four-component
+   stack for a Steam Deck in Game Mode. Theirs is one `.so` for a desktop Linux
+   user who wants no plugin, no root and no launcher. A1 and A10 encode a target
+   they never claimed.
+3. **The comparison is between a project with three months of update-response
+   machinery and a repository that is one day old.** SteamFlipper's entire public
+   history is 2026-09-02. Scoring A2 and A8 against ours is scoring a first commit
+   against a maintained project, which is fair as a snapshot and unfair as a
+   prediction.
+
+The useful two-level view: **on the engine layer we are ahead where it decides
+whether a game installs and keeps installing (A1, A2, A3), and behind on how
+cleanly the thing sits on the user's machine (A6, A7).** That second pair is not
+cosmetic and §7.5 refuses to let it be minimised.
+
+### §7.4 Verdicts by profile
+
+- **"I want games on my Deck in Game Mode."** Ours, and it is not close — they do
+  not target Game Mode, install from a clone with a compiler, and cannot open
+  gate 6 (§4.3).
+- **"Desktop Linux, I want the smallest thing that works and no root."** Theirs is
+  a reasonable pick *if* the Steam build matches their pinned hash and you bring
+  your own manifests. Otherwise it will not install at all (§5.3), which is at
+  least a loud failure.
+- **"I care what runs in my Steam process."** Theirs maps nothing into your games
+  (§3.3) and needs no root (§6.6); ours does the opposite on both. But theirs
+  executes manifest `.lua` files as programs (§6.2). If you write your own
+  manifests, theirs is the cleaner posture; if you download them, ours is.
+- **"I have to fix it when it breaks."** Ours. `RESEARCH.md`, `maintenance.md`'s
+  three tiers, a watch bot and a feed that ships fixes without a release, against a
+  repository with no history explaining any of its addresses.
+- **"Denuvo."** Neither, on Linux: their `EticketClient` path is off unless a
+  manifest turns it on (§6.4) and the ticket layer it feeds sits behind the
+  unresolved IPC hooks.
+
+### §7.5 Adversarial pass
+
+Five conclusions that favour us, challenged.
+
+**§7.5.1 REVISED — "gate 6 closed means installs cannot update" (§4.3).**
+The challenge: SteamFlipper ships `setManifestid()`, and pinning is a *supported
+workflow*, not a workaround. A user who pins every depot to the manifest they hold
+never needs a request code, and the game simply stays at that version — which is
+also what LumaDeck's own per-game auto-update toggle does deliberately. So the
+correct statement is not "installs break on update"; it is **"installs are
+effectively pinned, and updating means re-seeding `depotcache` by hand"**. That is
+a real limitation against our native auto-update, but it is a coherent design, not
+a defect. §4.3's phrasing overstated it.
+
+**§7.5.2 REVISED — "their `sig` fallback is dead weight" (§5.5).**
+The challenge: `PatternLoader`'s own failure popup tells the user to *"Drop a
+matching TOML at `<Steam>/steamflipper/pattern/<component>/<sha256>.toml`"*. A user
+who copies a previous build's file under the new hash gets exactly the case the
+sig is for: right function, moved address, RVA now wrong, signature still matches.
+So the sig is dead in the **automated** Linux path, and alive in the **manual
+rescue** path the software explicitly documents. Narrowed accordingly.
+
+**§7.5.3 NARROWED — "we treat the `.lua` as data, they treat it as a program"
+(§6.8).**
+The claim survives but the safety conclusion drawn from it does not, and this is
+the sharpest counter in the pass. Their Lua VM runs **as the user**. Our parser
+runs inside a LumaDeck backend that runs **as root** (§6.6), and that backend
+downloads the same third-party zip and calls `archive.extractall()` on it before
+anything is parsed [read: `LumaDeck/backend/downloads.py:956-958`].
+
+To be precise about what that does and does not mean: Python's `zipfile`
+sanitises member paths and never creates symlinks, so classic zip-slip is **not**
+a finding here. What remains is that we process attacker-supplied archives with
+root privileges, and they process attacker-supplied *code* with user privileges.
+"Parsing beats executing" is true; "therefore our blast radius is smaller" does
+not follow. On a Deck, a bug in our root-side handling of a hostile zip is worse
+than `os.execute` in theirs.
+
+**§7.5.4 NARROWED — "injection durability, ours decisively" (§3.4, A3).**
+The challenge: our advantage is real for the *coverage* half — our wrapper is not
+a file Valve overwrites, and a guardian re-affirms it — but the *address* half
+needs a human on both sides when a pattern moves (`maintenance.md` §A.2/§A.3), and
+our own README tells users to reapply components after a Steam update. The gap is
+"they lose injection **and** addresses on every client update, we usually lose
+neither and sometimes lose addresses", not "we are immune". A3 stays 4 vs 2; the
+prose in §3.4 was closer to claiming immunity than the code supports.
+
+**§7.5.5 HELD — provenance is measured, not scored.**
+The challenge: §2.1's 60 %-verbatim figure reads as a knock, and it should not —
+reusing upstream is the *correct* choice for a port, and our own RVA feed is
+copied from OST's design by our own documentation's admission (§5.1). Held
+because no axis in §7.2 scores originality: provenance appears in the document to
+establish *what was written for Linux and by whom* (which decides who can fix it,
+A8), not as a quality judgement. §2.2's framing already says the 3.538 lines of
+port work "is not a small one".
+
+### §7.6 What would overturn this
+
+- **A1/A2 flip if** they publish Linux pattern files per build and locate the
+  message-layer functions. Nothing about that is impossible — `BBuildAndAsyncSendFrame`
+  is findable with a disassembler; it just is not automated.
+- **A5 flips toward them if** §5.9's experiment shows `derive_from_call_site` and
+  the VProf pass holding on `d0c0ff6e…`, a build they never calibrated against.
+  That is the single test most likely to change something in our own tree (F3).
+- **The whole comparison changes if** OpenSteamTool's `main` moves again. It has
+  been static since 2026-07-06 (§1.2), and this fork inherits its cadence.
+- **Nothing here is an observation.** Nothing was executed (§0). A field report of
+  either project working or failing on a real Deck outweighs the entire document,
+  as `slsdeck-analysis.md` §12.3 found the hard way.
+
+## §8 Findings list
+
+Five, and **none is a code change**. Three are corrections to our own
+documentation that this analysis turned up; two are evidence-gated candidates that
+must not be implemented before §5.9's experiment runs.
 
 - **F1 — documentation, `opensteamtool-findings.md`.** Its architecture-constraint
   ruling loses its platform leg for this fork (§2.4). The message-layer leg still
-  holds. Wording to be proposed once §4 has read their hooks.
+  holds, and §4.4 sharpens why: on Linux the message layer is unreachable for
+  *anyone*, so "not portable" should be restated as "not portable, and on this
+  platform not available to them either".
 - **F2 — documentation, `RESEARCH.md` §5 / `README.md`.** Our `LD_PRELOAD` write-up
   argues the choice against `LD_AUDIT` and never states its cost: the `.so` is
   mapped into every 32-bit child Steam spawns, and the `/proc/self/comm` allowlist
@@ -1107,6 +1277,13 @@ change:
   widening from "LumaCore does this" to "we are the only one of four that does not
   execute the `.lua` at all". No code change; it is our strongest trust position
   and it is currently recorded as a footnote.
+- **F6 — review candidate, `LumaDeck/backend/downloads.py`.** Raised by the
+  adversarial pass, not by their code (§7.5.3). We call `archive.extractall()` on a
+  third-party manifest zip inside a backend that runs as root. Python's `zipfile`
+  sanitises member paths and creates no symlinks, so there is **no known
+  vulnerability here** — this is a note that the privileged side of our pipeline
+  handles untrusted archives, and that A6 is the axis we lose. Worth a look, not an
+  alarm.
 
 ---
 
