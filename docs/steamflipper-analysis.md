@@ -1,10 +1,10 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
-*In progress. **§1–§2 complete** (provenance and inventory). §3 (gate-by-gate),
-§4 (surviving a Steam update), §5 (trust and risk) and §6 (verdict + adversarial
-pass) are pending and are marked as such below. Nothing here is a recommendation
-to change LumaDeck or lumalinux. **Read §0 first**: nothing was executed, and the
-evidence tags are load-bearing.*
+*In progress. **§1–§3 complete** (provenance and inventory; the injection model).
+§4 (gate-by-gate), §5 (surviving a Steam update), §6 (trust and risk) and §7
+(verdict + adversarial pass) are pending and are marked as such below. Nothing
+here is a recommendation to change LumaDeck or lumalinux. **Read §0 first**:
+nothing was executed, and the evidence tags are load-bearing.*
 
 ---
 
@@ -62,7 +62,7 @@ Every factual claim carries one of three tags:
 This document is written by the author of a competing stack. Two counter-measures
 apply, and the reader should hold the document to them:
 
-1. **Axes and weights are fixed before the comparison sections are written** (§6,
+1. **Axes and weights are fixed before the comparison sections are written** (§7,
    pending).
 2. **Every axis where they win, or where the two are equal, is stated explicitly.**
    §2.6 already records one place where this fork does something our stack does
@@ -202,6 +202,11 @@ That is the honest size of the engineering claim in the README, and it is not a
 small one: a hooking backend, a memory/PE/ELF layer, an injector and a pattern
 deriver are exactly the hard parts.
 
+One deduction from group A, made in §3.1: **426 of those lines are the injection
+bootstrap, and it is Millennium's code (MIT), not the fork's** — properly
+disclosed, but it means the headline mechanism of the README is adopted rather
+than invented. Net original Linux work is closer to **3.112 lines, 12,9 %**.
+
 Group C is a different matter, and §2.3 is about it.
 
 ### §2.3 Group C is Windows code of unexplained provenance
@@ -223,26 +228,48 @@ place them squarely on Windows:
 - `Utils/SteamMetadata/Mirror.h` — the delivery chain the updater reads from:
   *"the built-in mirror chain (github-raw → jsDelivr → **lua.tools**)"* [read].
 
-Three things follow, and only the first is settled.
+Three things follow.
 
 1. **These did not come from public OST and were not written for Linux.** The
    `rundll32`/HKCU/`.dll` vocabulary is not a porting artefact — it is code that
    was authored against Windows and carried in.
-2. **Their actual origin is unresolved.** Three possibilities are open: an
-   unpublished or private OpenSteamTool branch; another downstream of OST (note
-   that `slsdeck-analysis.md` §5.7 documents a *Tokeer* activation path in
-   SLSDeckUniversal — the name is the same, the relationship is not established);
-   or authorship by the fork. Nothing read so far distinguishes them. **This is
-   an open question, not a finding.**
-3. **The `lua.tools` mirror is a link to infrastructure we have already
-   catalogued** (`docs/luatools-desktop-app/`, `docs/luatools-windows/`). Whether
-   that means anything is a §5 question.
+2. **The origin is partly resolved, and it is not this repository.** Reading the
+   installer and the delivery code closes most of the gap [read]:
+   - `tools/install_linux.sh` migrates `<Steam>/ubuntu12_32/opensteamtool/` →
+     `steamflipper/` and `opensteamtool.toml` → `steamflipper.toml`, *"pre-rename
+     data"*, and its proxy-detection regex is `SF_RUNTIME_PATH|BST_RUNTIME_PATH`
+     where `BST_` is called *"the pre-rename marker"*. There was therefore a
+     **deployed predecessor in the field under a different name** before this
+     repository existed on 2026-09-02. `BST_` and the `bst://` scheme of
+     `TokeerBridge` are the same three letters.
+   - The update mirror chain does not point at this repository at all. It points
+     at `raw.githubusercontent.com/**madoiscool**/SteamFlipper`,
+     `cdn.jsdelivr.net/gh/**madoiscool**/SteamFlipper` and
+     `git.lua.tools/luatools/SteamFlipper` [read: `Utils/SteamMetadata/Mirror.cpp:17-19`],
+     with the pattern feed likewise on `madoiscool/steam-monitor` beside
+     upstream's `OpenSteam001/steam-monitor`.
 
-Group C is where the trust analysis will concentrate: a ticket-minting service
-backed by "pool accounts", a URI-scheme handler driven by a public website, and a
-self-updater that replaces the loaded module from a third-party mirror are three
-of the highest-consequence surfaces a tool like this can have. **§5 has not been
-written; nothing above is a risk assessment.**
+   So group C is prior work from a related project whose release infrastructure
+   lives under a **different GitHub account and on LuaTools' own git host**, not
+   code written for this port. What that relationship *is* — same author under
+   two handles, a team, or a downstream of a downstream — is still not
+   established, and this document does not guess. The `slsdeck-analysis.md` §5.7
+   *Tokeer* activation path shares the name; the relationship remains unproven.
+3. **Only part of group C is reachable on Linux**, which narrows the surface
+   considerably and is stated here rather than left for §6 [read]:
+
+   | Feature | Linux |
+   |---|---|
+   | `TokeerBridge::RegisterUriScheme` (`bst://` handler) | **dead** — call site is `#ifdef _WIN32` (`dllmain.cpp:134`) |
+   | `AppUpdater` (self-replacing module) | **dead** — call site is `#ifdef _WIN32` (`dllmain.cpp:145-163`), disabled because no Linux artifact is published |
+   | `EticketClient` (Tokeer ticket mint) | **live** — called unguarded from `Hooks_IPC_ISteamUser.cpp:125` and `Hooks_NetPacket.cpp:508`, but inert unless an endpoint is configured (`SF_ETICKET_URL` defaults to empty; `seteticketurl()` in the Lua config overrides) |
+   | `LegacyCDKey::Resolve` | **live** — `Hooks_NetPacket.cpp:1224` |
+
+Group C is still where the trust analysis will concentrate — a ticket mint backed
+by "pool accounts" and a self-updater fed from a third-party mirror are among the
+highest-consequence surfaces a tool like this can have — but the honest Linux
+reading is that two of the four are compiled-in dead code and a third is off by
+default. **§6 has not been written; nothing above is a risk assessment.**
 
 ### §2.4 This invalidates our own architecture-constraint ruling — for this fork
 
@@ -292,7 +319,7 @@ Stated here rather than buried, per §0:
   equivalent (`tools/derive_patterns.py` + the Ghidra workflow in `maintenance.md`
   §A.2) needs Ghidra and a human. If their technique holds, it is scriptable and
   CI-able where ours is neither. **This is the single most consequential thing in
-  the repository for us**, and §4 is where it gets tested rather than admired.
+  the repository for us**, and §5 is where it gets tested rather than admired.
 - **No wrapper, no `LD_PRELOAD`, no `PATH` changes.** The module is installed as
   `<Steam>/ubuntu12_32/libXtst.so.6` and resolved by the client's own loader
   [read: `STEAMFLIPPER_INTEGRATION.md` §2]. Whatever its costs, it is a genuinely
@@ -320,30 +347,224 @@ push to `main`), `watch-steam.yml` (detects new `steamclient.so` builds) and
 `verify-fix.yml`. A fork with a hand-run derivation script and no automation has to
 notice a Steam update the way its users do.
 
-Weighing that properly belongs to §4 and §6, not here.
+Weighing that properly belongs to §5 and §7, not here.
 
 ---
 
-## §3 Gate-by-gate comparison — *pending*
+## §3 The injection model
+
+This is the axis the README leads with — *"no `LD_PRELOAD`, no wrapper script, and
+no launcher to remember"* — and it is a genuinely different answer from the three
+this project has already catalogued (our wrapper + `LD_PRELOAD`, SLSsteam's
+`LD_AUDIT`, moon's reverted `steam.sh` shim, `slsteam-moon-findings.md` M7).
+
+### §3.1 The proxy is Millennium's, and they say so
+
+`src/Bootstrap/Linux/sf_bootstrap.c` (308 L) carries Project Millennium's MIT
+header verbatim and is *"derived from Millennium's
+`src/bootstrap/linux/libmillennium_bootstrap.c` […] with a `load_steamflipper()`
+added next to its own core load"* [read: `src/Bootstrap/Linux/README.md`;
+`MILLENNIUM_LICENSE` is shipped alongside]. The functions, the logging macros, the
+`HOOK_FUNC` forwarding macro and the constructor's name
+(`libmillennium_bootstrap_init`) are all upstream's.
+
+The attribution is clean and the licence is shipped — this is a credit note, not a
+complaint. But it means the mechanism the README presents as the port's defining
+idea is **adopted from an existing Linux Steam mod**, and the fork's contribution
+to it is one `dlopen` and the process gate around it. §2.2 is corrected
+accordingly.
+
+### §3.2 The load path, end to end
+
+1. `tools/install_linux.sh` compiles the bootstrap `-m32` and installs it **over
+   `<Steam>/ubuntu12_32/libXtst.so.6`**, backing the stock library up to
+   `libXtst.so.6.sf-orig` exactly once — guarded by a marker regex
+   (`SF_RUNTIME_PATH|BST_RUNTIME_PATH`) so it can never back up its own proxy over
+   the real library, a mistake that *"once left a system with no working libXtst
+   at all"* [read: `install_linux.sh:32-40, 211-223`].
+2. Steam's 32-bit client links `libXtst.so.6` directly, so the loader maps the
+   proxy at client start. Its constructor runs.
+3. **Gate 1** — `is_steam_process()`: `realpath("/proc/self/exe")` must end in
+   `/ubuntu12_32/steam` [read: `sf_bootstrap.c:130-155`]. A suffix match, chosen
+   deliberately over the upstream `$HOME/.steam/steam/...` comparison, which broke
+   silently on Flatpak, `~/.steam/root` layouts and relocated `STEAMROOT`.
+4. `setup_hooks()` `dlopen`s the **real** library from
+   `<parent>/steam-runtime/usr/lib/i386-linux-gnu/libXtst.so.6` with `RTLD_GLOBAL`,
+   so the five re-exported XTest entry points forward to it.
+5. `load_steamflipper()` `dlopen`s `~/.local/lib/steamflipper/32/SteamFlipper.so`
+   with **`RTLD_LOCAL`** — deliberately, because the module statically links
+   protobuf, lua and spdlog and *"putting that surface in the global scope would
+   interpose on Steam's own copies"* [read]. `SF_DISABLE=1` skips it;
+   `SF_RUNTIME_PATH` overrides the path.
+6. **Gate 2** — the module's own constructor re-checks the host:
+   `GetMainExecutablePath().filename() == "steam"` [read: `dllmain.cpp:170-183`].
+7. All real work runs on a detached thread: load `steamclient.so` and `steamui.so`,
+   read the pattern files, parse `config/stplug-in/*.lua`, start the file watchers,
+   install the hooks, then optionally CloudRedirect.
+
+Two gates for one decision is sound design, and the second one is the module's own
+so it survives being loaded any other way.
+
+### §3.3 Their case against `LD_PRELOAD` is correct, and it applies to us
+
+Stated plainly because §0 requires it:
+
+> *"`LD_PRELOAD` is inherited by every process Steam spawns, steamwebhelper, the
+> runtime launcher, reaper, Proton and the games themselves. The module gates on
+> the host process so it does nothing in those children, but it still gets mapped
+> into every one of them, which is a needless anti-cheat risk inside a game."*
+> — `src/Bootstrap/Linux/README.md` [read]
+
+They are describing their own previous design, and they have no idea we exist
+(SteamFlipper mentions SLSsteam, lumalinux, LumaDeck, Decky and `LD_AUDIT` exactly
+zero times, §2). But the argument is **our model, verbatim**: our wrapper exports
+`LD_PRELOAD` for lumalinux and CloudRedirect, and lumalinux's answer is exactly the
+gate they describe — an allowlist on `/proc/self/comm` of `steam` and
+`steamwebhelper`, returning *"immediately from the constructor with zero side
+effects"* [read: `lumalinux/src/main.cpp:58-92`]. Identical reasoning, identical
+residue: **the gate stops the work, not the mapping.**
+
+Two things narrow it, and neither disposes of it:
+
+- Both modules are 32-bit, so the loader skips them for 64-bit children — which is
+  most modern games and most of Proton. The exposure is 32-bit children only.
+- `LD_AUDIT` (SLSsteam) has the same inheritance property, so no stack that runs
+  SLSsteam is free of this.
+
+Their design removes the residue entirely, because nothing outside the client ever
+resolves that library. **On this axis they are ahead of us**, and the honest
+version of our position is "gated, and 32-bit only", not "not an issue".
+
+### §3.4 What it costs them: the injection point is a Valve-owned file
+
+The proxy lives **inside Steam's own install tree**, replacing a library Valve
+ships. Their installer states the consequence in its own comments: *"A Steam update
+overwrites `ubuntu12_64/libXtst.so.6`"*, and the uninstall path warns that after
+removing the proxy with no backup present, *"Steam will restore it on next update,
+or verify files"* [read: `install_linux.sh:43-44, 97-101`]. The pattern files have
+the same property by design: *"regenerated here because a Steam update invalidates
+them"* [read: `install_linux.sh:19-20`].
+
+So a Steam client update can take out **both halves at once** — the injection point
+and the hook addresses — and the recovery is *the user re-running the installer by
+hand*. There is no guardian, no re-affirm, no crash-loop fail-safe; the state file
+(`~/.local/lib/steamflipper/install-state`) exists only so a manual re-run
+remembers the Millennium choice [read].
+
+This is the trade our stack made in the opposite direction, and it is worth being
+precise rather than triumphant about it, because our reasons are on record. We
+moved *off* editing files Steam owns — `steam.sh` and `/usr/bin/steam` stay vanilla
+— to a wrapper reached by patched `.desktop` files, a PATH drop-in and a systemd
+drop-in, with a `--user` guardian that re-affirms coverage after a self-update
+(`RESEARCH.md` §5, `README.md` "After a Steam update"). moon tried the in-tree
+shim and reverted it (`slsteam-moon-findings.md` M7). SteamFlipper has walked into
+the same slot from a different direction: not `steam.sh`, but `libXtst.so.6` —
+different file, same landlord.
+
+The slot is also **contended**: Millennium's own installer writes its bootstrap to
+that exact path, so *"Reinstalling Millennium overwrites `ubuntu12_32/libXtst.so.6`
+with its own bootstrap, so re-run the install step afterwards"* [read]. Two mods,
+one file, last writer wins.
+
+Whether that trade is worth it is a §5/§7 question. What is settled here is that
+"no wrapper, no launcher to remember" is not free: it is paid for with durability
+against the exact event this whole class of tool has to survive.
+
+### §3.5 Five things reading the bootstrap turned up
+
+None is fatal; together they are a fair sample of the code's maturity.
+
+1. **The Millennium co-load path is unreachable.** `libmillennium_bootstrap_init()`
+   ends with `load_steamflipper(); return;` and then continues for another 25 lines
+   — `b_has_loaded_millennium = 1`, `load_and_start_millennium()`, the `atexit`
+   registration and a second `load_steamflipper()` — all after the `return` [read:
+   `sf_bootstrap.c:296-323`]. Since `b_has_loaded_millennium` can therefore never
+   be set, the destructor's `stop_and_unload_millennium()` is dead too, as are
+   `load_and_start_millennium`, `stop_and_unload_millennium` and
+   `proxy_at_exit_handler`. Inert, but it is unreachable code left in a file that
+   gets compiled every install.
+2. **Two comments in that function contradict each other.** One block says
+   *"SteamFlipper-only by default; Millennium is opt-in via `MILLENNIUM_ENABLE=1`"*;
+   the next says *"`MILLENNIUM_ENABLE` is retired"* [read]. The code implements the
+   second.
+3. **A claimed property the code does not have.** A comment asserts XTest
+   forwarding is *"established above, before this branch, so it is intact in either
+   mode"* — but `setup_hooks()` is called *after* the `is_steam_process()` early
+   return, so any process that resolves this library and is not the 32-bit client
+   leaves `h_xtst` NULL, and every `HOOK_FUNC` stub then returns 0 [read:
+   `sf_bootstrap.c:157-168` vs `shared.h:38-51`]. `XTestQueryExtension` returning 0
+   reports the extension as unavailable. The blast radius is small — only 32-bit
+   binaries resolving `ubuntu12_32/libXtst.so.6` — but the comment describes a
+   safety property that is not there, and the same comment records that this exact
+   bug (the call sitting inside a branch that the default path did not take) had
+   already killed Big Picture's virtual keyboard once.
+4. **The Steam root is `getcwd()`, not the executable's directory.**
+   `InitializeSteamComponents()` derives `steamclient.so`, `steamui.so`,
+   `config/stplug-in` and `steamflipper.toml` from
+   `DynamicLibrary::GetCurrentDirectoryPath()`, which on Linux is a plain `getcwd()`
+   [read: `dllmain.cpp:50-53`; `SFPlatform/Linux/DynamicLibrary.cpp:72-78`]. Their
+   own integration guide tells third-party tools the opposite: *"Paths are derived
+   from the **32-bit client executable's directory**"* [their claim:
+   `STEAMFLIPPER_INTEGRATION.md` §2]. It works in practice because Steam's launcher
+   `chdir`s to the Steam root, and `GetMainExecutablePath()` — which would be
+   correct — exists in the same file and is used for the process gate two functions
+   away.
+5. **`steamui.so` is a hard dependency that is deliberately never hooked.**
+   `InitializeSteamComponents()` returns `false` — aborting all initialisation — if
+   `steamui.so` fails to load [read: `dllmain.cpp:84-89`], while the installer
+   states *"`steamui.so` is intentionally not generated: hooking it segfaults the
+   client on startup, reproduced across several address sets including
+   independently verified ones"* [read: `install_linux.sh:298-300`]. The module is
+   required to load, forbidden to hook.
+
+### §3.6 What we would take from this: the diagnosis, not the mechanism
+
+Nothing here is portable to us, and not because of the architecture constraint
+(§2.4) — because the mechanism is one we deliberately walked away from. Putting
+lumalinux's injection point inside `ubuntu12_32/` would trade a durability property
+we spent releases building for a purity property we do not need.
+
+What does survive the comparison is **§3.3's diagnosis**. Our `README.md` and
+`RESEARCH.md` §5 present `LD_PRELOAD` as settled — correct against `LD_AUDIT`, which
+was the alternative under consideration — and never state the cost they name: the
+`.so` is mapped into every 32-bit child Steam spawns, gate or no gate. That is a
+true statement about our stack that our own documentation does not make. Whether it
+warrants any action beyond writing it down is a §7 question; writing it down is
+already worth the section.
+
+## §4 Gate-by-gate comparison — *pending*
 
 Planned spine: the six gates of `method.md` §1 — ownership, PICS appinfo, depot
 surfacing, manifest pinning, depot keys, GMRC — with their message-layer approach
-(`Hooks_NetPacket.cpp`, 1.565 L) set against our function-layer hooks, plus the
-injection mechanism (`Bootstrap/Linux/sf_bootstrap.c`, the `libXtst` proxy).
+(`Hooks_NetPacket.cpp`, 1.565 L) set against our function-layer hooks.
 
-## §4 Surviving a Steam client update — *pending*
+## §5 Surviving a Steam client update — *pending*
 
 Planned: `gen_linux_patterns.py` (VProf + `.eh_frame`) against our RVA feed and
 `derive_patterns.py`, including running their script over the `steamclient.so`
 hashes already recorded in `res/rvas/` to see whether it recovers our anchors.
+§3.4 is the other half of this axis and feeds into it.
 
-## §5 Trust and risk — *pending*
+## §6 Trust and risk — *pending*
 
-Planned: group C (§2.3) — the Tokeer backend and its pool accounts, the `bst://`
-handler, the self-updater and its `lua.tools` mirror — plus network surface,
-what is written to `config.vdf`, and privilege hygiene.
+Planned: group C (§2.3) — the Tokeer ticket mint, the `madoiscool`/`lua.tools`
+delivery chain, the `bst://` handler — plus the full network surface, what is
+written to `config.vdf`, and privilege hygiene.
 
-## §6 Verdict and adversarial pass — *pending*
+## §7 Verdict and adversarial pass — *pending*
+
+## §8 Findings list — *pending*
+
+Accumulating as the sections land. Two are already fixed, and neither is a code
+change:
+
+- **F1 — documentation, `opensteamtool-findings.md`.** Its architecture-constraint
+  ruling loses its platform leg for this fork (§2.4). The message-layer leg still
+  holds. Wording to be proposed once §4 has read their hooks.
+- **F2 — documentation, `RESEARCH.md` §5 / `README.md`.** Our `LD_PRELOAD` write-up
+  argues the choice against `LD_AUDIT` and never states its cost: the `.so` is
+  mapped into every 32-bit child Steam spawns, and the `/proc/self/comm` allowlist
+  gates the work, not the mapping (§3.3). Worth one honest paragraph.
 
 ---
 
@@ -379,17 +600,21 @@ than *absent from upstream*.
 
 - SteamFlipper (`IPedrax/SteamFlipper` @ `e505aef`): `README.md`,
   `STEAMFLIPPER_INTEGRATION.md`, `WALKTHROUGH.md`;
-  `src/Bootstrap/Linux/{sf_bootstrap.c,shared.h,README.md}`;
-  `src/SFPlatform/{CMakeLists.txt,Linux/*}`;
-  `src/Hook/Hooks_NetPacket.cpp`;
-  `src/Utils/{Tokeer,Tickets,Update,SteamMetadata}/*`;
+  `src/dllmain.cpp`; `src/Bootstrap/Linux/{sf_bootstrap.c,shared.h,README.md,MILLENNIUM_LICENSE}`;
+  `src/SFPlatform/{CMakeLists.txt,Linux/DynamicLibrary.cpp,Linux/*}`;
+  `src/Hook/{Hooks_NetPacket.cpp,Hooks_IPC_ISteamUser.cpp}`;
+  `src/Utils/{Tokeer,Tickets,Update,SteamMetadata}/*` (notably `Mirror.cpp`,
+  `EticketClient.h`, `TokeerBridge.h`, `AppUpdater.h`);
   `tools/{gen_linux_patterns.py,install_linux.sh,sync_depot_keys.py}`;
   `steamflipper.example.toml`.
+- Millennium (`SteamClientHomebrew/Millennium`): `src/bootstrap/linux/libmillennium_bootstrap.c`,
+  the origin of §3.1's proxy — read here only through the copy SteamFlipper ships
+  and its MIT header.
 - OpenSteamTool (`OpenSteam001/OpenSteamTool` @ `2a08b0b` and 12 branch tips):
   `src/OSTPlatform/Linux/.gitkeep` (the placeholder confirming upstream never
   implemented a Linux backend), and the counterparts of every file above.
 - Ours: `docs/opensteamtool-findings.md` (the ruling corrected in §2.4),
   `docs/method.md` (the six gates, §3's spine), `docs/maintenance.md` §A.2
-  (the derivation workflow §4 will compare against), `docs/RESEARCH.md`,
+  (the derivation workflow §5 will compare against), `docs/RESEARCH.md`,
   `docs/slsdeck-analysis.md` (the template this document follows),
   `res/rvas/`, `tools/derive_patterns.py`, `.github/workflows/watch-steam.yml`.
