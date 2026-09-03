@@ -1,8 +1,8 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
-*In progress. **§1–§3 complete** (provenance and inventory; the injection model).
-§4 (gate-by-gate), §5 (surviving a Steam update), §6 (trust and risk) and §7
-(verdict + adversarial pass) are pending and are marked as such below. Nothing
+*In progress. **§1–§4 complete** (provenance and inventory; the injection model;
+the gate-by-gate comparison). §5 (surviving a Steam update), §6 (trust and risk)
+and §7 (verdict + adversarial pass) are pending and are marked as such below. Nothing
 here is a recommendation to change LumaDeck or lumalinux. **Read §0 first**:
 nothing was executed, and the evidence tags are load-bearing.*
 
@@ -532,11 +532,171 @@ true statement about our stack that our own documentation does not make. Whether
 warrants any action beyond writing it down is a §7 question; writing it down is
 already worth the section.
 
-## §4 Gate-by-gate comparison — *pending*
+## §4 Gate-by-gate
 
-Planned spine: the six gates of `method.md` §1 — ownership, PICS appinfo, depot
-surfacing, manifest pinning, depot keys, GMRC — with their message-layer approach
-(`Hooks_NetPacket.cpp`, 1.565 L) set against our function-layer hooks.
+The spine is `method.md` §1. The finding that governs the whole section is that
+**most of SteamFlipper's hooks do not resolve on Linux**, so the code you read is
+not the code that runs.
+
+### §4.1 Twenty-eight names asked for, eight answered
+
+The hooks request 28 distinct function names from `PatternLoader::FindPattern`
+across `steamclient.so` and `steamui.so` [measured, from the `RESOLVE_*` /
+`INSTALL_HOOK_*` / `ARM_CAPTURE_*` / `CAPTURE_THIS_FUNC` call sites]. The Linux
+address generator can produce **nine** [read: `tools/gen_linux_patterns.py`,
+`WANTED` + `VERIFIED` + `REQUIRED`], and they are split two ways:
+
+- **Three by VProf scope, on any build** — `CheckAppOwnership`,
+  `BuildDepotDependency`, `GetOrAddAppData`. GCC leaves a self-naming profiling
+  scope in the binary; the string's only code reference lands inside the function,
+  and the `.eh_frame` FDE gives its bounds (§5 examines the technique itself).
+- **Six pinned to one exact SHA-256** — `GetPackageInfo`, `CUtlMemoryGrow`,
+  `MarkLicenseAsChanged`, `ProcessPendingLicenseUpdates`,
+  `CPackageInfoCacheGlobal` (steamclient `bc54101b…`) and
+  `CSteamUIAppControllerRunFrame` (steamui). *"They CANNOT be re-derived by the
+  generic path below […] If the hash does not match, these are skipped with a
+  warning rather than guessed"* [read].
+
+Of the nine, the four `steamui.so` entries are refused unless `--allow-steamui` is
+passed, because hooking them *"segfaults the client on startup, reproduced across
+several address sets"* [read]. `GetOrAddAppData` resolves but its
+`INSTALL_HOOK_C` is commented out [read: `Hooks_Misc.cpp`]. **Seven addresses are
+doing all the work.**
+
+Their own `WALKTHROUGH.md` states this plainly under "Known limits", and the count
+matches ours exactly — *"Nine functions are located by RVA. Only three are
+recoverable automatically […] the other six […] are pinned to the SHA-256 of a
+specific Steam build"* [their claim, and [measured] agrees]. Credit where it is
+due: this is disclosed, not hidden, and the generator *"fails safe: given a binary
+it does not recognise it emits nothing rather than a stale address"*.
+
+One mechanism detail worth recording, because it has a cost. The locally generated
+file is written to `<Steam>/ubuntu12_32/steamflipper/pattern/<component>/<sha>.toml`
+— which is exactly `RemoteToml`'s *cache* path, so the generator masquerades as a
+previously-downloaded remote file [read: `gen_linux_patterns.py --install` vs
+`RemoteToml.cpp:100-103`]. Neat, but `RemoteToml::Fetch` tries the **network
+first** and only falls back to the cache: five mirrors
+(`OpenSteam001/steam-monitor`, `madoiscool/steam-monitor` and
+`git.lua.tools`, over raw.githubusercontent and jsDelivr), each keyed by the
+SHA-256 of a *Linux* `.so` that those Windows-oriented feeds cannot contain. So
+every Steam launch makes five outbound requests that must 404 before the local
+file is read, twice over (steamclient and steamui). Functionally harmless,
+gratuitous as network behaviour; §6 picks up the surface.
+
+What does **not** resolve is everything else: the entire message layer
+(`BBuildAndAsyncSendFrame`, `RecvPkt`, `PchMsgNameFromEMsg`), the entire IPC layer
+(`IPCProcessMessage`, `GetPipeClient`), the depot-key hook
+(`ConfigStoreGetBinary`), and the misc/spawn hooks. `Hooks_NetPacket.cpp` is the
+single largest file in the repository at 1.565 lines, and on Linux **none of it
+executes**.
+
+### §4.2 The six gates
+
+| # | Gate | Their mechanism | Live on Linux? | Ours |
+|---|---|---|---|---|
+| 1 | Ownership | package-0 `AppIdVec` injection (token `10660652434190618804`) + `CheckAppOwnership` forcing `PackageId=0`, `bOwnsLicense=true` | **yes** — 1 VProf + 4 pinned | SLSsteam |
+| 2 | PICS appinfo | outbound `CMsgClientPICSProductInfoRequest` (8903) `access_token` injection, from `addtoken()` | **no** — NetPacket unresolved; `addtoken()` is parsed and stored but nothing reads it [read: only consumer is `Hooks_NetPacket.cpp`] | SLSsteam (PICS tokens) |
+| 3 | Depot surfacing | same package-0 injection: every depot id from the Lua goes into the fake licence's `AppIdVec` | **yes** — same pinned set | lumalinux package-0 finder |
+| 4 | Manifest pinning | `BuildDepotDependency` post-hook rewriting each `DepotEntry`'s `ManifestGid`/`ManifestSize` from `setManifestid()` | **yes** — VProf | SLSsteam `ManifestIds` (our BuildDep hook is off by default) |
+| 5 | Depot key | `ConfigStore::GetBinary` hook answering `…\<DepotId>\DecryptionKey` from the Lua | **no** — unresolved; compensated **out of process** by `tools/sync_depot_keys.py` writing `config.vdf` with Steam closed | lumalinux DepotKey hook **and** `steamidra_lite` writing `config.vdf` |
+| 6 | Manifest request code | intercept the outbound `ContentServerDirectory.GetManifestRequestCode#1` job (EMsg 151), fetch the code from the same three providers we use, inject it into the response (147) | **no** — NetPacket unresolved | lumalinux GMRC hook + provider cascade + `gmrc_store` |
+
+Four of six by hook; gate 5 relocated to a file; **gate 6 not open at all**.
+
+### §4.3 Gate 6 is the one that matters, and they know it
+
+`method.md` §1 is explicit that gate 6 is the only gate that cannot be faked
+locally — the request code is validated server-side by Valve. SteamFlipper has a
+complete, working implementation of it (`ManifestClient` + the NetPacket
+interception, same three providers: `opensteamtool` → `wudrm` → `steamrun`), and
+on Linux it is unreachable code.
+
+What that leaves is a **bring-your-own-manifest** design, and it is exactly what
+their documentation instructs: the user drops `.manifest` files into
+`<Steam>/depotcache/` themselves, and `STEAMFLIPPER_INTEGRATION.md` lists that
+directory as written by *"your app"*, not by SteamFlipper. With the manifest
+already cached, the client does not need to fetch it, so gate 6 never comes up for
+the initial install.
+
+The consequence worth flagging is what happens **after** the initial install
+[inferred, and the clearest testable prediction in this document]: a game that
+updates gets a new manifest GID that is not in `depotcache`, so the client must
+request a code for it. Ours serves that request; theirs cannot. So on Linux a
+SteamFlipper install should be expected to work once and then not update itself —
+unless the user re-seeds `depotcache` by hand for every new build. Nothing was
+executed, so this is an inference from the code path, not an observation. It is
+the first thing I would test if we ever move to §0's excluded execution track.
+
+### §4.4 Function layer vs message layer — and why the choice bit them here
+
+`opensteamtool-findings.md` recorded that OST hooks freely at the message/wire/IPC
+layer while lumalinux must use function-layer seams, because SLSsteam already owns
+`CProtoBufMsgBase` on our side. We framed that as *our* constraint — a limitation
+imposed by not forking SLSsteam.
+
+This port inverts the reading. On Windows the message layer is cheap because the
+`steam-monitor` pattern database publishes addresses for `steamclient64.dll`
+keyed by hash, so `BBuildAndAsyncSendFrame` and `IPCProcessMessage` are just
+lookups. On Linux there is no such database, the binary is stripped, and the
+message-layer entry points carry **no VProf scope** — so the whole layer is
+unreachable, and with it gates 2 and 6.
+
+The function-layer seams, meanwhile, survived the port: `CheckAppOwnership` and
+`BuildDepotDependency` are VProf-scoped and come out of a stripped binary
+automatically. **Our constraint turned out to be the portable choice**, though it
+is worth being honest that this is a fact about GCC's profiling instrumentation
+rather than foresight on our part.
+
+### §4.5 Same binary, independent agreement
+
+Their six pinned addresses are keyed to steamclient `bc54101b…` — **the same build
+lumalinux whitelisted in `4e0b7a8`**, for which we ship
+`res/rvas/bc54101b….yaml`. Two of their numbers can therefore be checked against
+ours directly, and both agree [measured]:
+
+| Value | SteamFlipper | lumalinux `res/rvas/bc54101b….yaml` |
+|---|---|---|
+| `ProcessPendingLicenseUpdates` | `0x188C950` | `Reconcile: 0x188c950` |
+| `CPackageInfoCache` owner GOT displacement | `0x3b7d4` (from their decoded call site `lea eax,[GOT+0x3b7d4]`) | `finder.cache_global_disp: 0x3b7d4` |
+
+Two independent derivations, two different methods, same addresses. That is the
+strongest confirmation either project has that its numbers are right, and it is
+worth recording in both directions — our licence-reconcile hook and their fake
+licence refresh call the *same function*, and our package-0 finder walks from the
+*same global* they pin.
+
+It also sharpens §5: their pinned six are what our RVA feed produces automatically
+per build. They pinned to one hash what we regenerate.
+
+### §4.6 The seam they could not find is one we resolve by a different technique
+
+`ConfigStoreGetBinary` — the depot-key seam — is the one they gave up on:
+*"`ConfigStoreGetBinary` is unresolved, so decryption goes through `config.vdf`
+instead of the hook"* [their claim, and consistent with the generator]. They add
+that the file route *"is the more robust route anyway: it needs no signature and
+survives client updates"*, which is fair.
+
+We resolve it. `res/rvas/bc54101b….yaml` carries
+`depotkey_rtti: {class: "12CConfigStore", slot: 6, rva: "0x11a4500"}` — the
+DepotKey hook located by **RTTI vtable slot** (`RESEARCH.md` §15), on the same
+class they could not locate. SteamFlipper contains no RTTI-based resolution at all
+[measured: no `typeinfo`/RTTI machinery anywhere in the tree].
+
+The two techniques are **complementary, not competing**, and that is the useful
+conclusion:
+
+- **VProf scopes** recover functions Valve chose to profile — including
+  `CheckAppOwnership` and `BuildDepotDependency`, which we do *not* currently
+  derive automatically.
+- **RTTI vtable slots** recover virtual functions of classes carrying type info —
+  including `CConfigStore::GetBinary`, which they cannot derive at all.
+
+Neither reaches the message layer, which is why gate 6 is closed for them and open
+for us only because we hook `BYieldingGetManifestRequestCode` as a *function*
+(`GMRC: 0x1371ac0` in the same feed).
+
+§5 takes this further: whether their VProf technique, run against binaries we
+already have, recovers anchors our own workflow needs a human and Ghidra for.
 
 ## §5 Surviving a Steam client update — *pending*
 
@@ -565,6 +725,16 @@ change:
   argues the choice against `LD_AUDIT` and never states its cost: the `.so` is
   mapped into every 32-bit child Steam spawns, and the `/proc/self/comm` allowlist
   gates the work, not the mapping (§3.3). Worth one honest paragraph.
+- **F3 — candidate, `tools/`.** VProf-scope derivation and our RTTI slot
+  derivation recover disjoint sets of functions (§4.6). VProf reaches
+  `CheckAppOwnership` and `BuildDepotDependency`, which we do not derive
+  automatically today. Whether it is worth adding as a second automatic path is
+  §5's question, and it is evidence-gated: do not implement before §5 runs their
+  generator against binaries we hold.
+- **F4 — cross-check, `res/rvas/`.** Their pinned `ProcessPendingLicenseUpdates`
+  and cache-owner displacement match ours exactly on the same build (§4.5). Worth
+  a line in `rva-feed-design.md` recording that an independent derivation agrees;
+  it is the only external confirmation our feed has.
 
 ---
 
@@ -602,7 +772,11 @@ than *absent from upstream*.
   `STEAMFLIPPER_INTEGRATION.md`, `WALKTHROUGH.md`;
   `src/dllmain.cpp`; `src/Bootstrap/Linux/{sf_bootstrap.c,shared.h,README.md,MILLENNIUM_LICENSE}`;
   `src/SFPlatform/{CMakeLists.txt,Linux/DynamicLibrary.cpp,Linux/*}`;
-  `src/Hook/{Hooks_NetPacket.cpp,Hooks_IPC_ISteamUser.cpp}`;
+  `src/Hook/*` (all nine hook units, notably `Hooks_NetPacket.cpp`,
+  `Hooks_Package.cpp`, `Hooks_Manifest.cpp`, `Hooks_Decryption.cpp`,
+  `HookManager.cpp`);
+  `src/Utils/SteamMetadata/{PatternLoader,RemoteToml,IPCLoader,ManifestClient}.cpp`;
+  `src/Utils/Config/LuaConfig.cpp`;
   `src/Utils/{Tokeer,Tickets,Update,SteamMetadata}/*` (notably `Mirror.cpp`,
   `EticketClient.h`, `TokeerBridge.h`, `AppUpdater.h`);
   `tools/{gen_linux_patterns.py,install_linux.sh,sync_depot_keys.py}`;
@@ -617,4 +791,6 @@ than *absent from upstream*.
   `docs/method.md` (the six gates, §3's spine), `docs/maintenance.md` §A.2
   (the derivation workflow §5 will compare against), `docs/RESEARCH.md`,
   `docs/slsdeck-analysis.md` (the template this document follows),
-  `res/rvas/`, `tools/derive_patterns.py`, `.github/workflows/watch-steam.yml`.
+  `res/rvas/bc54101b….yaml` (the shared-build cross-check in §4.5–§4.6),
+  `tools/derive_patterns.py`, `.github/workflows/watch-steam.yml`,
+  `docs/rva-feed-design.md`, `RESEARCH.md` §15 (RTTI resolution).
