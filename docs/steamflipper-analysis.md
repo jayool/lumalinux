@@ -611,6 +611,36 @@ executes**.
 
 Four of six by hook; gate 5 relocated to a file; **gate 6 not open at all**.
 
+#### §4.2.1 Gate 5's relocation lands on a dead end we already measured
+
+Their gate-5 fallback — `tools/sync_depot_keys.py` writing `DecryptionKey`
+entries into `config/config.vdf` with Steam closed — is a route this project
+tried, measured and rejected. `RESEARCH.md` §6, in the dead-ends list:
+
+> *"**config.vdf depot keys get pruned.** Writing `DecryptionKey` into
+> `config.vdf` works for owned depots, but Steam **deletes** the entries for
+> unowned depots on shutdown (`grep -c DecryptionKey` dropped from 3 to 1 across
+> a restart). → keys must be served at runtime (DepotKey hook), not via config."*
+
+If that behaviour reproduces under their stack, their only Linux depot-key path
+**erases itself on every Steam shutdown**, and the user has to re-run the script
+before each session in which a new depot is involved. Their documentation does
+not mention it: the README warns that Steam *"rewrites config.vdf on exit and
+would discard edits made [while it is running]"* — which is about editing
+underneath a live client, not about losing entries already written [read].
+
+**Stated as a prediction, with its uncertainty.** Our measurement was taken with
+our own stack, and the prune plausibly keys on whether the client considers the
+depot owned at shutdown. SteamFlipper also fakes ownership (gate 1 is live for
+them), so it is entirely possible Steam treats those depots as owned and keeps
+the entries. Nothing here settles that — §0 excluded execution.
+
+Two things make it worth recording anyway. It is one of the few claims in this
+document that rests on **our own measurement** rather than on reading their code;
+and it is cheap to falsify — write keys, restart Steam, `grep -c DecryptionKey`.
+It joins §4.3's pinning prediction as the second item on the list for the day
+execution is back in scope.
+
 ### §4.3 Gate 6 is the one that matters, and they know it
 
 `method.md` §1 is explicit that gate 6 is the only gate that cannot be faked
@@ -903,6 +933,10 @@ one that has to keep working on a Deck in Game Mode with no terminal.
 If §0's execution exclusion is ever lifted, this is the experiment, and it is
 cheap:
 
+0. Restart-prune check for §4.2.1: write depot keys into `config.vdf` the way
+   `sync_depot_keys.py` does, start and stop Steam, and re-count
+   `DecryptionKey` entries. Cheapest test in this document and it decides
+   whether their only Linux depot-key path survives a session.
 1. Fetch the two `steamclient.so` builds we already have RVA files for
    (`bc54101b…`, `d0c0ff6e…`) with `tools/fetch_steamclient.py`.
 2. Run `tools/gen_linux_patterns.py <binary>` (no `--install`) against each.
