@@ -19,7 +19,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 |---|---|---|
 | **0** | Datación y autoría de `download.lua` | **§1 — cerrada** |
 | **1** | La API de plugins como mecanismo | **§2 — cerrada** |
-| **2** | `download.lua` como artefacto técnico | §3 — pendiente de redactar |
+| **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
 | **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | §4 — pendiente de redactar |
 | **4** | Consecuencias para LumaDeck | §5 — pendiente de redactar |
 | **5** | Escenarios estratégicos y señales de vigilancia | §6 — pendiente de redactar |
@@ -490,7 +490,286 @@ veces.
 
 ## 3. Capa 2 — `download.lua` como artefacto técnico
 
-*Pendiente de redactar.*
+En una frase: **es una reimplementación en 330 líneas de Lua de tres de los
+seams de instalación de lumalinux**, sin nada del aparato de durabilidad que los
+rodea aquí.
+
+### 3.1 El mapa
+
+| Seam | `download.lua` | lumalinux | Veredicto |
+|---|---|---|---|
+| Claves de depot | `CConfigStore::GetBinary`, claves desde `config.yaml` | **la misma función**, claves desde `keys.txt` | Convergencia total |
+| Manifest request code | `GetManifestRequestCode`, wudrm en solitario | la misma, cascada de 3 + caché + UA anti-WAF | Vamos por delante |
+| Depots del paquete 0 | hook de `GetPackage` → captura el puntero → reescribe | `LoadPackage` + `package_zero_finder` (377 líneas) | **Misma meta, ruta distinta** |
+| Shader pre-cache | — | `ShaderDepot` (§13.9) | Sólo nosotros |
+| Reconcile sin reinicio | — | `NotifyLicensesUpdated` (0x7d) | Sólo nosotros |
+| Pinning de manifiestos | — (lo cubre `ManifestIds` del core) | BuildDep, desactivado por defecto | Empate por delegación |
+
+Que los tres primeros coincidan no es sorpresa: son **los tres únicos sitios**
+por los que se puede resolver el problema. Es convergencia forzada por el
+binario, no copia.
+
+### 3.2 Claves de depot — idénticos, salvo una guarda
+
+Los dos enganchan el mismo accesor y lo reconocen por la misma ruta KeyValues
+(`…\<depot>\DecryptionKey`). Diferencias reales:
+
+- **Resolución.** El plugin la deriva por RTTI en dos pasos: saca el índice de
+  ranura del mapa de interfaces (`21IClientConfigStoreMap`) y lo aplica sobre la
+  clase concreta (`12CConfigStore`). Es **más limpio** que nuestro
+  `ResolveVtableSlotBySignature`, que busca la ranura escaneando prólogos.
+  Nosotros compensamos con el RVA feed por delante.
+- **Orden.** El plugin llama al original **primero** y luego pisa el resultado si
+  tiene clave propia; nosotros consultamos el `KeyStore` primero y volvemos sin
+  llamar al original. Mismo resultado, una llamada de más en su caso.
+- **Guarda de tamaño.** Nosotros validamos `keySize >= 32` antes del `memcpy`
+  (`depot_key_hook.cpp:63`). **El plugin escribe 32 bytes sin mirar `outSize`.**
+  En la práctica Steam siempre pasa un buffer suficiente para una clave de
+  descifrado, así que es un defecto **latente**, no activo — pero es una
+  escritura sin validar en memoria de Steam.
+- **Depots sin clave.** Nuestro hook deja pasar deliberadamente las entradas
+  *presence-only* (§13.8/13.9: fabricar una clave cero rompe el pre-caché de
+  shaders). El plugin no tiene ese concepto porque tampoco tiene el hook que lo
+  necesita.
+
+### 3.3 Manifest request code — la pieza donde más ventaja tenemos
+
+Misma función, misma intervención. Divergencias:
+
+| | `download.lua` | lumalinux |
+|---|---|---|
+| Proveedores | `gmrc.wudrm.com` **en solitario**, y por **HTTP en claro** | cascada opensteamtool → wudrm → steamrun, HTTPS |
+| Cloudflare | — | UA `OpenSteamTool/1.0`, hallazgo verificado en dispositivo |
+| Caché | ninguna | en memoria (+ issue #21 para disco) |
+| Reintentos | 5, recursivos, sin espera | por proveedor |
+| Alcance | **cualquier** manifiesto que el original no codificara | sólo depots del `KeyStore` |
+
+Las dos últimas filas son decisiones de diseño, no descuidos:
+
+- Comprobar `pOutMRC[0] ~= 0` en vez de fiarse del valor de retorno **es mejor
+  idea que la nuestra** y merece anotarse: es más robusto ante que la función
+  devuelva éxito sin escribir.
+- Pero **el alcance es más invasivo**: dispara también para juegos legítimamente
+  comprados en los que Steam falle por cualquier motivo, y les mete un código de
+  un tercero. Nosotros acotamos al `KeyStore` por el principio *do no harm*
+  (§2.2 del doc hermano). Su cobertura es mayor; nuestra frontera es más segura.
+
+Detalle menor de higiene: construye la URL con `ffi.string(buf, 32)` —**con
+longitud explícita**—, así que la cadena Lua arrastra los NUL de relleno. Funciona
+de casualidad, porque al pasarla como `const char*` el lado C corta en el primer
+NUL. Doce líneas más abajo, para el log, usa `ffi.string(buf)` sin longitud, que
+es lo correcto. Y deja un `mrcCStr` asignado y sin usar. Son marcas de código
+escrito deprisa.
+
+### 3.4 El paquete 0 — misma meta, y una divergencia de offset que hay que resolver
+
+Aquí está lo más interesante de la capa.
+
+**La ruta.** Nosotros llegamos al `PackageInfo` del paquete 0 de dos maneras: el
+hook de `LoadPackage` (en el momento del parseo PICS) y, sobre todo, el
+`package_zero_finder`, un hilo que deriva el GOT, escanea el idiom de acceso a la
+caché y **recorre el árbol** con offsets de clase (`0xc58`, `0xc6c`, nodo `0x18`).
+El plugin engancha `GetPackage` y **deja que Steam le entregue el puntero**.
+
+Conviene deshacer una contradicción aparente con nuestro propio
+`patterns.hpp`, que dice que `GetPackage` *"no está en la ruta de carga PICS"* y
+que engancharlo (v0.10.3) rompió las descargas. **Las dos cosas son ciertas.** El
+error de v0.10.3 fue engancharlo **en lugar de** `LoadPackage`, intentando
+inyectar en el momento del parseo. El plugin no hace eso: usa `GetPackage`
+sólo como **captura oportunista del puntero**, y reescribe de forma perezosa vía
+el flag `RewriteDepots`. Ese es exactamente el papel de nuestro finder.
+
+Y así comparados, **su ruta es mejor en un aspecto concreto**: obtiene el mismo
+puntero sin un solo offset dependiente de build. Nuestros `0xc58`/`0xc6c`/`0x18`
+son deuda que hay que revalidar en cada build de Steam; él no tiene ninguno.
+A cambio es **reactivo**: si nadie vuelve a pedir el paquete 0, la inyección
+perezosa nunca ocurre. El nuestro es **activo** y reinyecta cada 15 s.
+
+**La divergencia que importa.** Los dos escriben ids de depot, pero **en vectores
+distintos** del mismo `PackageInfo`:
+
+```
++0x38  CUtlVector<uint32_t>   <- lumalinux escribe aquí  (lo llamamos AppIdVec)
++0x48  CUtlVector<uint32_t>   <- el plugin escribe aquí   (lo llamamos DepotIdVec)
+```
+
+Su `PackageInfo_t` (`packageId` + `__pad0x0[0x44]` + `depots`) sitúa su vector en
+`+0x48` sin ambigüedad. Y nuestro propio `load_package_hook.hpp:41` documenta ese
+`+0x48` como `DepotIdVec` — el sitio semánticamente correcto para ids de depot —
+mientras nosotros escribimos en `+0x38`.
+
+El comentario de `load_package_hook.cpp:179` explica por qué:
+
+> *"The DepotIdVec experiment was removed: it did nothing without a license
+> reconcile, which is the actual no-restart mechanism."*
+
+O sea: **probamos `+0x48`, no funcionó, y lo descartamos — antes de tener el
+reconcile.** Hoy sí lo tenemos. Que un tercero use `+0x48` y le funcione es un
+segundo dato que reabre la pregunta.
+
+No afirmo que lo nuestro esté mal: `+0x38` funciona en producción y está
+verificado. Lo que digo es que **hay dos implementaciones que hacen lo mismo por
+vectores distintos, y una de las dos está pasando por un camino indirecto**.
+Merece medirse. → **Accionable A**.
+
+**La gestión de memoria también difiere**, y es la otra mitad del asunto: nosotros
+**añadimos en el sitio** creciendo con `realloc` de libc; él **asigna un buffer
+nuevo** con `Plat_Alloc`, copia la lista fusionada, cambia el puntero y libera el
+viejo con `Plat_Free`. Ver §3.6.
+
+### 3.5 Lo que el plugin no hace
+
+No es una lista de reproches — es el foso, y conviene tenerlo escrito:
+
+- **Sin skip de pre-caché de shaders.** Toda la clase de fallo de §13.8 (el
+  `Invalid content configuration`, el bucle de `Missing decryption key`) le queda
+  abierta.
+- **Sin reconcile de licencias.** Sus juegos requieren reinicio de Steam; el
+  no-restart de LumaDeck es nuestro.
+- **Sin RVA feed ni SafeMode.** Resolución 100 % por patrones y RTTI: cuando Steam
+  recompile, se rompe y alguien tiene que editar patrones a mano. Nosotros
+  publicamos RVAs por hash desde CI.
+- **Sin diagnóstico.** Ni `status.json`, ni recuento `X/Y hooks activos`, ni
+  `maintenance.md`. Cuando falle, el usuario no tendrá con qué distinguir el caso.
+- **Sin despliegue.** No escribe manifiestos al `depotcache`, ni `AdditionalApps`,
+  ni claves en `config.vdf`. Espera que alguien haya dejado el `config.yaml`
+  preparado. Todo eso lo hace `steamidra_lite` en nuestro lado.
+
+### 3.6 Defectos encontrados
+
+| # | Defecto | Severidad | Nota |
+|---|---|---|---|
+| 1 | `hkGetBinary` escribe 32 bytes sin comprobar `outSize` | Media (latente) | Nosotros validamos |
+| 2 | `Downloader.Package` se cachea indefinidamente | **Alta** | Ver abajo |
+| 3 | `Plat_Free` sobre el buffer original de Steam | Media | Ver §3.7 |
+| 4 | MRC sin caché, un solo proveedor, HTTP en claro | Media | Fragilidad operativa |
+| 5 | Inyección perezosa: si nadie vuelve a pedir el paquete 0, no ocurre | Media | Reactivo vs. activo |
+| 6 | `ffi.string` con longitud en la URL; `mrcCStr` muerto | Baja | Higiene |
+
+El **#2** merece detalle. `Downloader.Package` guarda el puntero al
+`PackageInfo` la primera vez y no lo revalida nunca. Si Steam reconstruye el
+paquete 0 —re-login, refresco del conjunto de licencias— ese puntero queda
+colgando, y `writeDepotIds` desde el callback de `luaReload` escribiría sobre
+memoria liberada. Nuestro finder vuelve a recorrer el árbol en cada ciclo y
+reinyecta de forma idempotente; esa diferencia de diseño **nos da la razón**, y
+conviene que quede anotado porque el finder ha costado bastante.
+
+### 3.7 El fallo del `LuaMutex` — upstream, y en el ejemplo oficial [RIESGO]
+
+Esto no es del plugin: es de SLSsteam, y lo hereda todo el que copie la
+documentación. `lua.cpp:161`:
+
+```cpp
+class LuaMutex {
+    std::recursive_mutex* mutex;
+public:
+    LuaMutex() : mutex(&Lua::stateMutex) { lock(); }
+    ~LuaMutex()  { unlock(); }
+    void lock()   { mutex->lock(); }
+    void unlock() { mutex->unlock(); }
+};
+```
+
+**No lleva ningún seguimiento de propiedad.** Y el idiom que enseña
+`example.lua` —y que `download.lua` copia en sus tres hooks vía
+`mutexReturn`— es:
+
+```lua
+local mutex = LuaMutex()   -- bloquea
+...
+mutex:unlock()             -- desbloquea (1)
+-- más tarde, cuando el GC recoja el objeto: ~LuaMutex() -> desbloquea (2)
+```
+
+Es decir: **por construcción, cada hook desbloquea dos veces.** Y el segundo
+desbloqueo ocurre cuando al recolector de basura le apetece, en el hilo que le
+toque.
+
+Desbloquear un `std::recursive_mutex` que no posees es comportamiento
+indefinido. En glibc, en el caso benigno, devuelve `EPERM` y no hace nada —
+por eso nadie lo ha visto todavía. Pero hay un camino nada exótico al fallo real:
+
+1. Hilo A entra en un hook, `LuaMutex()` → contador 1.
+2. `mutex:unlock()` → contador 0, liberado. El objeto queda para el GC.
+3. Hilo A entra en **otro** hook, `LuaMutex()` → contador 1.
+4. El GC corre en el hilo A y recoge el objeto del paso 1 → `~LuaMutex()` →
+   **contador 0**.
+5. El hook del paso 3 sigue ejecutándose creyendo que tiene el `lua_State` en
+   exclusiva. Otro hilo puede entrar ya.
+
+Y ese es exactamente el escenario que la propia documentación dice que hay que
+evitar (*"Lua is not thread safe"*). El ayudante escrito para prevenirlo lo
+reintroduce.
+
+Con lo que la §2.5 de la capa anterior se agrava: no sólo nada obliga a poner el
+candado — **es que el candado que se recomienda está mal**. Un plugin que use
+`LuaMutex()` sin `unlock()` manual (dejando sólo el destructor) sería correcto,
+pero entonces el bloqueo dura hasta el GC, que puede ser muchísimo después.
+No hay forma correcta de usar esta clase tal como está.
+
+→ **Accionable B**: no depende de nosotros arreglarlo, pero sí condiciona
+cualquier plan que pase por escribir plugins, y es lo primero que reportaría
+upstream.
+
+### 3.8 Las dos preguntas de fondo que esta capa mueve
+
+**(a) El asignador — §7.7.12.a queda resuelto, y no a nuestro favor.**
+
+Teníamos abierto si es legítimo hacer `realloc` de libc sobre `m_pMemory`.
+Nuestro comentario afirma *"CUtlMemory is malloc-backed on Steam Linux i386"*.
+Hay ahora tres datos en contra:
+
+1. El README de la API: *"malloc & free seem to work just fine. **I still
+   recommend using Plat_Alloc, Plat_Realloc & Plat_Free** from libtier0_s.so
+   instead"*.
+2. `download.lua` usa `Plat_Alloc`/`Plat_Free`.
+3. Y el decisivo: **el SDK del propio SLSsteam modela `CUtlMemory` con el
+   asignador de tier0** (`sdk/CUtl.hpp`):
+
+```cpp
+~CUtlMemory() { if (base) Steam::Plat_Free(base); }
+bool resize(...) { mem = base ? Steam::Plat_Realloc(base, n) : Steam::Plat_Alloc(n); }
+```
+
+Eso no es una recomendación en un README: es su posición expresada en código,
+sobre la misma estructura que nosotros tocamos. Lo más probable es que en Linux
+`Plat_Alloc` sea una capa fina sobre `malloc` —lo que explicaría el *"seem to
+work just fine"*— pero apoyarse en eso es apostar a un detalle de implementación
+de Valve. → **Accionable C**: resolver `Plat_Realloc`/`Plat_Free` de
+`libtier0_s.so` por `dlsym` (ya hacemos ese baile con libcurl) y usarlos en
+`AppendIdsToVec`, con `realloc` como respaldo si no se resuelven.
+
+**(b) El offset.** §3.4. → **Accionable A**.
+
+### 3.9 Lo prestable [PRESTABLE]
+
+1. **Resolución por sitio de llamada.** `patternScan` sobre el `call` +
+   `getJmpTarget` para saltar al destino, en vez de anclar en el prólogo del
+   destino. El plugin lo usa dos veces y el `example.lua` oficial una tercera.
+   Sobrevive a un recompilado que reemita el prólogo — justo la clase de rotura
+   que nos obligó a montar el RVA feed. Como **tercer resolvedor** detrás del
+   feed y del RTTI, es barato y no rompe nada.
+2. **Derivación de ranura por el mapa de interfaces** (§3.2), más limpia que
+   escanear prólogos dentro de la vtable.
+3. **Comprobar el parámetro de salida en vez del valor de retorno** en GMRC
+   (§3.3).
+
+### 3.10 Balance
+
+El plugin **no es un reemplazo de lumalinux**: es la prueba de que los tres seams
+son alcanzables desde un script, sin ninguna de las cosas que hacen que un
+usuario pueda vivir con ello seis meses. Le faltan el shader skip, el reconcile,
+el feed de RVAs, el SafeMode, el diagnóstico y todo el despliegue.
+
+Pero técnicamente **nos ha enseñado tres cosas y nos ha reabierto dos**: la
+resolución por sitio de llamada y la derivación de ranura son mejores que las
+nuestras; la captura del puntero del paquete 0 vía `GetPackage` hace en 20 líneas
+lo que a nosotros nos cuesta 377 con offsets de build dentro; y el asunto del
+asignador y el del offset del vector quedan como trabajo real (Accionables A y C).
+
+En el otro sentido, confirma dos decisiones nuestras que costaron caro: la
+revalidación del puntero en cada ciclo del finder (su defecto #2) y el acotar la
+intervención a nuestros propios depots (§3.3).
 
 ## 4. Capa 3 — La frontera de coexistencia
 
