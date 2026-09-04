@@ -18,7 +18,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 | Capa | Qué responde | Estado |
 |---|---|---|
 | **0** | Datación y autoría de `download.lua` | **§1 — cerrada** |
-| **1** | La API de plugins como mecanismo | §2 — pendiente de redactar |
+| **1** | La API de plugins como mecanismo | **§2 — cerrada** |
 | **2** | `download.lua` como artefacto técnico | §3 — pendiente de redactar |
 | **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | §4 — pendiente de redactar |
 | **4** | Consecuencias para LumaDeck | §5 — pendiente de redactar |
@@ -228,7 +228,265 @@ en la Capa 1; aquí queda la fecha.
 
 ## 2. Capa 1 — La API de plugins como mecanismo
 
-*Pendiente de redactar.*
+Esta capa no mira el `.lua`. Mira **qué ha construido SLSsteam**: qué expone, con
+qué garantías, cuándo corre y qué pasa cuando algo va mal. Es la que decide si la
+plataforma es un sitio sensato al que mudarse o un sitio del que conviene estar
+lejos.
+
+### 2.1 Qué se publicó, y el gesto que delata la apuesta
+
+LuaJIT embebido + LuaBridge, con los plugins leídos de
+`~/.config/SLSsteam/plugins/`. La superficie publicada (`initLuaState`,
+`lua.cpp:354`) es amplia y está bien elegida:
+
+| Espacio | Contenido |
+|---|---|
+| `memhlp` | `getModule`, `patternScan`, `getJmpTarget`, `findPrologue`, `hexdump` |
+| `VFTableInfo_t` | resolución por RTTI, con `index` y `subClassIndex` |
+| `LuaHook` | `place`/`remove` + `place_lua_hook` como export de C |
+| `LuaMutex` | acceso al `recursive_mutex` del `lua_State` |
+| `curl` | `downloadString` (con y sin cabeceras) |
+| `log` | los ocho niveles + `notify*` |
+| `YAMLNode` / `CConfig` | lectura y **escritura** de la config, incl. `setAdditionalApps` |
+| SDK | `CSteamEngine`, `CUser` (`isSubscribed`, `postCallback`), `IClientApps`, `IClientUser`, `IClientUtils`, `CNetPacket` |
+| Callbacks | `configLoading`, `configLoaded`, `initialized`, `luaReload`, `Network::recvPkt`, `Network::sendPkt` |
+
+Con eso, más el FFI de LuaJIT, un plugin puede hacer literalmente cualquier cosa
+que pueda hacer SLSsteam. No es una API de extensión acotada: es acceso completo
+al proceso desde un script.
+
+**El detalle que mide el compromiso** está en `main.cpp:220`, y es una línea
+comentada:
+
+```cpp
+Lua::init(true);
+SLSAPI::init();
+//Disabled, since the Lua API can use it to find VFTables
+//Decompiler::cleanUp();
+```
+
+El descompilador — la maquinaria que SLSsteam montó para resolver vtables sin
+patrones frágiles (§7.5 del doc hermano) — **ya no se libera nunca**, y se paga la
+memoria durante toda la sesión, sólo para que los plugins puedan usarlo. Eso no
+es un experimento: es alguien reordenando el core para servir a la plataforma.
+
+### 2.2 Orden de arranque — los plugins corren los últimos
+
+De `setup()` en `main.cpp`, en orden:
+
+1. **Filtro de proceso**: `strcmp(proc.name, "steam") != 0` → se descarga.
+   SLSsteam vive **sólo** en el proceso `steam`. *(lumalinux admite además
+   `steamwebhelper`; la divergencia importa en la Capa 3, no aquí.)*
+2. Log, manejador de señales.
+3. **SafeMode**: si el hash de `steamclient.so` no está en la lista y `SafeMode: yes`
+   → aborta.
+4. `Steam::init()` → `VFTIndexes::init()` → `Patterns::init()` → `Hooks::init()`.
+5. **`Lua::init(true)`** ← aquí corren los plugins.
+6. `SLSAPI::init()`.
+
+De donde salen dos garantías firmes y una consecuencia:
+
+- **Los plugins corren después de que SLSsteam haya colocado todos sus hooks.**
+  Sobre las funciones que SLSsteam ya engancha, un plugin siempre engancha
+  *encima*.
+- **Entre plugins el orden es alfabético y determinista** — `files` es un
+  `std::set<std::filesystem::path>` precisamente para eso (`0453823`, *"Run files
+  in alphabetical order"*). Determinista, sí; pero también **manipulable**: un
+  fichero llamado `aaa.lua` corre antes que `download.lua`, siempre.
+- Si algo de los pasos 3–4 falla, `setup()` sale antes y **los plugins no corren
+  en absoluto**. Fallo cerrado, correcto.
+
+### 2.3 El ciclo de vida del estado Lua — y por qué la guarda de inclusión es estructural
+
+`Lua::init(fullReload)` sólo recrea el `lua_State` si `fullReload` es cierto. Y
+en `onFileChange` (`lua.cpp:548`):
+
+```cpp
+Lua::fireCallback(Lua::Callbacks::SLSsteam_LuaReload);
+#ifdef DEBUG
+    Lua::init(true);   // recrea el estado
+#else
+    Lua::init();       // NO lo recrea
+#endif
+```
+
+Las dos ramas se comportan de forma **cualitativamente distinta**:
+
+- **Debug**: el estado se recrea, los objetos `LuaHook` se destruyen, y su
+  destructor llama a `remove()` → `LM_UnhookCode`. Eso es lo que la
+  documentación llama *"LuaHooks get cleaned up automatically"*.
+- **Release**: el estado **no** se recrea. Los globales sobreviven, los `LuaHook`
+  siguen vivos y **los hooks siguen puestos**. `luaL_dofile` vuelve a ejecutar el
+  fichero sobre el mismo estado.
+
+Consecuencia que conviene tener muy clara: en release, **la guarda
+`if X.setup then return end` de cada plugin no es una cortesía, es lo único que
+impide que cada evento de fichero vuelva a enganchar la misma función**. Un
+plugin sin esa guarda se auto-destruye a la segunda recarga. Que la guarda esté
+en el `example.lua` oficial es, entonces, mucho más importante de lo que parece:
+es documentación de una restricción real, disfrazada de estilo.
+
+Tras cargar, `Lua::init` hace `g_config.loadSettings(false, true)` — una recarga
+completa de la config, que vuelve a disparar `configLoaded`. Es deliberado y está
+documentado: *"to allow changing it & remove any changes a previous Lua could have
+done"*. La config es el canal de comunicación entre el core y los plugins, y se
+reconstruye en cada ciclo.
+
+### 2.4 Los hooks de Lua usan exactamente nuestra primitiva [YA]
+
+`LuaHook::place()` (`hooks.cpp:205`):
+
+```cpp
+size = LM_HookCode(fn, hookFn, &tramp);
+if (!size) return nullptr;
+MemHlp::fixPICThunkCall(name.c_str(), fn, tramp);
+```
+
+`LM_HookCode` + reparación del thunk PIC. Es **la misma pareja de operaciones**
+que `LmHook::Install` + `FixPicThunk` en lumalinux — y no por casualidad: nuestro
+`FixPicThunk` es un port declarado del suyo (§1.3 del doc hermano). Un plugin y
+lumalinux parchean el binario con la misma técnica y con la misma librería.
+
+Guardas: `place()` rechaza `LM_ADDRESS_BAD` (`d648297`) y `remove()` no hace nada
+si `size == 0`. **Lo que no comprueba ninguno de los dos es si la función destino
+ya está enganchada.** Ese hueco es el que se paga en la Capa 3.
+
+### 2.5 El modelo de hilos — el mayor pie de banco de la API
+
+`stateMutex` es un `std::recursive_mutex`. SLSsteam lo bloquea él mismo en dos
+sitios: alrededor de `Lua::init` y dentro de `fireCallback`. Es decir, **los
+callbacks están protegidos por la casa**.
+
+Los hooks **no**. Un hook de Lua colocado sobre una función de Steam se ejecuta en
+**el hilo de Steam que llame a esa función**, que puede ser cualquiera y pueden ser
+varios a la vez. Por eso todo cuerpo de hook tiene que abrir con `LuaMutex()` a
+mano — y por eso `example.lua` lo explica en un comentario de cuatro líneas.
+
+**Nada lo obliga.** Un plugin que se olvide del mutex mete varios hilos en el
+mismo `lua_State`, que no es reentrante. El síntoma es corrupción, no un error
+limpio. Es el fallo más fácil de cometer y el más difícil de diagnosticar de toda
+la API.
+
+### 2.6 La recarga en caliente, reconocida como peligrosa por el propio autor
+
+El watcher (`CFileWatcher`) es un `inotify` en un **hilo propio**, con máscara
+`IN_CREATE | IN_CLOSE_WRITE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM`. Cuando
+salta, la carga del plugin —`luaL_dofile` **y la colocación de los detours**—
+ocurre **en el hilo del watcher**, mientras Steam sigue corriendo.
+
+O sea: `LM_HookCode` escribe 5 bytes sobre un prólogo que otro hilo puede estar
+ejecutando **en ese mismo instante**. El código lo admite sin adornos:
+
+```cpp
+//There is no API in linux to freeze single threads, so we just wing it
+```
+
+y la documentación lo eleva a advertencia en negrita: *"While hot reloading Luas
+is possible it's highly advised against doing so. You have been warned."*
+
+Traducción operativa: **la recarga en caliente es una herramienta de desarrollo,
+no un mecanismo de despliegue.** Cualquier diseño que dependa de dejar caer un
+`.lua` en el directorio con Steam abierto está construyendo sobre algo que el
+propio autor marca como inseguro.
+
+El otro disparador es el comando `reloadlua` del canal `/tmp/SLSsteam.API`
+(`api.cpp:143`), sólo con `API: yes`.
+
+### 2.7 Aislamiento entre plugins: ninguno [RIESGO]
+
+Todos los plugins comparten **un solo `lua_State` y un solo espacio de nombres
+global**. `Downloader` y `Example` son variables globales de la misma tabla. Un
+plugin puede leer, sobrescribir o borrar los globales de otro, incluidos sus
+punteros a trampolín.
+
+Y hay algo bastante peor, en el propio export de C:
+
+```cpp
+extern void* place_lua_hook(const int index, const void* pTarget)
+{
+    if (!LuaHook::hooks.contains(index)) return nullptr;
+    LuaHook* hook = LuaHook::hooks.at(index);
+    hook->hookFn = reinterpret_cast<lm_address_t>(pTarget);
+    return hook->place();
+}
+```
+
+`LuaHook::hooks` es un **mapa estático global**, y el índice se asigna como el
+primer entero libre desde 0 (`hooks.cpp:186`). O sea, los índices son
+`0, 1, 2, …` y **predecibles**. `place_lua_hook` acepta *cualquier* índice sin
+comprobar quién lo pide.
+
+Por tanto, un plugin puede pasar el índice de **otro** plugin, redirigirle el
+`hookFn` a una función suya y llamar a `place()` — quedándose con el hook ajeno.
+Combinado con el orden alfabético del §2.2, es un secuestro trivial y
+determinista. No hay modelo de amenazas entre plugins porque **no hay frontera
+entre plugins**: cargarlos es confiar plenamente en todos a la vez.
+
+### 2.8 Superficie de seguridad
+
+El commit de hoy `3d45b14` añade `Lua::fixPerms`: sobre el directorio y sobre
+**cada** `.lua`, si hay bits de grupo u otros los reduce a `owner_all`, y si no
+puede, **desactiva los plugins para toda la sesión**. Bien pensado y bien
+colocado.
+
+Pero conviene ser exacto sobre **qué defiende y qué no**:
+
+- **Defiende** contra otros usuarios del sistema y contra ficheros dejados con
+  permisos laxos.
+- **No defiende** contra nada que corra **como el propio usuario**. Cualquier
+  aplicación, script, instalador o juego con permisos de escritura en
+  `~/.config/SLSsteam/plugins/` obtiene **ejecución de código nativo dentro del
+  proceso de Steam**, vía FFI, sin sandbox, y **en caliente** — el `inotify` lo
+  carga sin reiniciar nada.
+
+Con `Plugins: no` (el defecto) los ficheros no se ejecutan, y eso es lo correcto.
+Pero merece anotarse que **el resto de la maquinaria arranca igualmente**: el
+`lua_State` se crea, los bindings se registran, el directorio se crea, se le
+arreglan los permisos y **el watcher se pone a correr**. La puerta está sólo en
+`runLua` (`lua.cpp:558`). No es una vulnerabilidad; sí es una superficie viva en
+usuarios que creen tener la función apagada.
+
+### 2.9 Lo que la API no garantiza
+
+Ordenado por lo que más nos afectaría si algún día nos apoyáramos en ella:
+
+| Ausencia | Consecuencia |
+|---|---|
+| **Sin versionado** de la API | No hay forma de que un plugin declare contra qué versión se escribió, ni de que SLSsteam lo rechace. Rompe en silencio. |
+| **Sin estabilidad demostrada** | En nueve días quitó y devolvió sus propios exports dos veces (§7.9.11, §7.9.12). Un plugin del 30-ago está roto el 31. |
+| **Sin aislamiento** entre plugins | §2.7. |
+| **Sin dependencias ni orden declarable** | Sólo el alfabético. |
+| **Sin contrato de desmontaje en release** | `luaReload` se dispara, pero los hooks no se quitan. El plugin es responsable de su propia idempotencia. |
+| **Sin comprobación de doble hook** | §2.4 → Capa 3. |
+| **Sin aislamiento de fallos** | Una excepción en un *callback* se captura y se registra (`fireCallback`); un error al **cargar** el fichero se registra y se sigue. Pero un fallo dentro de un **hook** ya colocado corre en un hilo de Steam y no lo captura nadie. |
+
+### 2.10 Balance de la capa
+
+Lo que hay, dicho con precisión: **un mecanismo de extensión potente, bien
+integrado en el arranque, con el core reordenado para servirlo — y sin ninguna de
+las garantías que uno pediría antes de apoyar un producto encima.** Sin
+versionado, sin aislamiento, sin contrato de desmontaje, con recarga en caliente
+que el propio autor desaconseja por escrito, y con un historial de nueve días en
+el que la superficie pública cambió dos veces.
+
+Eso no es una crítica: para lo que la API dice ser —*"plugins can run arbitrary
+code! So only run plugins you trust"*— es coherente. La confianza se asume
+completa desde el principio, y por eso no hay fronteras que diseñar.
+
+Lo relevante para nosotros es la conclusión operativa, y esta capa ya la sostiene
+sola, antes de mirar el `.lua`:
+
+> **La API es un sitio excelente para prototipar y un sitio malo para vivir.**
+> Escribir un plugin es barato y reversible; mover lumalinux a plugin sería atar
+> la instalación entera a una plataforma sin contrato de estabilidad. El §7.9.13
+> del doc hermano decía *"no planificar contra esta API hasta que haya release"*.
+> La release ya está. La lectura del mecanismo dice: **haber release no es lo
+> mismo que haber contrato**, y lo que falta es lo segundo.
+
+Queda una pieza [PRESTABLE] que no depende de nada de lo anterior y que conviene
+llevarse: `MemHlp::patternScan` + `getJmpTarget` sobre un **sitio de llamada** en
+lugar de un prólogo. Se desarrolla en la Capa 2, donde el `.lua` la usa tres
+veces.
 
 ## 3. Capa 2 — `download.lua` como artefacto técnico
 
