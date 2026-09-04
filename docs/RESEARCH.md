@@ -1824,8 +1824,27 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
 - **Trigger**: the re-enabled `keys.txt` watcher reloads the KeyStore and *arms*
   the reconcile (it never calls Steam itself); the **package-0 finder** fires it
   on its own thread **after** re-injecting the new depots (correct ordering).
-- **Hang**: none observed. The cold-cache PICS-re-request hang doesn't apply — the
-  finder injects after login (warm cache), exactly moon's prediction.
+- **Hang**: none observed. ~~The cold-cache PICS-re-request hang doesn't apply —
+  the finder injects after login (warm cache), exactly moon's prediction.~~
+  **[MEDIDO 2026-09-04 — la explicación de la caché caliente NO se sostiene.]**
+  Se ejecutó el estrés dirigido (`tools/experiment_cold_cache.sh`, tres brazos:
+  caché caliente + reconcile, caché **fría** + reconcile, y un segundo disparo
+  consecutivo) sobre el cliente `1788400362`, inyectando ids de depot
+  **inexistentes** — que nunca resuelven appinfo, exactamente la condición del
+  cuelgue de OST. **En los tres, `APPENDED` y `Reconcile: broadcast` caen en el
+  mismo segundo y la UI responde con normalidad.**
+  Y el dato que desmonta el argumento: `AppIdVec` sale `size=196 alloc=202`
+  **idéntico en frío y en caliente** — el conjunto de licencias viene del
+  servidor, no del `appcache`. Así que la caché caliente **no es lo que nos
+  salva**; no nos colgamos tampoco en frío, por un motivo que sigue sin
+  identificarse. Sigue siendo correcto que no nos cuelga; lo que era incorrecto
+  es el *porqué*.
+  **Límites**: disparo sintético (no el flujo real de añadir un juego), un solo
+  build, y sobre todo — `Reconcile: broadcast` retornando sólo prueba que
+  `NotifyLicensesUpdated` volvió, **no** que `ProcessPendingLicenseUpdates`
+  terminase: ese procesado es asíncrono y podría atascarse sin que el log lo vea.
+  Detalle completo en
+  [`slssteam-plugins-analysis.md`](slssteam-plugins-analysis.md) §3.4.2.
 
 **Did the hang matter for us?** No. We over-weighted it. moon's own note: the hang
 is a cold-cache/early-inject problem and lumalinux (finder, post-login) "most
