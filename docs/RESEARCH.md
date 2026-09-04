@@ -1824,26 +1824,25 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
 - **Trigger**: the re-enabled `keys.txt` watcher reloads the KeyStore and *arms*
   the reconcile (it never calls Steam itself); the **package-0 finder** fires it
   on its own thread **after** re-injecting the new depots (correct ordering).
-- **Hang**: none observed. ~~The cold-cache PICS-re-request hang doesn't apply —
-  the finder injects after login (warm cache), exactly moon's prediction.~~
-  **[MEDIDO 2026-09-04 — la explicación de la caché caliente NO se sostiene.]**
-  Se ejecutó el estrés dirigido (`tools/experiment_cold_cache.sh`, tres brazos:
-  caché caliente + reconcile, caché **fría** + reconcile, y un segundo disparo
-  consecutivo) sobre el cliente `1788400362`, inyectando ids de depot
-  **inexistentes** — que nunca resuelven appinfo, exactamente la condición del
-  cuelgue de OST. **En los tres, `APPENDED` y `Reconcile: broadcast` caen en el
-  mismo segundo y la UI responde con normalidad.**
-  Y el dato que desmonta el argumento: `AppIdVec` sale `size=196 alloc=202`
-  **idéntico en frío y en caliente** — el conjunto de licencias viene del
-  servidor, no del `appcache`. Así que la caché caliente **no es lo que nos
-  salva**; no nos colgamos tampoco en frío, por un motivo que sigue sin
-  identificarse. Sigue siendo correcto que no nos cuelga; lo que era incorrecto
-  es el *porqué*.
-  **Límites**: disparo sintético (no el flujo real de añadir un juego), un solo
-  build, y sobre todo — `Reconcile: broadcast` retornando sólo prueba que
-  `NotifyLicensesUpdated` volvió, **no** que `ProcessPendingLicenseUpdates`
-  terminase: ese procesado es asíncrono y podría atascarse sin que el log lo vea.
-  Detalle completo en
+- **Hang**: none observed. The cold-cache PICS-re-request hang doesn't apply — the
+  finder injects after login (warm cache), exactly moon's prediction.
+  **[AMPLIADO 2026-09-04 — la inmunidad es MÁS ancha que este párrafo.]** Se
+  ejecutó el estrés dirigido que este razonamiento no cubría
+  (`tools/experiment_cold_cache.sh`, cliente `1788400362`): tres brazos — caché
+  caliente + reconcile, caché **fría** + reconcile, y un segundo disparo
+  consecutivo — inyectando ids de depot **inexistentes**, que nunca resuelven
+  appinfo. **En los tres, `APPENDED` y `Reconcile: broadcast` caen en el mismo
+  segundo y la UI responde con normalidad.** O sea: **tampoco se cuelga en frío**,
+  así que el argumento de la caché caliente es suficiente pero no necesario —
+  coherente con la conclusión de más abajo (*"lo sobrevaloramos"*, y OST publica
+  su anti-cuelgue desactivado **y funciona en campo**: LuaToolsLinux lo usa y el
+  port a Windows `madoiscool/BetterSteamTools` también, sin cuelgues).
+  Dato lateral: `AppIdVec` sale `size=196 alloc=202` **idéntico en frío y en
+  caliente** — el conjunto de licencias viene del servidor, no del `appcache`.
+  **Límites**: disparo sintético (la verificación con juego real de 2026-07-20,
+  más abajo, es mejor evidencia), un solo build, y `Reconcile: broadcast`
+  retornando sólo prueba que `NotifyLicensesUpdated` volvió, **no** que
+  `ProcessPendingLicenseUpdates` terminase (es asíncrono). Detalle en
   [`slssteam-plugins-analysis.md`](slssteam-plugins-analysis.md) §3.4.2.
 
 **Did the hang matter for us?** No. We over-weighted it. moon's own note: the hang

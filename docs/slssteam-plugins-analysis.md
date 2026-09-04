@@ -684,8 +684,20 @@ nunca — relevante para el Accionable C.
 
 #### 3.4.2 Experimento 2 — forzar la caché fría: EJECUTADO (2026-09-04)
 
-**Resultado: el cuelgue no se reproduce. Y el motivo documentado por el que
-estamos a salvo no es el correcto.**
+**Resultado: el cuelgue no se reproduce — confirmando lo que `RESEARCH.md` §18
+ya concluía.**
+
+> **[CORRECCIÓN]** Una versión anterior de esta sección presentaba el cuelgue de
+> OST como un riesgo vivo y decía que la explicación de §18 "no se sostiene".
+> Ambas cosas estaban mal calibradas. §18 **ya concluye** *"¿nos importó el
+> cuelgue? No. Lo sobrevaloramos […] OST incluso publica su anti-cuelgue
+> desactivado"*, y trae una **verificación en vivo con un juego real**
+> (2026-07-20: 5 depots, 272 MB, `2 mounted depots`, app lanzada, sin reinicio)
+> que es mejor evidencia que este disparo sintético. Además OST **funciona en
+> campo** — LuaToolsLinux lo usa y el port a Windows
+> `madoiscool/BetterSteamTools` también, sin cuelgues. Lo único que aporta este
+> experimento es el brazo de **caché fría**, que el razonamiento de §18 no
+> cubría.
 
 Entorno: codespace SteamOS-like, cliente Steam `1788400362`, lumalinux v0.18.2
 (`3/3 hooks active`, `Reconcile: installed`, SLS-ach aplicado). Disparo
@@ -709,9 +721,9 @@ el cuelgue no nos afecte…
 > *"The cold-cache PICS-re-request hang doesn't apply — the finder injects after
 > login (**warm cache**)."*
 
-…**no es lo que nos está salvando**, porque tampoco se cuelga en frío. Estamos a
-salvo, pero **no por el motivo escrito**. Eso importa más que el resultado en sí:
-una explicación equivocada lleva a vetar cambios por razones falsas más adelante.
+…es **suficiente pero no necesario**: tampoco se cuelga en frío. El párrafo no
+es falso (en producción la caché SÍ está caliente); lo que muestra la medición es
+que la inmunidad es más ancha de lo que ese razonamiento implica.
 
 **Límites de la medición, para no sobrevender el resultado:**
 
@@ -725,12 +737,13 @@ una explicación equivocada lleva a vetar cambios por razones falsas más adelan
 - Un solo build de Steam, un solo contenedor, sin instalación real, así que
   nunca se observó el desenlace aguas abajo.
 
-**Veredicto sobre el Accionable A**: se **rebaja**, no se cierra. Pasa de *"riesgo
-latente por confirmar"* a **"no reproducible bajo estrés dirigido; la explicación
-oficial no se sostiene"**. Adoptar el diseño de moon (appids en `+0x38`, depots en
-`+0x48`) **no es urgente**: no hay evidencia de daño. Lo que sí conviene es
-**corregir la explicación en `RESEARCH.md` §18**, porque hoy afirma una causa que
-la medición no respalda.
+**Veredicto sobre el Accionable A: CERRADO.** Tres líneas de evidencia
+independientes dicen lo mismo — la verificación en vivo con juego real de §18, el
+hecho de que OST funcione en campo con su anti-cuelgue desactivado (LuaToolsLinux
+y `BetterSteamTools`), y este estrés dirigido en frío. Adoptar el diseño de moon
+(appids en `+0x38`, depots en `+0x48`) **no procede**: sería tocar la ruta de
+instalación más crítica, sin validación en CI de esos offsets y creando colisión
+con el plugin en `+0x48`, todo ello **sin ningún daño medido que lo justifique**.
 
 #### 3.4.3 Diseño original del experimento (referencia)
 
