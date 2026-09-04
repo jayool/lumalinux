@@ -1009,31 +1009,55 @@ que enfaticé.
 `main.cpp` marca como el **conjunto crítico**: si DepotKey o GMRC no están
 activos, una descarga forzada no puede completarse.
 
-### 4.4 Qué pasa con dos detours sobre la misma función — y lo que no sé
+### 4.4 Qué pasa con dos detours sobre la misma función
+
+> **[CORRECCIÓN — 2026-09-04]** Esta sección afirmaba que *"ninguno de los dos
+> comprueba si el destino ya está enganchado"* y que el encadenado era de
+> *"resultado indeterminado, nunca probado"*. **Las dos cosas son falsas para
+> lumalinux**, y se sostenían sobre no haber leído `src/lmhook.cpp`. Reescrita.
 
 Los dos lados usan `LM_HookCode` de libmem más una reparación de thunk PIC
-(§2.4). Ninguno comprueba si el destino ya está enganchado.
+(§2.4). **El plugin no comprueba si el destino ya está enganchado. lumalinux
+sí, y lo lleva haciendo desde antes de que existieran los plugins.**
 
-Encadenar detours **no es automáticamente un fallo**. En el papel, si Steam llama
-a la función: salta al hook del plugin → éste llama a su trampolín → que contiene
-el `jmp` de lumalinux relocalizado → salta al hook de lumalinux → que llama a su
-trampolín → que contiene el prólogo original → vuelve al cuerpo de la función.
-Funcionalmente incluso quedaría coherente: en `GetBinary` ganaría la clave del
-plugin, en GMRC ganaría el código de lumalinux.
+`LmHook::Install` (`src/lmhook.cpp:129`) lee el primer byte del destino **antes**
+de llamar a `LM_HookCode`, precisamente porque después ese byte es siempre `0xE9`
+(el nuestro):
 
-**Pero eso depende de que libmem relocalice correctamente un prólogo que ya es un
-detour ajeno, y eso no está validado por nadie.** El caso normal que libmem
-maneja es reubicar instrucciones reales; reubicar un `jmp rel32` que apunta fuera
-del módulo es un caso de borde. Encima, nuestra `FixPicThunk` busca un
-`call get_pc_thunk` dentro de los bytes robados: si lo robado es el `jmp` de otro,
-no encuentra nada y devuelve `false` — inofensivo, pero es señal de que estamos
-operando fuera de las suposiciones del código.
+```cpp
+bool already_hooked = (*reinterpret_cast<volatile uint8_t*>(target) == 0xE9);
+```
 
-**Segunda corrección a mi lectura inicial:** dije que este escenario era un crash.
-No lo sé, y afirmarlo era ir más lejos de lo que sostiene la evidencia. Lo
-honesto es: **resultado indeterminado, plausiblemente funcional, nunca probado, y
-sin ninguna de las dos partes comprobando nada.** Eso ya es razón suficiente para
-no dejarlo al azar, pero no es lo mismo que un fallo garantizado.
+y ramifica según el tipo de prólogo, que son mutuamente excluyentes:
+
+| Prólogo encontrado | Rama | Qué hace |
+|---|---|---|
+| PIC normal (`E8 …`) | `FixPicThunk` | Reescribe el `call get_pc_thunk` robado |
+| Detour ajeno (`E9 …`) | `RelocateChainedJmp` | Recalcula el `rel32` copiado al trampolín |
+
+`RelocateChainedJmp` (`lmhook.cpp:97`) resuelve exactamente el caso de borde que
+esta sección daba por no validado: libmem copia los 5 bytes del detour ajeno
+**verbatim** al trampolín sin ajustar el desplazamiento, así que lumalinux lo
+corrige él mismo —
+
+    new_rel32 = old_rel32 + (O - T)
+
+— con una guarda defensiva sobre `tramp[0]` (si los bytes originales no empiezan
+por `0xE9`, no toca nada) y, según el comentario del propio fichero, verificado
+con aritmética **y ejecución real** antes de integrarse.
+
+Es decir: **la reubicación del detour ajeno no se delega en libmem.** La cadena
+resultante es la que describía el párrafo original y funciona: Steam → hook del
+plugin → su trampolín → `jmp` de lumalinux relocalizado → hook de lumalinux → su
+trampolín → prólogo original → cuerpo. En `GetBinary` gana la clave del plugin;
+en GMRC gana el código de lumalinux.
+
+**Lo que queda abierto no es la mecánica: es la contabilidad.** Cuando esto
+ocurre, `Status::Outcome` (`src/status.hpp:9`) sólo sabe decir `INSTALLED`,
+`FAILED` o `DISABLED`, así que `status.json` registra `installed` a secas. Ni el
+usuario, ni LumaDeck, ni un log de soporte pueden distinguir *"lo instalé yo
+solo"* de *"lo instalé detrás de otro"*. → **Accionable D**, que por tanto **no
+es "detectar": es "reportar"**.
 
 ### 4.5 La ironía: nuestras dos mejoras de robustez desactivan el fallo seguro
 
@@ -1066,8 +1090,19 @@ encima del plugin sin enterarnos. Para DepotKey pasa lo mismo, con el matiz de
 que su ruta RTTI *sí* falla (busca la ranura comparando prólogos, que estarían
 parcheados), pero el feed la salva igual.
 
-La conclusión no es retirar el feed. Es que **el feed necesita la comprobación que
-el patrón nos daba gratis**. → **Accionable D**.
+La conclusión no es retirar el feed, y tampoco es la que escribí aquí primero
+(*"el feed necesita la comprobación que el patrón nos daba gratis"*): **esa
+comprobación ya existe** (§4.4). Cuando el feed acierta, `Install` detecta el
+detour ajeno y encadena correctamente. Lo que no existe es el **nombre**: el
+fallo seguro no se recupera avisando, se recupera pudiendo decir *"instalado,
+pero compartido"*. → **Accionable D**.
+
+Y ojo con el caso simétrico, que D **no** arregla: feed ausente + patrón fallando
+contra un prólogo ya parcheado. Ahí ni siquiera llegamos a `Install`, así que no
+hay nada que reportar — se reporta `failed`, que es lo que dispara la cadena de
+§5.1. Ese caso lo arreglan **J y K** (§7.7), quitando la dependencia del prólogo.
+**D y J/K son las dos mitades**: D nombra lo que sí resolvemos; J/K resuelven lo
+que hoy se nos escapa.
 
 ### 4.6 El paquete 0: hoy no colisionan — y el Accionable A crearía la colisión
 
@@ -1143,8 +1178,8 @@ Steam, y nos haría responsables de un `.lua` de terceros que no podemos auditar
 
 | # | Acción | Prioridad | Nota |
 |---|---|---|---|
-| **D** | **Detección de doble enganche antes de instalar.** Antes de `LmHook::Install`, inspeccionar el destino: si el primer byte ya es un salto incondicional cuyo destino cae fuera del mapeo de `steamclient.so`, alguien ha llegado antes. Registrarlo, **no instalar**, y marcar el hook como `FOREIGN` en `status.json` (estado nuevo, distinto de `FAILED`). | **Alta** | Recupera el fallo seguro que el RVA feed nos quitó (§4.5). Es la contrapartida honesta de la robustez que ganamos. |
-| **E** | **Que LumaDeck sepa distinguir `FOREIGN` de `FAILED`.** Hoy un hook no instalado se traduce a *"Steam build not supported"* — el mismo mensaje falso que dio BuildDep en julio. Con D en su sitio, el mensaje correcto es *"otro componente ha enganchado esta función"*. | **Alta** | Sin E, D sólo cambia un mensaje alarmante por otro. |
+| **D** | **Reportar el enganche compartido.** La detección **ya existe** (`lmhook.cpp:138`) y el encadenado **ya funciona** (`RelocateChainedJmp`, §4.4). Falta el estado: añadir `FOREIGN` a `Status::Outcome` (`status.hpp:9`) → `"foreign"` en `status.json`, emitido desde `LmHook::Install` cuando `already_hooked` es cierto. **No** dejar de instalar: instalar encadenado es el comportamiento correcto y probado. | **Alta** | Recupera el fallo seguro que el RVA feed nos quitó (§4.5), pero **nombrando**, no absteniéndose. Un único punto de emisión ⇒ vale para los siete hooks y para los que vengan. |
+| **E** | **Que LumaDeck sepa distinguir `foreign` de `failed`.** Hoy un hook no instalado se traduce a *"Steam build not supported"* — el mismo mensaje falso que dio BuildDep en julio. Con D en su sitio, el mensaje correcto es *"otro componente ha enganchado esta función"*. Detalle en **E′** (§5.6). | **Alta** | Sin E, D sólo cambia un mensaje alarmante por otro. |
 | **A′** | **Dependencia dura**: si se ejecuta el Accionable A (mover a `+0x48`), el Accionable C (asignador de tier0) va antes o a la vez. | Media | §4.6 |
 | **F** | **Regla de diseño**: LumaDeck no escribe en el directorio de plugins de SLSsteam. Nunca, ni para instalar `download.lua` a petición del usuario. | Media | §4.8 |
 
@@ -1463,7 +1498,7 @@ Todo lo que sale de esta investigación, en un sitio:
 
 | # | Acción | Dónde | Prioridad |
 |---|---|---|---|
-| **D** | Detección de doble enganche antes de instalar; estado `FOREIGN` en `status.json` | lumalinux | **Crítica** |
+| **D** | Estado `foreign` en `status.json`, emitido desde `LmHook::Install` (la detección y el encadenado ya existen, §4.4) | lumalinux | **Crítica** |
 | **E′** | `FOREIGN` no cuenta como `critical_failed` → sin `action: "downgrade"`, copy propio | LumaDeck | **Crítica** |
 | **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | Alta |
 | **I** | Plugin de diagnóstico para medir A y C sin tocar producción | herramienta | Alta |
@@ -1474,10 +1509,29 @@ Todo lo que sale de esta investigación, en un sitio:
 | **G** | Refrescar el snapshot embebido de `slssteam_schema.py` | LumaDeck | Media |
 | **F** | Regla de diseño: ni escribir plugins, ni activarlos, ni desactivarlos | LumaDeck (`DESIGN.md`) | Media |
 | **3ª** | Resolución por sitio de llamada como tercer resolvedor, tras feed y RTTI | lumalinux | Baja |
+| **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** |
+| **K** | Conectar el `depotkey_rtti` ya publicado (`ResolveVtableSlot`, hoy código muerto) | lumalinux | **Alta** |
+| **3** | Subir el ancla de cadena a runtime en los otros cuatro hooks | lumalinux | Media |
 
-**Orden:** D + E′ juntos y primero (quitan la oferta de degradar Steam). Luego B
+**J, K y 3 vienen de §7.7 y son la otra mitad de D** (§4.5): D nombra el
+enganche compartido cuando lo resolvemos; J/K/3 hacen que lo resolvamos también
+sin chuleta. **J va primero de las tres**, y no por GMRC: el walk-back es el
+último metro de *toda* la familia de anclaje por cadena, así que arreglarlo antes
+hace que los cuatro hooks del punto 3 nazcan ya tolerantes al prólogo — y
+hacerlo después obliga a repararlos uno a uno.
+
+**Orden:** D + E′ juntos y primero (quitan la oferta de degradar Steam), y son
+baratos porque D es un valor de enum en el único punto por el que pasan todos los
+hooks. Luego **J → K → 3**, que es donde se quita la fragilidad de raíz. Luego B
 e I, que son baratos y desbloquean. Después A/C con su dependencia, y H, G, F
 cuando toque.
+
+**Criterio, corregido:** endurecer un localizador **no** se decide por si alguien
+hookea hoy esa función. `download.lua` solapa hoy en dos (§4.3), pero eso es una
+foto: el censo cambia el día que alguien publique otro `.lua`, sin avisar. Un
+localizador que depende del prólogo es frágil por sí mismo (§7.1, fila 1) y se
+arregla porque está mal. El reparto de hoy sólo fija el **orden**, nunca el
+alcance.
 
 ### 6.7 Cierre
 
@@ -1710,9 +1764,22 @@ Y la conclusión no pide inventar nada:
 
 | Prioridad | Qué | Estado |
 |---|---|---|
-| 1 | **J** — que el walk-back falle cerrado | Bug propio, hoy |
+| 1 | **J** — que el walk-back falle cerrado | Bug propio, hoy · **cimiento del punto 3** |
 | 2 | **K** — conectar el `depotkey_rtti` ya publicado | ~30 líneas, ya validado por CI |
 | 3 | Subir el ancla de cadena a runtime en los otros cuatro hooks | Las cadenas ya están identificadas en `derive_patterns.py`; el código de referencia es `gmrc_xref.cpp` |
 | 4 | Familia 3 (sitio de llamada) donde no haya cadena usable | **Requiere §7.6 primero** |
 
 *No falta técnica: falta haberla puesto en primera fila.*
+
+**Y esta tabla es la mitad de resolución del Accionable D** (§4.5), no una lista
+paralela. D hace que un enganche compartido se pueda **nombrar**; J, K y el punto
+3 hacen que se pueda **resolver** aunque no haya chuleta. Los dos casos de §5.1
+—feed presente y feed ausente— se cierran uno con cada mitad.
+
+Nota sobre el orden interno: **J antes que el punto 3**, porque de la cadena
+`frase → GOT → sitio de uso → caminar atrás → entrada` sólo el último paso
+depende del prólogo. Arreglado ahí una vez, los cuatro hooks que adopten el
+ancla de cadena lo heredan. La alternativa, cuando caminar atrás no valga, ya
+está escrita en `package_zero_finder.cpp:96`: anclarse en el trozo de prólogo que
+**sobrevive** al detour en vez de en el que lo recibe — resuelto en julio para
+nuestro propio detour, y aplicable igual a uno ajeno porque ambos miden 5 bytes.
