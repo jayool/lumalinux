@@ -138,17 +138,37 @@ PkgProbe.dumpVec = function(label, vec)
     log.info(string.format("  %s  [%s]%s", label, table.concat(parts, ", "), extra))
 end
 
+-- Volcado hexadecimal propio. NO usa memhlp.hexdump: ese binding espera un
+-- `const void*` de LuaBridge y un cdata de FFI no se convierte (falla con
+-- "The lua object can't be cast to desired type"). Leyendo los bytes nosotros
+-- no dependemos de la capa de bindings.
+PkgProbe.hexdump = function(ptr, size)
+    local p = ffi.cast("const uint8_t*", ptr)
+    local lines = {}
+    for base = 0, size - 1, 16 do
+        local hex, asc = {}, {}
+        for i = 0, 15 do
+            if base + i < size then
+                local b = p[base + i]
+                hex[#hex + 1] = string.format("%02x", b)
+                asc[#asc + 1] = (b >= 0x20 and b < 0x7f) and string.char(b) or "."
+            else
+                hex[#hex + 1] = "  "
+                asc[#asc + 1] = " "
+            end
+        end
+        lines[#lines + 1] = string.format("    +%04x  %s  |%s|",
+            base, table.concat(hex, " "), table.concat(asc))
+    end
+    return table.concat(lines, "\n")
+end
+
 PkgProbe.dump = function(pkgId, pPkg)
     log.info(string.format("=== PKGPROBE package %u @ %s ===", pkgId, tostring(pPkg)))
 
     -- El hexdump es la EVIDENCIA; los campos parseados son la interpretacion.
     -- Si el layout hubiera derivado, los campos daran basura y el hexdump lo dira.
-    local ok, hd = pcall(memhlp.hexdump, ffi.cast("void*", pPkg), 0x60)
-    if ok and hd then
-        log.info("  raw +0x00..+0x5F:\n" .. tostring(hd))
-    else
-        log.warn("  hexdump no disponible: " .. tostring(hd))
-    end
+    log.info("  raw +0x00..+0x5F:\n" .. PkgProbe.hexdump(pPkg, 0x60))
 
     PkgProbe.dumpVec("appIds   (+0x38)", pPkg.appIds)
     PkgProbe.dumpVec("depotIds (+0x48)", pPkg.depotIds)
