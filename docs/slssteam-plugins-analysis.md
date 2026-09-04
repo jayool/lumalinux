@@ -20,7 +20,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 | **0** | Datación y autoría de `download.lua` | **§1 — cerrada** |
 | **1** | La API de plugins como mecanismo | **§2 — cerrada** |
 | **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
-| **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | §4 — pendiente de redactar |
+| **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | **§4 — cerrada** |
 | **4** | Consecuencias para LumaDeck | §5 — pendiente de redactar |
 | **5** | Escenarios estratégicos y señales de vigilancia | §6 — pendiente de redactar |
 
@@ -773,7 +773,229 @@ intervención a nuestros propios depots (§3.3).
 
 ## 4. Capa 3 — La frontera de coexistencia
 
-*Pendiente de redactar.*
+Esta es la capa con consecuencias operativas inmediatas. Las anteriores describen;
+esta obliga a **retirar una afirmación publicada** y deja accionables con usuarios
+detrás.
+
+### 4.1 Lo que §5 del doc hermano afirmaba, y por qué deja de valer
+
+`slssteam-analysis.md` §5 se titula, literalmente, *"los conjuntos de hooks son
+**disjuntos** (la sección que importa)"*, y sostiene:
+
+> *"Lo más valioso del análisis: **verificar que SLSsteam y lumalinux no tocan
+> ninguna de las mismas funciones**."*
+
+con una tabla de cinco filas, todas *"No"*, y un cierre en tres niveles: loader
+distinto, superficies disjuntas, gate de versión compartido.
+
+**Esa afirmación sigue siendo cierta para el core de SLSsteam y falsa para el
+conjunto SLSsteam + plugins.** No es que se haya quedado desactualizada: es que
+el objeto que describía ha cambiado de forma. Hasta hoy, "SLSsteam" era un
+conjunto cerrado de hooks que se podía enumerar leyendo su código. Desde hoy,
+**"SLSsteam" es un conjunto abierto**: lo que engancha depende de qué ficheros
+haya en el directorio de plugins del usuario, que no es auditable desde nuestro
+lado ni estable en el tiempo.
+
+La disjunción no se ha roto por un hook nuevo. Se ha roto porque **ya no se puede
+verificar leyendo un repositorio**.
+
+→ §5 del doc hermano queda **[SUPERSEDED por esta sección]** en su alcance: vale
+para el core, no para el sistema desplegado.
+
+### 4.2 El orden de carga no es una incógnita — ya lo medimos
+
+Aquí está lo que hace esta capa sólida en vez de especulativa. **Este escenario ya
+ocurrió en producción**, y está documentado en nuestro propio `main.cpp:191`:
+
+> *"BuildDep is OFF by default since SLSsteam 20260714 hooks `BuildDepotDependency`
+> itself (for its `ManifestIds` / `DepotBlacklist` features) and **loads first
+> (LD_AUDIT before our LD_PRELOAD), overwriting the prologue**. Our pattern scan
+> then can't match and reports a false FAILED, which LumaDeck used to surface as
+> 'Steam build not supported'."*
+
+De ahí salen tres hechos medidos, no deducidos:
+
+1. **El orden es determinista y conocido: SLSsteam primero, lumalinux después.**
+   `LD_AUDIT` corre antes que `LD_PRELOAD`. Y como los plugins se ejecutan al
+   final del `setup()` de SLSsteam (§2.2), **los plugins también llegan antes que
+   nosotros**.
+2. **El síntoma del solapamiento fue un fallo seguro**: nuestro escaneo de
+   patrones no encontró el prólogo —porque ya estaba parcheado— y el hook no se
+   instaló. Nadie se rompió.
+3. **Pero el fallo seguro tuvo un coste de producto**: se reportó como `FAILED`, y
+   LumaDeck lo tradujo a *"Steam build not supported"*. Un mensaje alarmante y
+   falso.
+
+Y la respuesta que dimos entonces fue la correcta y sigue siéndolo: **ceder el
+seam**. BuildDep se apagó por defecto y el pinning se delegó en `ManifestIds` del
+core. Ese es el precedente que gobierna esta capa entera.
+
+**Corrección a una lectura anterior mía en esta misma investigación.** En la
+primera pasada dije que el orden peligroso era *"lumalinux primero, plugin
+después"* y el benigno el inverso. El precedente de BuildDep dice que **el que
+ocurre en la realidad es siempre el segundo**: nosotros llegamos los últimos. El
+mecanismo que describí era correcto; la dirección relevante es la contraria a la
+que enfaticé.
+
+### 4.3 El solapamiento real, hoy
+
+| Función | Core SLSsteam | `download.lua` | lumalinux | Estado |
+|---|---|---|---|---|
+| `BuildDepotDependency` | **Sí** | no | apagado por defecto | **Resuelto** (cedido, 2026-07) |
+| `CConfigStore::GetBinary` (claves) | no | **Sí** | **Sí** | **Solapa** |
+| `GetManifestRequestCode` | no | **Sí** | **Sí** | **Solapa** |
+| `GetPackage` / paquete 0 | no | **Sí** (`+0x48`) | finder (`+0x38`) | Ver §4.6 |
+| `GetShaderCacheDepot` | no | no | **Sí** | Limpio |
+| `NotifyLicensesUpdated` | no | no | **Sí** | Limpio |
+| Ownership / tickets / DLC / IPC | **Sí** | no | no | Limpio (§5 doc hermano) |
+
+**Dos funciones solapan de verdad**, y son justo las dos que nuestro
+`main.cpp` marca como el **conjunto crítico**: si DepotKey o GMRC no están
+activos, una descarga forzada no puede completarse.
+
+### 4.4 Qué pasa con dos detours sobre la misma función — y lo que no sé
+
+Los dos lados usan `LM_HookCode` de libmem más una reparación de thunk PIC
+(§2.4). Ninguno comprueba si el destino ya está enganchado.
+
+Encadenar detours **no es automáticamente un fallo**. En el papel, si Steam llama
+a la función: salta al hook del plugin → éste llama a su trampolín → que contiene
+el `jmp` de lumalinux relocalizado → salta al hook de lumalinux → que llama a su
+trampolín → que contiene el prólogo original → vuelve al cuerpo de la función.
+Funcionalmente incluso quedaría coherente: en `GetBinary` ganaría la clave del
+plugin, en GMRC ganaría el código de lumalinux.
+
+**Pero eso depende de que libmem relocalice correctamente un prólogo que ya es un
+detour ajeno, y eso no está validado por nadie.** El caso normal que libmem
+maneja es reubicar instrucciones reales; reubicar un `jmp rel32` que apunta fuera
+del módulo es un caso de borde. Encima, nuestra `FixPicThunk` busca un
+`call get_pc_thunk` dentro de los bytes robados: si lo robado es el `jmp` de otro,
+no encuentra nada y devuelve `false` — inofensivo, pero es señal de que estamos
+operando fuera de las suposiciones del código.
+
+**Segunda corrección a mi lectura inicial:** dije que este escenario era un crash.
+No lo sé, y afirmarlo era ir más lejos de lo que sostiene la evidencia. Lo
+honesto es: **resultado indeterminado, plausiblemente funcional, nunca probado, y
+sin ninguna de las dos partes comprobando nada.** Eso ya es razón suficiente para
+no dejarlo al azar, pero no es lo mismo que un fallo garantizado.
+
+### 4.5 La ironía: nuestras dos mejoras de robustez desactivan el fallo seguro
+
+Este es el hallazgo de la capa, y es contraintuitivo.
+
+En 2026-07, con BuildDep, el solapamiento se resolvió solo: SLSsteam parcheó el
+prólogo, **nuestro escaneo de patrones dejó de encontrarlo**, y el hook no se
+instaló. Feo en el log, seguro en la práctica. Ese fallo seguro **era una
+propiedad accidental de resolver por patrón de bytes**: si alguien te pisa el
+prólogo, no te reconoces y te retiras.
+
+Desde entonces hemos añadido dos resolvedores **deliberadamente independientes
+del prólogo**, precisamente para dejar de rompernos cuando Steam recompila:
+
+- **El RVA feed**, que resuelve por hash del binario → dirección publicada desde CI.
+- **La derivación por RTTI**, que llega por la vtable.
+
+Y ahí está la ironía: **ambos siguen acertando aunque el prólogo esté parcheado
+por otro.** El feed devuelve la dirección igual; la vtable sigue apuntando a la
+función igual. Es decir:
+
+> **Justo las dos piezas que construimos para no rompernos son las que convierten
+> "no me instalo, fallo seguro" en "me instalo encima de otro, resultado
+> desconocido".**
+
+Concretamente, para GMRC (`gmrc_hook.cpp:69`): se prueba el feed primero, y sólo
+si falla se cae al localizador por patrón. Si el feed tiene entrada para el build
+del usuario —hoy hay dos publicadas, y CI añade más— acertará, y engancharemos
+encima del plugin sin enterarnos. Para DepotKey pasa lo mismo, con el matiz de
+que su ruta RTTI *sí* falla (busca la ranura comparando prólogos, que estarían
+parcheados), pero el feed la salva igual.
+
+La conclusión no es retirar el feed. Es que **el feed necesita la comprobación que
+el patrón nos daba gratis**. → **Accionable D**.
+
+### 4.6 El paquete 0: hoy no colisionan — y el Accionable A crearía la colisión
+
+Un resultado que sólo aparece cruzando la Capa 2 con esta.
+
+Los dos escriben en el `PackageInfo` del paquete 0, pero **en vectores distintos**:
+nosotros en `+0x38`, el plugin en `+0x48` (§3.4). Al ser dos estructuras separadas,
+**hoy no hay colisión de memoria**: cada uno gestiona su lista y no se pisan.
+
+Pero el plugin no *añade*: **sustituye la lista entera** — reserva un buffer
+nuevo, copia, cambia el puntero y **libera el viejo con `Plat_Free`**. Nosotros
+añadimos en el sitio creciendo con `realloc` de libc.
+
+Júntese eso con el **Accionable A** (evaluar mover nuestra inyección a `+0x48`):
+
+> Si movemos la inyección a `+0x48` **sin más**, pasamos a compartir vector con el
+> plugin, y entonces sí colisionan de la peor manera: él libera con el asignador
+> de Valve un buffer que nosotros podemos haber redimensionado con el de libc, o
+> al revés. **Liberación cruzada de asignadores = corrupción del heap de Steam.**
+
+O sea: **el Accionable A y el Accionable C no son independientes, y el orden
+importa.** Si algún día se mueve la inyección a `+0x48`, el cambio de asignador
+(C) tiene que ir **antes o a la vez**, nunca después. Queda anotado como
+dependencia dura.
+
+### 4.7 Lo que sigue siendo disjunto
+
+Para no exagerar el alcance del problema, conviene dejar escrito lo que **no**
+cambia:
+
+- **El loader.** SLSsteam por `LD_AUDIT`, nosotros por `LD_PRELOAD`, ambos desde
+  el mismo wrapper. Intacto (§0.1 doc hermano).
+- **El gate de versión.** El SafeMode de SLSsteam sigue decidiendo si el stack
+  arranca; nosotros seguimos dentro de esa ventana, con nuestro hash como
+  advertencia y no como puerta.
+- **La capa de mensajes, ownership, tickets, DLC e IPC.** Sigue siendo suya en
+  exclusiva y nosotros seguimos sin tocarla.
+- **El alcance de proceso.** SLSsteam se descarga en todo lo que no se llame
+  exactamente `steam` (`main.cpp:99`); nosotros admitimos además `steamwebhelper`.
+  En ese proceso corremos solos: ningún plugin puede alcanzarnos ahí.
+- **Los dos seams que sólo tenemos nosotros**: shader skip y reconcile de
+  licencias. Ningún plugin conocido los toca.
+
+El daño está acotado a dos funciones. Pero son las dos críticas.
+
+### 4.8 Superficie nueva: el directorio de plugins, y LumaDeck como root
+
+Un ángulo que no existía antes de hoy y que nos toca de lleno.
+
+En `rva_feed.cpp:44` dejamos escrito, al retirar los overrides por variable de
+entorno, un razonamiento que ahora aplica a otra puerta:
+
+> *"this feed decides WHERE HOOKS GET INSTALLED inside Steam's process. Anything
+> able to add an env var to Steam's launch (…) could point the feed at a server it
+> controlled and choose our hook targets. **That turns 'can write a file in $HOME'
+> into 'can run code inside Steam'**."*
+
+Ese razonamiento es correcto, y describe **exactamente** lo que el directorio de
+plugins es ahora: cualquiera que pueda escribir un `.lua` en
+`~/.config/SLSsteam/plugins/` ejecuta código nativo dentro de Steam, en caliente,
+sin reinicio (§2.8). Cerramos nuestra puerta y se ha abierto una equivalente al
+lado, con la diferencia de que esa no la controlamos.
+
+Y el detalle incómodo: **LumaDeck corre como root** (`plugin.json`, `flags:
+["_root"]`). Es decir, LumaDeck es una de las cosas que trivialmente pueden
+escribir ahí. Eso no es un problema hoy —no escribimos nada en ese directorio—
+pero fija una regla de diseño para la Capa 4: **LumaDeck no debe instalar,
+escribir ni modificar plugins de SLSsteam**, ni siquiera "para ayudar al usuario".
+Hacerlo convertiría al plugin de Decky en un vector de ejecución de código en
+Steam, y nos haría responsables de un `.lua` de terceros que no podemos auditar.
+
+### 4.9 Accionables de la capa
+
+| # | Acción | Prioridad | Nota |
+|---|---|---|---|
+| **D** | **Detección de doble enganche antes de instalar.** Antes de `LmHook::Install`, inspeccionar el destino: si el primer byte ya es un salto incondicional cuyo destino cae fuera del mapeo de `steamclient.so`, alguien ha llegado antes. Registrarlo, **no instalar**, y marcar el hook como `FOREIGN` en `status.json` (estado nuevo, distinto de `FAILED`). | **Alta** | Recupera el fallo seguro que el RVA feed nos quitó (§4.5). Es la contrapartida honesta de la robustez que ganamos. |
+| **E** | **Que LumaDeck sepa distinguir `FOREIGN` de `FAILED`.** Hoy un hook no instalado se traduce a *"Steam build not supported"* — el mismo mensaje falso que dio BuildDep en julio. Con D en su sitio, el mensaje correcto es *"otro componente ha enganchado esta función"*. | **Alta** | Sin E, D sólo cambia un mensaje alarmante por otro. |
+| **A′** | **Dependencia dura**: si se ejecuta el Accionable A (mover a `+0x48`), el Accionable C (asignador de tier0) va antes o a la vez. | Media | §4.6 |
+| **F** | **Regla de diseño**: LumaDeck no escribe en el directorio de plugins de SLSsteam. Nunca, ni para instalar `download.lua` a petición del usuario. | Media | §4.8 |
+
+Ninguno de estos pasa por "detectar `download.lua`" por nombre o por hash. Eso
+sería una carrera imposible de ganar: el fichero puede llamarse de cualquier forma
+y cambiar mañana. **La detección correcta es genérica y está en el sitio donde
+importa: justo antes de escribir nuestro propio detour.**
 
 ## 5. Capa 4 — Consecuencias para LumaDeck
 

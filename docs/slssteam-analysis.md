@@ -431,6 +431,15 @@ puede perder claves. Se quedan las dos.
 
 ## 5. Mapa de coexistencia — los conjuntos de hooks son **disjuntos** (la sección que importa)
 
+> **[ALCANCE REDUCIDO — 2026-09-03]** Esta sección sigue siendo válida para el
+> **core** de SLSsteam, y su tabla se mantiene verificada. Pero desde el tag
+> `20260903114323` SLSsteam carga **plugins Lua**, y lo que engancha pasa a
+> depender de qué ficheros haya en el directorio de plugins del usuario — un
+> conjunto abierto que no se puede verificar leyendo este repositorio. Con el
+> plugin `download.lua` en circulación, dos de los cinco puntos de la tabla
+> (**DepotKey** y **GMRC**, justo el conjunto crítico) **sí solapan**.
+> Ver [`slssteam-plugins-analysis.md`](slssteam-plugins-analysis.md) §4.
+
 Lo más valioso del análisis: **verificar que SLSsteam y lumalinux no tocan
 ninguna de las mismas funciones.** Recorriendo `patterns.cpp` + `vftableinfo.hpp`
 de SLSsteam contra los cinco puntos de lumalinux:
