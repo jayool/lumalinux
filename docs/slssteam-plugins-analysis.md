@@ -682,7 +682,57 @@ Dato lateral con valor operativo: en el paquete 0, `appIds` tiene `alloc=202` /
 huecos). Escribir en `+0x38` obliga a reasignar casi siempre; en `+0x48` casi
 nunca — relevante para el Accionable C.
 
-#### 3.4.2 Experimento 2 — forzar la caché fría (pendiente)
+#### 3.4.2 Experimento 2 — forzar la caché fría: EJECUTADO (2026-09-04)
+
+**Resultado: el cuelgue no se reproduce. Y el motivo documentado por el que
+estamos a salvo no es el correcto.**
+
+Entorno: codespace SteamOS-like, cliente Steam `1788400362`, lumalinux v0.18.2
+(`3/3 hooks active`, `Reconcile: installed`, SLS-ach aplicado). Disparo
+sintético: una línea en `keys.txt` con un depot inexistente — que **nunca va a
+resolver appinfo**, exactamente la condición del cuelgue de OST.
+
+| Brazo | Condición | `APPENDED` → `Reconcile: broadcast` | UI |
+|---|---|---|---|
+| **A** | caché **caliente** + reconcile | mismo segundo | normal |
+| **B** | caché **fría** + reconcile | mismo segundo | normal |
+| **B2** | segundo disparo consecutivo (197→198) | mismo segundo | normal |
+
+El brazo **C** (`LUMA_NO_RECONCILE`) **no se ejecutó**: era el control para
+aislar el factor *si B se atascaba*. B no se atascó, así que no aportaba nada.
+
+**El hallazgo que no buscábamos.** `AppIdVec` sale `size=196 alloc=202`
+**idéntico en frío y en caliente** — el conjunto de licencias viene del servidor,
+no del `appcache`. Es decir, la justificación que `RESEARCH.md` §18 da para que
+el cuelgue no nos afecte…
+
+> *"The cold-cache PICS-re-request hang doesn't apply — the finder injects after
+> login (**warm cache**)."*
+
+…**no es lo que nos está salvando**, porque tampoco se cuelga en frío. Estamos a
+salvo, pero **no por el motivo escrito**. Eso importa más que el resultado en sí:
+una explicación equivocada lleva a vetar cambios por razones falsas más adelante.
+
+**Límites de la medición, para no sobrevender el resultado:**
+
+- El disparo es **sintético** (dos ids de depot inventados), no el flujo real de
+  añadir un juego con sus depots y su manifiesto.
+- **`Reconcile: broadcast` retornando NO prueba que `ProcessPendingLicenseUpdates`
+  terminase.** Esa línea sólo dice que `NotifyLicensesUpdated` volvió; el
+  procesado es asíncrono en otro hilo de Steam y podría atascarse ahí sin que el
+  log lo viera. (Una lectura anterior de esta investigación presentó esa línea
+  como detector de cuelgues; era demasiado fuerte.)
+- Un solo build de Steam, un solo contenedor, sin instalación real, así que
+  nunca se observó el desenlace aguas abajo.
+
+**Veredicto sobre el Accionable A**: se **rebaja**, no se cierra. Pasa de *"riesgo
+latente por confirmar"* a **"no reproducible bajo estrés dirigido; la explicación
+oficial no se sostiene"**. Adoptar el diseño de moon (appids en `+0x38`, depots en
+`+0x48`) **no es urgente**: no hay evidencia de daño. Lo que sí conviene es
+**corregir la explicación en `RESEARCH.md` §18**, porque hoy afirma una causa que
+la medición no respalda.
+
+#### 3.4.3 Diseño original del experimento (referencia)
 
 Hipótesis a refutar: *"el cuelgue no nos aplica porque el finder inyecta con la
 caché de PICS caliente"*.
@@ -1404,7 +1454,7 @@ Todo lo que sale de esta investigación, en un sitio:
 | **E′** | `FOREIGN` no cuenta como `critical_failed` → sin `action: "downgrade"`, copy propio | LumaDeck | **Crítica** |
 | **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | Alta |
 | **I** | Plugin de diagnóstico para medir A y C sin tocar producción | herramienta | Alta |
-| **A** | **Reformulado**: ¿es latente el cuelgue de `ProcessPendingLicenseUpdates`? (§3.4.1 medido, §3.4.2 pendiente) | lumalinux | Media |
+| **A** | **Rebajado tras medir** (§3.4.2): el cuelgue no se reproduce ni en frío. Queda corregir la explicación de `RESEARCH.md` §18, que atribuye la inmunidad a la caché caliente y no se sostiene | lumalinux | Baja |
 | **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media |
 | **A′** | Dependencia dura: si se ejecuta A, C va antes o a la vez | — | — |
 | **H** | Detección sólo lectura de `Plugins:` + inventario de `.lua`, como información | LumaDeck | Media |
