@@ -95,7 +95,7 @@ stamp "observador iniciado (brazo ${ARM})" | tee -a "$OUT"
     wait
 } \
 | grep --line-buffered -E \
-    'PKG0_FINDER: (HIT|GOT=|cache-access idiom not found)|LoadPackage\[finder\]: (APPENDED|SANITY|realloc)|Reconcile: (broadcast|no CUser|unresolved|no-op)|SLS-ach|target depots|0 target|mounted depots|added depots|config changed' \
+    'KeyStore watcher: .* changed|PKG0_FINDER: (HIT|GOT=|cache-access idiom not found)|LoadPackage\[finder\]: (APPENDED|SANITY|realloc)|Reconcile: (broadcast|no CUser|unresolved|no-op)|SLS-ach: scoped|target depots|0 target|mounted depots|added depots|config changed' \
 | while IFS= read -r line; do
       stamp "$line"
   done | tee -a "$OUT"
