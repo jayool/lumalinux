@@ -13,6 +13,9 @@ SLSsteam ha dejado de ser una librería con hooks y se ha convertido en una
 plataforma con API de plugins, y que ya circula un plugin que hace, desde Lua,
 tres de las cosas que lumalinux hace desde C++.
 
+**Estado: completo.** Las seis secciones están cerradas; los accionables
+consolidados están en §6.6.
+
 El análisis va **por capas**, y cada una condiciona a la siguiente:
 
 | Capa | Qué responde | Estado |
@@ -22,7 +25,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 | **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
 | **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | **§4 — cerrada** |
 | **4** | Consecuencias para LumaDeck | **§5 — cerrada** |
-| **5** | Escenarios estratégicos y señales de vigilancia | §6 — pendiente de redactar |
+| **5** | Escenarios estratégicos y señales de vigilancia | **§6 — cerrada** |
 
 Se mantienen los cubos del doc hermano — **[YA]**, **[PRESTABLE]**,
 **[FRONTERA]** — y se añade uno:
@@ -1150,6 +1153,201 @@ primero — son los que quitan de en medio la oferta de degradar Steam. H despu�
 porque mejora el diagnóstico pero no evita daño. G es independiente y puede ir
 cuando toque.
 
-## 6. Capa 5 — Escenarios y señales de vigilancia
+## 6. Capa 5 — Escenarios, señales y decisión
 
-*Pendiente de redactar.*
+Última capa. Las cuatro anteriores establecen los hechos; ésta dice qué hacer con
+ellos y qué vigilar.
+
+### 6.1 El reencuadre: dónde está realmente nuestro foso
+
+La conclusión incómoda de la Capa 2, dicha sin rodeos:
+
+> **Los tres hooks de instalación de lumalinux son, desde hoy, una mercancía.**
+> Cualquiera con conocimiento de `steamclient.so` los reproduce en 330 líneas de
+> script, sin compilar, sin toolchain de 32 bits, sin pipeline de releases.
+
+Eso duele si uno cree que el valor de lumalinux **son** los hooks. No lo son. Lo
+que un plugin no reproduce barato es el resto:
+
+| Pieza | ¿Reproducible en un `.lua`? | Por qué |
+|---|---|---|
+| DepotKey / GMRC / paquete 0 | **Sí, ya está hecho** | 330 líneas |
+| **Skip del pre-caché de shaders** | En principio sí, **pero nadie lo ha hecho** | Requiere §13.8/§13.9: entender por qué el juego se suspende, y descubrir la ruta de skip que Steam ya tiene. Meses de RE, no horas |
+| **Reconcile de licencias** | Igual | El no-restart es un hallazgo, no una técnica |
+| **RVA feed + CI** | **No** | Requiere infraestructura fuera del proceso: monitorizar builds, derivar direcciones, publicarlas, cachearlas |
+| **SafeMode / diagnóstico / `status.json`** | **No en la práctica** | Es producto, no técnica |
+| **Despliegue (`steamidra_lite`)** | **No** | Fuera del proceso por definición |
+| **El corpus documental** | **No** | 500 KB de RE que es el activo que permitió todo lo anterior |
+
+El foso no son los tres seams. **Es la maquinaria que hace que sigan funcionando
+después de que Steam se actualice**, más los dos seams que costaron meses. Y esa
+maquinaria es estructuralmente inalcanzable para un plugin: un `.lua` no tiene CI,
+ni feed por hash, ni pipeline de publicación. Cuando Steam recompile, `download.lua`
+se rompe y alguien tendrá que editar patrones a mano; lumalinux se repara sola.
+
+Eso no es consuelo, es dirección: **si los hooks son mercancía, el sitio donde
+invertir es lo que los mantiene vivos**, no defenderlos.
+
+### 6.2 Los tres escenarios
+
+**(a) Se oficializa como plugin.** El dev publica un descargador en
+`docs/Lua/` o en el repo, y SLSsteam pasa a traer la capacidad de serie.
+
+- lumalinux pierde la exclusiva de los tres hooks, pero conserva los dos seams
+  propios y toda la maquinaria de mantenimiento.
+- **La coexistencia pasa de accidente a norma**: en vez de un `.lua` de Discord
+  que tiene el 1 % de los usuarios, sería el camino recomendado. Los Accionables
+  D y E dejan de ser contención y pasan a ser requisito permanente.
+- LumaDeck no cambia de razón de ser: sigue siendo la capa de orquestación y UX,
+  y eso ningún plugin lo cubre.
+
+**(b) Se queda extraoficial.** El `.lua` circula, unos pocos lo usan, upstream no
+lo bendice.
+
+- Es el escenario **actual**, y el peor para el soporte: la capacidad existe y se
+  propaga, pero nadie es responsable de ella. Los usuarios que se rompan vendrán
+  a nuestro Discord, no al suyo.
+- Todos los accionables siguen valiendo exactamente igual.
+
+**(c) Se absorbe al core.** SLSsteam mete claves y descarga directamente en el
+binario, sin pasar por plugins.
+
+- Es el escenario que más cambia las cosas y el menos probable a corto: su README
+  no menciona descargas ni una vez, y meterlo al core convierte a SLSsteam en algo
+  que hoy declara no ser.
+- Si ocurriera: los tres hooks de lumalinux quedan redundantes de verdad, y la
+  respuesta correcta es la misma que ya dimos con BuildDep en 2026-07 — **ceder el
+  seam** y quedarnos con lo que sólo hacemos nosotros. No sería una derrota; sería
+  el tercer seam cedido por la misma razón y con el mismo criterio.
+
+**En los tres escenarios LumaDeck sobrevive intacto.** Es la capa de producto:
+credenciales, catálogo, despliegue, salud, multi-librería, fixes, UX de Game Mode.
+Nada de eso lo toca un plugin. **El expuesto es lumalinux**, y sólo en su tercio
+más reproducible.
+
+### 6.3 ¿Convertir lumalinux en plugin?
+
+La pregunta que subyace a todo esto, contestada con lo que sabemos ya.
+
+**Lo que se ganaría** es real y grande: desaparece toda la superficie de inyección
+— el wrapper, la cobertura por `.desktop`, el drop-in de PATH, el drop-in de
+systemd, el guardián que reafirma la cobertura, el fail-safe de crash-loop. Es, de
+largo, **nuestro mayor coste de mantenimiento**, y buena parte de
+`maintenance.md` y de los estados de salud de LumaDeck existen sólo por eso.
+
+**Lo que se perdería**, con lo aprendido en las Capas 1 y 3:
+
+1. **La independencia.** Nos ataríamos a una API sin versionado, sin contrato de
+   desmontaje y que en nueve días quitó y devolvió sus exports dos veces (§2.9).
+2. **`steamwebhelper`.** SLSsteam se descarga en todo proceso que no sea `steam`
+   (§4.7). Perderíamos ese proceso.
+3. **El aislamiento.** Pasaríamos a compartir espacio global con cualquier otro
+   `.lua`, que puede secuestrar nuestros hooks por índice (§2.7).
+4. **El arranque garantizado.** Requiere `Plugins: yes`, que viene apagado. Cada
+   usuario tendría que activarlo — y **LumaDeck no debe activarlo por él** (§6.5).
+5. **El `LuaMutex` roto** (§3.7) nos afectaría igual que a todos.
+
+**Recomendación: no portar.** No por apego, sino porque el punto 1 es
+descalificatorio por sí solo: la instalación entera de todos los usuarios
+dependería de la estabilidad de una API que aún se está reordenando. Y el §7.9.13
+del doc hermano ya lo formuló bien; lo único que añade esta investigación es que
+*haber release no es haber contrato*.
+
+**Pero sí hay un uso excelente para la API, y conviene aprovecharlo ya:**
+
+> **Usar el sistema de plugins como instrumento de medida, no como vivienda.**
+
+El Accionable A (`+0x38` vs `+0x48`) se responde con un `.lua` de treinta líneas
+que enganche `GetPackage`, lea **los dos** vectores del paquete 0 y los registre
+en el log. Sin recompilar lumalinux, sin tocar a ningún usuario, en una sesión de
+pruebas. Lo mismo vale para verificar el asignador (Accionable C) y para
+reproducir el escenario de doble enganche del §4.4 en un entorno controlado.
+
+Eso es barato, reversible y no compromete nada. → **Accionable I**.
+
+### 6.4 Señales de vigilancia
+
+Concretas y comprobables, no "estar atentos":
+
+| Señal | Dónde mirar | Qué significaría |
+|---|---|---|
+| `download.lua` (o equivalente) aparece en `docs/Lua/` | repo SLSsteam | Escenario (a) confirmado |
+| `AdditionalDepots` / `DecryptionKeys` entran en `config_default.hpp` | repo SLSsteam | Oficialización en curso; y **cerraría la Capa 0** de paso |
+| El core toca `GetBinary`, GMRC o el paquete 0 | `hooks.cpp` / `patterns.cpp` | Escenario (c) — ceder seams, como con BuildDep |
+| Aparece versionado de la API o un campo de capacidades | `lua.cpp` / `docs/Lua/` | La API empieza a tener contrato: **reabrir la pregunta de portar** |
+| Se arregla `LuaMutex` | `lua.cpp` | Indicador de cómo responde upstream a un reporte (§3.7) |
+| Circulan **más** plugins que enganchan los mismos seams | Discord / repos | El problema de coexistencia se multiplica; D y E pasan a imprescindibles |
+| El `example.lua` deja de enseñar el `unlock()` manual | `docs/Lua/example.lua` | Reconocimiento del fallo del mutex |
+
+La primera y la segunda son la misma pregunta que dejó abierta la Capa 0. **No
+hace falta perseguirla**: si se oficializa, se verá.
+
+### 6.5 Una precisión sobre el Accionable F
+
+Al escribir esta capa aparece un caso que F, tal como quedó redactado en §4.9, no
+cubre: **LumaDeck tampoco debe poner `Plugins: yes` en la config del usuario.**
+
+No es lo mismo que escribir en el directorio, pero el efecto es peor de lo que
+parece: activar la opción **ejecuta cualquier `.lua` que ya esté en esa carpeta**,
+lo pusiera quien lo pusiera. Sería encender la ejecución de código arbitrario en
+Steam en nombre del usuario, por ficheros que no hemos visto.
+
+F queda entonces en dos mitades: **ni escribir plugins, ni activarlos.** Escribir
+`Plugins: no` tampoco — desactivarle al usuario algo que él encendió es la
+tutela que §5.5(a) descarta. La postura es simétrica: **esa clave es suya y no la
+tocamos en ninguna dirección.** Lo único que hacemos con ella es leerla
+(Accionable H).
+
+*(Nota: `slssteam_schema.py` **añade** `Plugins: no` cuando la clave no existe —
+§5.2. Eso no es tocar la elección del usuario: es completar un fichero incompleto
+con el defecto de upstream, que es exactamente su trabajo, y sin él SLSsteam
+toastea en cada arranque. La regla prohíbe cambiar un valor existente, no sembrar
+el defecto en su ausencia.)*
+
+### 6.6 Accionables consolidados
+
+Todo lo que sale de esta investigación, en un sitio:
+
+| # | Acción | Dónde | Prioridad |
+|---|---|---|---|
+| **D** | Detección de doble enganche antes de instalar; estado `FOREIGN` en `status.json` | lumalinux | **Crítica** |
+| **E′** | `FOREIGN` no cuenta como `critical_failed` → sin `action: "downgrade"`, copy propio | LumaDeck | **Crítica** |
+| **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | Alta |
+| **I** | Plugin de diagnóstico para medir A y C sin tocar producción | herramienta | Alta |
+| **A** | Resolver `+0x38` vs `+0x48` empíricamente | lumalinux | Media (bloqueada por I) |
+| **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media |
+| **A′** | Dependencia dura: si se ejecuta A, C va antes o a la vez | — | — |
+| **H** | Detección sólo lectura de `Plugins:` + inventario de `.lua`, como información | LumaDeck | Media |
+| **G** | Refrescar el snapshot embebido de `slssteam_schema.py` | LumaDeck | Media |
+| **F** | Regla de diseño: ni escribir plugins, ni activarlos, ni desactivarlos | LumaDeck (`DESIGN.md`) | Media |
+| **3ª** | Resolución por sitio de llamada como tercer resolvedor, tras feed y RTTI | lumalinux | Baja |
+
+**Orden:** D + E′ juntos y primero (quitan la oferta de degradar Steam). Luego B
+e I, que son baratos y desbloquean. Después A/C con su dependencia, y H, G, F
+cuando toque.
+
+### 6.7 Cierre
+
+Lo que ha pasado hoy no es que haya aparecido un competidor. Es que **SLSsteam ha
+dejado de ser una librería y se ha convertido en una plataforma**, y con eso ha
+cambiado dos cosas para nosotros:
+
+1. **Una afirmación que teníamos publicada ha dejado de ser verificable.** La
+   disjunción de hooks (§5 del doc hermano) no se rompió por un hook nuevo: se
+   rompió porque el conjunto contra el que se verificaba dejó de ser cerrado.
+2. **Y nuestras dos mejoras de robustez se han convertido en un riesgo**, porque
+   la red de seguridad que teníamos era un efecto secundario del método frágil que
+   sustituimos (§4.5).
+
+Ninguna de las dos cosas se ve mirando el `.lua`. Salen de mirar el mecanismo, y
+por eso el análisis fue por capas.
+
+Lo urgente es pequeño y está acotado: **dos accionables (D y E′) que impiden que
+LumaDeck le ofrezca a alguien degradar su Steam por culpa de un fichero de texto.**
+El resto es trabajo ordinario con calendario propio.
+
+Y lo estratégico no requiere decisión hoy. Requiere vigilar §6.4 y aceptar el
+reencuadre de §6.1: **el valor de lumalinux nunca estuvo en los tres hooks, sino
+en seguir funcionando el día después de que Steam se actualice.** Eso ningún
+plugin lo puede copiar, porque no es código: es una máquina de mantenimiento.
+
