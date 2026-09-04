@@ -602,19 +602,106 @@ Su `PackageInfo_t` (`packageId` + `__pad0x0[0x44]` + `depots`) sitúa su vector 
 `+0x48` como `DepotIdVec` — el sitio semánticamente correcto para ids de depot —
 mientras nosotros escribimos en `+0x38`.
 
-El comentario de `load_package_hook.cpp:179` explica por qué:
+> **[CORRECCIÓN — 2026-09-04]** Una versión anterior de esta sección decía que
+> el experimento de `DepotIdVec` se descartó *"antes de tener el reconcile"* y
+> que por tanto la pregunta quedaba reabierta. **Es falso**, y contradice
+> [`RESEARCH.md` §18](RESEARCH.md), que documenta el asunto con mucho más
+> detalle. Lo que sigue es la versión corregida; el error se conserva anotado
+> porque es justo el tipo de afirmación que reabre trabajo ya cerrado.
 
-> *"The DepotIdVec experiment was removed: it did nothing without a license
-> reconcile, which is the actual no-restart mechanism."*
+El comentario de `load_package_hook.cpp:179` remite a `RESEARCH.md` §18, que es
+donde está la historia completa:
 
-O sea: **probamos `+0x48`, no funcionó, y lo descartamos — antes de tener el
-reconcile.** Hoy sí lo tenemos. Que un tercero use `+0x48` y le funcione es un
-segundo dato que reabre la pregunta.
+> *"**Dead end — `DepotIdVec` (tested, ruled out).** […] We shipped an experiment
+> (v0.16.14, `LUMA_DEPOT_IDVEC`) that also seeds `DepotIdVec`. **Result: no
+> change** — still `0 target depots` without a restart. **Because the failure is
+> upstream (empty appinfo depot list), eligibility (whichever vector it reads) is
+> never consulted.** So `DepotIdVec` is **not** the lever."*
 
-No afirmo que lo nuestro esté mal: `+0x38` funciona en producción y está
-verificado. Lo que digo es que **hay dos implementaciones que hacen lo mismo por
-vectores distintos, y una de las dos está pasando por un camino indirecto**.
-Merece medirse. → **Accionable A**.
+O sea: el experimento **sí se hizo**, y no dio nada **no** por falta del
+reconcile, sino porque el cuello de botella estaba aguas arriba — el `appinfo`
+del juego llegaba con la lista de depots vacía, así que el filtro de
+elegibilidad, **lea el vector que lea**, nunca se consultaba. La palanca real era
+el **reconcile de licencias**, que es lo que se implementó en v0.16.15/16.
+
+**La pregunta "¿qué vector lee el filtro?" no está abierta: es la pregunta
+equivocada.**
+
+#### Lo que SÍ queda abierto, y es más importante
+
+§18 deja escrito el motivo real por el que `slsteam-moon` sí usa `DepotIdVec`:
+
+> *"moon avoids the hang by keeping `AppIdVec` app-ids-only and depots in
+> `DepotIdVec` — that is the **only** reason moon touches `DepotIdVec`."*
+
+¿Qué cuelgue? El de OpenSteamTool:
+
+> *"OST needs an anti-hang hook (`CAppInfoCache::GetOrAddAppData` → `bSkipFlag`)
+> because it **injects depot ids into `AppIdVec` that never resolve appinfo**,
+> blocking `ProcessPendingLicenseUpdates` forever; OST shipped that hook
+> **disabled**."*
+
+Y la posición de lumalinux:
+
+> *"**Hang**: none observed. The cold-cache PICS-re-request hang doesn't apply —
+> the finder injects after login (warm cache)."*
+
+**lumalinux reúne las dos precondiciones del cuelgue de OST** — ids de depot en
+`AppIdVec` **y** un reconcile que dispara `ProcessPendingLicenseUpdates` (por
+defecto desde v0.16.16) — y se apoya en un *"no lo hemos visto"* con un argumento
+de caché caliente. Eso es una observación, no una garantía estructural.
+
+→ **Accionable A, reformulado**: no *"¿qué vector lee el filtro?"* sino
+**"¿el argumento de la caché caliente aguanta, o el cuelgue es latente?"**.
+Diseño del experimento en §3.4.1.
+
+#### 3.4.1 Medición hecha (2026-09-04): los vectores son lo que dicen ser
+
+Sonda de solo lectura (`tools/experiment_pkg_vectors.lua`) sobre un Steam real
+(cliente `1788400362`) con SLSsteam y **sin lumalinux**, volcando ambos vectores
+de paquetes que el usuario posee:
+
+| Paquete | `appIds` (+0x38) | `depotIds` (+0x48) |
+|---|---|---|
+| 1081 | `[22300]` (Fallout 3) | `[22301, 22302, 22303, 22304, 22306]` |
+| 11301 | `[6910]` (Deus Ex GOTY) | `[6911]` |
+| 6442 | `[22380, 22480]` | `[22381…22386, 22393, 22481]` |
+| 7194 | `[50300, 203180]` | `[50301…50309, 203185, 203189]` |
+| 0 | 196 appids de juegos gratis (440, 480, 570…) | 878 depots de numeración baja |
+
+**Concluyente**: `+0x38` contiene ids de aplicación y `+0x48` sus depots
+(típicamente `appid+1, +2, …`). Las etiquetas heredadas de `Structs.h` de
+LumaCore **son correctas**, ya no son una convención sin verificar.
+
+Consecuencia: **lumalinux mete ids de depot en la lista de aplicaciones**, que es
+exactamente la condición que produce el cuelgue en OST. La medición no dice que
+haya que cambiarlo — dice que la premisa que sostiene el diseño de moon es cierta.
+
+Dato lateral con valor operativo: en el paquete 0, `appIds` tiene `alloc=202` /
+`size=196` (6 huecos) mientras `depotIds` tiene `alloc=1021` / `size=878` (143
+huecos). Escribir en `+0x38` obliga a reasignar casi siempre; en `+0x48` casi
+nunca — relevante para el Accionable C.
+
+#### 3.4.2 Experimento 2 — forzar la caché fría (pendiente)
+
+Hipótesis a refutar: *"el cuelgue no nos aplica porque el finder inyecta con la
+caché de PICS caliente"*.
+
+1. Entorno completo (SLSsteam + lumalinux + un juego desplegado con
+   `steamidra_lite`).
+2. Steam cerrado; `mv ~/.local/share/Steam/appcache ~/appcache.bak` para forzar
+   que Steam re-pida `appinfo` de **todo** lo que haya en `AppIdVec`, incluidos
+   nuestros ids de depot, que no son apps y no van a resolver nunca.
+3. Arrancar y observar ~5 min: `lumalinux.log` (¿inyecta el finder? ¿dispara el
+   reconcile?), `content_log.txt` (¿`0 target depots`?), y si la UI de la
+   biblioteca responde.
+4. **Brazo de control**: repetir con `LUMA_NO_RECONCILE=1`.
+
+| Resultado | Lectura |
+|---|---|
+| No se atasca en ninguna combinación | El argumento de caché caliente aguanta en frío. **A se cierra, medido** |
+| Se atasca con caché fría **y** reconcile, no sin él | **Cuelgue latente reproducido** → adoptar el diseño de moon (appids en `+0x38`, depots en `+0x48`) |
+| Se atasca siempre en frío | Hay algo más aguas arriba; el reconcile no es el factor |
 
 **La gestión de memoria también difiere**, y es la otra mitad del asunto: nosotros
 **añadimos en el sitio** creciendo con `realloc` de libc; él **asigna un buffer
@@ -743,7 +830,9 @@ de Valve. → **Accionable C**: resolver `Plat_Realloc`/`Plat_Free` de
 `libtier0_s.so` por `dlsym` (ya hacemos ese baile con libcurl) y usarlos en
 `AppendIdsToVec`, con `realloc` como respaldo si no se resuelven.
 
-**(b) El offset.** §3.4. → **Accionable A**.
+**(b) El offset.** §3.4 — y ojo, **reformulado**: no es qué vector lee el
+filtro (pregunta cerrada en `RESEARCH.md` §18) sino si el cuelgue de
+`ProcessPendingLicenseUpdates` es latente. → **Accionable A**.
 
 ### 3.9 Lo prestable [PRESTABLE]
 
@@ -1315,7 +1404,7 @@ Todo lo que sale de esta investigación, en un sitio:
 | **E′** | `FOREIGN` no cuenta como `critical_failed` → sin `action: "downgrade"`, copy propio | LumaDeck | **Crítica** |
 | **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | Alta |
 | **I** | Plugin de diagnóstico para medir A y C sin tocar producción | herramienta | Alta |
-| **A** | Resolver `+0x38` vs `+0x48` empíricamente | lumalinux | Media (bloqueada por I) |
+| **A** | **Reformulado**: ¿es latente el cuelgue de `ProcessPendingLicenseUpdates`? (§3.4.1 medido, §3.4.2 pendiente) | lumalinux | Media |
 | **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media |
 | **A′** | Dependencia dura: si se ejecuta A, C va antes o a la vez | — | — |
 | **H** | Detección sólo lectura de `Plugins:` + inventario de `.lua`, como información | LumaDeck | Media |
