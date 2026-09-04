@@ -21,7 +21,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 | **1** | La API de plugins como mecanismo | **§2 — cerrada** |
 | **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
 | **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | **§4 — cerrada** |
-| **4** | Consecuencias para LumaDeck | §5 — pendiente de redactar |
+| **4** | Consecuencias para LumaDeck | **§5 — cerrada** |
 | **5** | Escenarios estratégicos y señales de vigilancia | §6 — pendiente de redactar |
 
 Se mantienen los cubos del doc hermano — **[YA]**, **[PRESTABLE]**,
@@ -999,7 +999,156 @@ importa: justo antes de escribir nuestro propio detour.**
 
 ## 5. Capa 4 — Consecuencias para LumaDeck
 
-*Pendiente de redactar.*
+Las capas anteriores describen un ecosistema. Esta baja al producto: qué le pasa
+**hoy** a un usuario de LumaDeck por lo que se publicó esta mañana.
+
+### 5.1 El hallazgo: un `.lua` puede hacer que LumaDeck ofrezca degradar Steam
+
+Esto no es un riesgo teórico ni futuro. Es una cadena que ya está cableada, y
+conviene leerla entera:
+
+1. El plugin engancha `GetBinary` y GMRC. **Siempre llega antes que nosotros**
+   (§4.2), así que cuando llegamos, los prólogos ya están parcheados.
+2. lumalinux intenta resolver. Si el **RVA feed no tiene entrada para el build
+   del usuario** —hoy hay **dos** publicadas en `res/rvas/`, y CI añade según
+   aparecen— caemos al escaneo por patrón, que **no encuentra nada** porque el
+   prólogo ya no es el que buscamos.
+3. `status.json` registra `DepotKey` y/o `GMRC` como `"failed"`.
+4. `paths.py:766` los ve en `_CRITICAL_LUMALINUX_HOOKS` y devuelve:
+   `{"state": "not_supported", "cause": "hooks", "action": "downgrade"}`.
+5. `SystemStatus.tsx:155` pinta la fila de severidad `problem`:
+
+   > **"Steam build not supported"**
+   > *"A Steam update broke LumaDeck. Press Fix in Desktop to repair it."*
+
+6. Y el botón de esa fila ejecuta `actions.downgrade`: el traspaso a Desktop que
+   **degrada el cliente de Steam del usuario** y lo fija a un build anterior.
+
+O sea:
+
+> **Un fichero `.lua` en una carpeta hace que LumaDeck le diga al usuario que
+> Steam le ha roto la instalación, y le ofrezca degradar su cliente de Steam para
+> arreglarlo.** Steam está perfecto. No se ha roto nada. Y la acción propuesta es
+> destructiva, lenta, y deja al usuario en un build antiguo por un diagnóstico
+> falso.
+
+Es **exactamente** la misma clase de error de diagnóstico que dio BuildDep en
+julio (§4.2) — con la diferencia de que entonces el desenlace era un mensaje
+alarmante, y ahora el mensaje viene con un botón que degrada Steam.
+
+Esto **eleva el Accionable E** de "alta prioridad" a **la prioridad de toda la
+investigación**. Los accionables D y E dejan de ser higiene y pasan a ser
+contención de daño.
+
+Matices honestos sobre la probabilidad, para no exagerar:
+
+- Si el RVA feed **sí** tiene el build del usuario, resolvemos igual, enganchamos
+  encima y reportamos `installed`: no hay falso `not_supported`… pero entonces
+  estamos en el doble enganche no validado de §4.4. **Ninguna de las dos ramas es
+  buena**; una miente al usuario y la otra hace algo indeterminado en silencio.
+- El usuario tiene que haber activado `Plugins: yes` **y** haber puesto el `.lua`.
+  No es el caso común. Pero es exactamente el perfil del usuario entusiasta que
+  ya tiene LumaDeck instalado, que es justo el que va a probar el plugin que
+  circula por Discord.
+
+### 5.2 Lo que ya funciona solo, y era lo previsto
+
+Una nota positiva que conviene registrar porque costó trabajo en su día.
+
+`slssteam_schema.py` completa la config del usuario contra el `config_default.hpp`
+de upstream **descargado en vivo desde `main`**. Con la release de hoy, eso
+significa que las tres claves nuevas (`Plugins`, `SmartTickets`, `LaunchOptions`)
+**se añaden solas** a la config de cada usuario, en su siguiente carga, sin que
+hayamos tocado nada.
+
+Y como `Plugins` viene con su valor por defecto (`no`), el efecto neto es que
+**LumaDeck reparte la función de plugins desactivada** a toda su base. Que es
+exactamente el defecto correcto.
+
+§7.9.13 del doc hermano predijo esto y decidió no actuar: *"la rama elegida hace
+el trabajo sin que intervengamos; el trabajo de `a061b00` se paga aquí"*. Se ha
+pagado.
+
+**Lo que sí queda pendiente** es lo que aquel mismo párrafo dejó anotado: el
+**snapshot embebido** de `slssteam_schema.py` (el respaldo sin red) sigue sin las
+tres claves nuevas — verificado, cero coincidencias de `Plugins:`,
+`SmartTickets:` y `LaunchOptions:` en el fichero. Sólo importa en un Deck sin red
+con SLSsteam recién actualizada, y la decisión era refrescarlo **cuando hubiera
+release**. La hay. → **Accionable G**.
+
+### 5.3 Lo que NO se rompe
+
+Para acotar el alcance, y porque es tranquilizador:
+
+- **Nuestra escritura de config no interfiere.** `slssteam_schema` es
+  *append-only* y sólo añade claves que existan en upstream; `AdditionalDepots` y
+  `DecryptionKeys` no están ahí (§1.2), así que nunca las tocamos ni las
+  pisamos. Un usuario puede tener el plugin configurado y LumaDeck no le va a
+  romper la configuración.
+- **`AdditionalApps`, `ManifestIds` y `DisableUpdates`** siguen siendo nuestros y
+  el plugin no los toca.
+- **El despliegue de un juego** (`steamidra_lite`: manifiestos al `depotcache`,
+  `keys.txt`, claves en `config.vdf`, el lua a `stplug-in/`) no tiene solape
+  alguno con lo que hace el plugin, que no despliega nada (§3.5).
+- **`steamwebhelper`.** SLSsteam se descarga en todo proceso que no se llame
+  exactamente `steam`; nosotros seguimos cargando ahí. Ningún plugin nos alcanza
+  en ese proceso.
+
+### 5.4 La carga de soporte, y qué preguntar
+
+El escenario que va a llegar por Discord es: *"LumaDeck me dice que Steam no está
+soportado y me pide degradar"*. Hoy no tenemos forma de distinguirlo de una
+rotura real por actualización de Steam, y las dos respuestas son opuestas
+(degradar vs. **no** degradar).
+
+Con el Accionable H (detección de sólo lectura) la pregunta se responde sola en
+el propio panel. Sin él, el triaje manual es:
+
+1. ¿`Plugins: yes` en `~/.config/SLSsteam/config.yaml`?
+2. ¿Hay `.lua` en `~/.config/SLSsteam/plugins/`?
+3. En `~/.cache/lumalinux/lumalinux.log`, ¿los hooks fallidos son `DepotKey`/`GMRC`
+   **mientras** `ShaderDepot` instaló bien? Una actualización de Steam suele mover
+   varios patrones a la vez; que fallen exactamente los dos que un plugin conocido
+   engancha, y no los demás, es la firma del solape.
+
+Ese punto 3 es un discriminador razonable **mientras** el plugin en circulación
+sea éste. No es una base sólida para automatizar nada — por eso el Accionable D
+comprueba el destino en memoria, que sí es genérico.
+
+### 5.5 Postura de producto
+
+Tres decisiones, y creo que las tres son claras:
+
+**(a) No bloquear.** LumaDeck no debe negarse a funcionar, ni desactivar plugins
+del usuario, ni "recomendar" quitarlos. La máquina es suya y la función es
+legítima. Nuestra obligación es **diagnosticar bien y no proponer barbaridades**,
+no tutelar.
+
+**(b) No escribir nunca en el directorio de plugins** (Accionable F, §4.8).
+Ni para instalar `download.lua` si alguien lo pide, ni para desactivarlo, ni para
+"arreglar" permisos. LumaDeck corre como root; escribir ahí lo convertiría en una
+vía de ejecución de código dentro de Steam y nos haría responsables de un script
+de terceros que no podemos auditar. Esta regla debe sobrevivir a la petición
+razonable de un usuario, que llegará.
+
+**(c) Sí detectar, en sólo lectura.** Leer `Plugins:` de la config y listar los
+`.lua` presentes es barato, no invasivo y resuelve el triaje de §5.4. Se muestra
+como **información** en Settings → Components (no como advertencia), y alimenta la
+desambiguación de D/E.
+
+### 5.6 Accionables de la capa
+
+| # | Acción | Prioridad | Nota |
+|---|---|---|---|
+| **E′** | **Que un hook `FOREIGN` no produzca `not_supported`.** En `paths.py:766`, `critical_failed` debe contar sólo `"failed"`, nunca el nuevo `"foreign"`. Estado propio, severidad `info` o `problem` **sin** `action: "downgrade"`, y copy nuevo: *"otro componente ha enganchado esta función"*. | **Crítica** | Sin esto, D convierte el falso `not_supported` en otro falso `not_supported`. Es la mitad que impide el daño. |
+| **G** | Refrescar el snapshot embebido de `slssteam_schema.py` desde el `config_default.hpp` de la release `20260903114323` (añade `Plugins`, `SmartTickets`, `LaunchOptions`). | Media | §5.2. Decisión ya tomada en §7.9.13, condicionada a que hubiera release. |
+| **H** | Detección de sólo lectura: `Plugins:` de la config + inventario de `~/.config/SLSsteam/plugins/*.lua`, expuesto en Settings → Components como información. | Media | Resuelve §5.4 y alimenta E′. |
+| **F** | Regla de diseño: LumaDeck no escribe en el directorio de plugins. | Media | §4.8, §5.5(b). Documentar en `DESIGN.md` como entrada del decision log. |
+
+**Orden de ejecución recomendado:** D (lumalinux) y E′ (LumaDeck) van juntos y
+primero — son los que quitan de en medio la oferta de degradar Steam. H después,
+porque mejora el diagnóstico pero no evita daño. G es independiente y puede ir
+cuando toque.
 
 ## 6. Capa 5 — Escenarios y señales de vigilancia
 
