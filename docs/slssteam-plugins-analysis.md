@@ -1046,11 +1046,48 @@ corrige él mismo —
 por `0xE9`, no toca nada) y, según el comentario del propio fichero, verificado
 con aritmética **y ejecución real** antes de integrarse.
 
-Es decir: **la reubicación del detour ajeno no se delega en libmem.** La cadena
-resultante es la que describía el párrafo original y funciona: Steam → hook del
-plugin → su trampolín → `jmp` de lumalinux relocalizado → hook de lumalinux → su
-trampolín → prólogo original → cuerpo. En `GetBinary` gana la clave del plugin;
-en GMRC gana el código de lumalinux.
+Es decir: **la reubicación del detour ajeno no se delega en libmem.**
+
+> **[CORRECCIÓN 2 — 2026-09-04]** El párrafo original describía la cadena al
+> revés, y yo la repetí. **Manda quien escribe el último**, porque en `fn` sólo
+> queda el `jmp` que se escribió después. Y por §4.2 el último somos nosotros.
+
+La cadena real es:
+
+```
+Steam → fn (jmp de lumalinux, escrito el último)
+      → hook de LUMALINUX          ← corre PRIMERO
+      → nuestro trampolín = jmp relocalizado
+      → hook del PLUGIN            ← corre segundo
+      → trampolín del plugin = prólogo original
+      → cuerpo de la función
+```
+
+Con dos consecuencias que la versión invertida decía al contrario:
+
+- En `GetBinary` **gana el `KeyStore` de lumalinux**, no la clave del plugin:
+  nuestro hook consulta primero y vuelve sin llamar al original (§3.2), así que
+  el hook del plugin **ni siquiera se ejecuta** cuando tenemos clave.
+- En GMRC gana lumalinux también — que era la conclusión escrita, pero por el
+  motivo contrario al que se daba.
+
+**Alcance de la premisa de los 5 bytes.** Todo esto vale porque los dos lados
+pasan por el mismo `LM_HookCode`. `download.lua` no escribe bytes propios: llama
+a `place_lua_hook` (SLSsteam `src/lua.cpp:27`) → `LuaHook::place()`
+(`src/hooks.cpp:213`) → `LM_HookCode` + `fixPICThunkCall`. Y en libmem 5.1.5,
+`generate_hook_payload` (`src/common/arch/x86.c:41`) sólo emite `FF 25` si
+`bits == 64`: **en i386 siempre `E9` + rel32, exactamente 5 bytes**. Además
+escribe `hooksize` (5), **no** `aligned_size` — que sólo dice cuánto se copia al
+trampolín. Por tanto, del byte +5 en adelante los originales quedan intactos
+**siempre**, para cualquier hookeador que pase por libmem en 32 bits.
+
+Lo que **no** está garantizado: un plugin no está obligado a usar
+`place_lua_hook`. Con el FFI de LuaJIT puede llamar a `mprotect` y escribir lo
+que quiera (`FF 25`, `68 … C3`, un parche largo). Por eso `already_hooked`, que
+hoy sólo reconoce `0xE9` (`lmhook.cpp:138`), tiene un falso **negativo** posible
+contra un plugin que no use la API oficial. (El falso positivo —una función que
+empiece legítimamente por `E9`— es inofensivo: relocalizar un `jmp` es lo
+correcto en ambos casos.)
 
 **Lo que queda abierto no es la mecánica: es la contabilidad.** Cuando esto
 ocurre, `Status::Outcome` (`src/status.hpp:9`) sólo sabe decir `INSTALLED`,
@@ -1512,6 +1549,7 @@ Todo lo que sale de esta investigación, en un sitio:
 | **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** |
 | **K** | Conectar el `depotkey_rtti` ya publicado (`ResolveVtableSlot`, hoy código muerto) | lumalinux | **Alta** |
 | **3** | Subir el ancla de cadena a runtime en los otros cuatro hooks | lumalinux | Media |
+| **L** | **Verificación de vigencia**: releer los primeros bytes de cada objetivo enganchado y comprobar que nuestro `jmp` sigue ahí, no sólo al instalar sino cada vez que se escribe `status.json`. Hoy `installed` significa *"se instaló"*, no *"sigue instalado"* | lumalinux | **Alta** |
 
 **J, K y 3 vienen de §7.7 y son la otra mitad de D** (§4.5): D nombra el
 enganche compartido cuando lo resolvemos; J/K/3 hacen que lo resolvamos también
@@ -1525,6 +1563,23 @@ baratos porque D es un valor de enum en el único punto por el que pasan todos l
 hooks. Luego **J → K → 3**, que es donde se quita la fragilidad de raíz. Luego B
 e I, que son baratos y desbloquean. Después A/C con su dependencia, y H, G, F
 cuando toque.
+
+**Límite honesto de D + J + K + 3.** Ninguno de los cuatro da robustez frente a
+un tercero que **mueva** la función en vez de parchearla. Concretamente, y todo
+verificable en la fuente de SLSsteam:
+
+| Qué puede hacer un plugin | ¿Lo cubre algo de lo anterior? |
+|---|---|
+| Detour de 5 bytes vía `place_lua_hook` | **Sí** — D lo nombra, J/K lo localizan igual |
+| **`hook:remove()`** (`lua.cpp:427` → `hooks.cpp:225` → `LM_UnhookCode`) | **No.** Reescribe `size` bytes de **su** trampolín —el prólogo original— sobre `fn`, **borrando nuestro `jmp`** si enganchamos después. Seguimos reportando `installed` con el hook ya muerto. Y no es exótico: el directorio de plugins está vigilado (`lua.cpp:347`) y `luaReload` dispara en cada guardado |
+| Sustituir el puntero de la vtable | **No.** K resolvería al impostor; el ancla de cadena resolvería a la función real que ya no llama nadie. En ambos casos acertamos mal |
+| Parchear la GOT/PLT | **No.** La función queda intacta y sin llamantes; enganchamos algo que ya no se ejecuta |
+| Parche más largo de 5 bytes | **Parcial.** La lista blanca de J devuelve 0 — honesto, no robusto |
+
+**La conclusión que hay que escribir sin adornos: J no compra robustez, compra
+honestidad.** Convierte "equivocarse en silencio" en "reportar que no puede". Lo
+único que compra robustez de verdad frente a un objetivo que se mueve es
+**comprobar en caliente que el hook sigue vivo** → **Accionable L**.
 
 **Criterio, corregido:** endurecer un localizador **no** se decide por si alguien
 hookea hoy esa función. `download.lua` solapa hoy en dos (§4.3), pero eso es una
@@ -1782,4 +1837,12 @@ depende del prólogo. Arreglado ahí una vez, los cuatro hooks que adopten el
 ancla de cadena lo heredan. La alternativa, cuando caminar atrás no valga, ya
 está escrita en `package_zero_finder.cpp:96`: anclarse en el trozo de prólogo que
 **sobrevive** al detour en vez de en el que lo recibe — resuelto en julio para
-nuestro propio detour, y aplicable igual a uno ajeno porque ambos miden 5 bytes.
+nuestro propio detour, y aplicable igual a uno ajeno **mientras el ajeno venga de
+libmem** (§4.4: en i386 son 5 bytes por construcción de la librería, y eso cubre
+todo lo que pase por `place_lua_hook`).
+
+Fuera de ahí no cubre nada, así que J **no se escribe sobre esa premisa**: se
+escribe con lista blanca —`E8 …` intacto, o una forma de desvío reconocida— y
+**cero para todo lo demás**, más un `maxBack` acotado (hoy `0x8000`, absurdo para
+la distancia entre el uso de una cadena y su entrada). Lo desconocido se rechaza;
+no se acepta por parecerse.
