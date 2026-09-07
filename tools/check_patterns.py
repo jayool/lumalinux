@@ -145,6 +145,25 @@ DIAGNOSTIC = {
 RTTI_DEPOTKEY = {"class": "12CConfigStore", "const": "kDepotKeyFnPattern",
                  "label": "DepotKey", "max_slots": 40}
 
+# Name-derived resolution — the SECOND opinion, and the only one here that reads
+# no byte of the target function. Mirrors Rtti::ResolveVtableSlotByName (and
+# download.lua): find the slot of the interface-MAP class whose function
+# references the method name as a string, then apply that index to the concrete
+# class. Verified on build bc54101b29 by tools/experiment_ifacemap_slot.py:
+# "GetBinary" -> map slot 6 -> CConfigStore 0x11a4500, the pattern's own answer.
+#
+# Why it belongs in CI: the runtime uses it as its last-resort resolver, and a
+# resolver nothing validates is a parachute nobody has opened. It is also what
+# makes `agrees_with_pattern` mean something — that field compares the pattern
+# with itself, so it is true by construction and reports nothing.
+BYNAME_DEPOTKEY = {"map_class": "21IClientConfigStoreMap", "method": "GetBinary",
+                   "impl_class": "12CConfigStore", "label": "DepotKey-byname",
+                   "max_slots": 64,
+                   # Max distance from a slot's entry for a reference to count as
+                   # "inside it". The same name is referenced from unrelated code
+                   # far from this vtable; attributing that would pick a wrong slot.
+                   "max_fn_size": 512}
+
 # ── finder anchors (§13.5) — mirrored from package_zero_finder.cpp ────────────
 # (a) cache-access idiom, anchored on the 0xc58 tree-root offset of
 #     CPackageInfoCache:  lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+0xc58].
@@ -310,28 +329,14 @@ def _load_sections(path):
     return data, secs
 
 
-def rtti_derive_slot(path, mangled, patstr, max_slots=40):
-    """Walk RTTI for `mangled`: type-name string (.rodata) -> type_info ->
-    vtable (.data.rel.ro; i386 REL relocations store the addend = target vaddr
-    in-place, so the file already holds the vaddrs), then scan up to `max_slots`
-    slots and return [(slot_index, fn_rva), ...] for every slot whose target
-    function's prologue matches `patstr`. This is the exact invariant the runtime
-    derive-by-signature relies on. Returns (matches, note); matches is None on a
-    walk failure (vtable not locatable), with `note` explaining which step."""
-    try:
-        data, secs = _load_sections(path)
-    except (OSError, ValueError) as e:
-        return None, "load:%s" % e
+def _vtable_funcs_va(data, secs, mangled):
+    """type-name (.rodata) -> type_info -> vtable header -> VA of slot 0.
+
+    i386 relocations are REL: the addend is stored in place, so the file already
+    holds the vaddrs. Same walk Rtti::FindTypeVtable does live, and it reads no
+    code byte. Returns (va, note); va is None on failure."""
     if ".rodata" not in secs or ".data.rel.ro" not in secs:
         return None, "missing .rodata/.data.rel.ro"
-
-    ranges = [(a, o, s) for (a, o, s) in secs.values() if a and s]
-
-    def read_va(va, n):
-        for a, o, s in ranges:
-            if a <= va < a + s and va + n <= a + s:
-                return data[o + (va - a): o + (va - a) + n]
-        return b""
 
     ro_a, ro_o, ro_s = secs[".rodata"]
     i = data[ro_o:ro_o + ro_s].find(mangled.encode() + b"\x00")
@@ -350,15 +355,179 @@ def rtti_derive_slot(path, mangled, patstr, max_slots=40):
         return None, "type_info not found"
     typeinfo_va = ti_field - 4
 
-    vt_hdr = None
     for off in range(0, len(drr) - 8, 4):
         if (struct.unpack_from("<I", drr, off)[0] == 0
                 and struct.unpack_from("<I", drr, off + 4)[0] == typeinfo_va):
-            vt_hdr = drr_a + off
+            return drr_a + off + 8, "ok"
+    return None, "vtable not found"
+
+
+def _read_va(data, secs):
+    ranges = [(a, o, s) for (a, o, s) in secs.values() if a and s]
+
+    def read_va(va, n):
+        for a, o, s in ranges:
+            if a <= va < a + s and va + n <= a + s:
+                return data[o + (va - a): o + (va - a) + n]
+        return b""
+    return read_va
+
+
+def _got_base_consensus(data, secs):
+    """`E8 <rel32>; 05 <imm32>` = call get_pc_thunk.ax; add eax,GOT. The thunk
+    returns the address AFTER the call, so got = (va of the 05) + imm32. One
+    module-wide value, so the right answer dominates. Port of
+    DeriveGotBaseConsensus (gmrc_xref_core.hpp)."""
+    if ".text" not in secs:
+        return None
+    a, o, s = secs[".text"]
+    tx = data[o:o + s]
+    votes = {}
+    i, n = 0, len(tx) - 10
+    while i < n:
+        j = tx.find(b"\xE8", i)
+        if j < 0 or j > n:
             break
-    if vt_hdr is None:
-        return None, "vtable not found"
-    vt_funcs = vt_hdr + 8
+        if tx[j + 5] == 0x05:
+            imm = struct.unpack_from("<i", tx, j + 6)[0]
+            va = (a + j + 5 + imm) & 0xFFFFFFFF
+            votes[va] = votes.get(va, 0) + 1
+        i = j + 1
+    if not votes:
+        return None
+    return max(votes.items(), key=lambda kv: kv[1])[0]
+
+
+def rtti_derive_slot_byname(path, map_class, method, impl_class,
+                            max_slots=64, max_fn_size=512):
+    """Derive the vtable slot from the METHOD NAME. Mirrors the runtime
+    Rtti::ResolveVtableSlotByName; see BYNAME_DEPOTKEY above for the why.
+
+    SLSsteam builds the whole name->index map for 37 interfaces
+    (Decompiler::parseInterfaceMapBase); one entry is needed here, so the question
+    is inverted — not "which strings does each slot mention?" but "which slot
+    mentions THIS address?". That needs no disassembler: in i386 PIC a string is
+    referenced as `lea reg,[got+disp32]`, so with the string address S and the GOT
+    base it is a search for `8D <modrm mod=10> <disp32>` with disp32 == S - GOT.
+
+    Returns (info, note). info["status"] is UNIQUE / NOT_RESOLVED / <error>."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return {"status": "LOAD_FAILED"}, "load:%s" % e
+    if ".text" not in secs or not secs[".text"][2]:
+        return {"status": "NO_TEXT"}, "no .text"
+
+    # (1) every exact, NUL-terminated occurrence of the method name. The full
+    # terminator matters: "GetBinary" is a prefix of "GetBinaryWatermarked", and
+    # Steam emits this name table more than once (four hits on bc54101b29), so
+    # the right one is chosen by WHICH slot references it, not by being first.
+    needle = method.encode() + b"\x00"
+    str_vas = []
+    for _nm, (a, o, sz) in sorted(secs.items()):
+        if not a or not sz:
+            continue
+        blob = data[o:o + sz]
+        start = 0
+        while True:
+            j = blob.find(needle, start)
+            if j < 0:
+                break
+            start = j + 1
+            if j == 0 or blob[j - 1] == 0:      # NUL before too: not a tail
+                str_vas.append(a + j)
+    if not str_vas:
+        return {"status": "NOT_RESOLVED"}, "method name %r not found as a string" % method
+
+    got = _got_base_consensus(data, secs)
+    if got is None:
+        return {"status": "NOT_RESOLVED"}, "could not derive GOT base"
+
+    map_vt, note = _vtable_funcs_va(data, secs, map_class)
+    if map_vt is None:
+        return {"status": "NOT_RESOLVED"}, "%s: %s" % (map_class, note)
+
+    read_va = _read_va(data, secs)
+    tx_a, tx_o, tx_s = secs[".text"]
+    tx = data[tx_o:tx_o + tx_s]
+
+    slots = []
+    for k in range(max_slots):
+        b = read_va(map_vt + k * 4, 4)
+        if len(b) < 4:
+            break
+        fn = struct.unpack_from("<I", b, 0)[0]
+        if not (tx_a <= fn < tx_a + tx_s):
+            break                                # first non-code entry = end
+        slots.append((fn, k))
+    if not slots:
+        return {"status": "NOT_RESOLVED"}, "%s vtable has no code slots" % map_class
+    slots.sort()
+
+    # (2) which slot references which occurrence.
+    hits = {}
+    for s_va in str_vas:
+        needle32 = struct.pack("<I", (s_va - got) & 0xFFFFFFFF)
+        i = 0
+        while True:
+            j = tx.find(needle32, i)
+            if j < 0:
+                break
+            i = j + 1
+            if j < 2 or tx[j - 2] != 0x8D:
+                continue
+            modrm = tx[j - 1]
+            if (modrm & 0xC0) != 0x80 or (modrm & 0x07) == 0x04:
+                continue
+            ref = tx_a + j - 2
+            owner = None
+            for fn, k in slots:
+                if fn <= ref:
+                    owner = (fn, k)
+                else:
+                    break
+            if owner and ref - owner[0] <= max_fn_size:
+                hits.setdefault(owner[1], []).append(s_va)
+    if not hits:
+        return {"status": "NOT_RESOLVED"}, "no %s slot references %r" % (map_class, method)
+
+    # Overloads have one string EACH, in consecutive slots; a bare name means the
+    # first, which is what SLSsteam's table does (name, name2, name3...). The
+    # sibling slot is a DIFFERENT function, so this tie-break is load-bearing.
+    slot = min(hits)
+
+    impl_vt, note = _vtable_funcs_va(data, secs, impl_class)
+    if impl_vt is None:
+        return {"status": "NOT_RESOLVED"}, "%s: %s" % (impl_class, note)
+    b = read_va(impl_vt + slot * 4, 4)
+    if len(b) < 4:
+        return {"status": "NOT_RESOLVED"}, "%s has no slot %d" % (impl_class, slot)
+    fn_rva = struct.unpack_from("<I", b, 0)[0]
+
+    return ({"status": "UNIQUE", "map_class": map_class, "method": method,
+             "slot": slot, "rva": "0x%x" % fn_rva,
+             "overloads": sorted(hits),
+             "name_sites": ["0x%x" % v for v in str_vas]},
+            "ok")
+
+
+def rtti_derive_slot(path, mangled, patstr, max_slots=40):
+    """Walk RTTI for `mangled`: type-name string (.rodata) -> type_info ->
+    vtable (.data.rel.ro; i386 REL relocations store the addend = target vaddr
+    in-place, so the file already holds the vaddrs), then scan up to `max_slots`
+    slots and return [(slot_index, fn_rva), ...] for every slot whose target
+    function's prologue matches `patstr`. This is the exact invariant the runtime
+    derive-by-signature relies on. Returns (matches, note); matches is None on a
+    walk failure (vtable not locatable), with `note` explaining which step."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return None, "load:%s" % e
+
+    vt_funcs, note = _vtable_funcs_va(data, secs, mangled)
+    if vt_funcs is None:
+        return None, note
+    read_va = _read_va(data, secs)
 
     rx = pattern_to_regex(patstr)
     matches = []
@@ -408,6 +577,7 @@ def main():
         "caps": {},           # cap token -> "ok" | "moved" (all non-criticals)
         "caps_str": "",       # "shader=ok reconcile=moved" for the updates.yaml comment
         "rtti": {},           # DepotKey RTTI ground-truth (slot/rva/status)
+        "rtti_byname": {},    # DepotKey slot derived from the METHOD NAME
         "verdict": None,
         "exit_code": None,
     }
@@ -471,6 +641,34 @@ def main():
                 "slots": [{"slot": s, "rva": "0x%x" % f} for s, f in matches],
             }
             result["blocking"].append("DepotKey-RTTI:ambiguous(%d slots)" % len(matches))
+
+    # 1c) DepotKey by NAME — the independent second opinion, and the runtime's
+    # last-resort resolver. Reads no byte of the accessor, so it is the only check
+    # here that survives the event which takes pattern, feed and the RTTI walk out
+    # together: a recompile that moves the prologue.
+    #
+    # Severity, deliberately asymmetric:
+    #   - the two RESOLVE and DISAGREE  -> BLOCKING. Something moved and we cannot
+    #     say what; publishing a whitelist entry on that would be guessing.
+    #   - by-name cannot resolve at all -> NOT blocking. What we publish (the
+    #     pattern's RVA) is still correct, so the build is fine; but the runtime's
+    #     parachute is dead and that must be visible. It lands in the human report,
+    #     which the auto-PR embeds, so it shows up where the hash bump is reviewed.
+    bn, bn_note = rtti_derive_slot_byname(
+        args.steamclient, BYNAME_DEPOTKEY["map_class"], BYNAME_DEPOTKEY["method"],
+        BYNAME_DEPOTKEY["impl_class"], BYNAME_DEPOTKEY["max_slots"],
+        BYNAME_DEPOTKEY["max_fn_size"])
+    bn["note"] = bn_note
+    result["rtti_byname"] = bn
+    if bn.get("status") == "UNIQUE":
+        rt = result.get("rtti", {})
+        if rt.get("status") == "UNIQUE":
+            bn["agrees_with_rtti"] = (rt.get("slot") == bn["slot"]
+                                      and rt.get("rva") == bn["rva"])
+            if not bn["agrees_with_rtti"]:
+                result["blocking"].append(
+                    "DepotKey-byname:disagrees(pattern slot %s @ %s vs name slot %s @ %s)"
+                    % (rt.get("slot"), rt.get("rva"), bn["slot"], bn["rva"]))
 
     # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
     # derive but still PR-able. Record per-hook capability (ok/moved) so the
@@ -549,6 +747,19 @@ def main():
               % ("DepotKey-RTTI", rt["slot"], rt["rva"], rt["agrees_with_pattern"]))
     elif rt:
         print("  %-12s %s" % ("DepotKey-RTTI", rt.get("status")))
+    bn = result.get("rtti_byname", {})
+    if bn.get("status") == "UNIQUE":
+        extra = ""
+        if len(bn.get("overloads", [])) > 1:
+            extra = "  overloads=%s" % bn["overloads"]
+        print("  %-12s slot %d @ %s  (agrees-with-rtti=%s)%s"
+              % ("DepotKey-name", bn["slot"], bn["rva"],
+                 bn.get("agrees_with_rtti"), extra))
+    elif bn:
+        # Not blocking: the published RVA is still the pattern's. But the runtime
+        # falls back to this resolver, so a dead one must not pass unnoticed.
+        print("  %-12s %s  (%s)  <- runtime fallback unavailable on this build"
+              % ("DepotKey-name", bn.get("status"), bn.get("note")))
     print("")
     print("VERDICT: %s (exit %d)" % (result["verdict"], result["exit_code"]))
     if result["blocking"]:
