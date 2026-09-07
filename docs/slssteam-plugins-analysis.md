@@ -1575,7 +1575,7 @@ refleja la decisión de arriba:
 
 | # | Acción | Dónde | Prioridad | Estado |
 |---|---|---|---|---|
-| **K** | **Slot de vtable como constante compilada** (`kDepotKeyVtableClass`/`kDepotKeyVtableSlot` en `patterns.hpp`) + llamar a `ResolveVtableSlot`, hoy código muerto. **No** leerlo de la chuleta: ahí es el mismo dato que el RVA y no existe en builds sin ficha (§7.5.a) | lumalinux | **Alta** | **ACTIVO** |
+| **K** | **Índice de vtable derivado por nombre en caliente**, como `download.lua` (§7.5.a): ranura de `21IClientConfigStoreMap` que referencia `"GetBinary"` → aplicar ese índice a `12CConfigStore` vía `ResolveVtableSlot` (escrita, sin llamar). Falla cerrado. **Ni constante compilada ni leído de la chuleta** — las dos se descartaron con motivo en §7.5.a | lumalinux | **Alta** | **ACTIVO** |
 | **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** | **ACTIVO** |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
 | **G** | Refrescar el snapshot embebido de `slssteam_schema.py` (`SmartTickets`, `LaunchOptions`, `Plugins`) | LumaDeck | Media | **ACTIVO** |
@@ -1599,10 +1599,11 @@ prólogos, §7.4), y **el rescate por xref de GMRC puede devolver la función
 anterior en silencio** si una recompilación de Valve cambia la forma del prólogo
 PIC — no hace falta ningún `.lua` para eso.
 
-**Orden:** **K primero** (~30 líneas: la clase y la ranura como constantes
-compiladas junto a los patrones, y llamar a `Rtti::ResolveVtableSlot`, hoy sin
-llamar; convierte DepotKey de uno a dos métodos reales, y el segundo no lee un
-solo byte de la función ni depende de la chuleta).
+**Orden:** **K primero** (una función nueva —ranura de la clase mapa → cadenas
+que referencia → índice por nombre— más engancharla a `Rtti::ResolveVtableSlot`,
+hoy sin llamar; convierte DepotKey de uno a dos métodos reales, y el segundo no
+lee un byte de la función, no depende de la chuleta y **no apuesta por ninguna
+constante**).
 Luego **J**, que es un bug de corrección vivo. Luego **R** y **G**, que son
 baratos e independientes. **C** y **3** cuando toque.
 
@@ -1789,22 +1790,64 @@ meses— pero **el mecanismo que esta sección proponía no la realiza**:
 > el fichero entero no existe. Leerlo de ahí da información justo cuando ya
 > sobra, y nada cuando hace falta.
 
-**Lo que sí realiza la intuición:** `ResolveVtableSlot` sólo necesita dos cosas, y
-sólo una viene de fuera:
+> **[CORRECCIÓN 2 — 2026-09-07]** Esta sección pasó entonces a proponer
+> **compilar el slot como constante** (`kDepotKeyVtableSlot = 6`). También es la
+> respuesta mala, y la buena estaba desde el principio en §3.2 de este mismo
+> documento: **`download.lua` no usa ninguna constante — deriva el índice en
+> caliente, por nombre.** Se corrige abajo con el código del plugin delante.
 
-1. Localizar la vtable de `12CConfigStore` — lo hace `FindTypeVtable` **sobre el
-   binario cargado**, sin chuleta y sin red. Funciona en cualquier build.
-2. Un número de ranura.
+**Lo que sí realiza la intuición — el método de `download.lua` (líneas 69-79):**
 
-Así que el slot debe vivir **compilado en el `.so`, junto a los patrones**
-(`kDepotKeyVtableClass` / `kDepotKeyVtableSlot` en `patterns.hpp`), no leerse de
-la chuleta. Con eso, en un build que nadie ha visto, sin red: vtable por nombre →
-ranura 6 → dirección, **sin leer un byte de la función**.
+```lua
+local configStoreMapGetBinary = VFTableInfo_t("21IClientConfigStoreMap", "GetBinary")
+if not configStoreMapGetBinary:init() then
+    log.notifyError("Failed to find GetBinary!")
+    return
+end
 
-El `depotkey_rtti` de la chuleta se queda como lo que sí puede ser: **el
-verificador** de esa constante. Misma relación que `check_patterns.py` ya tiene
-con `patterns.hpp` — valida contra el binario del día y abre PR si el valor se
-movió. Coste ≈ 30 líneas.
+local configStoreGetBinary = VFTableInfo_t("12CConfigStore", "GetBinary",
+                                           configStoreMapGetBinary.index)
+```
+
+Dos pasos, cero constantes:
+
+1. **Derivar el índice por nombre.** En la vtable de la clase *mapa de interfaz*
+   `21IClientConfigStoreMap`, busca la ranura **cuya función referencia la cadena
+   `"GetBinary"`**. Las clases `*Map` son la capa de despacho y cada método lleva
+   su propio nombre dentro, así que el índice sale del binario que se tiene
+   delante. El mecanismo de SLSsteam es `Decompiler::parseInterfaceMapBase`
+   (`decompiler.cpp:593`): recorre ranuras, desensambla cada una, recoge sus
+   referencias a cadenas y construye `nombre → índice`.
+2. **Aplicar el índice a la clase concreta**, `12CConfigStore`, para obtener el
+   puntero real.
+
+Y **falla cerrado**: si `init()` no resuelve, error y `return` — el plugin no se
+carga. No sigue a ciegas.
+
+Ni constantes, ni bytes de la función, ni chuleta: **dos nombres de texto**. Es
+inmune a la recompilación *y* a que Valve reorganice la vtable, porque el índice
+se vuelve a derivar en cada arranque.
+
+**Qué falta en lumalinux — una sola pieza:**
+
+| Paso | ¿Existe? |
+|---|---|
+| Vtable de una clase por nombre RTTI | **Sí** — `FindTypeVtable`, en uso |
+| Recorrer ranuras acotado | **Sí** — `ResolveVtableSlotBySignature`, `maxSlots=40` |
+| Desensamblar una instrucción | **Sí** — `LM_Disassemble`, usado en `FixPicThunk` |
+| **Ranura → cadenas que referencia → índice por nombre** | **No. Es lo único que falta** |
+| Aplicar el índice a la clase concreta | **Sí** — `Rtti::ResolveVtableSlot(nombre, slot)`, escrita y **sin llamar** |
+
+No hace falta un decompilador: SLSsteam tiene `decompiler.cpp` entero porque lo
+hace genérico para 37 interfaces; aquí hace falta **una**. Y su consumidor
+—`ResolveVtableSlot`— lleva meses escrito esperando exactamente este productor.
+
+**Nota de encuadre**, para no sobrevalorar al plugin: la vía por nombre la usa
+**sólo** para `GetBinary`. Sus otros dos hooks (líneas 66-67) son patrones de
+bytes en el **sitio de llamada** (`E8 ? ? ? ? 83 C4 …` + `getJmpTarget`). O sea:
+usa la técnica cara donde no hay ancla dentro de la función —que es justo el
+caso de DepotKey (§7.5.a: *"NO usable in-function anchor"*)— y patrones cortos
+donde sí la hay.
 
 **b) El walk-back del xref falla ABIERTO. [ACCIONABLE J]**
 `gmrc_xref_core.hpp:94` ancla en el byte **`0xE8`** para reconocer la entrada de la
@@ -1873,7 +1916,7 @@ Y la conclusión no pide inventar nada:
 | Prioridad | Qué | Estado |
 |---|---|---|
 | 1 | **J** — que el walk-back falle cerrado | Bug propio, hoy · **cimiento del punto 3** |
-| 2 | **K** — slot de vtable como constante compilada, verificada por CI | ~30 líneas; `ResolveVtableSlot` ya escrita |
+| 2 | **K** — índice de vtable derivado por nombre en caliente (método de `download.lua`) | Falta **una** función: ranura → cadenas → índice. Todo lo demás ya existe |
 | 3 | Subir el ancla de cadena a runtime en los otros cuatro hooks | Las cadenas ya están identificadas en `derive_patterns.py`; el código de referencia es `gmrc_xref.cpp` |
 | 4 | Familia 3 (sitio de llamada) donde no haya cadena usable | **Requiere §7.6 primero** |
 
