@@ -1581,7 +1581,7 @@ refleja la decisión de arriba:
 | **K″** | **DepotKey: patrón exigiendo coincidencia única** (`FindUniqueInSteamclient`), viable ya que hay resolvedores detrás | lumalinux | Alta | **HECHO 2026-09-07** — era el último fallo silencioso del hook |
 | **M1** | GMRC: patrón exigiendo coincidencia única | lumalinux | Alta | **HECHO 2026-09-07** — viable porque J hizo exacto el rescate que hay debajo |
 | **M2** | GMRC: comprobar en CI la ruta de rescate — ancla por frase **y** `.eh_frame_hdr` | lumalinux (CI) | Alta | **HECHO 2026-09-07** — verificado sobre `bc54101b29`: xref `0x1371ac0` = patrón, 133.049 funciones en la tabla |
-| **M3** | **GMRC: calcula el xref siempre**, aunque el patrón haya resuelto, sólo para registrar `DRIFT`. **Desbloqueado por M2**: el contraste que justificaba pagarlo en cada arranque ya lo hace el cron, contra cada build nuevo y con capacidad de abrir un PR — que es más de lo que da una línea en el log de un usuario | lumalinux | Media | **ACTIVO** |
+| **M3** | GMRC: calcular el xref sólo cuando el patrón no resuelve | lumalinux | Media | **HECHO 2026-09-07** |
 | **M4** | **Retirar `WalkBackToPrologue`** si los logs reales nunca emiten *".eh_frame_hdr unavailable"*. Con él se van sus dos modos de fallo. Condición anotada en `gmrc_xref.hpp` para que no se quede de andamio | lumalinux | Baja | **Condicional** |
 | **N** | **Barrer si a ShaderDepot le aplica K**: `16IClientShaderMap` existe; una orden con la sonda lo dice. No crítico | lumalinux | Baja | Abierto |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
@@ -1615,9 +1615,20 @@ para GMRC** — `"GetManifestRequestCode"` existe una vez en el binario y ningun
 de las 52 vtables `*IClient…Map` la referencia (barrido completo, con control).
 No es un método de interfaz. Nota en `gmrc_xref.hpp`.
 
-**Orden que queda:** **M3**, y luego **N**. Con M1 y M2 hechos, GMRC ya no tiene
-ninguno de los dos problemas graves que tenía esta mañana: no adivina cuando el
-patrón es ambiguo, y su rescate está vigilado cada noche.
+**La regla, ahora en los dos hooks críticos:** *se calcula un resolvedor sólo si
+puede cambiar qué función se engancha.* Si alguien ya resolvió, el siguiente no
+altera el resultado y no se ejecuta. El contraste entre métodos no desaparece —
+se muda al sitio donde vale más y cuesta menos:
+
+```
+Deck  →  calcula lo justo para decidir.   Elige.
+CI    →  calcula todo y los enfrenta.     Vigila.
+```
+
+**Orden que queda:** **N**. Con M1, M2 y M3 hechos, GMRC ya no tiene ninguno de
+los problemas que tenía esta mañana: no adivina cuando el patrón es ambiguo, su
+rescate resuelve la entrada de forma exacta y está vigilado cada noche, y no
+paga trabajo que no decide nada.
 
 **Y una dependencia que conviene ver escrita**, porque los tres pasos de hoy se
 habilitaron unos a otros y no al revés:

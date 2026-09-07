@@ -229,46 +229,41 @@ uintptr_t FindBuildDepotDependencyFunction() {
 }
 
 uintptr_t FindGmrcFunction() {
-    // Byte pattern stays PRIMARY (it's the path the CI check / SafeMode gate
-    // validate per build). The job-name string-xref (#13 Part 1) is computed too
-    // and used only to RESCUE a pattern miss — a rebuild that reshuffles the
-    // getter's prologue but leaves the function intact breaks the pattern while
-    // the xref still resolves. When both resolve we log DRIFT if they disagree
-    // (telemetry toward flipping the preference once a CI xref-gate lands). This
-    // ordering means the xref can only help, never regress GMRC location.
+    // Byte pattern PRIMARY, job-name xref (#13 Part 1) as the RESCUE — a rebuild
+    // that reshuffles the getter's prologue but leaves the function intact breaks
+    // the pattern while the xref still resolves.
+    //
     // UNIQUE-match required since v0.16.x, same reasoning as FindDepotKeyFunction:
     // FindInSteamclient returns the FIRST match without counting, so an ambiguous
     // pattern yields a plausible wrong address and the caller detours it — no
     // error, no FAILED, status.json green. That risk was accepted while a 0 meant
     // "no manifest request code, no download at all"; it no longer does. The xref
-    // below rescues, and since 2026-09-07 it resolves the entry from
-    // .eh_frame_hdr's function table (src/eh_frame.hpp) instead of inferring it
-    // from code shape, so the safety net underneath is exact rather than a
-    // heuristic that could itself be wrong. Ambiguity is now reported, not guessed
-    // past.
+    // rescues, and since 2026-09-07 it resolves the entry from .eh_frame_hdr's
+    // function table (src/eh_frame.hpp) instead of inferring it from code shape,
+    // so the net underneath is exact rather than a heuristic that could itself be
+    // wrong.
+    //
+    // The xref is computed ONLY when the pattern came up empty. It used to run
+    // unconditionally so a DRIFT line could be logged when the two disagreed;
+    // that cost (a module-wide string scan, the GOT consensus, a lea scan, and
+    // now building the .eh_frame_hdr table — order of 60 ms) bought a log line
+    // that changed no decision, since the pattern won regardless. Since M2 the
+    // nightly check does that comparison against every new build and can open a
+    // PR, which is strictly more than a line nobody reads until something is
+    // already broken. Same rule as DepotKey: compute a resolver only when it can
+    // change which function gets hooked.
     uintptr_t viaPattern =
         FindUniqueInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
-    uintptr_t viaXref = GmrcXref::FindGmrcFunction();
-
     if (viaPattern) {
-        if (viaXref && viaXref != viaPattern) {
-            Log::Warn("GMRC locate: DRIFT method=pattern target=0x%lx xref=0x%lx "
-                      "(disagree) — using pattern; investigate the anchor",
-                      (unsigned long)viaPattern, (unsigned long)viaXref);
-        } else if (viaXref) {
-            Log::Info("GMRC locate: method=pattern target=0x%lx (xref agrees, drift=0)",
-                      (unsigned long)viaPattern);
-        } else {
-            Log::Info("GMRC locate: method=pattern target=0x%lx (xref unavailable)",
-                      (unsigned long)viaPattern);
-        }
+        Log::Info("GMRC locate: method=pattern target=0x%lx", (unsigned long)viaPattern);
         return viaPattern;
     }
 
+    // "MISSED" now covers two cases: the pattern matched nowhere, or it matched
+    // more than once and FindUniqueInSteamclient refused to guess. Both mean the
+    // same thing here — the xref decides.
+    uintptr_t viaXref = GmrcXref::FindGmrcFunction();
     if (viaXref) {
-        // "MISSED" now covers two cases: the pattern matched nowhere, or it
-        // matched more than once and FindUniqueInSteamclient refused to guess.
-        // Both mean the same thing here — the xref decides.
         Log::Warn("GMRC locate: method=xref target=0x%lx — byte pattern MISSED or "
                   "AMBIGUOUS (Steam likely reshuffled the prologue); xref rescued "
                   "the hook", (unsigned long)viaXref);
@@ -276,63 +271,6 @@ uintptr_t FindGmrcFunction() {
     }
 
     return 0;
-}
-
-uintptr_t FindShaderCacheDepotFunction() {
-    // UNIQUE-match (not FindInSteamclient's first-match): if a Steam update makes
-    // this pattern ambiguous, hooking the first (possibly wrong) match could crash
-    // Steam. Non-critical, so bail to a clean no-op instead — the per-game shader
-    // skip is lost (keyless games regress to the §13.8 loop, DisableShaderCache is
-    // the global stop-gap), but installs are unaffected.
-    return FindUniqueInSteamclient(kShaderCacheDepotPattern,
-                                   "GetShaderCacheDepot (per-game shader skip)");
-}
-
-uintptr_t FindLoadPackageFunction() {
-    // The prologue `55 89 E5 57 ... 81 EC 1C 01 00 00` may match multiple
-    // functions. Enumerate all matches; pick by index via LUMA_LOADPKG_IDX
-    // (default 0). Logs all candidates so we can re-tune if a Steam update
-    // shifts the offset.
-    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
-    if (!r.base) return 0;
-
-    auto parsed = ParsePattern(kLoadPackagePattern);
-    if (parsed.bytes.empty()) return 0;
-
-    std::vector<uintptr_t> hits;
-    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
-    const size_t   patLen = parsed.bytes.size();
-    for (size_t i = 0; i + patLen <= r.size; ++i) {
-        bool match = true;
-        for (size_t j = 0; j < patLen; ++j) {
-            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
-        }
-        if (match) hits.push_back(r.base + i);
-    }
-
-    if (hits.empty()) {
-        Log::Error("Patterns: LoadPackage — no candidates found");
-        return 0;
-    }
-
-    for (size_t i = 0; i < hits.size(); ++i) {
-        Log::Info("Patterns: LoadPackage candidate[%zu] at 0x%lx (RVA 0x%lx)",
-                  i, (unsigned long)hits[i], (unsigned long)(hits[i] - r.base));
-    }
-
-    size_t idx = 0;
-    if (const char* env = std::getenv("LUMA_LOADPKG_IDX")) {
-        idx = static_cast<size_t>(std::strtoul(env, nullptr, 10));
-        if (idx >= hits.size()) {
-            Log::Warn("Patterns: LUMA_LOADPKG_IDX=%zu out of range (%zu) — using 0",
-                      idx, hits.size());
-            idx = 0;
-        }
-    }
-
-    Log::Info("Patterns: LoadPackage selected candidate[%zu] = 0x%lx (RVA 0x%lx)",
-              idx, (unsigned long)hits[idx], (unsigned long)(hits[idx] - r.base));
-    return hits[idx];
 }
 
 } // namespace Patterns
