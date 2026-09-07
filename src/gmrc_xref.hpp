@@ -60,6 +60,19 @@
 // that lone string is the IPC job name this locator already anchors on. So GMRC
 // keeps the xref, and the fixes below are the way out, not a workaround.
 //
+// RESOLVED for the normal path (2026-09-07): step 4 now queries .eh_frame_hdr's
+// sorted function-start table (src/eh_frame.hpp) instead of inferring the entry
+// from code shape — exact, and it rejects an address in no function instead of
+// returning the nearest thing that looks like an entry. WalkBackToPrologue stays
+// ONLY as the fallback for a build with no usable table, so everything below
+// still describes it accurately, and still applies whenever that fallback runs.
+//
+// RETIREMENT CONDITION, so this does not linger as scaffolding the way the RVA
+// feed's phase-3 drift scan did: if real logs never emit ".eh_frame_hdr
+// unavailable — falling back to the walk-back" (gmrc_xref.cpp), delete
+// WalkBackToPrologue and its two failure modes with it. Until then it is the only
+// thing standing between "no table" and "no rescue at all".
+//
 // Not urgent, on our own evidence: across the 11 builds whitelisted since
 // 2026-06-11 no prologue has moved at all (`res/updates.yaml` still has a single
 // pattern-set group). Cheap fix if this file is touched: on a hit, look at the

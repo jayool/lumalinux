@@ -1575,8 +1575,15 @@ refleja la decisión de arriba:
 
 | # | Acción | Dónde | Prioridad | Estado |
 |---|---|---|---|---|
-| **K** | **Índice de vtable derivado por nombre en caliente**, como `download.lua` (§7.5.a): ranura de `21IClientConfigStoreMap` que referencia `"GetBinary"` → aplicar ese índice a `12CConfigStore` vía `ResolveVtableSlot` (escrita, sin llamar). Falla cerrado. **Ni constante compilada ni leído de la chuleta** — las dos se descartaron con motivo en §7.5.a | lumalinux | **Alta** | **ACTIVO** |
-| **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** | **ACTIVO** |
+| **K** | Índice de vtable derivado por nombre en caliente, como `download.lua` (§7.5.a) | lumalinux | Alta | **HECHO 2026-09-07** — `Rtti::ResolveVtableSlotByName` + rescate en `depot_key_hook.cpp`, y contraste nocturno en `check_patterns.py`. Verificado sobre `bc54101b29`: ranura 6 → `0x11a4500` |
+| **J** | Que el paso 4 del xref de GMRC deje de adivinar la entrada | lumalinux | Alta | **HECHO 2026-09-07** — `src/eh_frame.{hpp,cpp}`: tabla ordenada de inicios de función del propio binario. Exacto y fallo cerrado. Medido con `tools/experiment_eh_frame.py` |
+| **K′** | **DepotKey: no calcular resolvedores que ya no deciden**, y comprobar la ficha en su dirección (`Patterns::MatchesAt`) en vez de escanear `.text` | lumalinux | Media | **HECHO 2026-09-07** — ~150 ms fuera de la ruta normal |
+| **K″** | **DepotKey: patrón exigiendo coincidencia única** (`FindUniqueInSteamclient`), viable ya que hay resolvedores detrás | lumalinux | Alta | **HECHO 2026-09-07** — era el último fallo silencioso del hook |
+| **M1** | **GMRC: lo mismo que K″.** `FindGmrcFunction` usa `FindInSteamclient` (primera coincidencia sin contar) — mismo fallo silencioso, en el otro hook crítico | lumalinux | **Alta** | **ACTIVO** |
+| **M2** | **GMRC: su xref no lo comprueba nadie en CI.** El paracaídas sin abrir. `tools/verify_gmrc_anchor.py` ya existe y no está en el cron | lumalinux (CI) | **Alta** | **ACTIVO** |
+| **M3** | **GMRC: calcula el xref siempre**, aunque el patrón haya resuelto, sólo para registrar `DRIFT`. Decidir si compensa (aquí el contraste vale más que en DepotKey: son dos métodos de verdad independientes) | lumalinux | Media | **ACTIVO** |
+| **M4** | **Retirar `WalkBackToPrologue`** si los logs reales nunca emiten *".eh_frame_hdr unavailable"*. Con él se van sus dos modos de fallo. Condición anotada en `gmrc_xref.hpp` para que no se quede de andamio | lumalinux | Baja | **Condicional** |
+| **N** | **Barrer si a ShaderDepot le aplica K**: `16IClientShaderMap` existe; una orden con la sonda lo dice. No crítico | lumalinux | Baja | Abierto |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
 | **G** | Refrescar el snapshot embebido de `slssteam_schema.py` (`SmartTickets`, `LaunchOptions`, `Plugins`) | LumaDeck | Media | **ACTIVO** |
 | **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media | Abierto |
@@ -1599,11 +1606,19 @@ prólogos, §7.4), y **el rescate por xref de GMRC puede devolver la función
 anterior en silencio** si una recompilación de Valve cambia la forma del prólogo
 PIC — no hace falta ningún `.lua` para eso.
 
-**Orden:** **K primero** (una función nueva —ranura de la clase mapa → cadenas
-que referencia → índice por nombre— más engancharla a `Rtti::ResolveVtableSlot`,
-hoy sin llamar; convierte DepotKey de uno a dos métodos reales, y el segundo no
-lee un byte de la función, no depende de la chuleta y **no apuesta por ninguna
-constante**).
+**Estado 2026-09-07:** K y J hechos, más K′ y K″. DepotKey pasa de un método
+disfrazado de tres a dos de verdad, con el patrón fallando cerrado y sin trabajo
+inútil en el arranque; y el xref de GMRC deja de adivinar la entrada.
+
+**Medido de paso, para no volver a preguntárselo:** la vía por nombre **no sirve
+para GMRC** — `"GetManifestRequestCode"` existe una vez en el binario y ninguna
+de las 52 vtables `*IClient…Map` la referencia (barrido completo, con control).
+No es un método de interfaz. Nota en `gmrc_xref.hpp`.
+
+**Orden que queda:** **M1 → M2 → M3**. Son los tres problemas que DepotKey tenía
+esta mañana, en el otro hook crítico; el camino ya está trillado. M1 primero
+porque es el que puede romper una Deck en silencio, y es viable **ahora** porque
+J hizo de fiar el rescate que hay debajo.
 Luego **J**, que es un bug de corrección vivo. Luego **R** y **G**, que son
 baratos e independientes. **C** y **3** cuando toque.
 
