@@ -95,6 +95,8 @@ set(LUMA_SOURCES
     src/status.cpp
     src/curl.cpp
     src/sha256.cpp
+    src/proc_filter.cpp
+    src/libcurl_pin.cpp
 )
 
 # SafeMode update-check (fetches res/updates.yaml, hashes steamclient.so).
