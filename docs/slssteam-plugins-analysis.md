@@ -1579,9 +1579,9 @@ refleja la decisión de arriba:
 | **J** | Que el paso 4 del xref de GMRC deje de adivinar la entrada | lumalinux | Alta | **HECHO 2026-09-07** — `src/eh_frame.{hpp,cpp}`: tabla ordenada de inicios de función del propio binario. Exacto y fallo cerrado. Medido con `tools/experiment_eh_frame.py` |
 | **K′** | **DepotKey: no calcular resolvedores que ya no deciden**, y comprobar la ficha en su dirección (`Patterns::MatchesAt`) en vez de escanear `.text` | lumalinux | Media | **HECHO 2026-09-07** — ~150 ms fuera de la ruta normal |
 | **K″** | **DepotKey: patrón exigiendo coincidencia única** (`FindUniqueInSteamclient`), viable ya que hay resolvedores detrás | lumalinux | Alta | **HECHO 2026-09-07** — era el último fallo silencioso del hook |
-| **M1** | **GMRC: lo mismo que K″.** `FindGmrcFunction` usa `FindInSteamclient` (primera coincidencia sin contar) — mismo fallo silencioso, en el otro hook crítico | lumalinux | **Alta** | **ACTIVO** |
-| **M2** | **GMRC: su xref no lo comprueba nadie en CI.** El paracaídas sin abrir. `tools/verify_gmrc_anchor.py` ya existe y no está en el cron | lumalinux (CI) | **Alta** | **ACTIVO** |
-| **M3** | **GMRC: calcula el xref siempre**, aunque el patrón haya resuelto, sólo para registrar `DRIFT`. Decidir si compensa (aquí el contraste vale más que en DepotKey: son dos métodos de verdad independientes) | lumalinux | Media | **ACTIVO** |
+| **M1** | GMRC: patrón exigiendo coincidencia única | lumalinux | Alta | **HECHO 2026-09-07** — viable porque J hizo exacto el rescate que hay debajo |
+| **M2** | GMRC: comprobar en CI la ruta de rescate — ancla por frase **y** `.eh_frame_hdr` | lumalinux (CI) | Alta | **HECHO 2026-09-07** — verificado sobre `bc54101b29`: xref `0x1371ac0` = patrón, 133.049 funciones en la tabla |
+| **M3** | **GMRC: calcula el xref siempre**, aunque el patrón haya resuelto, sólo para registrar `DRIFT`. **Desbloqueado por M2**: el contraste que justificaba pagarlo en cada arranque ya lo hace el cron, contra cada build nuevo y con capacidad de abrir un PR — que es más de lo que da una línea en el log de un usuario | lumalinux | Media | **ACTIVO** |
 | **M4** | **Retirar `WalkBackToPrologue`** si los logs reales nunca emiten *".eh_frame_hdr unavailable"*. Con él se van sus dos modos de fallo. Condición anotada en `gmrc_xref.hpp` para que no se quede de andamio | lumalinux | Baja | **Condicional** |
 | **N** | **Barrer si a ShaderDepot le aplica K**: `16IClientShaderMap` existe; una orden con la sonda lo dice. No crítico | lumalinux | Baja | Abierto |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
@@ -1615,10 +1615,20 @@ para GMRC** — `"GetManifestRequestCode"` existe una vez en el binario y ningun
 de las 52 vtables `*IClient…Map` la referencia (barrido completo, con control).
 No es un método de interfaz. Nota en `gmrc_xref.hpp`.
 
-**Orden que queda:** **M1 → M2 → M3**. Son los tres problemas que DepotKey tenía
-esta mañana, en el otro hook crítico; el camino ya está trillado. M1 primero
-porque es el que puede romper una Deck en silencio, y es viable **ahora** porque
-J hizo de fiar el rescate que hay debajo.
+**Orden que queda:** **M3**, y luego **N**. Con M1 y M2 hechos, GMRC ya no tiene
+ninguno de los dos problemas graves que tenía esta mañana: no adivina cuando el
+patrón es ambiguo, y su rescate está vigilado cada noche.
+
+**Y una dependencia que conviene ver escrita**, porque los tres pasos de hoy se
+habilitaron unos a otros y no al revés:
+
+```
+J   hace exacto el rescate        ->  habilita M1 (fallar cerrado ya no es perder el hook)
+M2  mete el contraste en el cron  ->  habilita M3 (pagarlo en cada arranque deja de tener sentido)
+```
+
+Ninguno de los dos se podía hacer antes que el que lo habilita, y hacerlos al
+revés habría sido un error difícil de ver.
 Luego **J**, que es un bug de corrección vivo. Luego **R** y **G**, que son
 baratos e independientes. **C** y **3** cuando toque.
 
