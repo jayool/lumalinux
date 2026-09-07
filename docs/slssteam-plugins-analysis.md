@@ -20,6 +20,12 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 
 | Capa | Qué responde | Estado |
 |---|---|---|
+> **DECISIÓN — 2026-09-07.** Este documento es **análisis, estudio y
+> comparativa**. No se modifica lumalinux ni LumaDeck para defenderse de los
+> plugins de SLSsteam. Los accionables de defensa (**D, E′, L, H, F, B**) quedan
+> **archivados**; siguen activos sólo los que son independientes de los plugins
+> (**K, J, R, G**). Detalle y motivos en **§6.6**.
+
 | **0** | Datación y autoría de `download.lua` | **§1 — cerrada** |
 | **1** | La API de plugins como mecanismo | **§2 — cerrada** |
 | **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
@@ -1213,6 +1219,10 @@ Steam, y nos haría responsables de un `.lua` de terceros que no podemos auditar
 
 ### 4.9 Accionables de la capa
 
+> **Archivados por la decisión de 2026-09-07 (§6.6).** Se conservan por su valor
+> de análisis: describen con precisión qué haría falta si algún día se decidiera
+> defenderse de los plugins.
+
 | # | Acción | Prioridad | Nota |
 |---|---|---|---|
 | **D** | **Reportar el enganche compartido.** La detección **ya existe** (`lmhook.cpp:138`) y el encadenado **ya funciona** (`RelocateChainedJmp`, §4.4). Falta el estado: añadir `FOREIGN` a `Status::Outcome` (`status.hpp:9`) → `"foreign"` en `status.json`, emitido desde `LmHook::Install` cuando `already_hooked` es cierto. **No** dejar de instalar: instalar encadenado es el comportamiento correcto y probado. | **Alta** | Recupera el fallo seguro que el RVA feed nos quitó (§4.5), pero **nombrando**, no absteniéndose. Un único punto de emisión ⇒ vale para los siete hooks y para los que vengan. |
@@ -1365,6 +1375,10 @@ como **información** en Settings → Components (no como advertencia), y alimen
 desambiguación de D/E.
 
 ### 5.6 Accionables de la capa
+
+> **E′, H y F archivados por la decisión de 2026-09-07 (§6.6). G sigue activo**,
+> porque el snapshot de `slssteam_schema.py` hay que refrescarlo igual:
+> la release trajo `SmartTickets` y `LaunchOptions` además de `Plugins`.
 
 | # | Acción | Prioridad | Nota |
 |---|---|---|---|
@@ -1531,55 +1545,65 @@ el defecto en su ausencia.)*
 
 ### 6.6 Accionables consolidados
 
-Todo lo que sale de esta investigación, en un sitio:
+> ## DECISIÓN — 2026-09-07
+>
+> **Los plugins de SLSsteam se tratan como material de análisis, estudio y
+> comparativa. No se modifica lumalinux ni LumaDeck para defenderse de ellos.**
+>
+> Es una decisión defendible por sí sola: los plugins vienen **apagados por
+> defecto** (`Plugins: no`, §2.1) y el usuario tiene que activarlos a mano, así
+> que quien los ejecuta ha elegido meter código de terceros dentro de Steam. El
+> único daño que LumaDeck causaría de forma activa —ofrecer degradar Steam,
+> §5.1— exige tres condiciones simultáneas: plugins activados, un `.lua` que
+> pise justo DepotKey o GMRC, y un build sin entrada en la chuleta.
+>
+> **Se archivan sin ejecutar: D, E′, L, H, F, B** (y **I** en su parte de
+> medición sobre plugins).
+>
+> **Sobrevive todo lo que no va de plugins**, que es la mitad del documento y
+> todo el §7: J y K son agujeros frente a que **Valve recompile**, no frente a
+> un `.lua`; el derivador de Reconcile está sin probar; y G toca igual porque la
+> release trajo `SmartTickets` y `LaunchOptions` además de `Plugins`.
+>
+> El §7 completo —las cinco familias de anclaje, que Ghidra encuentra por cadena
+> y guarda un prólogo, que la chuleta es una caché y no un segundo método, y el
+> recuento honesto de métodos por hook— **no lo produjo el plugin: el plugin fue
+> la excusa para mirar.** Sigue vigente entero.
 
-| # | Acción | Dónde | Prioridad |
-|---|---|---|---|
-| **D** | Estado `foreign` en `status.json`, emitido desde `LmHook::Install` (la detección y el encadenado ya existen, §4.4) | lumalinux | **Crítica** |
-| **E′** | `FOREIGN` no cuenta como `critical_failed` → sin `action: "downgrade"`, copy propio | LumaDeck | **Crítica** |
-| **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | Alta |
-| **I** | Plugin de diagnóstico para medir A y C sin tocar producción | herramienta | Alta |
-| **A** | **Rebajado tras medir** (§3.4.2): el cuelgue no se reproduce ni en frío. Queda corregir la explicación de `RESEARCH.md` §18, que atribuye la inmunidad a la caché caliente y no se sostiene | lumalinux | Baja |
-| **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media |
-| **A′** | Dependencia dura: si se ejecuta A, C va antes o a la vez | — | — |
-| **H** | Detección sólo lectura de `Plugins:` + inventario de `.lua`, como información | LumaDeck | Media |
-| **G** | Refrescar el snapshot embebido de `slssteam_schema.py` | LumaDeck | Media |
-| **F** | Regla de diseño: ni escribir plugins, ni activarlos, ni desactivarlos | LumaDeck (`DESIGN.md`) | Media |
-| **3ª** | Resolución por sitio de llamada como tercer resolvedor, tras feed y RTTI | lumalinux | Baja |
-| **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** |
-| **K** | Conectar el `depotkey_rtti` ya publicado (`ResolveVtableSlot`, hoy código muerto) | lumalinux | **Alta** |
-| **3** | Subir el ancla de cadena a runtime en los otros cuatro hooks | lumalinux | Media |
-| **L** | **Verificación de vigencia**: releer los primeros bytes de cada objetivo enganchado y comprobar que nuestro `jmp` sigue ahí, no sólo al instalar sino cada vez que se escribe `status.json`. Hoy `installed` significa *"se instaló"*, no *"sigue instalado"* | lumalinux | **Alta** |
+Todo lo que sale de esta investigación, en un sitio. La columna **estado**
+refleja la decisión de arriba:
 
-**J, K y 3 vienen de §7.7 y son la otra mitad de D** (§4.5): D nombra el
-enganche compartido cuando lo resolvemos; J/K/3 hacen que lo resolvamos también
-sin chuleta. **J va primero de las tres**, y no por GMRC: el walk-back es el
-último metro de *toda* la familia de anclaje por cadena, así que arreglarlo antes
-hace que los cuatro hooks del punto 3 nazcan ya tolerantes al prólogo — y
-hacerlo después obliga a repararlos uno a uno.
+| # | Acción | Dónde | Prioridad | Estado |
+|---|---|---|---|---|
+| **K** | Conectar el `depotkey_rtti` ya publicado (`ResolveVtableSlot`, hoy código muerto) | lumalinux | **Alta** | **ACTIVO** |
+| **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** | **ACTIVO** |
+| **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
+| **G** | Refrescar el snapshot embebido de `slssteam_schema.py` (`SmartTickets`, `LaunchOptions`, `Plugins`) | LumaDeck | Media | **ACTIVO** |
+| **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media | Abierto |
+| **3** | Subir el ancla de cadena a runtime en los otros cuatro hooks | lumalinux | Media | Abierto |
+| **3ª** | Resolución por sitio de llamada como tercer resolvedor, tras feed y RTTI | lumalinux | Baja | Abierto (requiere §7.6) |
+| **A** | **Cerrado tras medir** (§3.4.2): el cuelgue no se reproduce ni en frío | lumalinux | — | Cerrado |
+| **A′** | Dependencia dura: si se ejecuta A, C va antes o a la vez | — | — | Sin objeto (A cerrado) |
+| **D** | Estado `foreign` en `status.json` | lumalinux | — | **Archivado** (decisión) |
+| **E′** | `foreign` no cuenta como `critical_failed` | LumaDeck | — | **Archivado** (decisión) |
+| **L** | Verificación de vigencia del hook en cada `status.json` | lumalinux | — | **Archivado** (decisión) |
+| **H** | Detección sólo lectura de `Plugins:` + inventario de `.lua` | LumaDeck | — | **Archivado** (decisión) |
+| **F** | Regla de diseño sobre el directorio de plugins | LumaDeck | — | **Archivado** (decisión) |
+| **B** | Reportar upstream el doble `unlock` de `LuaMutex` | SLSsteam (issue) | — | **Archivado** (decisión) |
+| **I** | Plugin de diagnóstico para medir A y C | herramienta | — | **Archivado** (A cerrado; C se mide sin plugin) |
 
-**Orden:** D + E′ juntos y primero (quitan la oferta de degradar Steam), y son
-baratos porque D es un valor de enum en el único punto por el que pasan todos los
-hooks. Luego **J → K → 3**, que es donde se quita la fragilidad de raíz. Luego B
-e I, que son baratos y desbloquean. Después A/C con su dependencia, y H, G, F
-cuando toque.
+**J y K ya no son "la otra mitad de D"** — D está archivado. Se quedan por su
+propio motivo, que es anterior a los plugins y más importante: **DepotKey tiene
+un solo método real** (la chuleta es la caché del patrón y la vía RTTI compara
+prólogos, §7.4), y **el rescate por xref de GMRC puede devolver la función
+anterior en silencio** si una recompilación de Valve cambia la forma del prólogo
+PIC — no hace falta ningún `.lua` para eso.
 
-**Límite honesto de D + J + K + 3.** Ninguno de los cuatro da robustez frente a
-un tercero que **mueva** la función en vez de parchearla. Concretamente, y todo
-verificable en la fuente de SLSsteam:
-
-| Qué puede hacer un plugin | ¿Lo cubre algo de lo anterior? |
-|---|---|
-| Detour de 5 bytes vía `place_lua_hook` | **Sí** — D lo nombra, J/K lo localizan igual |
-| **`hook:remove()`** (`lua.cpp:427` → `hooks.cpp:225` → `LM_UnhookCode`) | **No.** Reescribe `size` bytes de **su** trampolín —el prólogo original— sobre `fn`, **borrando nuestro `jmp`** si enganchamos después. Seguimos reportando `installed` con el hook ya muerto. Y no es exótico: el directorio de plugins está vigilado (`lua.cpp:347`) y `luaReload` dispara en cada guardado |
-| Sustituir el puntero de la vtable | **No.** K resolvería al impostor; el ancla de cadena resolvería a la función real que ya no llama nadie. En ambos casos acertamos mal |
-| Parchear la GOT/PLT | **No.** La función queda intacta y sin llamantes; enganchamos algo que ya no se ejecuta |
-| Parche más largo de 5 bytes | **Parcial.** La lista blanca de J devuelve 0 — honesto, no robusto |
-
-**La conclusión que hay que escribir sin adornos: J no compra robustez, compra
-honestidad.** Convierte "equivocarse en silencio" en "reportar que no puede". Lo
-único que compra robustez de verdad frente a un objetivo que se mueve es
-**comprobar en caliente que el hook sigue vivo** → **Accionable L**.
+**Orden:** **K primero** (~30 líneas sobre un dato que el CI ya publica y una
+función ya escrita: `Rtti::ResolveVtableSlot`, hoy sin llamar; convierte DepotKey
+de uno a dos métodos reales, y el segundo no lee un solo byte de la función).
+Luego **J**, que es un bug de corrección vivo. Luego **R** y **G**, que son
+baratos e independientes. **C** y **3** cuando toque.
 
 **Criterio, corregido:** endurecer un localizador **no** se decide por si alguien
 hookea hoy esa función. `download.lua` solapa hoy en dos (§4.3), pero eso es una
@@ -1604,9 +1628,13 @@ cambiado dos cosas para nosotros:
 Ninguna de las dos cosas se ve mirando el `.lua`. Salen de mirar el mecanismo, y
 por eso el análisis fue por capas.
 
-Lo urgente es pequeño y está acotado: **dos accionables (D y E′) que impiden que
-LumaDeck le ofrezca a alguien degradar su Steam por culpa de un fichero de texto.**
-El resto es trabajo ordinario con calendario propio.
+Lo urgente parecía ser **D y E′** —impedir que LumaDeck ofreciera degradar Steam
+por culpa de un fichero de texto—, y **se han archivado por decisión explícita**
+(§6.6): los plugins vienen apagados, activarlos es un acto deliberado del
+usuario, y el daño exige tres condiciones simultáneas.
+
+Lo que queda es lo que nunca fue de plugins: **K y J**, dos agujeros frente a que
+**Valve recompile**, que es lo que sí va a pasar.
 
 Y lo estratégico no requiere decisión hoy. Requiere vigilar §6.4 y aceptar el
 reencuadre de §6.1: **el valor de lumalinux nunca estuvo en los tres hooks, sino
