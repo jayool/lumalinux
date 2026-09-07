@@ -236,8 +236,18 @@ uintptr_t FindGmrcFunction() {
     // the xref still resolves. When both resolve we log DRIFT if they disagree
     // (telemetry toward flipping the preference once a CI xref-gate lands). This
     // ordering means the xref can only help, never regress GMRC location.
+    // UNIQUE-match required since v0.16.x, same reasoning as FindDepotKeyFunction:
+    // FindInSteamclient returns the FIRST match without counting, so an ambiguous
+    // pattern yields a plausible wrong address and the caller detours it — no
+    // error, no FAILED, status.json green. That risk was accepted while a 0 meant
+    // "no manifest request code, no download at all"; it no longer does. The xref
+    // below rescues, and since 2026-09-07 it resolves the entry from
+    // .eh_frame_hdr's function table (src/eh_frame.hpp) instead of inferring it
+    // from code shape, so the safety net underneath is exact rather than a
+    // heuristic that could itself be wrong. Ambiguity is now reported, not guessed
+    // past.
     uintptr_t viaPattern =
-        FindInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
+        FindUniqueInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
     uintptr_t viaXref = GmrcXref::FindGmrcFunction();
 
     if (viaPattern) {
@@ -256,9 +266,12 @@ uintptr_t FindGmrcFunction() {
     }
 
     if (viaXref) {
-        Log::Warn("GMRC locate: method=xref target=0x%lx — byte pattern MISSED "
-                  "(Steam likely reshuffled the prologue); xref rescued the hook",
-                  (unsigned long)viaXref);
+        // "MISSED" now covers two cases: the pattern matched nowhere, or it
+        // matched more than once and FindUniqueInSteamclient refused to guess.
+        // Both mean the same thing here — the xref decides.
+        Log::Warn("GMRC locate: method=xref target=0x%lx — byte pattern MISSED or "
+                  "AMBIGUOUS (Steam likely reshuffled the prologue); xref rescued "
+                  "the hook", (unsigned long)viaXref);
         return viaXref;
     }
 
