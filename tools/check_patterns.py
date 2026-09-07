@@ -36,6 +36,7 @@
 #                        -> open an issue (A.2 / C); do NOT whitelist.
 #   1  usage / I/O / unparseable-binary error.
 import argparse
+import bisect
 import hashlib
 import json
 import os
@@ -163,6 +164,21 @@ BYNAME_DEPOTKEY = {"map_class": "21IClientConfigStoreMap", "method": "GetBinary"
                    # "inside it". The same name is referenced from unrelated code
                    # far from this vtable; attributing that would pick a wrong slot.
                    "max_fn_size": 512}
+
+# GMRC's RESCUE path, which nothing validated until now — and a rescue only runs
+# once the pattern has already missed, i.e. exactly when there is no second
+# opinion left to catch it being wrong. Two things the Deck depends on here:
+#
+#   (a) the job-name string anchor: it must exist and be referenced from EXACTLY
+#       ONE site, or it identifies nothing (the v0.10.3 LoadPackage lesson);
+#   (b) .eh_frame_hdr: since 2026-09-07 the runtime turns that site into the
+#       function ENTRY by looking it up in the binary's own sorted function table
+#       (src/eh_frame.hpp) instead of walking backwards. A build whose header
+#       encodings this parser does not implement makes the runtime fail closed and
+#       fall back to the walk-back and its two documented failure modes — silently,
+#       unless CI says so.
+GMRC_XREF = {"string": "ContentServerDirectory.GetManifestRequestCode#1",
+             "const": "kGmrcFunctionPattern", "label": "GMRC"}
 
 # ── finder anchors (§13.5) — mirrored from package_zero_finder.cpp ────────────
 # (a) cache-access idiom, anchored on the 0xc58 tree-root offset of
@@ -398,6 +414,140 @@ def _got_base_consensus(data, secs):
     return max(votes.items(), key=lambda kv: kv[1])[0]
 
 
+def eh_frame_starts(path):
+    """Sorted function-start table from .eh_frame_hdr. Port of the runtime
+    src/eh_frame.cpp, and of tools/experiment_eh_frame.py which measured it
+    viable on build bc54101b29.
+
+    Only the fixed-size encodings gcc emits here are implemented; anything else
+    returns an error rather than being guessed at, exactly like the C++ does.
+    Returns (starts, info, note); starts is None on failure."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return None, {}, "load:%s" % e
+    if ".eh_frame_hdr" not in secs:
+        return None, {}, "no .eh_frame_hdr"
+    hdr_va, hdr_off, _hdr_size = secs[".eh_frame_hdr"]
+
+    def read_enc(off, enc):
+        fmt, app = enc & 0x0F, enc & 0x70
+        if fmt == 0x03:                      # udata4
+            v = struct.unpack_from("<I", data, off)[0]
+        elif fmt == 0x0B:                    # sdata4
+            v = struct.unpack_from("<i", data, off)[0]
+        else:
+            raise ValueError("unimplemented value encoding 0x%02x" % enc)
+        at = hdr_va + (off - hdr_off)
+        if app == 0x00:                      # absptr
+            base = 0
+        elif app == 0x10:                    # pcrel
+            base = at
+        elif app == 0x30:                    # datarel
+            base = hdr_va
+        else:
+            raise ValueError("unimplemented encoding application 0x%02x" % enc)
+        return (base + v) & 0xFFFFFFFF, off + 4
+
+    info = {"version": data[hdr_off], "eh_frame_ptr_enc": data[hdr_off + 1],
+            "fde_count_enc": data[hdr_off + 2], "table_enc": data[hdr_off + 3]}
+    if info["version"] != 1:
+        return None, info, "version %d unsupported" % info["version"]
+    try:
+        off = hdr_off + 4
+        _ehf, off = read_enc(off, info["eh_frame_ptr_enc"])
+        count, off = read_enc(off, info["fde_count_enc"])
+        starts = []
+        prev = 0
+        for _ in range(count):
+            loc, off = read_enc(off, info["table_enc"])
+            _fde, off = read_enc(off, info["table_enc"])
+            if loc < prev:
+                return None, info, "table not sorted"
+            prev = loc
+            starts.append(loc)
+    except (ValueError, struct.error) as e:
+        return None, info, str(e)
+    info["count"] = len(starts)
+    return starts, info, "ok"
+
+
+def gmrc_xref_derive(path, anchor):
+    """Mirror of the runtime GMRC rescue (src/gmrc_xref.cpp): job-name string ->
+    GOT base by consensus -> the UNIQUE `lea reg,[got+disp32]` referencing it ->
+    the containing function's entry from .eh_frame_hdr.
+
+    Fail-closed like the runtime: a string that is absent, or referenced from more
+    than one site, resolves to nothing rather than to a guess.
+    Returns (info, note)."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return {"status": "LOAD_FAILED"}, "load:%s" % e
+    if ".text" not in secs or not secs[".text"][2]:
+        return {"status": "NO_TEXT"}, "no .text"
+
+    needle = anchor.encode() + b"\x00"
+    s_va = None
+    for _nm, (a, o, sz) in sorted(secs.items()):
+        if not a or not sz:
+            continue
+        j = data[o:o + sz].find(needle)
+        if j >= 0:
+            s_va = a + j
+            break
+    if s_va is None:
+        return {"status": "STRING_NOT_FOUND"}, "job-name string absent"
+
+    got = _got_base_consensus(data, secs)
+    if got is None:
+        return {"status": "NO_GOT"}, "could not derive GOT base"
+
+    tx_a, tx_o, tx_s = secs[".text"]
+    tx = data[tx_o:tx_o + tx_s]
+    needle32 = struct.pack("<I", (s_va - got) & 0xFFFFFFFF)
+    sites, i = [], 0
+    while True:
+        j = tx.find(needle32, i)
+        if j < 0:
+            break
+        i = j + 1
+        if j < 2 or tx[j - 2] != 0x8D:
+            continue
+        modrm = tx[j - 1]
+        if (modrm & 0xC0) != 0x80 or (modrm & 0x07) == 0x04:
+            continue
+        sites.append(tx_a + j - 2)
+
+    out = {"string_rva": "0x%x" % s_va, "got": "0x%x" % got,
+           "sites": ["0x%x" % v for v in sites]}
+    if len(sites) != 1:
+        # The whole point of a string anchor is that it identifies ONE function.
+        out["status"] = "AMBIGUOUS" if sites else "NO_SITE"
+        return out, "%d referencing site(s), need exactly 1" % len(sites)
+
+    site = sites[0]
+    starts, eh_info, eh_note = eh_frame_starts(path)
+    out["eh_frame"] = {"note": eh_note, **{k: v for k, v in eh_info.items()}}
+    if starts is None:
+        out["status"] = "NO_EH_FRAME"
+        return out, "site 0x%x found but .eh_frame_hdr unusable: %s" % (site, eh_note)
+
+    i = bisect.bisect_right(starts, site) - 1
+    if i < 0:
+        out["status"] = "NOT_IN_A_FUNCTION"
+        return out, "site 0x%x precedes every function" % site
+    end = starts[i + 1] if i + 1 < len(starts) else (tx_a + tx_s)
+    if site >= end:
+        out["status"] = "NOT_IN_A_FUNCTION"
+        return out, "site 0x%x is past the last function" % site
+
+    out["status"] = "UNIQUE"
+    out["rva"] = "0x%x" % starts[i]
+    out["fn_size"] = end - starts[i]
+    return out, "ok"
+
+
 def rtti_derive_slot_byname(path, map_class, method, impl_class,
                             max_slots=64, max_fn_size=512):
     """Derive the vtable slot from the METHOD NAME. Mirrors the runtime
@@ -578,6 +728,7 @@ def main():
         "caps_str": "",       # "shader=ok reconcile=moved" for the updates.yaml comment
         "rtti": {},           # DepotKey RTTI ground-truth (slot/rva/status)
         "rtti_byname": {},    # DepotKey slot derived from the METHOD NAME
+        "gmrc_xref": {},      # GMRC's rescue path: job-name anchor + .eh_frame_hdr
         "verdict": None,
         "exit_code": None,
     }
@@ -670,6 +821,31 @@ def main():
                     "DepotKey-byname:disagrees(pattern slot %s @ %s vs name slot %s @ %s)"
                     % (rt.get("slot"), rt.get("rva"), bn["slot"], bn["rva"]))
 
+    # 1d) GMRC's RESCUE path. The byte pattern above is what gets published; this
+    # is what the Deck falls back to when that pattern misses, so it runs in
+    # precisely the situation where nothing else can catch it being wrong. Two
+    # dependencies, neither validated before now: the job-name string anchor, and
+    # .eh_frame_hdr (which the runtime has used to resolve the entry since
+    # 2026-09-07, replacing the walk-back and its two failure modes).
+    #
+    # Severity:
+    #   - resolves and DISAGREES with the pattern -> BLOCKING. One of the two is
+    #     wrong and there is no third opinion to say which.
+    #   - does not resolve at all -> NOT blocking. The published RVA comes from the
+    #     pattern and is still correct, so the build is fine — but the rescue is
+    #     dead and that must be visible before it is needed, not after.
+    gx, gx_note = gmrc_xref_derive(args.steamclient, GMRC_XREF["string"])
+    gx["note"] = gx_note
+    result["gmrc_xref"] = gx
+    if gx.get("status") == "UNIQUE":
+        pat_rvas = result["hooks"].get(GMRC_XREF["label"], {}).get("rvas", [])
+        if pat_rvas:
+            gx["agrees_with_pattern"] = (pat_rvas[0] == gx["rva"])
+            if not gx["agrees_with_pattern"]:
+                result["blocking"].append(
+                    "GMRC-xref:disagrees(pattern %s vs xref %s)"
+                    % (pat_rvas[0], gx["rva"]))
+
     # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
     # derive but still PR-able. Record per-hook capability (ok/moved) so the
     # whitelist can carry it and LumaDeck knows what a build would lose.
@@ -747,6 +923,17 @@ def main():
               % ("DepotKey-RTTI", rt["slot"], rt["rva"], rt["agrees_with_pattern"]))
     elif rt:
         print("  %-12s %s" % ("DepotKey-RTTI", rt.get("status")))
+    gx = result.get("gmrc_xref", {})
+    if gx.get("status") == "UNIQUE":
+        eh = gx.get("eh_frame", {})
+        print("  %-12s @ %s  (agrees-with-pattern=%s, fn %d B, eh_frame %s fns)"
+              % ("GMRC-xref", gx["rva"], gx.get("agrees_with_pattern"),
+                 gx.get("fn_size", 0), eh.get("count", "?")))
+    elif gx:
+        # Not blocking: what is published comes from the pattern. But the Deck
+        # falls back to this, so a dead rescue must not pass unnoticed.
+        print("  %-12s %s  (%s)  <- runtime rescue unavailable on this build"
+              % ("GMRC-xref", gx.get("status"), gx.get("note")))
     bn = result.get("rtti_byname", {})
     if bn.get("status") == "UNIQUE":
         extra = ""
