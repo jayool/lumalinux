@@ -229,5 +229,12 @@ uintptr_t FindShaderCacheDepotFunction();
 
 uintptr_t FindSteamclientBase();
 
+// Does `pattern` match the bytes AT `addr`? O(pattern length) instead of the
+// O(.text) that a Find* call costs, so it is the right shape for VERIFYING an
+// address something else already produced — e.g. checking a feed RVA points at
+// the function we think it does, without paying a full scan on the happy path.
+// False on a parse error, a null addr, or an addr outside steamclient's r-x span.
+bool MatchesAt(uintptr_t addr, const char* pattern);
+
 } // namespace Patterns
 

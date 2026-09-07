@@ -130,23 +130,27 @@ bool Install() {
     // steamclient.so hash), and it is prologue-independent — it survives a
     // recompile that would break the byte pattern. RTTI/pattern below is the
     // fallback for builds the feed hasn't published yet. docs/rva-feed-design.md.
+    //
+    // Each step runs ONLY if the previous came up empty. Resolution is a hot path
+    // — it runs while Steam is starting — so a resolver that cannot change the
+    // outcome must not run at all. Cross-checking the chosen address belongs in
+    // CI, which has the binary open anyway and can afford full scans.
     if (uintptr_t feed = RvaFeed::Resolve("DepotKey")) {
         target = feed; method = "rva";
-        if (uintptr_t p = Patterns::FindDepotKeyFunction(); p && p != feed)
-            Log::Warn("DepotKey: feed 0x%lx != pattern 0x%lx — using feed; investigate drift",
-                      (unsigned long)feed, (unsigned long)p);
+        // Drift note only — the feed still WINS on a mismatch, and that is
+        // load-bearing: the whole point of the feed is curing a deployed .so
+        // without a release, so a build whose patterns moved has a correct feed
+        // RVA and a STALE compiled pattern. Gating the feed on that pattern would
+        // throw away the good address precisely when it is the only one left.
+        // Checked at the address (O(pattern)) instead of by scanning .text for
+        // the pattern and comparing addresses (O(.text)) — same information,
+        // ~46 byte comparisons instead of a pass over the executable span.
+        if (!Patterns::MatchesAt(feed, Patterns::kDepotKeyFnPattern))
+            Log::Warn("DepotKey: feed 0x%lx does not match the compiled prologue "
+                      "— using the feed anyway (expected if patterns.hpp is older "
+                      "than this build's feed entry); investigate drift",
+                      (unsigned long)feed);
     }
-
-    // Name-derived resolution, computed unconditionally so it can both CHECK the
-    // chosen target and RESCUE a total miss. It reads no byte of the accessor —
-    // the only resolver here that doesn't — so it survives exactly the event that
-    // takes out all the others at once: a recompile that moves the prologue.
-    // (§7.5.a: the feed is a cache of the pattern, and ResolveVtableSlotBySignature
-    // finds the slot by comparing prologues, so those three are one bet, not three.)
-    int bynameSlot = -1;
-    const uintptr_t byname = Rtti::ResolveVtableSlotByName(
-        kDepotKeyIfaceMapClass, kDepotKeyMethodName, kDepotKeyImplClass,
-        /*maxSlots=*/40, &bynameSlot);
 
     if (!target) {
         uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
@@ -168,27 +172,34 @@ bool Install() {
         }
     }
 
-    // Cross-check, then rescue. Ordered so the name path can never REGRESS the
-    // location: when something else resolved, that stays the target and a
-    // disagreement is only logged — same arrangement FindGmrcFunction uses for
-    // its xref (patterns.cpp:198). It only decides when nothing else could.
-    if (target && byname && byname != target) {
-        Log::Warn("DepotKey: DRIFT method=%s target=0x%lx byname=0x%lx (slot %d) "
-                  "— using %s; investigate which moved",
-                  method, (unsigned long)target, (unsigned long)byname,
-                  bynameSlot, method);
-    } else if (target && byname) {
-        Log::Info("DepotKey: byname agrees (slot %d, drift=0)", bynameSlot);
-    }
-
-    if (!target && byname) {
-        target = byname;
-        method = "byname(rescue)";
-        derivedSlot = bynameSlot;
-        Log::Warn("DepotKey: feed, RTTI and pattern all MISSED; %s::%s resolved by "
-                  "name to 0x%lx (slot %d) — Steam likely reshuffled the prologue",
-                  kDepotKeyImplClass, kDepotKeyMethodName,
-                  (unsigned long)byname, bynameSlot);
+    // Last resort: derive the vtable slot from the METHOD NAME. Reads no byte of
+    // the accessor, so it survives the one event that takes out feed, RTTI and
+    // pattern together — a recompile that moves the prologue (§7.5.a: the feed is
+    // a cache of the pattern and the RTTI walk compares prologues, so those three
+    // are one bet, not three).
+    //
+    // Deliberately NOT computed when something else already resolved. It costs
+    // roughly a dozen passes over the module (string search, GOT consensus, one
+    // lea scan per name occurrence, two vtable walks); paying that on every
+    // launch to print an agree/drift line is a cost with no return, because the
+    // line changes no decision and nobody reads it until something is already
+    // broken. The cross-check it would give belongs in check_patterns.py, which
+    // runs nightly against every new build and can open a PR.
+    if (!target) {
+        int bynameSlot = -1;
+        const uintptr_t byname = Rtti::ResolveVtableSlotByName(
+            kDepotKeyIfaceMapClass, kDepotKeyMethodName, kDepotKeyImplClass,
+            /*maxSlots=*/40, &bynameSlot);
+        if (byname) {
+            target = byname;
+            method = "byname(rescue)";
+            derivedSlot = bynameSlot;
+            Log::Warn("DepotKey: feed, RTTI and pattern all MISSED; %s::%s resolved "
+                      "by name to 0x%lx (slot %d) — Steam likely reshuffled the "
+                      "prologue",
+                      kDepotKeyImplClass, kDepotKeyMethodName,
+                      (unsigned long)byname, bynameSlot);
+        }
     }
 
     if (!target) {
