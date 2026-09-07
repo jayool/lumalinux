@@ -26,6 +26,36 @@
 // found, no unique lea, walk-back fails). The caller keeps the byte pattern as
 // the primary path and uses this only to rescue a pattern miss, logging drift
 // when both resolve and disagree — so this can never regress GMRC location.
+//
+// KNOWN LIMIT of step 4 — it is NOT fail-closed, and the caveat is load-bearing.
+// WalkBackToPrologue does not find "the function entry"; it finds the nearest
+// preceding `E8 rel32` whose next byte is `05` / `81 C?` — i.e. the PIC preamble
+// idiom — and returns THAT. Those coincide only when the preamble sits at
+// offset 0 of the function. Two ways they don't, both reproduced against a
+// synthetic .text (2026-09-03, not observed on a real build):
+//   (a) A prologue that pushes before the thunk call — the shape our OWN
+//       DepotKey target has (`55 57 56 53 E8 …`) — yields entry+4.
+//   (b) `call X; add eax,imm32` is also ordinary code (`return f() + k;`), so a
+//       body carrying one between its entry and the lea site wins the backward
+//       scan; a synthetic case returned entry+0x48.
+// Neither returns 0: they return a plausible WRONG address, and the caller
+// installs a detour there — mid-instruction, so a crash rather than a dead hook.
+//
+// Why this matters more than the numbers suggest: the rescue path only runs
+// when the byte pattern already missed, i.e. exactly when there is no second
+// opinion to drift-check against. And the event that triggers the rescue (Steam
+// reshuffling the prologue) is the same event that can move the preamble off
+// offset 0. Case (b) is at least self-announcing — while the pattern still
+// resolves, a spurious hit shows up as a DRIFT warning — but case (a) is not.
+//
+// Not urgent, on our own evidence: across the 11 builds whitelisted since
+// 2026-06-11 no prologue has moved at all (`res/updates.yaml` still has a single
+// pattern-set group). Cheap fix if this file is touched: on a hit, look at the
+// bytes immediately before the preamble and keep walking over a push run — that
+// closes (a), the case with no early warning. Proper fix: resolve the entry from
+// `.eh_frame_hdr`'s sorted function-start table instead of scanning backwards,
+// which closes both and drops the prologue assumption this locator exists to
+// avoid.
 namespace GmrcXref {
 
 // Absolute runtime address of the GMRC getter derived via the job-name xref, or
