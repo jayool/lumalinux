@@ -178,14 +178,23 @@ def parse_eh_frame_hdr(data, secs):
     return info, starts, fdes
 
 
-def lookup(starts, addr):
-    """Entrada de la función que contiene `addr`, y el inicio de la SIGUIENTE
-    (el límite superior aproximado). (None, None) si cae antes de la primera."""
+def lookup(starts, addr, text_end=None):
+    """Entrada de la función que contiene `addr`, y su límite superior.
+
+    El límite es el initial_location de la entrada SIGUIENTE, que la tabla ya trae
+    ordenado — por eso no hace falta decodificar la FDE para saber dónde acaba una
+    función. La última entrada no tiene siguiente, así que se acota con el final
+    del span ejecutable; sin eso, cualquier dirección posterior al último inicio
+    caería dentro de la última función y el fallo dejaría de ser cerrado.
+
+    Devuelve (None, None) si `addr` cae fuera de toda función."""
     i = bisect.bisect_right(starts, addr) - 1
     if i < 0:
         return None, None
-    nxt = starts[i + 1] if i + 1 < len(starts) else None
-    return starts[i], nxt
+    end = starts[i + 1] if i + 1 < len(starts) else text_end
+    if end is not None and addr >= end:
+        return None, None
+    return starts[i], end
 
 
 def main():
@@ -196,6 +205,8 @@ def main():
     args = ap.parse_args()
 
     data, secs = load_sections(args.binary)
+    tx_a, _tx_o, tx_s = secs.get(".text", (0, 0, 0))
+    text_end = (tx_a + tx_s) if tx_a else None
 
     print("=" * 74)
     print("[1] .eh_frame_hdr")
@@ -255,36 +266,44 @@ def main():
     offsets = [int(x, 0) for x in args.probe_offsets.split(",")]
     allgood = True
     for name, va in sorted(known.items(), key=lambda kv: kv[1]):
+        _s, own_end = lookup(starts, va, text_end)
         res = []
         for d in offsets:
-            start, nxt = lookup(starts, va + d)
+            if own_end is not None and va + d >= own_end:
+                # El offset se sale de ESTA función, así que devolver otra entrada
+                # es el comportamiento correcto, no un fallo. Se compara contra el
+                # límite de la función original, no contra el de la que salga.
+                res.append("+%-5s %s" % (hex(d), "fuera"))
+                continue
+            start, _e = lookup(starts, va + d, text_end)
             good = (start == va)
-            if nxt is not None and va + d >= nxt:
-                good = None          # el offset se sale de la función; no cuenta
-            res.append("+%-5s %s" % (hex(d), "ok" if good else ("--" if good is None else "MAL")))
-            if good is False:
+            res.append("+%-5s %s" % (hex(d), "ok" if good else "MAL"))
+            if not good:
                 allgood = False
         print("    %-12s %s" % (name, "  ".join(res)))
     print()
 
     print("[5] fallo cerrado: ¿se rechaza lo que no es código?")
+    print("    (límite de la última función = fin del span ejecutable, 0x%x)" % text_end)
+    closed = True
     for probe, label in ((starts[0] - 0x1000, "antes de la primera función"),
-                         (starts[-1] + 0x100000, "más allá de la última")):
-        start, nxt = lookup(starts, probe)
+                         (starts[-1] + 0x100000, "más allá de la última"),
+                         (text_end + 0x10, "pasado el fin de .text")):
+        start, _e = lookup(starts, probe, text_end)
         if start is None:
-            verdict = "rechazada (fuera de la tabla)"
-        elif nxt is None:
-            verdict = "cae en la última entrada — hace falta el límite de la FDE"
+            verdict = "rechazada"
         else:
-            verdict = "entrada 0x%08x" % start
+            verdict = "entrada 0x%08x  <- NO cierra" % start
+            closed = False
         print("    0x%08x  %-28s -> %s" % (probe & 0xFFFFFFFF, label, verdict))
     print()
 
     print("=" * 74)
-    print("VEREDICTO: %s" % ("VIABLE — cabecera + búsqueda binaria basta"
-                             if (exact and allgood and ordered)
-                             else "revisar los puntos marcados arriba"))
-    return 0 if (exact and allgood and ordered) else 1
+    ok = exact and allgood and ordered and closed
+    print("VEREDICTO: %s" % ("VIABLE — cabecera + búsqueda binaria basta, "
+                             "sin decodificar FDE ni CIE"
+                             if ok else "revisar los puntos marcados arriba"))
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
