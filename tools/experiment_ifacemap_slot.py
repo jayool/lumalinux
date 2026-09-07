@@ -301,8 +301,14 @@ def analyse(path, args):
     if not hits:
         print("    FALLO: no aparece como cadena terminada en NUL")
         return False
+    read_va = make_reader(data, secs)
     for nm, va, standalone in hits:
+        ctx = read_va(va - 16, 48)
+        dump = " ".join("%02x" % b for b in ctx[:16])
+        txt = "".join(chr(b) if 32 <= b < 127 else "." for b in ctx)
         print("    0x%08x  en %-14s %s" % (va, nm, "" if standalone else "(¡sufijo de otra cadena!)"))
+        print("                 antes: %s" % dump)
+        print("                 texto: %s" % txt)
     print()
 
     # (3) base del GOT
@@ -321,7 +327,7 @@ def analyse(path, args):
     # (4) qué ranura la referencia
     print("[4] ranuras que referencian la cadena")
     slot_starts = sorted((fn, k) for k, fn in map_slots)
-    verdict_slot = None
+    candidates = []   # (slot, fn, string_va, dist)
     for nm, va, standalone in hits:
         refs, loose = find_lea_refs(data, secs, va, got)
         print("    cadena 0x%08x: %d ref(s) `lea` en .text  (disp32 suelto: %d)"
@@ -342,48 +348,66 @@ def analyse(path, args):
             print("        0x%08x  -> ranura %-3d (fn 0x%08x, +%d bytes)%s"
                   % (ref_va, k, fn, dist, flag))
             if dist <= args.max_fn_size and standalone:
-                if verdict_slot is None:
-                    verdict_slot = k
-                elif verdict_slot != k:
-                    verdict_slot = -1   # ambiguo
+                candidates.append((k, fn, va, dist))
     print()
 
     # (5) aplicar el índice a la clase concreta y contrastar
-    print("[5] veredicto")
-    if verdict_slot is None:
+    print("[5] candidatos y contraste")
+    if not candidates:
         print("    NO CONCLUYENTE: ninguna ranura referencia la cadena de cerca.")
         return False
-    if verdict_slot < 0:
-        print("    AMBIGUO: más de una ranura la referencia. Haría falta desempatar")
-        print("    (SLSsteam desempata sobrecargas añadiendo sufijos 2,3,... al nombre).")
-        return False
 
-    print("    índice derivado por nombre: %d" % verdict_slot)
     impl_slots, note, impl_vt = vtable_slots(data, secs, args.impl_class, args.max_slots)
     if impl_slots is None:
-        print("    pero no se pudo leer la vtable de %s: %s" % (args.impl_class, note))
+        print("    no se pudo leer la vtable de %s: %s" % (args.impl_class, note))
         return False
-    got_fn = dict(impl_slots).get(verdict_slot)
-    if got_fn is None:
-        print("    %s no tiene ranura %d (sólo %d)" % (args.impl_class, verdict_slot, len(impl_slots)))
-        return False
-    print("    %s vtable 0x%x, ranura %d -> 0x%08x" % (args.impl_class, impl_vt, verdict_slot, got_fn))
+    impl = dict(impl_slots)
+
+    by_slot = {}
+    for k, fn, va, dist in candidates:
+        by_slot.setdefault(k, []).append((va, dist))
+
+    if len(by_slot) > 1:
+        print("    %d ranuras distintas, cada una con SU PROPIA cadena." % len(by_slot))
+        print("    Es el caso de sobrecarga que SLSsteam indexa como GetBinary, GetBinary2, ...")
+        print("    El nombre a secas resuelve a la PRIMERA (menor índice).")
+        print()
+
+    want_slot = feed.get("depotkey_rtti.slot") if feed else None
+    want_rva = (feed.get("hooks.DepotKey") or feed.get("depotkey_rtti.rva")) if feed else None
+
+    print("    %-6s %-12s %-12s %s" % ("ranura", "cadena", "%s->" % args.impl_class, "contraste"))
+    for k in sorted(by_slot):
+        fn = impl.get(k)
+        vas = ", ".join("0x%x" % v for v, _ in by_slot[k])
+        mark = ""
+        if fn is None:
+            mark = "(%s no tiene esa ranura)" % args.impl_class
+        elif want_rva and int(want_rva, 16) == fn:
+            mark = "<-- COINCIDE con hooks.DepotKey"
+        elif want_rva:
+            mark = "(no es DepotKey)"
+        print("    %-6d %-12s %-12s %s"
+              % (k, vas, "0x%08x" % fn if fn else "-", mark))
+    print()
+
+    chosen = min(by_slot)
+    fn = impl.get(chosen)
+    print("    Regla \"primera sobrecarga\" (la de download.lua): ranura %d -> %s"
+          % (chosen, "0x%08x" % fn if fn else "-"))
 
     ok = True
-    if feed:
-        want_slot = feed.get("depotkey_rtti.slot")
-        want_rva = feed.get("hooks.DepotKey") or feed.get("depotkey_rtti.rva")
-        if want_slot is not None:
-            same = int(want_slot) == verdict_slot
-            print("    contraste slot   CI=%s  nombre=%d  -> %s"
-                  % (want_slot, verdict_slot, "COINCIDE" if same else "DISCREPA"))
-            ok = ok and same
-        if want_rva:
-            same = int(want_rva, 16) == got_fn
-            print("    contraste rva    CI=%s  nombre=0x%08x  -> %s"
-                  % (want_rva, got_fn, "COINCIDE" if same else "DISCREPA"))
-            ok = ok and same
-    else:
+    if want_slot is not None:
+        same = int(want_slot) == chosen
+        print("    contraste slot   CI=%s  por-nombre=%d  -> %s"
+              % (want_slot, chosen, "COINCIDE" if same else "DISCREPA"))
+        ok = ok and same
+    if want_rva and fn:
+        same = int(want_rva, 16) == fn
+        print("    contraste rva    CI=%s  por-nombre=0x%08x  -> %s"
+              % (want_rva, fn, "COINCIDE" if same else "DISCREPA"))
+        ok = ok and same
+    if not feed:
         print("    (sin ficha publicada para este build: nada con lo que contrastar)")
     return ok
 
