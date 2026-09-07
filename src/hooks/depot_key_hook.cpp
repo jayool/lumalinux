@@ -39,6 +39,18 @@ using LoadDepotKeyFn = int32_t (*)(void* /*pObject*/, uint32_t /*foo*/,
 
 LoadDepotKeyFn g_origFn = nullptr;
 
+// Anchors for the name-derived resolver (Rtti::ResolveVtableSlotByName). Not
+// addresses and not code bytes: `21IClientConfigStoreMap` is the interface-map
+// class whose virtuals each reference their own method name, and the slot found
+// there is applied to the concrete store. This is what `download.lua` does
+// (docs/slssteam-plugins-analysis.md §7.5.a), verified on build bc54101b29:
+// "GetBinary" -> map slot 6 -> CConfigStore 0x11a4500, the byte pattern's answer.
+// NOTE there are TWO GetBinary overloads, in map slots 6 and 7, each with its own
+// string; slot 7 is a different function, so the bare name must take the lower.
+constexpr const char* kDepotKeyIfaceMapClass = "21IClientConfigStoreMap";
+constexpr const char* kDepotKeyMethodName    = "GetBinary";
+constexpr const char* kDepotKeyImplClass     = "12CConfigStore";
+
 constexpr size_t kDepotKeyBytes = 32;
 
 // Parse the depot id out of "Software\Valve\Steam\Depots\<depot>\DecryptionKey".
@@ -125,6 +137,17 @@ bool Install() {
                       (unsigned long)feed, (unsigned long)p);
     }
 
+    // Name-derived resolution, computed unconditionally so it can both CHECK the
+    // chosen target and RESCUE a total miss. It reads no byte of the accessor —
+    // the only resolver here that doesn't — so it survives exactly the event that
+    // takes out all the others at once: a recompile that moves the prologue.
+    // (§7.5.a: the feed is a cache of the pattern, and ResolveVtableSlotBySignature
+    // finds the slot by comparing prologues, so those three are one bet, not three.)
+    int bynameSlot = -1;
+    const uintptr_t byname = Rtti::ResolveVtableSlotByName(
+        kDepotKeyIfaceMapClass, kDepotKeyMethodName, kDepotKeyImplClass,
+        /*maxSlots=*/40, &bynameSlot);
+
     if (!target) {
         uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
             "12CConfigStore", Patterns::kDepotKeyFnPattern, /*maxSlots=*/40, &derivedSlot);
@@ -145,8 +168,32 @@ bool Install() {
         }
     }
 
+    // Cross-check, then rescue. Ordered so the name path can never REGRESS the
+    // location: when something else resolved, that stays the target and a
+    // disagreement is only logged — same arrangement FindGmrcFunction uses for
+    // its xref (patterns.cpp:198). It only decides when nothing else could.
+    if (target && byname && byname != target) {
+        Log::Warn("DepotKey: DRIFT method=%s target=0x%lx byname=0x%lx (slot %d) "
+                  "— using %s; investigate which moved",
+                  method, (unsigned long)target, (unsigned long)byname,
+                  bynameSlot, method);
+    } else if (target && byname) {
+        Log::Info("DepotKey: byname agrees (slot %d, drift=0)", bynameSlot);
+    }
+
+    if (!target && byname) {
+        target = byname;
+        method = "byname(rescue)";
+        derivedSlot = bynameSlot;
+        Log::Warn("DepotKey: feed, RTTI and pattern all MISSED; %s::%s resolved by "
+                  "name to 0x%lx (slot %d) — Steam likely reshuffled the prologue",
+                  kDepotKeyImplClass, kDepotKeyMethodName,
+                  (unsigned long)byname, bynameSlot);
+    }
+
     if (!target) {
-        Log::Error("DepotKey hook: target not found (RTTI and pattern both failed)");
+        Log::Error("DepotKey hook: target not found (feed, RTTI, pattern and name "
+                   "resolution all failed)");
         Log::Warn("Hook install: name=DepotKey method=none outcome=miss");
         return false;
     }

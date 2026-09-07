@@ -38,4 +38,35 @@ uintptr_t ResolveVtableSlotBySignature(const char* mangledName,
                                        const char* sigPattern,
                                        int maxSlots, int* outSlot);
 
+// Resolve by deriving the slot FROM THE METHOD NAME, reading no byte of the
+// target function. This is `download.lua`'s technique (SLSsteam's
+// VFTableInfo_t::init + Decompiler::parseInterfaceMapBase); see
+// docs/slssteam-plugins-analysis.md §7.5.a for the analysis and the on-binary
+// verification.
+//
+//   1. `mapMangledName` is Steam's INTERFACE MAP class (e.g.
+//      "21IClientConfigStoreMap") — the dispatch layer whose every virtual
+//      references its own method name as a string literal.
+//   2. Find that name's string, then the slot of the map vtable that REFERENCES
+//      it (i386 PIC: `lea reg,[got + (S - GOT)]`).
+//   3. Apply that index to the concrete class `implMangledName`
+//      (e.g. "12CConfigStore").
+//
+// Independent of everything the byte pattern depends on: no prologue, no code
+// layout, no published address. It only breaks if Valve renames the method or
+// reorders the *Map interface — and even a reorder is absorbed, because the
+// index is re-derived on every launch rather than assumed.
+//
+// Fail-closed. Returns 0 if: the string is absent; no map slot references it
+// closely; the name is a prefix of a longer one and no exact NUL-terminated
+// match exists; either vtable is unlocatable; or the resolved address falls
+// outside steamclient.so. Overloads (the same name in several slots, each with
+// its OWN string) resolve to the LOWEST index, which is what a bare name means
+// in SLSsteam's table — the sibling slot is a DIFFERENT function, so this
+// tie-break is load-bearing, not cosmetic. `outSlot` receives the derived index.
+uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
+                                  const char* methodName,
+                                  const char* implMangledName,
+                                  int maxSlots, int* outSlot);
+
 } // namespace Rtti

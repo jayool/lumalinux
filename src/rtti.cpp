@@ -4,13 +4,17 @@
 // does not swap the slot). Linux i386, same target (steamclient.so). See
 // rtti.hpp and RESEARCH §15.
 #include "rtti.hpp"
+#include "gmrc_xref_core.hpp"   // Region + DeriveGotBaseConsensus + ScanLeaAll
 #include "log.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
+#include <limits>
 #include <unistd.h>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -221,6 +225,62 @@ size_t MatchSignature(uintptr_t addr, const char* sig) {
     return bytes.size();
 }
 
+// Aggregate steamclient.so's r-x mappings into one executable Region. Separate
+// from MapSteamclient's `readable` list (which is r--/rw- too) because the GOT
+// consensus and the lea scan must not walk data pages.
+GmrcXrefCore::Region ExecRegion() {
+    FILE* f = fopen("/proc/self/maps", "r");
+    if (!f) return {};
+    uintptr_t lo = ~uintptr_t(0), hi = 0;
+    char line[512];
+    while (fgets(line, sizeof(line), f)) {
+        unsigned long s, e; char perms[5] = {};
+        if (sscanf(line, "%lx-%lx %4s", &s, &e, perms) < 3) continue;
+        if (!strstr(line, "steamclient.so")) continue;
+        if (perms[0] != 'r' || perms[2] != 'x') continue;
+        if (s < lo) lo = s;
+        if (e > hi) hi = e;
+    }
+    fclose(f);
+    if (hi <= lo) return {};
+    return { reinterpret_cast<const uint8_t*>(lo),
+             static_cast<std::size_t>(hi - lo), lo };
+}
+
+// Every occurrence of `needle` across the readable ranges (FindBytes returns
+// only the first). Steam emits its interface name tables more than once, so a
+// method name legitimately appears several times and the caller must try them
+// all — see docs/slssteam-plugins-analysis.md §7.5.a.
+void FindAllBytes(const std::vector<Range>& readable, const void* needle,
+                  size_t len, std::vector<uintptr_t>& out, size_t maxHits) {
+    for (const auto& r : readable) {
+        if (r.end - r.start < len) continue;
+        const uint8_t* start = reinterpret_cast<const uint8_t*>(r.start);
+        const uint8_t* end = reinterpret_cast<const uint8_t*>(r.end);
+        for (const uint8_t* p = start; p <= end - len; ++p) {
+            if (memcmp(p, needle, len) != 0) continue;
+            // Require a NUL before it too: `needle` already carries its own
+            // terminator (so "GetBinary\0" cannot match inside
+            // "GetBinaryWatermarked"), but without this a name could still match
+            // the TAIL of a longer literal ending in the same word.
+            if (p > start && p[-1] != 0) continue;
+            out.push_back(reinterpret_cast<uintptr_t>(p));
+            if (out.size() >= maxHits) return;
+        }
+    }
+}
+
+// Read up to `maxSlots` code pointers out of an already-located vtable.
+void ReadSlots(void** vtable, uintptr_t base, size_t size, int maxSlots,
+               std::vector<uintptr_t>& out) {
+    for (int i = 0; i < maxSlots; ++i) {
+        if (!CanReadMemory(&vtable[i], sizeof(void*))) break;
+        uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[i]);
+        if (fn < base || fn >= base + size) break;   // past the end of the vtable
+        out.push_back(fn);
+    }
+}
+
 } // namespace
 
 namespace Rtti {
@@ -279,6 +339,111 @@ uintptr_t ResolveVtableSlotBySignature(const char* mangledName,
     }
     if (outSlot) *outSlot = hitSlot;
     return hitFn;
+}
+
+// See rtti.hpp. Mirrors SLSsteam's VFTableInfo_t::init(), with the lookup
+// inverted: it builds the whole `name -> index` map for an interface because it
+// needs 37 of them; we need one, so we find the string first and then ask which
+// slot references it. Verified against build bc54101b29 by
+// tools/experiment_ifacemap_slot.py (§7.5.a): slot 6 -> 0x11a4500, the same
+// address the byte pattern yields, with zero false positives on the lea scan.
+uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
+                                  const char* methodName,
+                                  const char* implMangledName,
+                                  int maxSlots, int* outSlot) {
+    if (outSlot) *outSlot = -1;
+
+    uintptr_t base = 0; size_t size = 0;
+    std::vector<Range> readable;
+    if (!MapSteamclient(base, size, readable) || readable.empty()) {
+        Log::Warn("RTTI byname: steamclient.so not mapped");
+        return 0;
+    }
+
+    // (1) every exact, NUL-terminated occurrence of the method name.
+    const size_t nlen = strlen(methodName);
+    std::vector<uint8_t> needle(nlen + 1);
+    memcpy(needle.data(), methodName, nlen + 1);
+    std::vector<uintptr_t> strAddrs;
+    FindAllBytes(readable, needle.data(), nlen + 1, strAddrs, /*maxHits=*/16);
+    if (strAddrs.empty()) {
+        Log::Warn("RTTI byname: method name '%s' not found as a string", methodName);
+        return 0;
+    }
+
+    // (2) module GOT base — the anchor the PIC lea displacements are relative to.
+    GmrcXrefCore::Region rx = ExecRegion();
+    if (!rx) {
+        Log::Warn("RTTI byname: steamclient.so r-x mapping not found");
+        return 0;
+    }
+    const uintptr_t got = GmrcXrefCore::DeriveGotBaseConsensus(rx);
+    if (!got) {
+        Log::Warn("RTTI byname: could not derive GOT base");
+        return 0;
+    }
+
+    // (3) the interface-map vtable, and its slots sorted by address so a
+    // reference can be attributed to the function that contains it.
+    uintptr_t mapBase = 0; size_t mapSize = 0; void** mapVt = nullptr;
+    if (!FindTypeVtable(mapMangledName, mapBase, mapSize, mapVt)) return 0;
+    std::vector<uintptr_t> slots;
+    ReadSlots(mapVt, mapBase, mapSize, maxSlots, slots);
+    if (slots.empty()) {
+        Log::Warn("RTTI byname: '%s' vtable has no code slots", mapMangledName);
+        return 0;
+    }
+    std::vector<std::pair<uintptr_t, int>> byAddr;   // (fn, slot index)
+    byAddr.reserve(slots.size());
+    for (size_t i = 0; i < slots.size(); ++i)
+        byAddr.emplace_back(slots[i], static_cast<int>(i));
+    std::sort(byAddr.begin(), byAddr.end());
+
+    // (4) which slot references which occurrence. A reference is attributed to
+    // the nearest PRECEDING slot function and only if it lands within a sane
+    // function size — the same name is also referenced from unrelated code far
+    // from this vtable, and attributing that would pick the wrong slot.
+    constexpr size_t kMaxFnSize = 512;
+    constexpr uint32_t kMaxRefs = 32;
+    int best = -1;
+    for (uintptr_t s : strAddrs) {
+        const int32_t disp = static_cast<int32_t>(
+            static_cast<intptr_t>(s) - static_cast<intptr_t>(got));
+        uintptr_t refs[kMaxRefs];
+        uint32_t total = 0;
+        const uint32_t n = GmrcXrefCore::ScanLeaAll(rx, disp, refs, kMaxRefs, &total);
+        if (total > kMaxRefs)
+            Log::Debug("RTTI byname: '%s' @0x%lx has %u refs, examining %u",
+                       methodName, (unsigned long)s, total, n);
+        for (uint32_t k = 0; k < n; ++k) {
+            auto it = std::upper_bound(
+                byAddr.begin(), byAddr.end(),
+                std::make_pair(refs[k], std::numeric_limits<int>::max()));
+            if (it == byAddr.begin()) continue;         // before the first slot
+            --it;
+            if (refs[k] - it->first > kMaxFnSize) continue;  // inside some other fn
+            Log::Debug("RTTI byname: '%s' @0x%lx referenced from slot %d (fn 0x%lx +%lu)",
+                       methodName, (unsigned long)s, it->second,
+                       (unsigned long)it->first, (unsigned long)(refs[k] - it->first));
+            // Overloads: each has its OWN string in its OWN slot. A bare name
+            // means the first one (SLSsteam indexes the rest as name2, name3...).
+            if (best < 0 || it->second < best) best = it->second;
+        }
+    }
+    if (best < 0) {
+        Log::Warn("RTTI byname: no '%s' slot of '%s' references the name",
+                  methodName, mapMangledName);
+        return 0;
+    }
+
+    // (5) apply the derived index to the concrete class.
+    const uintptr_t fn = ResolveVtableSlot(implMangledName, best);
+    if (!fn) return 0;
+    if (outSlot) *outSlot = best;
+    Log::Info("RTTI byname: %s::%s -> slot %d -> 0x%lx (RVA 0x%lx)",
+              implMangledName, methodName, best, (unsigned long)fn,
+              (unsigned long)(fn - base));
+    return fn;
 }
 
 } // namespace Rtti

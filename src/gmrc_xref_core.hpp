@@ -90,6 +90,37 @@ inline uintptr_t ScanLeaUnique(Region rx, int32_t disp) {
     return count == 1 ? hit : 0;
 }
 
+// Every `lea reg,[base + disp32]` (8D, mod=10, base != SIB) with disp32 == disp,
+// as address-space addresses. Writes at most `maxOut` into `out` and returns how
+// many were written; if `total` != nullptr it receives how many exist, so the
+// caller can tell "capped" from "that's all".
+//
+// Sibling of ScanLeaUnique, for callers that must ENUMERATE rather than demand
+// uniqueness: a method name can live in several identical string blocks (Steam
+// emits the interface name table more than once), so the reference that matters
+// is selected by WHICH function contains it, not by being the only one.
+// Used by Rtti::ResolveVtableSlotByName.
+inline uint32_t ScanLeaAll(Region rx, int32_t disp, uintptr_t* out,
+                           uint32_t maxOut, uint32_t* total = nullptr) {
+    if (total) *total = 0;
+    if (!rx || rx.size < 6 || !out || maxOut == 0) return 0;
+    const uint8_t* p = rx.p;
+    const std::size_t n = rx.size - 6;
+    uint32_t written = 0, seen = 0;
+    for (std::size_t i = 0; i <= n; ++i) {
+        if (p[i] != 0x8D) continue;
+        const uint8_t m = p[i + 1];
+        if ((m & 0xC0) != 0x80 || (m & 0x07) == 0x04) continue;
+        int32_t d;
+        std::memcpy(&d, p + i + 2, 4);
+        if (d != disp) continue;
+        ++seen;
+        if (written < maxOut) out[written++] = rx.addr + i;
+    }
+    if (total) *total = seen;
+    return written;
+}
+
 // Nearest preceding PIC prologue (`E8 rel32; add reg,imm32`) = function entry.
 inline uintptr_t WalkBackToPrologue(Region rx, uintptr_t site,
                                     std::size_t maxBack = 0x8000) {
