@@ -48,6 +48,18 @@
 // offset 0. Case (b) is at least self-announcing — while the pattern still
 // resolves, a spurious hit shows up as a DRIFT warning — but case (a) is not.
 //
+// MEASURED 2026-09-07 — the name-derived resolver is NOT an option here, so
+// this walk-back cannot simply be replaced. Rtti::ResolveVtableSlotByName gave
+// DepotKey a resolver that reads no prologue at all (docs/slssteam-plugins-
+// analysis.md §7.5.a); the obvious follow-up was to do the same for GMRC and
+// retire step 4. It does not apply: "GetManifestRequestCode" exists exactly once
+// in build bc54101b29 and NONE of the 52 `*IClient…Map` interface-map vtables has
+// a slot referencing it (swept with tools/experiment_ifacemap_slot.py over every
+// map class; control run with GetBinary/21IClientConfigStoreMap hit slots 6 and 7
+// as expected, so the sweep was sound). The getter is not an interface method —
+// that lone string is the IPC job name this locator already anchors on. So GMRC
+// keeps the xref, and the fixes below are the way out, not a workaround.
+//
 // Not urgent, on our own evidence: across the 11 builds whitelisted since
 // 2026-06-11 no prologue has moved at all (`res/updates.yaml` still has a single
 // pattern-set group). Cheap fix if this file is touched: on a hit, look at the
