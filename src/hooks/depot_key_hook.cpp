@@ -170,6 +170,10 @@ bool Install() {
         } else if (pat) {
             target = pat;  method = "pattern(rtti-miss)";
         }
+        // Both zero is not necessarily "the function moved": since v0.16.x
+        // FindDepotKeyFunction requires a UNIQUE match, so an AMBIGUOUS pattern
+        // also lands here. Either way the answer is the same — do not guess,
+        // let the name resolver below decide.
     }
 
     // Last resort: derive the vtable slot from the METHOD NAME. Reads no byte of

@@ -119,12 +119,17 @@ uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
 }
 
 // Like FindInSteamclient but requires a UNIQUE match: returns the address only if
-// the pattern matches EXACTLY ONE site, else 0. For NON-CRITICAL hooks that must
-// degrade to a clean no-op rather than risk hooking the WRONG function when a
-// Steam update makes the pattern ambiguous — FindInSteamclient takes the first
-// match, and a wrong first-match on a moved pattern could crash Steam. A 0 here
-// disables only that non-critical feature; installs are unaffected. Used by
-// ShaderDepot and NotifyLicensesUpdated (both non-load-bearing).
+// the pattern matches EXACTLY ONE site, else 0. FindInSteamclient takes the FIRST
+// match without counting, so on a Steam update that makes a pattern ambiguous it
+// returns a plausible wrong address and the caller detours it — mid-function at
+// best, a crash at worst, and silently either way: no error, no FAILED, status.json
+// green.
+//
+// Originally for non-critical hooks only, on the reasoning that a load-bearing
+// hook cannot afford to resolve to nothing. That reasoning held only while there
+// was no second opinion: a 0 meant the feature was gone. It no longer does — every
+// caller here has at least one resolver behind it, so 0 means "next resolver",
+// not "give up". Ambiguity is a real signal and guessing past it is never right.
 uintptr_t FindUniqueInSteamclient(const char* pattern, const char* logName) {
     ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
     if (!r.base) return 0;
@@ -150,8 +155,10 @@ uintptr_t FindUniqueInSteamclient(const char* pattern, const char* logName) {
         }
     }
     if (count != 1) {
-        Log::Warn("Patterns: %s — %zu match(es), need exactly 1; feature disabled "
-                  "(non-critical; installs unaffected)", logName, count);
+        // Neutral wording: what a 0 costs depends on who asked, so the caller
+        // logs the consequence. Here we only report the ambiguity itself.
+        Log::Warn("Patterns: %s — %zu match(es), need exactly 1; refusing to guess",
+                  logName, count);
         return 0;
     }
     Log::Info("Patterns: %s found at 0x%lx (RVA 0x%lx)",
@@ -205,7 +212,16 @@ bool MatchesAt(uintptr_t addr, const char* pattern) {
 }
 
 uintptr_t FindDepotKeyFunction() {
-    return FindInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
+    // UNIQUE-match required, since v0.16.x. This used to take the first match
+    // because DepotKey is load-bearing and a 0 meant no downloads at all — but
+    // that trade is gone: the hook now has the RTTI vtable constraint and the
+    // name-derived resolver behind it (depot_key_hook.cpp), so an ambiguous
+    // pattern degrades to "let the next resolver decide" instead of "hook
+    // whatever matched first". Note the two remaining paths can still succeed
+    // where this one bails: a pattern that is ambiguous across the whole module
+    // may still be unique WITHIN CConfigStore's vtable, which is exactly the
+    // constraint docs/rva-feed-design.md §13 describes.
+    return FindUniqueInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 
 uintptr_t FindBuildDepotDependencyFunction() {
