@@ -273,4 +273,61 @@ uintptr_t FindGmrcFunction() {
     return 0;
 }
 
+uintptr_t FindLoadPackageFunction() {
+    // The prologue `55 89 E5 57 ... 81 EC 1C 01 00 00` may match multiple
+    // functions. Enumerate all matches; pick by index via LUMA_LOADPKG_IDX
+    // (default 0). Logs all candidates so we can re-tune if a Steam update
+    // shifts the offset.
+    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
+    if (!r.base) return 0;
+
+    auto parsed = ParsePattern(kLoadPackagePattern);
+    if (parsed.bytes.empty()) return 0;
+
+    std::vector<uintptr_t> hits;
+    const uint8_t* hay = reinterpret_cast<const uint8_t*>(r.base);
+    const size_t   patLen = parsed.bytes.size();
+    for (size_t i = 0; i + patLen <= r.size; ++i) {
+        bool match = true;
+        for (size_t j = 0; j < patLen; ++j) {
+            if (parsed.fixed[j] && hay[i + j] != parsed.bytes[j]) { match = false; break; }
+        }
+        if (match) hits.push_back(r.base + i);
+    }
+
+    if (hits.empty()) {
+        Log::Error("Patterns: LoadPackage — no candidates found");
+        return 0;
+    }
+
+    for (size_t i = 0; i < hits.size(); ++i) {
+        Log::Info("Patterns: LoadPackage candidate[%zu] at 0x%lx (RVA 0x%lx)",
+                  i, (unsigned long)hits[i], (unsigned long)(hits[i] - r.base));
+    }
+
+    size_t idx = 0;
+    if (const char* env = std::getenv("LUMA_LOADPKG_IDX")) {
+        idx = static_cast<size_t>(std::strtoul(env, nullptr, 10));
+        if (idx >= hits.size()) {
+            Log::Warn("Patterns: LUMA_LOADPKG_IDX=%zu out of range (%zu) — using 0",
+                      idx, hits.size());
+            idx = 0;
+        }
+    }
+
+    Log::Info("Patterns: LoadPackage selected candidate[%zu] = 0x%lx (RVA 0x%lx)",
+              idx, (unsigned long)hits[idx], (unsigned long)(hits[idx] - r.base));
+    return hits[idx];
+}
+
+uintptr_t FindShaderCacheDepotFunction() {
+    // UNIQUE-match (not FindInSteamclient's first-match): if a Steam update makes
+    // this pattern ambiguous, hooking the first (possibly wrong) match could crash
+    // Steam. Non-critical, so bail to a clean no-op instead — the per-game shader
+    // skip is lost (keyless games regress to the §13.8 loop, DisableShaderCache is
+    // the global stop-gap), but installs are unaffected.
+    return FindUniqueInSteamclient(kShaderCacheDepotPattern,
+                                   "GetShaderCacheDepot (per-game shader skip)");
+}
+
 } // namespace Patterns
