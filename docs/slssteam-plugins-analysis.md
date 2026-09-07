@@ -1842,6 +1842,40 @@ No hace falta un decompilador: SLSsteam tiene `decompiler.cpp` entero porque lo
 hace genérico para 37 interfaces; aquí hace falta **una**. Y su consumidor
 —`ResolveVtableSlot`— lleva meses escrito esperando exactamente este productor.
 
+**Verificado en binario real — 2026-09-07.** `tools/experiment_ifacemap_slot.py`
+sobre el build `bc54101b29…` (STEAMDECK_STABLE, `version=1788652215`), el mismo
+que ya tiene ficha en `res/rvas/`:
+
+| Comprobación | Resultado |
+|---|---|
+| vtable de `21IClientConfigStoreMap` | existe, `0x2ebe7a0`, **21 ranuras de código** |
+| base del GOT por consenso (`E8 …; 05 imm32`) | `0x02f4a34c` con **13500/13590 votos = 99,3 %** |
+| refs `lea reg,[got+disp32]` | **cero falsos positivos**: el disp32 suelto aparece exactamente las mismas veces que la ref `lea` en los cuatro casos |
+| ranura → cadena | `0xbee6e0` → **ranura 6** (+178 B) · `0xbee6ec` → **ranura 7** (+157 B). 1 a 1, sin ambigüedad |
+| `12CConfigStore` ranura 6 | **`0x011a4500` = `hooks.DepotKey`** ✅ |
+| `12CConfigStore` ranura 7 | `0x011a4700` — **otra función** |
+| contraste con la ficha del CI | `slot 6` **COINCIDE** · `rva` **COINCIDE** |
+
+**El método por nombre reproduce el resultado del patrón, sin leer un byte de la
+función objetivo.** Es la primera vez que DepotKey tiene dos vías verdaderamente
+independientes verificadas contra el mismo binario.
+
+**Tres requisitos que salen del experimento y que la implementación debe cumplir**
+(el volcado de `.rodata` los hace evidentes: `GetString · GetBinary · GetBinary ·
+GetBinaryWatermarked`):
+
+1. **Casar la cadena completa con su NUL.** `"GetBinary"` es prefijo de
+   `"GetBinaryWatermarked"`; buscar el prefijo casa de más.
+2. **No vale la primera aparición en `.rodata`.** Hay **cuatro**, en dos bloques
+   idénticos de la misma tabla de nombres (`0xbe1c40…` y `0xbee6e0…`), y **sólo
+   el segundo lo referencia la vtable del Map**. Hay que probar cada candidata
+   contra las ranuras y quedarse con la que resuelve.
+3. **Desempate de sobrecargas: el menor índice**, que es la regla de
+   `download.lua` (pide `"GetBinary"` a secas). No es cosmético: la ranura 7 es
+   **otra función** (`0x11a4700`), así que elegir mal da un hook silenciosamente
+   equivocado — hay que atribuir la ref a la ranura por proximidad y exigir que
+   caiga dentro de un tamaño de función razonable, como hace la sonda.
+
 **Nota de encuadre**, para no sobrevalorar al plugin: la vía por nombre la usa
 **sólo** para `GetBinary`. Sus otros dos hooks (líneas 66-67) son patrones de
 bytes en el **sitio de llamada** (`E8 ? ? ? ? 83 C4 …` + `getJmpTarget`). O sea:
