@@ -1575,7 +1575,7 @@ refleja la decisión de arriba:
 
 | # | Acción | Dónde | Prioridad | Estado |
 |---|---|---|---|---|
-| **K** | Conectar el `depotkey_rtti` ya publicado (`ResolveVtableSlot`, hoy código muerto) | lumalinux | **Alta** | **ACTIVO** |
+| **K** | **Slot de vtable como constante compilada** (`kDepotKeyVtableClass`/`kDepotKeyVtableSlot` en `patterns.hpp`) + llamar a `ResolveVtableSlot`, hoy código muerto. **No** leerlo de la chuleta: ahí es el mismo dato que el RVA y no existe en builds sin ficha (§7.5.a) | lumalinux | **Alta** | **ACTIVO** |
 | **J** | Que el walk-back de GMRC falle cerrado (`gmrc_xref_core.hpp:94`) | lumalinux | **Alta** | **ACTIVO** |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
 | **G** | Refrescar el snapshot embebido de `slssteam_schema.py` (`SmartTickets`, `LaunchOptions`, `Plugins`) | LumaDeck | Media | **ACTIVO** |
@@ -1599,9 +1599,10 @@ prólogos, §7.4), y **el rescate por xref de GMRC puede devolver la función
 anterior en silencio** si una recompilación de Valve cambia la forma del prólogo
 PIC — no hace falta ningún `.lua` para eso.
 
-**Orden:** **K primero** (~30 líneas sobre un dato que el CI ya publica y una
-función ya escrita: `Rtti::ResolveVtableSlot`, hoy sin llamar; convierte DepotKey
-de uno a dos métodos reales, y el segundo no lee un solo byte de la función).
+**Orden:** **K primero** (~30 líneas: la clase y la ranura como constantes
+compiladas junto a los patrones, y llamar a `Rtti::ResolveVtableSlot`, hoy sin
+llamar; convierte DepotKey de uno a dos métodos reales, y el segundo no lee un
+solo byte de la función ni depende de la chuleta).
 Luego **J**, que es un bug de corrección vivo. Luego **R** y **G**, que son
 baratos e independientes. **C** y **3** cuando toque.
 
@@ -1776,10 +1777,34 @@ y lo **publica** en la chuleta (`depotkey_rtti: {class, slot}`). Y
 `Rtti::ResolveVtableSlot(nombre, slot)` (la variante de slot fijo, sin patrón)
 existe en `rtti.cpp` y **no la llama nadie**.
 
-Valor de conectarlo: (1) **contraste** RVA↔slot, que hoy no existe en runtime;
-(2) y sobre todo, **el slot es mucho más portable que el RVA** — la dirección vale
-para un hash, `"CConfigStore slot 6"` probablemente para meses. Sería un plan C que
-aguanta builds sin chuleta. Coste ≈ 30 líneas.
+La intuición de valor es correcta —**el slot es mucho más portable que el RVA**:
+la dirección vale para un hash, `"CConfigStore slot 6"` probablemente para
+meses— pero **el mecanismo que esta sección proponía no la realiza**:
+
+> **[CORRECCIÓN — 2026-09-07]** «Conectar el `depotkey_rtti` de la chuleta» **no
+> sirve para nada**, y el motivo se ve en el propio YAML: el bloque contiene
+> `rva: "0x11a4500"`, que es **el mismo valor que `hooks.DepotKey`**. Es el dato
+> duplicado, no un dato nuevo. Y la chuleta se descarga por hash del binario
+> (`rva_feed.cpp:55`), así que en un build sin ficha **no hay ni RVA ni slot**:
+> el fichero entero no existe. Leerlo de ahí da información justo cuando ya
+> sobra, y nada cuando hace falta.
+
+**Lo que sí realiza la intuición:** `ResolveVtableSlot` sólo necesita dos cosas, y
+sólo una viene de fuera:
+
+1. Localizar la vtable de `12CConfigStore` — lo hace `FindTypeVtable` **sobre el
+   binario cargado**, sin chuleta y sin red. Funciona en cualquier build.
+2. Un número de ranura.
+
+Así que el slot debe vivir **compilado en el `.so`, junto a los patrones**
+(`kDepotKeyVtableClass` / `kDepotKeyVtableSlot` en `patterns.hpp`), no leerse de
+la chuleta. Con eso, en un build que nadie ha visto, sin red: vtable por nombre →
+ranura 6 → dirección, **sin leer un byte de la función**.
+
+El `depotkey_rtti` de la chuleta se queda como lo que sí puede ser: **el
+verificador** de esa constante. Misma relación que `check_patterns.py` ya tiene
+con `patterns.hpp` — valida contra el binario del día y abre PR si el valor se
+movió. Coste ≈ 30 líneas.
 
 **b) El walk-back del xref falla ABIERTO. [ACCIONABLE J]**
 `gmrc_xref_core.hpp:94` ancla en el byte **`0xE8`** para reconocer la entrada de la
@@ -1848,7 +1873,7 @@ Y la conclusión no pide inventar nada:
 | Prioridad | Qué | Estado |
 |---|---|---|
 | 1 | **J** — que el walk-back falle cerrado | Bug propio, hoy · **cimiento del punto 3** |
-| 2 | **K** — conectar el `depotkey_rtti` ya publicado | ~30 líneas, ya validado por CI |
+| 2 | **K** — slot de vtable como constante compilada, verificada por CI | ~30 líneas; `ResolveVtableSlot` ya escrita |
 | 3 | Subir el ancla de cadena a runtime en los otros cuatro hooks | Las cadenas ya están identificadas en `derive_patterns.py`; el código de referencia es `gmrc_xref.cpp` |
 | 4 | Familia 3 (sitio de llamada) donde no haya cadena usable | **Requiere §7.6 primero** |
 
