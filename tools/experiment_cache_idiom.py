@@ -192,11 +192,35 @@ def derive_got(segs):
 
 # ── informe ──────────────────────────────────────────────────────────────────
 
+USAGE = """uso: python3 tools/experiment_cache_idiom.py <steamclient.so>
+
+El binario tiene que ser el steamclient.so de 32 bits. Si no lo tienes a mano,
+el propio repo se lo baja de la CDN publica de Valve (sin login, sin steamcmd —
+es lo que hace .github/workflows/watch-steam.yml):
+
+    python3 tools/fetch_steamclient.py --output steamclient.so
+    python3 tools/experiment_cache_idiom.py steamclient.so
+
+Y si quieres el de una instalacion local (una Deck, por ejemplo):
+
+    find ~ -name steamclient.so -path '*ubuntu12_32*' 2>/dev/null
+"""
+
+
 def main():
     if len(sys.argv) != 2:
-        print(__doc__ or "uso: experiment_cache_idiom.py /ruta/a/steamclient.so")
+        print(USAGE)
         return 2
-    data = read_elf(sys.argv[1])
+    try:
+        data = read_elf(sys.argv[1])
+    except FileNotFoundError:
+        print("no existe: %s\n" % sys.argv[1])
+        print(USAGE)
+        return 2
+    except ValueError as e:
+        print("no sirve como entrada: %s (%s)\n" % (sys.argv[1], e))
+        print(USAGE)
+        return 2
     segs = exec_segments(data)
     secs = sections(data)
 
