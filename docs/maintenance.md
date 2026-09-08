@@ -8,7 +8,12 @@ tiers of fix — start with the cheapest.
 Log: `~/.cache/lumalinux/lumalinux.log`.
 
 `grep outcome=` is the one-line health check: every hook and the package-0
-finder report there, `outcome=` always last.
+finder report there, `outcome=` always last. The **Runtime smoke test**
+workflow (`verify-fix.yml`, manual) asserts two of those lines against a
+real Steam process: DepotKey's `outcome=installed` and the finder's
+`outcome=resolved`. It is the only thing that actually runs the `.so`, so
+run it after touching hooking code or a resolver — `build.yml` only
+compiles and `check_patterns.py` only resolves on paper.
 
 The startup toast shows `X/Y hooks active` (e.g. `3/3 hooks active` on current
 defaults: DepotKey, GMRC, ShaderDepot — BuildDep is not in the default set). What

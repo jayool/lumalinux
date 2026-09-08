@@ -172,8 +172,26 @@ jobs:
             || { echo "FAIL: no 'X/X hooks active' — lumalinux did not install its hooks against the current steamclient"; exit 1; }
           grep -aqE 'name=DepotKey .*outcome=installed' "$LOG" \
             || { echo "FAIL: DepotKey did not install"; exit 1; }
+          # The package-0 finder is the SOLE depot injector, and until now this
+          # smoke test — the only thing that actually runs the .so — said nothing
+          # about it. Everything it does is exactly what this workflow exists to
+          # catch: it derives addresses at runtime and then READS AND WRITES
+          # through them, which is precisely the "bad memory read in a new
+          # resolver" case named at the top of this file.
+          #
+          # Package 0 itself cannot be found here (that needs a logged-in Steam
+          # with a licence set), so the assertion stops at the resolution step:
+          # the finder must reach a cache address. That is the one line that
+          # survives whichever resolver wins — method=rva when the feed carries
+          # this build's disp, method=scan when it does not — so it does not have
+          # to be rewritten every time the resolver chain changes.
+          echo "── package-0 finder ──"
+          grep -aE 'PKG0_FINDER|Finder resolve:' "$LOG" || echo "(no finder lines at all)"
+          echo "──────────────────────"
+          grep -aqE 'Finder resolve: name=PKG0Finder .*outcome=resolved' "$LOG" \
+            || { echo "FAIL: the package-0 finder resolved no cache address — see the finder lines above for which anchor failed (GOT or the cache-access idiom) and whether it was NOT_FOUND or AMBIGUOUS"; exit 1; }
           test "${crashes:-1}" -eq 0 || { echo "FAIL: ${crashes} SIGABRT crash(es)"; exit 1; }
-          echo "PASS: lumalinux loaded, DepotKey + hooks installed against the CURRENT steamclient, no crash."
+          echo "PASS: lumalinux loaded, DepotKey + hooks installed, package-0 finder resolved its cache address against the CURRENT steamclient, no crash."
 
       - name: Upload lumalinux log
         if: always()
