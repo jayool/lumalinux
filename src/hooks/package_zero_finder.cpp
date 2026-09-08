@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -123,15 +124,60 @@ uintptr_t DeriveGotBase(ScRange rx) {
     return 0;
 }
 
-// Scan the r-x span for the cache-access idiom and return its disp32 (X).
-// Returns 0 if not found (0 is never a valid GOT-relative cache offset here).
+// Scan the r-x span for the cache-access idiom and return its disp32 (X), or 0
+// when the answer is not UNIQUE. (0 is never a valid GOT-relative cache offset
+// here, so it doubles as the "no answer" sentinel.)
+//
+// FAILING CLOSED matters more here than anywhere else in the finder: X builds
+// cache_global, which we then dereference and ultimately write depots through.
+// "Several answers" therefore has to mean "do nothing" — never "take the first
+// one", which is what this used to do. First-by-address has no relation
+// whatsoever to which one is correct; it is a coin toss whose result was being
+// used to pick a write target. Same rule the two critical hooks now follow
+// (Patterns::FindUniqueInSteamclient): ambiguous == unresolved.
+//
+// The idiom is 14 bytes:
+//   8D /r mod=10 disp32        lea  r1,[GOT + X]
+//   8B /r mod=00               mov  r2,[r1]
+//   8B /r mod=10 58 0C 00 00   mov  r3,[r2 + 0xc58]
+// The mod fields and the rm exclusions (no SIB, no disp32-only) are what pin
+// those 6+2+6 lengths, so the 0xc58 anchor lands exactly at +10.
+//
+// Beyond the shape we require the three to be CHAINED — reg(lea)==rm(mov1) and
+// reg(mov1)==rm(mov2), i.e. each instruction's destination is the next one's
+// base. That is what makes them one expression instead of three neighbours.
+// Without it three unrelated instructions whose forms happen to line up in
+// front of a 0xc58 displacement are accepted, e.g.
+//     8D B0 xx xx xx xx   lea esi,[eax+disp32]
+//     8B 39               mov edi,[ecx]          <- reads ecx, not esi
+//     8B 82 58 0C 00 00   mov eax,[edx+0xc58]    <- reads edx, not edi
+// and every such accident is a candidate X that would now make the scan
+// AMBIGUOUS and take the finder down with it. Tightening the match and failing
+// closed only work as a pair; either alone is worse than what was here.
+//
+// What we deliberately do NOT require is a fixed base register for the lea.
+// There is no "the GOT register": the compiler uses whatever it has free, and
+// measured on bc54101b29 the two real sites use DIFFERENT ones —
+//     lea eax,[esi+0x3b7d4]  @ rva 0xfdd2dd
+//     lea eax,[eax+0x3b7d4]  @ rva 0x18964e5
+// so pinning it would have discarded a good site.
+//
+// Measured on bc54101b29 with tools/experiment_cache_idiom.py: 2 sites, both
+// chained, both disp32=0x3b7d4, both resolving to 0x2f85b20 in .bss. This build
+// is UNIQUE, so the change is a no-op on it — it closes the hole for a future
+// build, it does not fix a live failure.
+constexpr int kMaxDistinctDisp = 4;   // only so the log can list them
+
 int32_t FindCacheGlobalDisp(ScRange rx) {
     if (!rx.base || rx.size < 14) return 0;
     const uint8_t* p   = reinterpret_cast<const uint8_t*>(rx.base);
     const std::size_t n = rx.size - 14;
 
-    int32_t found = 0;
-    int     foundCount = 0;
+    int32_t distinct[kMaxDistinctDisp] = {0};
+    int  nDistinct = 0;
+    int  sites     = 0;
+    bool overflow  = false;
+
     for (std::size_t i = 0; i <= n; ++i) {
         // lea r1, [base + disp32] : 8d MODRM(mod=10, base!=SIB) disp32
         if (p[i] != 0x8d) continue;
@@ -146,25 +192,43 @@ int32_t FindCacheGlobalDisp(ScRange rx) {
         uint8_t m3 = p[i + 9];
         if ((m3 & 0xc0) != 0x80 || (m3 & 0x07) == 0x04) continue;
         if (*reinterpret_cast<const uint32_t*>(p + i + 10) != 0x00000c58u) continue;
+        // chained: each instruction's destination is the next one's base
+        if (((m1 >> 3) & 0x07) != (m2 & 0x07)) continue;   // reg(lea)  == rm(mov1)
+        if (((m2 >> 3) & 0x07) != (m3 & 0x07)) continue;   // reg(mov1) == rm(mov2)
 
         int32_t disp = *reinterpret_cast<const int32_t*>(p + i + 2);
-        if (foundCount == 0) {
-            found = disp;
-            foundCount = 1;
-        } else if (disp != found) {
-            // Two different disps for the same idiom — ambiguous, log and keep
-            // the first (the real cache is by far the most common; mismatches
-            // would be rare unrelated code). Counted for the log line.
-            ++foundCount;
-        } else {
-            ++foundCount;
+        ++sites;
+        bool seen = false;
+        for (int k = 0; k < nDistinct; ++k) {
+            if (distinct[k] == disp) { seen = true; break; }
         }
+        if (seen) continue;
+        if (nDistinct < kMaxDistinctDisp) distinct[nDistinct++] = disp;
+        else                              overflow = true;
     }
-    if (foundCount > 0) {
-        Log::Info("PKG0_FINDER: cache-access idiom found %d time(s), disp=0x%x",
-                  foundCount, (unsigned)found);
+
+    if (sites == 0) {
+        Log::Error("PKG0_FINDER: cache-access idiom NOT_FOUND (anchor 0x%x) — "
+                   "CPackageInfoCache layout changed?", (unsigned)kCacheRootIdxOff);
+        return 0;
     }
-    return found;
+    if (nDistinct == 1) {   // overflow implies nDistinct == kMaxDistinctDisp
+        Log::Info("PKG0_FINDER: cache-access idiom UNIQUE — %d site(s), disp=0x%x",
+                  sites, (unsigned)distinct[0]);
+        return distinct[0];
+    }
+    char list[80] = {0};
+    int  off = 0;
+    for (int k = 0; k < nDistinct && off < (int)sizeof(list) - 12; ++k) {
+        int r = std::snprintf(list + off, sizeof(list) - (std::size_t)off,
+                              " 0x%x", (unsigned)distinct[k]);
+        if (r < 0) break;
+        off += r;
+    }
+    Log::Error("PKG0_FINDER: cache-access idiom AMBIGUOUS — %d site(s), %d distinct "
+               "disp32%s:%s — refusing to guess, not injecting",
+               sites, nDistinct, overflow ? "+" : "", list);
+    return 0;
 }
 
 // =============================================================================
