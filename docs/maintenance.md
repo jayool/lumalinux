@@ -8,12 +8,20 @@ tiers of fix — start with the cheapest.
 Log: `~/.cache/lumalinux/lumalinux.log`.
 
 `grep outcome=` is the one-line health check: every hook and the package-0
-finder report there, `outcome=` always last. The **Runtime smoke test**
-workflow (`verify-fix.yml`, manual) asserts two of those lines against a
-real Steam process: DepotKey's `outcome=installed` and the finder's
-`outcome=resolved`. It is the only thing that actually runs the `.so`, so
-run it after touching hooking code or a resolver — `build.yml` only
-compiles and `check_patterns.py` only resolves on paper.
+finder report there, `outcome=` always last. Two lines summarise a healthy
+boot: DepotKey's `outcome=installed` and the finder's `outcome=resolved`.
+
+**Nothing in CI proves those two lines.** `build.yml` compiles and runs the
+`tools/test_*.py` unit tests; `check_patterns.py` resolves addresses on paper.
+Neither loads the `.so` into a Steam process. `verify-fix.yml` ("Runtime smoke
+test") is meant to, and its header claims it does, but **it has never produced
+a green run** — its first real executions (2026-09-08) all failed in the
+harness, before any assertion. Treat it as work-in-progress, not as a gate.
+
+So after touching hooking code or a resolver, the validation that actually
+proves anything is **manual, on a SteamOS box with a logged-in Steam** — the
+procedure is written out at the end of §C and applies to hooks just as much as
+to the finder.
 
 The startup toast shows `X/Y hooks active` (e.g. `3/3 hooks active` on current
 defaults: DepotKey, GMRC, ShaderDepot — BuildDep is not in the default set). What
@@ -96,12 +104,21 @@ Maintainer fix:
    sha256sum ~/.local/share/Steam/ubuntu12_32/steamclient.so
    ```
 
-2. Verify the existing patterns still cover that binary by running the
-   `verify-fix` workflow (`.github/workflows/verify-fix.yml`,
-   `workflow_dispatch`). It builds the current lumalinux, downloads the
-   pinned test deps, and runs the hooks against a real `steamclient.so` in
-   CI. If all required hooks report `outcome=installed`, the patterns still
-   match → this is a hash bump, not a re-derivation.
+2. Verify the existing patterns still cover that binary. Offline, in about a
+   second, against that exact build:
+
+   ```sh
+   python3 tools/fetch_steamclient.py --output /tmp/steamclient.so
+   python3 tools/check_patterns.py /tmp/steamclient.so
+   ```
+
+   If it reports CLEAN — every critical hook resolving UNIQUE, and both finder
+   anchors `UNIQUE` — the patterns still match → this is a hash bump, not a
+   re-derivation. (This is exactly what the nightly `watch-steam.yml` runs, so
+   most of the time the auto-PR has already done it for you.) Note this
+   resolves *on paper*: it proves the addresses are findable, not that the
+   detour installs. Do not substitute it for the on-device check before a
+   release.
 
 3. Append the new hash under the **current** `SafeModeHashes:` group in
    `res/updates.yaml` (do NOT bump `res/version.txt` for a hash bump — that
@@ -112,7 +129,7 @@ That's it. Users get the fix on next Steam launch, zero action required.
 
 ### A.2 Re-derive moved patterns (rebuild + release)
 
-If `verify-fix` shows `outcome=miss` on **GMRC**, a byte
+If `check_patterns.py` (or a Deck log) shows `outcome=miss` on **GMRC**, a byte
 pattern actually moved; the **string-anchored** hooks re-derive themselves.
 (BuildDep is **diagnostic** and disabled by default — a `miss` on it does
 not block; the blocking re-derive triggers are DepotKey + GMRC.)
@@ -367,27 +384,127 @@ a healthy binary is:
 ---- package-0 finder anchors (§13.5) ----
   [a] cache-access idiom (anchored on tree-root offset 0xc58):
       PRESENT @ <addr>   disp32=0x<X>  (cache_global = GOT + disp32)
+      UNIQUE (2 site(s), disp32=0x3b7d4)
       OK — finder's cache locator will work on this binary.
   [b] GMRC prologue tail (survives the hook detour):
-      PRESENT @ <addr>   (unique)
+      PRESENT @ <addr>   -> GOT 0x<...>
+      UNIQUE (1 site(s), got=0x<...>)
       OK — finder's GOT derivation will work on this binary.
 ```
 
-If `[a]` says NOT FOUND → `0xc58` moved (root offset of `CPackageInfoCache`).
-If `[b]` says NOT FOUND → the GMRC prologue tail changed.
+Read the verdict line, not the PRESENT lines: **several sites are normal and
+healthy** — what matters is whether they AGREE. Since 2026-09-08 both anchors
+resolve UNIQUE-or-nothing at runtime, so the three verdicts map to three
+different jobs:
 
-**Fix** (manual code edits, no patterns.hpp involved):
+| verdict | meaning | what to do |
+|---|---|---|
+| `UNIQUE` | every site names the same address | nothing |
+| `NOT_FOUND` | the anchor is gone — `0xc58` moved, or the prologue tail changed | the **Fix** below |
+| `AMBIGUOUS` | the anchor is there but sites disagree | the anchor is no longer specific enough; the Fix below will not help — see the note after it |
+
+**Faster than Ghidra**, and the first thing to run, because it needs only a
+`steamclient.so` and about a second:
+
+```bash
+python3 tools/fetch_steamclient.py --output /tmp/steamclient.so
+python3 tools/experiment_cache_idiom.py /tmp/steamclient.so
+```
+
+It reproduces the runtime's predicates exactly, prints every site with its
+disp32, says which policy would resolve and which would refuse, and derives
+`GOT + X` to show which section it lands in (`.bss` on a healthy binary).
+
+**And this should not reach a user in the first place**: since 2026-09-08 the
+nightly `check_patterns.py` classifies both anchors and **blocks** on anything
+but `UNIQUE` (`finder:cache_idiom:…` / `finder:gmrc_tail:…` in `blocking`), so
+a Steam build that breaks them stops the whitelist PR instead of shipping.
+
+**Fix for `NOT_FOUND`** (manual code edits, no patterns.hpp involved):
 
 1. Diff `CPackageInfoCache` in the new binary against the old one to find
    the new root-offset (very likely still around `0xc5n` / `0xc6n`).
 2. Update `kCacheRootIdxOff` / `kCacheNodesOff` (and the related node
    offsets if anything else moved) at the top of
    `src/hooks/package_zero_finder.cpp`.
-3. Update the literal `0xc58` inside `FindCacheGlobalDisp` — it's the anchor
-   that confirms the idiom match.
+3. Update the anchor literal `0xc58` **in all four places at once**. The same
+   idiom scan is implemented four times, deliberately, so that CI, Ghidra and
+   the offline probe check exactly what the runtime does. They must change in
+   lockstep or the CI verdict stops describing the runtime:
+
+   | file | function | role |
+   |---|---|---|
+   | `src/hooks/package_zero_finder.cpp` | `FindCacheGlobalDisp` | the runtime scan (the one that matters) |
+   | `tools/check_patterns.py` | `verify_cache_idiom` / `classify_cache_idiom` | nightly CI gate |
+   | `tools/derive_patterns.py` | `verify_finder_cache_idiom` | Ghidra postScript (§A.2) |
+   | `tools/experiment_cache_idiom.py` | `scan_idiom` | offline probe |
+
+   `tools/test_cache_idiom.py` pins the predicates the four share (opcodes,
+   mod fields, register chaining, the anchor, the UNIQUE-or-nothing policy)
+   against a synthetic ELF and **fails if any of them drifts**. It runs in
+   `build.yml`, so a partial edit is caught in CI, not on a Deck. Run it
+   locally after the edit: `python3 tools/test_cache_idiom.py`.
 4. If the prologue tail changed, update the `tail` byte array inside
-   `DeriveGotBase`.
-5. Rebuild + release as in A.2 step 4–5.
+   `DeriveGotBase` — and its twin in `check_patterns.verify_gmrc_got` /
+   `derive_patterns.verify_gmrc_prologue_tail`.
+5. Rebuild + release as in A.2 step 4–5, then validate on-device (below)
+   before releasing.
+
+**If the verdict is `AMBIGUOUS`, do not apply the Fix above.** Nothing is
+missing: the anchor is still there, it is just no longer *specific* — several
+distinct `disp32` (or several distinct GOT bases) match the same byte shape,
+and the finder refuses to guess between them rather than seed a wrong pointer.
+Editing `0xc58` will not make the sites agree. The job is to find a second
+discriminator that keeps exactly the real site: run
+`tools/experiment_cache_idiom.py` to see every candidate with the section its
+`GOT + disp32` lands in (the real one is in `.bss`; that alone often
+disqualifies the rest), then tighten the predicate in the four
+implementations together and extend `tools/test_cache_idiom.py` with a case
+that reproduces the ambiguity. Until that lands the finder is off, but hooks
+and the rest of the plugin are unaffected.
+
+**Bypass while you work on it**: if `check_patterns.py` reported a `UNIQUE`
+disp32 for the build, the RVA feed can carry it and the runtime skips the idiom
+scan on that binary — see `docs/rva-feed-design.md`, key
+`finder.cache_global_disp`. That turns a broken idiom into a data fix, no
+release needed. Two limits: it covers **only** the idiom, not the GOT
+derivation (`finder.got_rva` is not published yet), so a `GOT NOT_FOUND` still
+needs a build; and it does **not** help on `AMBIGUOUS`, because in that case CI
+has no `UNIQUE` value to publish in the first place.
+
+**Manual on-device validation** (the procedure that validated the 2026-09-08
+rework; do this before releasing a finder change — no CI job covers it,
+see `docs/update-testing.md`):
+
+1. On a SteamOS box or codespace, install the stack normally from LumaDeck
+   (`setup.sh`), so every other piece is the shipped one.
+2. Build the branch and swap only the library:
+
+   ```bash
+   ./tools/fetch_libmem.sh                      # 32-bit libmem, once per clone
+   mkdir -p build && cd build
+   cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release && ninja && cd ..
+   file build/liblumalinux.so   # must say: ELF 32-bit LSB shared object, Intel 80386
+   cp build/liblumalinux.so ~/.local/share/lumalinux/liblumalinux.so
+   ```
+
+   The `file` line is not ceremony: a host-native 64-bit build copies over
+   cleanly and then simply never loads (`ELF file class ELFCLASS32 incorrect`
+   in the loader's output, no lumalinux banner in the log), which reads exactly
+   like a wrapper problem (§B) and is not one.
+
+3. Boot Steam **logged in** (a logged-out client never populates the cache, so
+   the finder has nothing to find and the test proves nothing).
+4. Read the log:
+
+   ```bash
+   grep -E "hooks active|outcome=|PKG0_FINDER|Finder resolve|AMBIGUOUS" \
+        ~/.cache/lumalinux/lumalinux.log
+   ```
+
+   A healthy run shows `3/3 hooks active`, `GOT UNIQUE`, `cache-access idiom
+   UNIQUE`, `Finder resolve: … outcome=resolved` and a `PKG0_FINDER: HIT
+   pkg=… PackageId=0 AppIdVec{size=N}` with a non-empty appid list.
 
 Worth opening an issue with the failing log line so the diagnostic landing
 in the next release is sharper.
@@ -444,7 +561,9 @@ same discipline applies to any future in-memory patch.)
 ## E) Dormant workbench tools
 
 Three tools in `tools/` belong to no flow: nothing imports them, no workflow runs
-them, and they are not steps in any procedure above. They were written as gates
+them, and they are not steps in any procedure above. (A fourth,
+`experiment_cache_idiom.py`, is *not* dormant — it is step one of §C's diagnosis
+— but it is the same kind of thing, so it is described at the end here too.) They were written as gates
 for specific questions, those questions got answered, and they have sat unused
 since. They are kept — and listed here — because the questions come back every
 time Steam moves a pattern, and rediscovering the tools from scratch costs more
@@ -497,15 +616,49 @@ So its use now is diagnostic rather than exploratory: when DepotKey reports
 which of the two broke on the new build instead of leaving you to guess. Test:
 `tools/test_experiment_rtti.py`.
 
-### Why these are not in CI
+### `experiment_cache_idiom.py` — what does the finder see on this binary?
 
-Deliberately. They guard code nothing else executes, so running them on every
-push buys a signal that can only change when someone edits the tool itself — and
-whoever does that can run the test in the same second. The rule this repo already
-follows is `watch-steam-selftest.yml`'s: fire when the thing being protected is
-edited. That workflow covers the production chain (`run_ghidra_derive.sh` →
-`apply_derived_pattern.py` → `check_patterns.py`) on PRs that touch it. These
-three are not in that chain.
+Not dormant: it is the fastest first move in §C, and the tool that turned the
+package-0 finder from "it works, we think" into a measured claim. It reproduces
+the runtime's cache-access idiom scan byte for byte on a static
+`steamclient.so`, and prints every candidate site with its opcodes, its register
+chain, its `disp32`, and the section that `GOT + disp32` lands in — the real
+site lands in `.bss`.
+
+Reach for it whenever `PKG0_FINDER` says anything but `UNIQUE`, and before
+touching the anchor: it tells you in one second whether you are looking at a
+missing anchor (`NOT_FOUND`, the anchor moved) or a non-specific one
+(`AMBIGUOUS`, several sites match and disagree), which are different jobs with
+different fixes. It also answers the question the log cannot: *which* extra
+sites appeared, and what makes them distinguishable from the real one.
+
+The measurements it produced are recorded in RESEARCH §13.5 — five Steam builds,
+each with a single distinct `disp32`, two chained sites on the current one.
+Test: `tools/test_cache_idiom.py` (which also pins the runtime, CI and Ghidra
+implementations against this one).
+
+### The tools are not in CI; their tests are (since 2026-09-08)
+
+The **tools** stay out of CI deliberately: they need a real `steamclient.so` and
+they guard code nothing else executes, so running them on every push buys a
+signal that can only change when someone edits the tool. The rule this repo
+follows is `watch-steam-selftest.yml`'s — fire when the thing being protected is
+edited; that workflow covers the production chain (`run_ghidra_derive.sh` →
+`apply_derived_pattern.py` → `check_patterns.py`), and these three are not in it.
+
+Their **tests** are a different matter, and the old rule here ("whoever edits the
+tool can run the test in the same second") turned out to be wishful: until
+2026-09-08 *nothing* invoked `tools/test_*.py`, so the tests could rot silently
+and nobody would know. `build.yml` now runs every `tools/test_*.py` on each push
+(synthetic inputs, no binary, no network — seconds). Two consequences worth
+knowing:
+
+- A new `tools/test_*.py` is picked up by the glob automatically. Name it that
+  way and it is in CI; name it anything else and it is not.
+- The tests now pin cross-file invariants, not just single tools — most
+  importantly `test_cache_idiom.py`, which fails if the four implementations of
+  the cache-access idiom (§C) drift apart. That is the check that had no owner
+  before.
 
 ---
 
@@ -513,8 +666,8 @@ three are not in that chain.
 
 1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
    or the crash-loop fail-safe latched vanilla → the real issue is usually A).
-2. **`SafeMode` mismatch but `verify-fix` is green** → A.1 (hash bump in
-   `updates.yaml`, no rebuild).
+2. **`SafeMode` mismatch but `check_patterns.py` is CLEAN on that binary** →
+   A.1 (hash bump in `updates.yaml`, no rebuild).
 3. **`outcome=miss` on DepotKey/GMRC** → A.2 / A.3
    (re-derive patterns, rebuild, new release).
 4. **`PKG0_FINDER: … NOT_FOUND` or `… AMBIGUOUS`** (grep `PKG0_FINDER`; anything

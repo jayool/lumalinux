@@ -2,7 +2,16 @@
 # -*- coding: utf-8 -*-
 # experiment_cache_idiom.py — ¿el idiom de acceso a la caché resuelve ÚNICO?
 #
-# El problema (src/hooks/package_zero_finder.cpp, FindCacheGlobalDisp)
+# ESTADO (2026-09-08): los dos defectos descritos abajo ESTAN ARREGLADOS en el
+# runtime. FindCacheGlobalDisp cuenta disp32 distintos y devuelve 0 salvo que
+# haya exactamente uno (ambiguo == no resuelto, igual que
+# Patterns::FindUniqueInSteamclient), y exige el encadenado de registros. Se
+# deja el texto original porque explica POR QUE los predicados son los que son.
+# La sonda sigue viva y es el primer paso del diagnostico de docs/maintenance.md
+# §C: mide lo mismo que el runtime, pero sobre un .so estatico y en un segundo.
+#
+# El problema que motivo todo esto (src/hooks/package_zero_finder.cpp,
+# FindCacheGlobalDisp)
 # --------------------------------------------------------------------
 # El finder localiza la ranura global de CPackageInfoCache buscando el idiom
 #
