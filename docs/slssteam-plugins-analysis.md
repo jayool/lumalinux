@@ -510,7 +510,7 @@ rodea aquí.
 |---|---|---|---|
 | Claves de depot | `CConfigStore::GetBinary`, claves desde `config.yaml` | **la misma función**, claves desde `keys.txt` | Convergencia total |
 | Manifest request code | `GetManifestRequestCode`, wudrm en solitario | la misma, cascada de 3 + caché + UA anti-WAF | Vamos por delante |
-| Depots del paquete 0 | hook de `GetPackage` → captura el puntero → reescribe | `LoadPackage` + `package_zero_finder` (377 líneas) | **Misma meta, ruta distinta** |
+| Depots del paquete 0 | hook de `GetPackage` → captura el puntero → reescribe | `package_zero_finder` (670 líneas; el hook de `LoadPackage` es diagnóstico y no inyecta) | **Misma meta, ruta distinta** |
 | Shader pre-cache | — | `ShaderDepot` (§13.9) | Sólo nosotros |
 | Reconcile sin reinicio | — | `NotifyLicensesUpdated` (0x7d) | Sólo nosotros |
 | Pinning de manifiestos | — (lo cubre `ManifestIds` del core) | BuildDep, desactivado por defecto | Empate por delegación |
