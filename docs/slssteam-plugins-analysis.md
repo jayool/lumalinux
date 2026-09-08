@@ -1583,7 +1583,7 @@ refleja la decisión de arriba:
 | **M2** | GMRC: comprobar en CI la ruta de rescate — ancla por frase **y** `.eh_frame_hdr` | lumalinux (CI) | Alta | **HECHO 2026-09-07** — verificado sobre `bc54101b29`: xref `0x1371ac0` = patrón, 133.049 funciones en la tabla |
 | **M3** | GMRC: calcular el xref sólo cuando el patrón no resuelve | lumalinux | Media | **HECHO 2026-09-07** |
 | **M4** | **Retirar `WalkBackToPrologue`** si los logs reales nunca emiten *".eh_frame_hdr unavailable"*. Con él se van sus dos modos de fallo. Condición anotada en `gmrc_xref.hpp` para que no se quede de andamio | lumalinux | Baja | **Condicional** |
-| **N** | **Barrer si a ShaderDepot le aplica K**: `16IClientShaderMap` existe; una orden con la sonda lo dice. No crítico | lumalinux | Baja | Abierto |
+| **N** | ¿Le aplica K a ShaderDepot? | lumalinux | Baja | **CERRADO 2026-09-07 — no aplica.** `GetShaderCacheDepot` no existe como cadena en el binario (cero apariciones), así que no es método de interfaz. Con esto, DepotKey era el único hook del proyecto donde K aplica — ver el alcance más abajo |
 | **R** | Probar el derivador automático de Reconcile contra una corrida real de Ghidra (`derive_patterns.py` lo marca *"UNTESTED"*) | lumalinux (CI) | Media | **ACTIVO** |
 | **G** | Refrescar el snapshot embebido de `slssteam_schema.py` (`SmartTickets`, `LaunchOptions`, `Plugins`) | LumaDeck | Media | **ACTIVO** |
 | **C** | `Plat_Realloc`/`Plat_Free` vía `dlsym` sobre `libtier0_s.so`, con `realloc` de respaldo | lumalinux | Media | Abierto |
