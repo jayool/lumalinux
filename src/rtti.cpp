@@ -195,35 +195,6 @@ bool FindTypeVtable(const char* mangledName, uintptr_t& base, size_t& size,
 // local so rtti keeps its own memory-safety (CanReadMemory before dereferencing
 // a vtable target) and stays independent of the Patterns module. Returns the
 // matched byte length, or 0 on parse error / mismatch / unreadable target.
-size_t MatchSignature(uintptr_t addr, const char* sig) {
-    std::vector<uint8_t> bytes;
-    std::vector<bool> fixed;
-    auto hex = [](char c) -> int {
-        if (c >= '0' && c <= '9') return c - '0';
-        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-        return -1;
-    };
-    for (const char* p = sig; *p; ) {
-        while (*p == ' ') ++p;
-        if (!*p) break;
-        if (p[0] == '?') { bytes.push_back(0); fixed.push_back(false); ++p; if (*p == '?') ++p; }
-        else {
-            int hi = hex(p[0]);
-            int lo = p[1] ? hex(p[1]) : -1;
-            if (hi < 0 || lo < 0) return 0;   // malformed pattern
-            bytes.push_back(static_cast<uint8_t>((hi << 4) | lo));
-            fixed.push_back(true);
-            p += 2;
-        }
-    }
-    if (bytes.empty()) return 0;
-    if (!CanReadMemory(reinterpret_cast<void*>(addr), bytes.size())) return 0;
-    const uint8_t* mem = reinterpret_cast<const uint8_t*>(addr);
-    for (size_t i = 0; i < bytes.size(); ++i)
-        if (fixed[i] && mem[i] != bytes[i]) return 0;
-    return bytes.size();
-}
 
 // Aggregate steamclient.so's r-x mappings into one executable Region. Separate
 // from MapSteamclient's `readable` list (which is r--/rw- too) because the GOT
@@ -308,38 +279,6 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
     return fn;
 }
 
-uintptr_t ResolveVtableSlotBySignature(const char* mangledName,
-                                       const char* sigPattern,
-                                       int maxSlots, int* outSlot) {
-    uintptr_t base = 0; size_t size = 0; void** vtable = nullptr;
-    if (!FindTypeVtable(mangledName, base, size, vtable)) return 0;
-
-    uintptr_t hitFn = 0;
-    int hitSlot = -1;
-    int matches = 0;
-    for (int i = 0; i < maxSlots; ++i) {
-        // Bound the scan: stop the moment a slot pointer itself is unreadable
-        // (walked past the mapped vtable). Out-of-module / non-code entries are
-        // skipped, not fatal — only the accessor's prologue can match the sig.
-        if (!CanReadMemory(&vtable[i], sizeof(void*))) break;
-        uintptr_t fn = reinterpret_cast<uintptr_t>(vtable[i]);
-        if (fn < base || fn >= base + size) continue;
-        if (MatchSignature(fn, sigPattern)) {
-            ++matches;
-            hitFn = fn;
-            hitSlot = i;
-            Log::Info("RTTI: '%s' slot %d -> 0x%lx (RVA 0x%lx) matches accessor signature",
-                      mangledName, i, (unsigned long)fn, (unsigned long)(fn - base));
-        }
-    }
-    if (matches != 1) {
-        Log::Warn("RTTI: '%s' signature scan matched %d slots (need exactly 1) — fail closed",
-                  mangledName, matches);
-        return 0;
-    }
-    if (outSlot) *outSlot = hitSlot;
-    return hitFn;
-}
 
 // See rtti.hpp. Mirrors SLSsteam's VFTableInfo_t::init(), with the lookup
 // inverted: it builds the whole `name -> index` map for an interface because it

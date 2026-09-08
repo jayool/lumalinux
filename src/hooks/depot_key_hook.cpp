@@ -139,28 +139,13 @@ bool Install() {
         target = feed; method = "rva";
     }
 
+    // Both zero is not necessarily "the function moved": FindDepotKeyFunction
+    // requires a UNIQUE match, so an AMBIGUOUS pattern lands here too. Either
+    // way the answer is the same — do not guess, let the name resolver decide.
     if (!target) {
-        uintptr_t rtti = Rtti::ResolveVtableSlotBySignature(
-            "12CConfigStore", Patterns::kDepotKeyFnPattern, /*maxSlots=*/40, &derivedSlot);
-        uintptr_t pat  = Patterns::FindDepotKeyFunction();
-        if (rtti && pat) {
-            if (rtti == pat) {
-                target = rtti; method = "rtti(agrees-with-pattern)";
-            } else {
-                Log::Warn("DepotKey: RTTI 0x%lx != pattern 0x%lx — using pattern "
-                          "(no regression); investigate the mismatch",
-                          (unsigned long)rtti, (unsigned long)pat);
-                target = pat; method = "pattern(rtti-mismatch)";
-            }
-        } else if (rtti) {
-            target = rtti; method = "rtti(pattern-miss)";
-        } else if (pat) {
-            target = pat;  method = "pattern(rtti-miss)";
+        if (uintptr_t pat = Patterns::FindDepotKeyFunction()) {
+            target = pat; method = "pattern";
         }
-        // Both zero is not necessarily "the function moved": since v0.16.x
-        // FindDepotKeyFunction requires a UNIQUE match, so an AMBIGUOUS pattern
-        // also lands here. Either way the answer is the same — do not guess,
-        // let the name resolver below decide.
     }
 
     // Last resort: derive the vtable slot from the METHOD NAME. Reads no byte of
@@ -213,7 +198,10 @@ bool Install() {
               "method=%s, trampoline=%p, %zu keys loaded)",
               (unsigned long)target, method, (void*)g_origFn, KeyStore::Size());
     uintptr_t base = Patterns::FindSteamclientBase();
-    Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx rtti_slot=%d outcome=installed",
+    // `slot` is -1 unless the name resolver decided; it used to be filled by the
+    // RTTI-by-signature path too, which is gone. Renamed from rtti_slot= so the
+    // field says what it now holds — nothing outside docs/RESEARCH.md §21 reads it.
+    Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx slot=%d outcome=installed",
               method, (unsigned long)target, (unsigned long)(base ? target - base : 0), derivedSlot);
     return true;
 }

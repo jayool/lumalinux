@@ -666,9 +666,19 @@ def rtti_derive_slot(path, mangled, patstr, max_slots=40):
     vtable (.data.rel.ro; i386 REL relocations store the addend = target vaddr
     in-place, so the file already holds the vaddrs), then scan up to `max_slots`
     slots and return [(slot_index, fn_rva), ...] for every slot whose target
-    function's prologue matches `patstr`. This is the exact invariant the runtime
-    derive-by-signature relies on. Returns (matches, note); matches is None on a
-    walk failure (vtable not locatable), with `note` explaining which step."""
+    function's prologue matches `patstr`.
+
+    This USED to mirror a runtime resolver (Rtti::ResolveVtableSlotBySignature),
+    which was deleted once the name-derived one landed: it took the same pattern,
+    so it was the pattern a second time rather than an independent opinion. The
+    check keeps its value here as a CONSTRAINT — the function this pattern finds
+    must be a CConfigStore virtual — which catches a pattern derived from a
+    function outside that vtable, the realistic Ghidra failure. What it cannot
+    catch is a mis-derivation landing on another slot of the same vtable; that is
+    what rtti_derive_slot_byname is for.
+
+    Returns (matches, note); matches is None on a walk failure (vtable not
+    locatable), with `note` explaining which step."""
     try:
         data, secs = _load_sections(path)
     except (OSError, ValueError) as e:
@@ -754,10 +764,12 @@ def main():
         if record(const, label, "critical") != "UNIQUE":
             result["blocking"].append(label)
 
-    # 1b) DepotKey RTTI ground-truth — mirror Rtti::ResolveVtableSlotBySignature:
-    # find CConfigStore's vtable and confirm EXACTLY ONE slot's prologue matches
-    # kDepotKeyFnPattern (the runtime's primary resolution), recording the derived
-    # slot for reorder-drift detection. Zero / multiple / walk-failure => BLOCKING.
+    # 1b) DepotKey pattern-vs-vtable CONSTRAINT: find CConfigStore's vtable and
+    # confirm EXACTLY ONE slot's prologue matches kDepotKeyFnPattern. It no longer
+    # mirrors a runtime resolver — that one was deleted for being the pattern in
+    # disguise — but it still answers a question the plain scan cannot: is the
+    # function this pattern finds actually a CConfigStore virtual? Zero / multiple
+    # / walk-failure => BLOCKING. The independent second opinion is 1c below.
     dk_pat = patterns.get(RTTI_DEPOTKEY["const"])
     if dk_pat is None:
         result["rtti"] = {"status": "PATTERN_MISSING_FROM_HPP"}
