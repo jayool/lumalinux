@@ -46,12 +46,21 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install 32-bit toolchain
+      - name: Install 32-bit toolchain and the runtime libs steamclient.so needs
+        # steamclient.so has real DT_NEEDED deps on the 32-bit X/desktop stack;
+        # without them dlopen fails with "libXrandr.so.2: cannot open shared
+        # object file" and nothing downstream runs. RTLD_LAZY does not help —
+        # these are load-time dependencies, not lazily-bound symbols.
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib g++-multilib cmake ninja-build pkg-config \
-            libcurl4-openssl-dev:i386 libssl-dev:i386 p7zip-full wget
+          sudo apt-get install -y --no-install-recommends \
+            gcc-multilib g++-multilib cmake ninja-build p7zip-full \
+            libc6:i386 libstdc++6:i386 \
+            libx11-6:i386 libxext6:i386 libxrandr2:i386 libxfixes3:i386 \
+            libxi6:i386 libxcursor1:i386 libxinerama1:i386 libxss1:i386 \
+            libgl1:i386 libglx-mesa0:i386 libdbus-1-3:i386 libnss3:i386 \
+            libudev1:i386 libpulse0:i386 libsm6:i386 libice6:i386
 
       - name: Fetch libmem
         run: ./tools/fetch_libmem.sh
@@ -178,7 +187,7 @@ jobs:
           LD_LIBRARY_PATH="$PWD/deck-env/ubuntu12_32:/usr/lib32" \
           LD_PRELOAD="$LUMA" \
             timeout 60 ./smoke_dlopen "$SC" 15 2>&1 | tee run-a.log
-          exA=${PIPESTATUS[0]}; echo "run A exit=$exA"
+          exA=${PIPESTATUS[0]}; echo "run A exit=$exA (NOT trustworthy, see below)"
 
           # Run B — the full stack, same env a Deck sets (setup.sh
           # luma_set_injection_env). INFORMATIONAL: reported, never fatal, since
@@ -191,11 +200,19 @@ jobs:
           echo "run B exit=${PIPESTATUS[0]} (informational)"
 
           set -e
-          crashes=0
-          [ "$exA" -eq 134 ] && crashes=1
-          echo "crashes(SIGABRT, run A)=$crashes"
-          echo "crashes=$crashes" >> "$GITHUB_ENV"
-          echo "exA=$exA" >> "$GITHUB_ENV"
+          # DO NOT gate on the exit code. lumalinux registers
+          # atexit([]{ _exit(0); }) (main.cpp, to dodge a teardown SIGABRT with
+          # the full stack loaded), so ANY process it is preloaded into exits 0
+          # no matter what main returned — this run reported "exit=0" while the
+          # host had actually failed its dlopen. The host's own stdout is the
+          # signal instead: it prints "mapped" only after dlopen succeeds.
+          grep -q "smoke_dlopen: mapped" run-a.log \
+            && echo "hostA=ok" >> "$GITHUB_ENV" || echo "hostA=fail" >> "$GITHUB_ENV"
+          echo "crashes=0" >> "$GITHUB_ENV"
+          echo "── ldd of the client library (missing deps show as 'not found') ──"
+          ldd deck-env/ubuntu12_32/steamclient.so 2>&1 | grep -i "not found" \
+            && echo "^^ unmet 32-bit deps: add them to the toolchain step" \
+            || echo "all DT_NEEDED deps resolved"
 
       - name: Assert loaded + hooks installed + no crash
         run: |
@@ -207,8 +224,8 @@ jobs:
           # "did not install its hooks", which on 2026-09-08 sent the diagnosis
           # off after a red herring: Steam had never mapped steamclient.so at
           # all, so the hooks were never given anything to install against.
-          test "${exA:-1}" -eq 0 \
-            || { echo "HARNESS FAIL: the dlopen host itself exited ${exA} — see run-a.log; steamclient.so was never mapped, so nothing below was even attempted"; exit 1; }
+          test "${hostA:-fail}" = "ok" \
+            || { echo "HARNESS FAIL: the dlopen host never mapped steamclient.so — see run-a.log for the dlopen error (usually an unmet 32-bit dependency) and the ldd dump in the previous step"; exit 1; }
           grep -aqE 'steamclient.so detected|installing hooks' "$LOG" \
             || { echo "HARNESS FAIL: lumalinux ran but never saw steamclient.so in /proc/self/maps — the host mapped it, so this is the poller or the process gate (LUMA_PROCESS_ANY), not the hooks"; exit 1; }
           grep -aqE 'hooks active' "$LOG" \
