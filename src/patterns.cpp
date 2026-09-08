@@ -1,5 +1,4 @@
 #include "patterns.hpp"
-#include "gmrc_xref.hpp"
 #include "log.hpp"
 
 #include <cstring>
@@ -213,48 +212,20 @@ uintptr_t FindBuildDepotDependencyFunction() {
 }
 
 uintptr_t FindGmrcFunction() {
-    // Byte pattern PRIMARY, job-name xref (#13 Part 1) as the RESCUE — a rebuild
-    // that reshuffles the getter's prologue but leaves the function intact breaks
-    // the pattern while the xref still resolves.
+    // Byte pattern ONLY, like every other Find*Function here: this module means
+    // "locate it with the compiled byte pattern", nothing else. It used to also
+    // call GmrcXref and pick between the two, which made it the one function in
+    // Patterns that could return an address Patterns had not found, forced this
+    // file to #include a hook-specific locator, and left the caller unable to say
+    // which resolver won (it could only log method=locator). That choice now
+    // lives in gmrc_hook.cpp, next to the feed, exactly like depot_key_hook.cpp.
     //
-    // UNIQUE-match required since v0.16.x, same reasoning as FindDepotKeyFunction:
-    // FindInSteamclient returns the FIRST match without counting, so an ambiguous
-    // pattern yields a plausible wrong address and the caller detours it — no
-    // error, no FAILED, status.json green. That risk was accepted while a 0 meant
-    // "no manifest request code, no download at all"; it no longer does. The xref
-    // rescues, and since 2026-09-07 it resolves the entry from .eh_frame_hdr's
-    // function table (src/eh_frame.hpp) instead of inferring it from code shape,
-    // so the net underneath is exact rather than a heuristic that could itself be
-    // wrong.
-    //
-    // The xref is computed ONLY when the pattern came up empty. It used to run
-    // unconditionally so a DRIFT line could be logged when the two disagreed;
-    // that cost (a module-wide string scan, the GOT consensus, a lea scan, and
-    // now building the .eh_frame_hdr table — order of 60 ms) bought a log line
-    // that changed no decision, since the pattern won regardless. Since M2 the
-    // nightly check does that comparison against every new build and can open a
-    // PR, which is strictly more than a line nobody reads until something is
-    // already broken. Same rule as DepotKey: compute a resolver only when it can
-    // change which function gets hooked.
-    uintptr_t viaPattern =
-        FindUniqueInSteamclient(kGmrcFunctionPattern, "GMRC getter (GetManifestRequestCode)");
-    if (viaPattern) {
-        Log::Info("GMRC locate: method=pattern target=0x%lx", (unsigned long)viaPattern);
-        return viaPattern;
-    }
-
-    // "MISSED" now covers two cases: the pattern matched nowhere, or it matched
-    // more than once and FindUniqueInSteamclient refused to guess. Both mean the
-    // same thing here — the xref decides.
-    uintptr_t viaXref = GmrcXref::FindGmrcFunction();
-    if (viaXref) {
-        Log::Warn("GMRC locate: method=xref target=0x%lx — byte pattern MISSED or "
-                  "AMBIGUOUS (Steam likely reshuffled the prologue); xref rescued "
-                  "the hook", (unsigned long)viaXref);
-        return viaXref;
-    }
-
-    return 0;
+    // UNIQUE-match required since v0.16.x: FindInSteamclient returns the FIRST
+    // match without counting, so an ambiguous pattern yields a plausible wrong
+    // address and the caller detours it — no error, no FAILED, status.json green.
+    // Returning 0 is safe now because the caller falls back to the job-name xref.
+    return FindUniqueInSteamclient(kGmrcFunctionPattern,
+                                   "GMRC getter (GetManifestRequestCode)");
 }
 
 uintptr_t FindLoadPackageFunction() {

@@ -1,4 +1,5 @@
 #include "gmrc_hook.hpp"
+#include "../gmrc_xref.hpp"
 #include "../patterns.hpp"
 #include "../rva_feed.hpp"
 #include "../key_store.hpp"
@@ -60,13 +61,40 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
 namespace Hooks::Gmrc {
 
 bool Install() {
-    // RVA feed first (prologue-independent), else the byte-pattern/xref locator.
-    const char* method = "rva";
-    uintptr_t target = RvaFeed::Resolve("GMRC");
-    if (!target) { method = "locator"; target = Patterns::FindGmrcFunction(); }
+    // Resolver order, same shape as depot_key_hook.cpp: each step runs ONLY if
+    // the previous came up empty, because a resolver that cannot change the
+    // outcome must not run while Steam is starting. Cross-checking the chosen
+    // address belongs in CI (check_patterns.py derives the xref nightly and
+    // blocks on a disagreement), which has the binary open and can open a PR.
+    const char* method = "none";
+    uintptr_t target = 0;
+
+    if (uintptr_t feed = RvaFeed::Resolve("GMRC")) {
+        target = feed; method = "rva";
+    }
+
     if (!target) {
-        Log::Error("GMRC hook: GetManifestRequestCode function not found");
-        Log::Warn("Hook install: name=GMRC method=%s outcome=miss", method);
+        if (uintptr_t pat = Patterns::FindGmrcFunction()) {
+            target = pat; method = "pattern";
+        }
+    }
+
+    // Last resort: the job-name string xref. Survives a rebuild that reshuffles
+    // the prologue — the anchor is a string, and since 2026-09-07 the entry comes
+    // from .eh_frame_hdr's function table rather than a backward scan.
+    if (!target) {
+        if (uintptr_t xref = GmrcXref::FindGmrcFunction()) {
+            target = xref; method = "xref(rescue)";
+            Log::Warn("GMRC: feed and pattern both MISSED or AMBIGUOUS; job-name "
+                      "xref resolved 0x%lx — Steam likely reshuffled the prologue",
+                      (unsigned long)xref);
+        }
+    }
+
+    if (!target) {
+        Log::Error("GMRC hook: target not found (feed, pattern and job-name xref "
+                   "all failed)");
+        Log::Warn("Hook install: name=GMRC method=none outcome=miss");
         return false;
     }
     void* tramp = nullptr;

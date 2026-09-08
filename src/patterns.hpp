@@ -224,6 +224,10 @@ uintptr_t FindNotifyLicensesUpdatedFunction();
 uintptr_t FindDepotKeyFunction();
 uintptr_t FindBuildDepotDependencyFunction();
 uintptr_t FindLoadPackageFunction();
+
+// Byte pattern only, unique-match. The GMRC job-name xref is a SEPARATE resolver
+// (src/gmrc_xref.hpp); gmrc_hook.cpp picks between the two, the way
+// depot_key_hook.cpp does for its own.
 uintptr_t FindGmrcFunction();
 uintptr_t FindShaderCacheDepotFunction();
 
