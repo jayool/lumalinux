@@ -15,7 +15,7 @@ to grep for, and what it tells you:
 |---|---|---|
 | `SafeMode` mismatch / `Curl Res` + the hash isn't whitelisted | Steam shipped a new `steamclient.so`; patterns probably still match | **A.1** Hash bump |
 | `Hook install: name=<HOOK> … outcome=pattern_miss` | A pattern moved — that hook can't install | **A.2** / **A.3** Re-derive patterns |
-| `PKG0_FINDER: cache-access idiom not found` or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
+| `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
 
