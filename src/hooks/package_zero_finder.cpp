@@ -209,7 +209,8 @@ int32_t FindCacheGlobalDisp(ScRange rx) {
 
     if (sites == 0) {
         Log::Error("PKG0_FINDER: cache-access idiom NOT_FOUND (anchor 0x%x) — "
-                   "CPackageInfoCache layout changed?", (unsigned)kCacheRootIdxOff);
+                   "CPackageInfoCache layout changed? Not injecting",
+                   (unsigned)kCacheRootIdxOff);
         return 0;
     }
     if (nDistinct == 1) {   // overflow implies nDistinct == kMaxDistinctDisp
@@ -371,10 +372,14 @@ void Run() {
                         Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
                                   (unsigned long)got, (unsigned)disp,
                                   (unsigned long)cacheGlobal);
-                    } else {
-                        Log::Warn("PKG0_FINDER: cache-access idiom not found in r-x "
-                                  "— class layout changed?");
                     }
+                    // No else: FindCacheGlobalDisp has already logged the cause
+                    // (NOT_FOUND vs AMBIGUOUS) at Error severity, and both of its
+                    // messages state the consequence. The line that used to live
+                    // here re-diagnosed it as "cache-access idiom not found —
+                    // class layout changed?", which is false in the ambiguous
+                    // case: the idiom WAS found, several times, disagreeing. One
+                    // diagnosis, in the place that actually knows it.
                 } else {
                     Log::Debug("PKG0_FINDER: GOT not derived yet (GMRC prologue tail "
                                "not located)");
