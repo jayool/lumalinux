@@ -54,8 +54,10 @@ constexpr int kMaxTreeDepth = 64;
 //      db0d79c2" above means a human did it once, two builds ago.
 //      This is not an oversight we can close: field offsets inside a node are
 //      invisible in a stripped binary without decompiling it, so CI cannot
-//      derive them. The practical mitigation is [9] below — cross-check the
-//      object we reach against its own PackageId — not more static checking.
+//      derive them. MITIGATED, not fixed: FindPackage0 now cross-checks the
+//      object it reaches against its own PackageId before returning it, so a
+//      walk that went wrong ends in a refusal instead of a write. The offsets
+//      themselves are still unverified.
 //
 // [15] THE TREE WALK HAS NO CONSISTENCY CONTROL. `nodes` is read once and then
 //      indexed for up to kMaxTreeDepth iterations while Steam may be mutating
@@ -63,7 +65,9 @@ constexpr int kMaxTreeDepth = 64;
 //      crash on unmapped memory, but not garbage read out of freed-but-still-
 //      mapped memory. Realistically that yields a STALE-but-real PackageInfo
 //      (harmless to append to); reaching an object of another type takes more
-//      coincidence. Same mitigation as [14].
+//      coincidence. Same mitigation as [14] — and note the finder retries here
+//      rather than giving up, because unlike the code scans this read really
+//      can come out consistent on the next poll.
 //
 // [17] GetSteamclientRx() returns lo..hi across every r-x mapping of the
 //      module, so it would read across a non-readable gap between two of them.
@@ -409,6 +413,41 @@ void* FindPackage0(uintptr_t cacheGlobal) {
             if (!pkg || !IsReadable(pkg, 0x50)) {
                 Log::Debug("PKG0_FINDER: package-0 node found but PackageInfo %p bad",
                            pkg);
+                return nullptr;
+            }
+            // Cross-check the object against ITSELF before handing it over to be
+            // written into.
+            //
+            // Everything above this line is navigation: seven compiled-in
+            // offsets, walked through a structure Steam may be mutating from
+            // another thread while we read it. The only validation we had was
+            // "is this address readable", which a stale or torn read passes
+            // happily — freed-but-still-mapped memory reads fine.
+            //
+            // But TWO independent sources say "this is package 0": the tree
+            // node's key field (+0x10, read above) and the object's own id
+            // (+0x00, here). We were using one and ignoring the other — and not
+            // for lack of access: PkgId() was already being called, purely to
+            // print it in the HIT line, and only on the first hit. Free evidence
+            // thrown away.
+            //
+            // This is the practical mitigation for KNOWN LIMIT [14]. Five of the
+            // seven offsets cannot be validated statically at all (field offsets
+            // inside a node are invisible in a stripped binary), so instead of
+            // checking the map we check where it took us. A disagreement means
+            // either a torn/stale read or that the offsets have gone wrong; both
+            // mean the same thing — do not write here.
+            //
+            // Unlike the resolution scans, this returns nullptr rather than
+            // giving up: those read code bytes that are final, so a failure is
+            // permanent and piece 3 made them one-shot. THIS read is genuinely
+            // transient — the same walk can be consistent on the next poll — so
+            // retrying is the correct response, and the caller already does.
+            const uint32_t selfId = Hooks::LoadPackage::PkgId(pkg);
+            if (selfId != 0) {
+                Log::Warn("PKG0_FINDER: node idx %d has key 0 but the PackageInfo "
+                          "at %p reports PackageId=%u — inconsistent read, not "
+                          "injecting this pass", cur, pkg, selfId);
                 return nullptr;
             }
             return pkg;

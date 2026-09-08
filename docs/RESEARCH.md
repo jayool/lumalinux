@@ -923,7 +923,7 @@ asumidos.
 | 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | pendiente |
 | 11 | el triaje buscaba `outcome=pattern_miss`, que sólo emitía `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no cazaba los dos hooks críticos**. Y no era una fila: eran **cinco** referencias en `maintenance.md`, cuatro de ellas a hooks que nunca emitieron esa cadena | **real, hoy** | **hecho** — vocabulario unificado en `miss` |
 | 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético | pendiente |
-| 13 | `InjectDepots` **no comprueba `PkgId(pInfo)==0`** aunque el valor ya se lee para el log: dos fuentes independientes, una usada | **único del camino vivo**; una línea | pendiente |
+| 13 | se llegaba al `PackageInfo` navegando siete offsets por una estructura viva y sólo se validaba que la dirección fuera legible; el propio id del objeto ya se leía **para el log** y no se usaba: dos fuentes independientes, una desperdiciada | **único del camino vivo** | **hecho** — `FindPackage0` cruza el id y reintenta si discrepa; es también la mitigación de [14] |
 | 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |
 | 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
 | — | `0xc58` hace **doble papel**: identifica el idiom *y* es el offset que leemos después. Si Steam mueve el campo, fallan a la vez y el diagnóstico dirá "no encontrado" | estructural | abierta |
