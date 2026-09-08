@@ -1615,6 +1615,25 @@ para GMRC** — `"GetManifestRequestCode"` existe una vez en el binario y ningun
 de las 52 vtables `*IClient…Map` la referencia (barrido completo, con control).
 No es un método de interfaz. Nota en `gmrc_xref.hpp`.
 
+**Alcance final de K, medido y cerrado.** La vía por nombre sólo sirve para
+funciones que son **métodos de una interfaz** de Steam, porque son las clases
+`*Map` las que llevan el nombre escrito dentro. Barrido sobre `bc54101b29`:
+
+| Hook | ¿La cadena del método existe? | ¿La referencia alguna de las 52 `*Map`? | ¿Aplica K? |
+|---|---|---|---|
+| **DepotKey** | sí (`GetBinary`, ×4) | **sí — ranura 6** | **Sí. Hecho** |
+| **GMRC** | sí (`GetManifestRequestCode`, ×1) | **no, ninguna** | No |
+| **ShaderDepot** | **no existe** | — | No |
+| Reconcile | emisor de callbacks, no método de interfaz | — | No |
+| LoadPackage / BuildDep | diagnóstico / apagado | — | No aplica |
+| Finder | no engancha nada; deriva en caliente | — | No aplica |
+
+**DepotKey era el único sitio del proyecto donde K aplicaba.** Los dos negativos
+están medidos, no supuestos, y los dos con su control: el barrido de GMRC y el de
+ShaderDepot se validaron acto seguido con `GetBinary`/`21IClientConfigStoreMap`,
+que devolvió las ranuras 6 y 7 como se esperaba. Un vacío con el arnés sin probar
+no habría sido un resultado.
+
 **La regla, ahora en los dos hooks críticos:** *se calcula un resolvedor sólo si
 puede cambiar qué función se engancha.* Si alguien ya resolvió, el siguiente no
 altera el resultado y no se ejecuta. El contraste entre métodos no desaparece —
