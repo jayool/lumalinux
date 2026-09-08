@@ -137,6 +137,19 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 10. **package-0 finder** clears **gate 3**: finds Package 0 in memory and
     appends the game's depot ids to its `AppIdVec` → the depots survive the
     per-depot licence filter.
+
+    > **This step is the whole of gate 3, and it is fail-closed.** The finder is
+    > the *sole* injector — there is no second path that surfaces depots — so
+    > when it declines, gate 3 stays shut and the install ends as "0 target
+    > depots" / a 0-byte "Fully Installed", with **every other gate green**. It
+    > declines on purpose in two cases: when it cannot name a single answer for
+    > the addresses it derives (since 2026-09-08 ambiguous counts as unresolved,
+    > never as a guess — RESEARCH §13.5.a), and when the object it walked to
+    > disagrees about its own identity. Writing a guessed pointer into Steam's
+    > memory is worse than not installing, which is why it is built this way.
+    > The finder says which case it is in the log
+    > (`Finder resolve: … outcome=miss`, cause on the line above), and
+    > `maintenance.md` §C is the triage.
 11. **Gate 4** (manifest pinning) is only needed when a game is pinned to an
     older version. It is now handled by **SLSsteam's `ManifestIds`** (written by
     `steamidra_lite --pin-installed`), not lumalinux: SLSsteam 20260714 hooks
@@ -396,8 +409,9 @@ shader pre-cache, never fired GMRC and still installed end to end.
 
 The content always comes from Steam's CDN, and in the native method the **Steam
 client** downloads it. The tools' job is to clear the six gates so the client
-will: SLSsteam/LumaCore fake **ownership** (1–2); a LoadPackage injection or the
-package-0 finder **surface the depots** (3); SLSsteam's `ManifestIds` **pin the
+will: SLSsteam/LumaCore fake **ownership** (1–2); the package-0 finder
+**surfaces the depots** (3 — the sole injector, and fail-closed: no derived
+address, no injection); SLSsteam's `ManifestIds` **pin the
 manifest** (4, only when a game is pinned — lumalinux's BuildDep hook is disabled
 by default); a DepotKey hook **serves the AES key** (5); and the **manifest
 request code** (6) — the only server-validated token — is obtained from a
