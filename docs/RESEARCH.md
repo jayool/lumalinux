@@ -513,6 +513,16 @@ module — but those get pruned (§6), so it's only a belt-and-suspenders helper
       guarantee, but bets that Steam keeps using libc realloc for
       `CUtlMemory` (§11.2). Leave alone until there's a real repro;
   speculative concurrency fixes tend to introduce more bugs than they fix.
+  **Update 2026-09-08 — a fourth, cheaper mitigation shipped**, and it is none
+  of the three above: `FindPackage0` now cross-checks the tree node's key
+  against the `PackageInfo`'s own `PackageId` (+0x00) and refuses to return the
+  object when they disagree. It does not narrow the race window at all — it
+  makes a walk that landed on the wrong object end in a refusal plus a log line
+  instead of a write. Note what it does NOT catch, which is exactly the
+  dangerous case above: a STALE `PackageInfo` for the real package 0 still
+  reports id 0 and passes. Same for `AppendIdsToVec`'s existing sanity checks,
+  which test plausibility (`m_Size > 4096`, entries `0` or `> 50M`), not
+  identity. The (a)/(b)/(c) options remain the answer if a repro ever appears.
 
 ## 11. lumalinux vs LumaCore — verified divergences
 
@@ -923,7 +933,7 @@ asumidos.
 | 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | pendiente |
 | 11 | el triaje buscaba `outcome=pattern_miss`, que sólo emitía `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no cazaba los dos hooks críticos**. Y no era una fila: eran **cinco** referencias en `maintenance.md`, cuatro de ellas a hooks que nunca emitieron esa cadena | **real, hoy** | **hecho** — vocabulario unificado en `miss` |
 | 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético | pendiente |
-| 13 | se llegaba al `PackageInfo` navegando siete offsets por una estructura viva y sólo se validaba que la dirección fuera legible; el propio id del objeto ya se leía **para el log** y no se usaba: dos fuentes independientes, una desperdiciada | **único del camino vivo** | **hecho** — `FindPackage0` cruza el id y reintenta si discrepa; es también la mitigación de [14] |
+| 13 | se llegaba al `PackageInfo` navegando siete offsets por una estructura viva sin comprobar la **identidad** del objeto; el propio id ya se leía **para el log** y no se usaba: dos fuentes independientes, una desperdiciada. *(Matiz: el camino de escritura no estaba desnudo — `AppendIdsToVec` ya rechazaba un `AppIdVec` inverosímil. Eso es plausibilidad, no identidad.)* | **único del camino vivo** | **hecho** — `FindPackage0` cruza el id y reintenta si discrepa; mitigación de [14] y cuarta opción para §10 |
 | 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |
 | 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
 | — | `0xc58` hace **doble papel**: identifica el idiom *y* es el offset que leemos después. Si Steam mueve el campo, fallan a la vez y el diagnóstico dirá "no encontrado" | estructural | abierta |

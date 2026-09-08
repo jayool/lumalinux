@@ -60,15 +60,17 @@ constexpr int kMaxTreeDepth = 64;
 //      walk that went wrong ends in a refusal instead of a write. The offsets
 //      themselves are still unverified.
 //
-// [15] THE TREE WALK HAS NO CONSISTENCY CONTROL. `nodes` is read once and then
-//      indexed for up to kMaxTreeDepth iterations while Steam may be mutating
-//      or reallocating the array from another thread. IsReadable() stops a
-//      crash on unmapped memory, but not garbage read out of freed-but-still-
-//      mapped memory. Realistically that yields a STALE-but-real PackageInfo
-//      (harmless to append to); reaching an object of another type takes more
-//      coincidence. Same mitigation as [14] — and note the finder retries here
-//      rather than giving up, because unlike the code scans this read really
-//      can come out consistent on the next poll.
+// [15] THE ASYNC READ RACE — see RESEARCH §10, "Async finder ↔ Steam read race
+//      on CPackageInfoCache", which owns this item and analyses it properly
+//      (what is already protected, the freed-and-still-mapped use-after-free
+//      that is not, and three mitigations costed cheapest-first with an
+//      explicit "leave alone until there is a real repro"). Do not restate it
+//      here; the note that used to live at this spot was a worse copy written
+//      without checking that §10 existed.
+//      What IS new since that entry: the PackageId cross-check in FindPackage0
+//      below, which is a cheaper mitigation than any of its three options — it
+//      does not narrow the window, it just refuses to write when the object we
+//      landed on is not who we were looking for.
 //
 // [17] GetSteamclientRx() returns lo..hi across every r-x mapping of the
 //      module, so it would read across a non-readable gap between two of them.
@@ -421,9 +423,14 @@ void* FindPackage0(uintptr_t cacheGlobal) {
             //
             // Everything above this line is navigation: seven compiled-in
             // offsets, walked through a structure Steam may be mutating from
-            // another thread while we read it. The only validation we had was
-            // "is this address readable", which a stale or torn read passes
-            // happily — freed-but-still-mapped memory reads fine.
+            // another thread while we read it. What was missing was any check of
+            // the object's IDENTITY: readability only says the address is
+            // mapped, which a stale or torn read passes happily — freed-but-
+            // still-mapped memory reads fine. (The write path downstream was not
+            // bare: AppendIdsToVec already rejects an implausible AppIdVec —
+            // m_Size > 4096, or existing entries that are 0 or > 50M. That is
+            // plausibility, though, not identity: a stale PackageInfo for a real
+            // package passes it comfortably.)
             //
             // But TWO independent sources say "this is package 0": the tree
             // node's key field (+0x10, read above) and the object's own id
