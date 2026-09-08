@@ -385,9 +385,32 @@ def verify_gmrc_prologue_tail():
     """The post-detour-survivor tail: the 18 bytes that follow the 5-byte
     `05 imm32` in GMRC's prologue. Even after the GMRC hook overwrites the
     first 5 bytes (`E8 <call thunk>`) with a `jmp` detour, these 18 bytes
-    survive — that's what DeriveGotBase() relies on."""
-    hits = pattern_matches(GMRC_PROLOGUE_TAIL)
-    return hits
+    survive — that's what DeriveGotBase() relies on.
+
+    Returns [(addr_of_the_0x05_byte, derived_got)] rather than the raw tail
+    hits, because the match count is the wrong axis to judge this on: if the
+    same prologue shape occurs in a second function, that function is PIC too
+    and its own `add eax,imm32` derives THE SAME GOT. Several sites agreeing is
+    harmless; only sites that DISAGREE break DeriveGotBase, which now fails
+    closed on them."""
+    out = []
+    for h in pattern_matches(GMRC_PROLOGUE_TAIL):
+        try:
+            if h.getOffset() < 5:
+                continue
+            base = h.subtract(5)                       # the 0x05 of add eax,imm32
+            if (mem.getByte(base) & 0xFF) != 0x05:
+                continue
+            imm = ((mem.getByte(base.add(1)) & 0xFF)
+                   | ((mem.getByte(base.add(2)) & 0xFF) << 8)
+                   | ((mem.getByte(base.add(3)) & 0xFF) << 16)
+                   | ((mem.getByte(base.add(4)) & 0xFF) << 24))
+            if imm >= 0x80000000:
+                imm -= 0x100000000
+            out.append((base, (base.getOffset() + imm) & 0xFFFFFFFF))
+        except Exception:
+            continue
+    return out
 
 
 # ── main ──────────────────────────────────────────────────────────────────
@@ -535,14 +558,20 @@ if not tail:
     print("      NOT FOUND — Steam may have reorganised GMRC's prologue.")
     print("      ACTION: update the `tail` byte array in DeriveGotBase() in")
     print("              src/hooks/package_zero_finder.cpp to the new sequence.")
-elif len(tail) == 1:
-    print("      PRESENT @ %s   (unique)" % tail[0])
-    print("      OK — finder's GOT derivation will work on this binary.")
 else:
-    print("      PRESENT but matches %d sites — DeriveGotBase needs a more" % len(tail))
-    print("      specific anchor than the current tail bytes.")
-    for h in tail[:6]:
-        print("      @ %s" % h)
+    _gots = sorted(set(g for _, g in tail))
+    for base, got in tail:
+        print("      PRESENT @ %s   -> GOT 0x%x" % (base, got))
+    if len(_gots) == 1:
+        print("      UNIQUE (%d site(s), got=0x%x)" % (len(tail), _gots[0]))
+        print("      OK — finder's GOT derivation will work on this binary.")
+    else:
+        print("      AMBIGUOUS — %d site(s) derive %d different GOT base(s): %s"
+              % (len(tail), len(_gots), " ".join("0x%x" % g for g in _gots)))
+        print("      NOT OK — DeriveGotBase fails closed on disagreement, so the")
+        print("      finder will not resolve or inject on this binary.")
+        print("      ACTION: DeriveGotBase needs a more specific anchor than the")
+        print("              current tail bytes.")
 
 # 5) Machine-readable dump for CI (watch-steam.yml auto-derivation)
 if _JSON_OUT:

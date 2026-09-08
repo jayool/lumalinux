@@ -39,8 +39,9 @@ import tempfile
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check_patterns import (classify_cache_idiom, emit_rvas_file,  # noqa: E402
-                            verify_cache_idiom)
+from check_patterns import (GMRC_PROLOGUE_TAIL, classify_cache_idiom,  # noqa: E402
+                            classify_gmrc_got, emit_rvas_file,
+                            verify_cache_idiom, verify_gmrc_got)
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VADDR = 0x1000
@@ -87,6 +88,23 @@ def naked_needle():
     return b"\x90" * 10 + bytes([0x58, 0x0C, 0x00, 0x00])
 
 
+def gmrc(got_rva, at):
+    """A GMRC prologue whose `add eax,imm32` derives `got_rva` when the 0x05
+    byte lands at RVA `at`: imm = got - rva(0x05). The leading `E8 rel32` is
+    included for realism but is NOT what the scan anchors on — our own detour
+    overwrites exactly those 5 bytes at runtime."""
+    tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    return (bytes([0xE8, 0, 0, 0, 0]) +
+            bytes([0x05]) + struct.pack("<i", got_rva - at) + tail)
+
+
+def tail_without_add():
+    """The 18 tail bytes with something other than 0x05 in front: the shape is
+    there but the instruction that computes the GOT is not."""
+    tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    return bytes([0x90] * 5) + tail
+
+
 def seg(*chunks):
     buf = bytearray()
     for c in chunks:
@@ -123,6 +141,42 @@ def ghidra_scan(segments):
     return sorted(x for v, b in segments for x in ns["_scan"](b, v))
 
 
+def ghidra_gmrc_got(segments):
+    """derive_patterns.verify_gmrc_prologue_tail(), extracted whole and driven
+    through a stand-in for the Ghidra API it expects (Address arithmetic, a
+    memory reader, and pattern_matches). Nobody can run Ghidra locally, so this
+    leg is the one most likely to rot unnoticed."""
+    src = open(os.path.join(REPO, "tools", "derive_patterns.py")).read()
+    i = src.index("def verify_gmrc_prologue_tail():")
+    j = src.index("\n\n", src.index("    return out", i))
+    vaddr, buf = segments[0]
+
+    class Addr(int):
+        def getOffset(self): return int(self)
+        def add(self, n): return Addr(int(self) + n)
+        def subtract(self, n): return Addr(int(self) - n)
+
+    class Mem(object):
+        def getByte(self, a):
+            b = buf[int(a) - vaddr]
+            return b - 256 if b > 127 else b        # Ghidra returns signed
+
+    def pattern_matches(pat):
+        needle = bytes(int(t, 16) for t in pat.split())
+        out, start = [], 0
+        while True:
+            o = buf.find(needle, start)
+            if o < 0:
+                return out
+            start = o + 1
+            out.append(Addr(vaddr + o))
+
+    ns = {"mem": Mem(), "pattern_matches": pattern_matches,
+          "GMRC_PROLOGUE_TAIL": GMRC_PROLOGUE_TAIL, "Exception": Exception}
+    exec(src[i:j], ns)
+    return [(int(a), g) for a, g in ns["verify_gmrc_prologue_tail"]()]
+
+
 # ── the C++ leg, extracted from its own file ─────────────────────────────────
 # Compiled 64-bit with the surrounding stubs: the function only walks bytes, so
 # pointer width is irrelevant to what it decides. Skipped if g++ is missing.
@@ -143,7 +197,14 @@ int main(int argc, char** argv) {
     if (!f) return 2;
     n = fread(buf, 1, sizeof(buf), f); fclose(f);
     ScRange rx; rx.base = (uintptr_t)buf; rx.size = n;
-    printf("%%d\n", (int)FindCacheGlobalDisp(rx));
+    // "got" is reported as an OFFSET from the buffer start so the test can
+    // compare it against an RVA without knowing where malloc put us.
+    if (argc > 2 && std::strcmp(argv[2], "got") == 0) {
+        uintptr_t g = DeriveGotBase(rx);
+        printf("%%lld\n", g ? (long long)(g - rx.base) : -1LL);
+    } else {
+        printf("%%d\n", (int)FindCacheGlobalDisp(rx));
+    }
     return 0;
 }
 '''
@@ -157,7 +218,7 @@ def build_cxx():
     except Exception:
         return None
     src = open(os.path.join(REPO, "src", "hooks", "package_zero_finder.cpp")).read()
-    i = src.index("constexpr int kMaxDistinctDisp")
+    i = src.index("uintptr_t DeriveGotBase(ScRange rx) {")
     j = src.index("// ============================================================"
                   "=================\n// Readability gate")
     tmp = tempfile.mkdtemp()
@@ -170,6 +231,16 @@ def build_cxx():
         print(r.stderr)
         return None
     return exe
+
+
+def cxx_got(exe, segments):
+    """DeriveGotBase's answer as an offset from the buffer start (-1 = refused),
+    which is directly comparable to an RVA measured from VADDR."""
+    tmp = tempfile.mktemp()
+    with open(tmp, "wb") as f:
+        f.write(segments[0][1])
+    out = subprocess.run([exe, tmp, "got"], capture_output=True, text=True).stdout.strip()
+    return int(out)
 
 
 def cxx_disp(exe, segments):
@@ -217,6 +288,37 @@ def main():
             want = disps[0] & 0xFFFFFFFF if status == "UNIQUE" else 0
             check(cxx_disp(exe, segs) == want,
                   "%-34s C++ returns 0x%x" % (name, want))
+
+    # ── the GOT leg (DeriveGotBase) ──────────────────────────────────────────
+    # Classified over the DERIVED GOT, not the match count: a second PIC
+    # prologue of the same shape computes the SAME base, so agreeing sites are
+    # healthy. Only disagreement is fatal, and it now fails closed.
+    G1, G2 = 0x2f4a34c, 0x2f40000
+    P = 5 + 5 + 18                       # E8 rel32 + 05 imm32 + the 18-byte tail
+    GOT_CASES = [
+        ("one prologue",
+         seg(gmrc(G1, VADDR + 5)), "UNIQUE", [G1]),
+        ("two prologues, same GOT",
+         seg(gmrc(G1, VADDR + 5), gmrc(G1, VADDR + P + 8 + 5)), "UNIQUE", [G1]),
+        ("two prologues, different GOT",
+         seg(gmrc(G1, VADDR + 5), gmrc(G2, VADDR + P + 8 + 5)), "AMBIGUOUS", [G2, G1]),
+        ("tail present, no add eax",
+         seg(tail_without_add()), "NOT_FOUND", []),
+        ("nothing",
+         seg(b"\x90" * 64), "NOT_FOUND", []),
+    ]
+    for name, segs, want_status, want_gots in GOT_CASES:
+        sites = verify_gmrc_got(segs)
+        status, gots = classify_gmrc_got(sites)
+        check(status == want_status, "%-34s check_patterns -> %s" % (name, status))
+        check(sorted(gots) == sorted(want_gots),
+              "%-34s gots %s" % (name, [hex(g) for g in gots]))
+        check(sorted(sites) == sorted(ghidra_gmrc_got(segs)),
+              "%-34s derive_patterns agrees" % name)
+        if exe is not None:
+            want = (gots[0] - VADDR) if status == "UNIQUE" else -1
+            check(cxx_got(exe, segs) == want,
+                  "%-34s C++ derives %s" % (name, hex(want) if want >= 0 else "nothing"))
 
     # The lea's base register must not matter: pinning it would have discarded a
     # real site on bc54101b29 (esi at 0xfdd2dd, eax at 0x18964e5).

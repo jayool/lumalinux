@@ -161,12 +161,59 @@ uintptr_t DeriveGotBase(ScRange rx) {
         0x55, 0x89, 0xE5, 0x57, 0x56, 0x53, 0x81, 0xEC, 0x10, 0x01, 0x00, 0x00,
         0x8B, 0x7D, 0x08, 0x8B, 0x4D, 0x20
     };
+    // Like FindCacheGlobalDisp below, this must not take the first match and
+    // run: it used to `return` from inside the loop, so a second site would
+    // have been silently ignored and the lowest address would have won a coin
+    // toss — and this one is UPSTREAM, so a wrong GOT poisons everything after
+    // it (cache_global = GOT + X, however perfect X is).
+    //
+    // But the axis to classify on is the derived GOT, NOT the match count. If
+    // this prologue shape appears in a second function, that function is PIC
+    // too and its own `add eax,imm32` computes THE SAME GOT — so several sites
+    // agreeing is harmless, exactly as several cache-access idiom sites naming
+    // the same X are. What we cannot survive is sites that disagree.
+    uintptr_t distinct[4] = {0};
+    int  nDistinct = 0;
+    int  sites     = 0;
+    bool overflow  = false;
+
     for (std::size_t i = 0; i <= n; ++i) {
         if (p[i] != 0x05) continue;                          // add eax, imm32
         if (std::memcmp(p + i + 5, tail, sizeof(tail)) != 0) continue;
         int32_t imm = *reinterpret_cast<const int32_t*>(p + i + 1);
-        return rx.base + i + static_cast<uintptr_t>(static_cast<intptr_t>(imm));
+        const uintptr_t cand =
+            rx.base + i + static_cast<uintptr_t>(static_cast<intptr_t>(imm));
+        ++sites;
+        bool seen = false;
+        for (int k = 0; k < nDistinct; ++k) {
+            if (distinct[k] == cand) { seen = true; break; }
+        }
+        if (seen) continue;
+        if (nDistinct < 4) distinct[nDistinct++] = cand;
+        else               overflow = true;
     }
+
+    if (sites == 0) {
+        Log::Error("PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail is not "
+                   "in the r-x span. Not injecting");
+        return 0;
+    }
+    if (nDistinct == 1) {
+        Log::Info("PKG0_FINDER: GOT UNIQUE — %d site(s), got=0x%lx",
+                  sites, (unsigned long)distinct[0]);
+        return distinct[0];
+    }
+    char list[80] = {0};
+    int  off = 0;
+    for (int k = 0; k < nDistinct && off < (int)sizeof(list) - 14; ++k) {
+        int r = std::snprintf(list + off, sizeof(list) - (std::size_t)off,
+                              " 0x%lx", (unsigned long)distinct[k]);
+        if (r < 0) break;
+        off += r;
+    }
+    Log::Error("PKG0_FINDER: GOT AMBIGUOUS — %d site(s) derive %d different GOT "
+               "base(s)%s:%s — refusing to guess, not injecting",
+               sites, nDistinct, overflow ? "+" : "", list);
     return 0;
 }
 
@@ -437,12 +484,11 @@ void Run() {
             // liveness (it is absent from status.json). The four hooks are
             // unaffected; only package-0 injection is off for this session.
             if (!cacheGlobal) {
+                // Neither call needs an else: each logs its own NOT_FOUND /
+                // AMBIGUOUS cause, with the consequence, at Error severity.
                 got = DeriveGotBase(rx);
                 if (got) {
                     disp = FindCacheGlobalDisp(rx);
-                } else {
-                    Log::Error("PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail "
-                               "is not in the r-x span");
                 }
                 if (!disp) {
                     // The cause was logged by whichever step knows it (GOT above,

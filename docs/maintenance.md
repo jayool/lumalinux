@@ -310,10 +310,11 @@ or, when the idiom is there but the sites disagree on the address:
 PKG0_FINDER: cache-access idiom AMBIGUOUS — 5 site(s), 3 distinct disp32: 0x3b7d4 0x18240 0x2c9e0 — refusing to guess, not injecting
 ```
 
-or, when the upstream anchor is the one missing:
+or, when the upstream anchor is the one missing — or present but disagreeing with itself:
 
 ```
-PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail is not in the r-x span
+PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail is not in the r-x span. Not injecting
+PKG0_FINDER: GOT AMBIGUOUS — 2 site(s) derive 2 different GOT base(s): 0x2f4a34c 0x2f40000 — refusing to guess, not injecting
 ```
 
 followed in every case by the one consequence line, after which the thread
@@ -327,6 +328,7 @@ PKG0_FINDER: no cache address (cause on the previous line) — finder ends; pack
 A healthy boot instead shows:
 
 ```
+PKG0_FINDER: GOT UNIQUE — 1 site(s), got=0x…
 PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
 ```
 

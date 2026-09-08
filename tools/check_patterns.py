@@ -336,6 +336,42 @@ def verify_cache_idiom(segments):
 
 # ── status helpers ───────────────────────────────────────────────────────────
 
+def verify_gmrc_got(segments):
+    """[(rva_of_the_0x05_byte, derived_got_rva)] for every GMRC prologue tail.
+
+    Mirrors Hooks::PackageZeroFinder::DeriveGotBase exactly: the tail is
+    preceded by `05 imm32` (add eax,imm32), and GOT = rva(0x05) + imm32 —
+    the arithmetic the CPU performs after get_pc_thunk leaves GMRC+5 in eax."""
+    tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    out = []
+    for vaddr, buf in segments:
+        start = 0
+        while True:
+            o = buf.find(tail, start)
+            if o < 0:
+                break
+            start = o + 1
+            i = o - 5
+            if i < 0 or buf[i] != 0x05:
+                continue
+            imm = struct.unpack_from("<i", buf, i + 1)[0]
+            out.append((vaddr + i, (vaddr + i + imm) & 0xFFFFFFFF))
+    return out
+
+
+def classify_gmrc_got(sites):
+    """(status, sorted distinct GOT bases) for verify_gmrc_got's output.
+
+    Classify over the DERIVED GOT, not over the match count — that was the
+    wrong axis. If this prologue shape occurs in a second function, that
+    function is PIC too and its own `add eax,imm32` computes THE SAME GOT, so
+    several sites agreeing is harmless. Only sites that disagree are fatal,
+    and since DeriveGotBase now fails closed on disagreement, they are fatal
+    to the finder as well — hence blocking."""
+    gots = sorted({g for _, g in sites})
+    return ("NOT_FOUND" if not sites else classify_hit_count(len(gots))), gots
+
+
 def classify_cache_idiom(idiom):
     """(status, sorted distinct disp32) for verify_cache_idiom's output.
 
@@ -952,18 +988,22 @@ def main():
         result["blocking"].append("finder:cache_idiom(0x%x):%s"
                                   % (CACHE_ROOT_OFFSET, idiom_status))
 
-    # 4b) GMRC prologue tail
-    tail_rvas = scan_rvas(segments, GMRC_PROLOGUE_TAIL)
-    tail_status = classify_hit_count(len(tail_rvas))
+    # 4b) GMRC prologue tail -> the GOT base DeriveGotBase will derive from it.
+    # This used to classify on the MATCH COUNT and let AMBIGUOUS pass with the
+    # note "DeriveGotBase finds the right one at runtime" — which the code never
+    # did: it returned the FIRST match. Both halves are fixed. DeriveGotBase now
+    # fails closed on disagreement, and the axis is the derived GOT, so several
+    # sites computing the same base (which is what a second PIC prologue of the
+    # same shape would do) stay UNIQUE instead of being flagged for nothing.
+    got_sites = verify_gmrc_got(segments)
+    tail_status, tail_gots = classify_gmrc_got(got_sites)
     result["finder"]["gmrc_tail"] = {
-        "status": tail_status, "count": len(tail_rvas),
-        "rvas": ["0x%x" % r for r in tail_rvas[:8]],
+        "status": tail_status, "count": len(got_sites),
+        "distinct_got": ["0x%x" % g for g in tail_gots],
+        "rvas": ["0x%x" % r for r, _ in got_sites[:8]],
     }
-    # NOT_FOUND blocks (DeriveGotBase can't work). AMBIGUOUS is only a warning:
-    # DeriveGotBase finds the right one at runtime, but flag it for a tighter
-    # anchor — it does not block the whitelist.
-    if tail_status == "NOT_FOUND":
-        result["blocking"].append("finder:gmrc_tail")
+    if tail_status != "UNIQUE":
+        result["blocking"].append("finder:gmrc_tail:%s" % tail_status)
 
     # ── verdict + exit code ──────────────────────────────────────────────────
     if result["blocking"]:
@@ -994,7 +1034,9 @@ def main():
              "" if len(ci["distinct_disp32"]) == 1 else "s",
              " ".join(ci["distinct_disp32"]) or "-"))
     gt = result["finder"]["gmrc_tail"]
-    print("  %-12s %s (%d)" % ("gmrc_tail", gt["status"], gt["count"]))
+    print("  %-12s %s (%d site(s), got %s)"
+          % ("gmrc_tail", gt["status"], gt["count"],
+             " ".join(gt["distinct_got"]) or "-"))
     rt = result.get("rtti", {})
     if rt.get("status") == "UNIQUE":
         print("  %-12s slot %d @ %s  (agrees-with-pattern=%s)"
