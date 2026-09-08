@@ -1,14 +1,30 @@
-name: Runtime smoke test (loads lumalinux, checks hooks)
+name: Runtime smoke test (WIP — has never passed, do not rely on it)
 
-# Manual runtime smoke test: build a fresh liblumalinux.so, load it into a real
-# Steam process against the CURRENT steamclient.so + CURRENT SLSsteam/CloudRedirect,
-# and assert it LOADS, INSTALLS ITS HOOKS, and doesn't crash.
+# ============================================================================
+# STATUS: WORK IN PROGRESS. THIS WORKFLOW HAS NEVER PRODUCED A GREEN RUN.
+# ============================================================================
+# Read this before trusting anything below it. As of 2026-09-08 every real
+# execution of this file has failed inside the HARNESS — while fetching or
+# booting Steam — without reaching a single assertion. It is not a gate, it is
+# not evidence, and a red run here says nothing about the code under test.
 #
-# This is the ONLY test that actually RUNS the .so. build.yml only compiles, and
-# check_patterns.py only resolves statically — so a change that compiles and
-# resolves on paper but crashes or fails to hook at runtime (e.g. a bad memory
-# read in a new resolver — the DepotKey derive-by-signature risk in v0.16.18) is
-# invisible to them. This starts the engine.
+# It is kept, rather than deleted, because the gap it aims at is real and
+# nothing else covers it (see "the gap", below). Finish it or delete it; do
+# not cite it.
+#
+# The one thing that DOES validate a change end to end today is the manual
+# on-device procedure in docs/update-testing.md, Part 2 — a SteamOS box with a
+# logged-in Steam. That is what validated the 2026-09-08 finder rework.
+#
+# THE GAP IT AIMS AT: nothing in CI ever RUNS the .so. build.yml compiles and
+# runs the tools/test_*.py unit tests; check_patterns.py resolves addresses
+# statically. So a change that compiles and resolves on paper but crashes or
+# fails to hook at runtime (e.g. a bad memory read in a new resolver — the
+# DepotKey derive-by-signature risk in v0.16.18) is invisible to both. This
+# file is the attempt to start the engine.
+#
+# WHAT THE REST OF THIS COMMENT DESCRIBES IS THE INTENT, NOT A WORKING
+# MECHANISM. The design below is what it is *trying* to do:
 #
 # Self-contained: it fetches EVERYTHING current at run time — Valve's official
 # Steam bootstrapper (repo.steampowered.com), which downloads the Steam Runtime
@@ -28,17 +44,30 @@ name: Runtime smoke test (loads lumalinux, checks hooks)
 # is therefore asserted only as far as resolving its cache address. Injection
 # into package 0 remains a real-Deck check.
 #
-# HISTORY, so nobody re-derives it: this file was born to verify ONE fix (the
-# atexit crash) and was later rewritten into a full-stack harness that was never
-# actually run. Its first real execution — 2026-09-08, run 6 — failed with all
-# five Steam attempts timing out and steamclient.so never mapped, i.e. every
-# assertion in it had been decorative. It now loads the client library in a
-# purpose-built 32-bit host instead of trying to boot Steam; see the comment on
-# that step for what that trades away.
+# HISTORY, so nobody re-derives it — and so nobody repeats the mistake that
+# made this file look healthy for months:
 #
-# Manual only — heavy. Run before a release, or after touching hooking code
-# (rtti.cpp, hooks/, lmhook.cpp, main.cpp, patterns). Checks out the dispatched
-# ref, so you can validate a branch/tag BEFORE merge.
+#   - It was born to verify ONE fix (the atexit crash), then was rewritten into
+#     a full-stack harness that was NEVER ACTUALLY RUN. The "successful" run
+#     people pointed at belonged to a DIFFERENT workflow. A workflow nobody
+#     executes reads exactly like a workflow that passes.
+#   - Its first real execution, 2026-09-08 run 6, failed: all five Steam
+#     attempts timed out, steamclient.so never mapped. Every assertion in it had
+#     been decorative.
+#   - Runs 7-10 the same day each failed on a different harness fault — missing
+#     :i386 libs, a guessed bootstrapper URL, looking for steam.sh in the
+#     launcher package instead of inside bootstraplinux_ubuntu12_32.tar.xz. Each
+#     was fixed; the next one surfaced. None reached an assertion either.
+#
+# An earlier version of this comment claimed the file "now loads the client
+# library in a purpose-built 32-bit host instead of trying to boot Steam". That
+# was false — the steps below boot steam.sh. Corrected here rather than left to
+# mislead the next reader.
+#
+# WHEN IT WORKS, it should be: manual only, heavy. Run before a release, or
+# after touching hooking code (rtti.cpp, hooks/, lmhook.cpp, main.cpp,
+# patterns). It checks out the dispatched ref, so a branch/tag can be validated
+# BEFORE merge.
 
 on:
   workflow_dispatch:
