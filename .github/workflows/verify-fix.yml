@@ -10,13 +10,23 @@ name: Runtime smoke test (loads lumalinux, checks hooks)
 # read in a new resolver — the DepotKey derive-by-signature risk in v0.16.18) is
 # invisible to them. This starts the engine.
 #
-# Self-contained: it fetches EVERYTHING current at run time — the whole 32-bit
-# client tree (fetch_steamclient.py --extract-tree, same manifest as the
-# steamclient.so we hook, so tree and library are consistent), SLSsteam +
-# library-inject (AceSLS latest), and CloudRedirect (linux-test). Nothing is
-# pinned any more: the 329 MB steam_ubuntu12_32.tar.gz from test-deps-v1 is
-# gone, along with the three-month drift between that frozen tree and today's
-# client library.
+# Self-contained: it fetches EVERYTHING current at run time — Valve's official
+# Steam bootstrapper (repo.steampowered.com), which downloads the Steam Runtime
+# and the client itself on first boot; the current steamclient.so
+# (fetch_steamclient.py) to report which build we are looking at; SLSsteam +
+# library-inject (AceSLS latest); and CloudRedirect (linux-test). Nothing is
+# pinned: the 329 MB steam_ubuntu12_32.tar.gz from test-deps-v1 (uploaded
+# 2026-06-13, never refreshed) is gone.
+#
+# It boots Steam through steam.sh with EXACTLY the injection environment
+# setup.sh puts on a Deck — LD_AUDIT=library-inject:SLSsteam,
+# LD_PRELOAD=lumalinux:cloud_redirect — under xvfb, and every byte of output is
+# captured and uploaded.
+#
+# WHAT IT STILL CANNOT COVER: there is no login, so PackageId 0 never exists
+# (Steam only builds it once a session has loaded a licence set) and the finder
+# is therefore asserted only as far as resolving its cache address. Injection
+# into package 0 remains a real-Deck check.
 #
 # HISTORY, so nobody re-derives it: this file was born to verify ONE fix (the
 # atexit crash) and was later rewritten into a full-stack harness that was never
@@ -56,6 +66,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-multilib g++-multilib cmake ninja-build p7zip-full \
+            xvfb wget ca-certificates \
             libc6:i386 libstdc++6:i386 \
             libx11-6:i386 libxext6:i386 libxrandr2:i386 libxfixes3:i386 \
             libxi6:i386 libxcursor1:i386 libxinerama1:i386 libxss1:i386 \
@@ -111,17 +122,22 @@ jobs:
           gcc -m32 -shared -fPIC -o fix_atexit.so fix_atexit.c
           echo "fetched:"; ls -la SLSsteam.so library-inject.so cloud_redirect.so fix_atexit.so
 
-      # The whole 32-bit client tree, from the SAME manifest steamclient.so comes
-      # from — so it is current and self-consistent. This replaces a 329 MB
-      # steam_ubuntu12_32.tar.gz pinned in the test-deps-v1 release (uploaded
-      # 2026-06-13, never refreshed) that had the current steamclient.so dropped
-      # on top of it: a three-month-old tree carrying a brand-new client library.
-      - name: Fetch the CURRENT 32-bit client tree
+      # THE REAL CLIENT, not a tree of files. Valve's bootstrapper is the same
+      # thing a desktop install starts from: it brings steam.sh, and on first run
+      # it downloads the Steam Runtime and the client itself. Booting through
+      # steam.sh is what a Deck does (setup.sh drives /usr/lib/steamos/steam-launcher,
+      # which ends up here); running ubuntu12_32/steam directly — what this
+      # workflow used to do — skips the runtime setup and never gets far enough
+      # to map steamclient.so.
+      - name: Download the real Steam bootstrapper
         run: |
-          python3 tools/fetch_steamclient.py --extract-tree deck-env
-          echo "tree:"; ls -la deck-env/ubuntu12_32 | head -20
-          test -f deck-env/ubuntu12_32/steamclient.so \
-            || { echo "ERROR: no steamclient.so in the extracted tree"; exit 1; }
+          wget -q https://repo.steampowered.com/steam/archive/precise/steam_latest.tar.gz
+          mkdir -p steam-boot && tar xzf steam_latest.tar.gz -C steam-boot
+          SH=$(find steam-boot -name steam.sh | head -1)
+          test -n "$SH" || { echo "ERROR: no steam.sh in the bootstrapper tarball"; find steam-boot -maxdepth 3 | head -40; exit 1; }
+          echo "steam.sh=$SH"
+          echo "STEAM_SH=$PWD/$SH" >> "$GITHUB_ENV"
+          echo "STEAM_DIR=$PWD/$(dirname "$SH")" >> "$GITHUB_ENV"
 
       - name: Set up fake HOME
         run: |
@@ -145,74 +161,42 @@ jobs:
           EOF
           mkdir -p /tmp/fakehome/.steam /tmp/fakehome/.local/share/Steam
           ln -sf /tmp/fakehome/.local/share/Steam /tmp/fakehome/.steam/steam
-          ln -sf "$PWD/deck-env/ubuntu12_32" /tmp/fakehome/.local/share/Steam/ubuntu12_32
 
-      # WHY A dlopen HOST AND NOT THE REAL CLIENT.
-      # This step used to run `./steam` straight out of the pinned tree, with all
-      # output sent to /dev/null. On its first ever execution (2026-09-08, run 6
-      # — the rewritten workflow had never actually run) all five attempts hit
-      # the 25 s timeout without steamclient.so ever being mapped, so every
-      # assertion below was reporting on a process that never got started
-      # properly. Running the ubuntu12_32 binary directly skips steam.sh and the
-      # Steam runtime that a real Deck goes through, and diagnosing it was
-      # impossible with the output discarded.
+      # Boot Steam with EXACTLY the environment setup.sh puts on a Deck
+      # (luma_set_injection_env): LD_AUDIT=library-inject:SLSsteam and
+      # LD_PRELOAD=lumalinux:cloud_redirect, in that order. Under xvfb because
+      # the client wants a display. Everything is captured — the run that
+      # preceded this one sent Steam's output to /dev/null and left us guessing
+      # for an afternoon.
       #
-      # What the resolvers actually need is steamclient.so MAPPED IN A 32-BIT
-      # PROCESS: lumalinux's LD_PRELOAD path polls /proc/self/maps and installs
-      # the hooks itself (src/main.cpp, LumalinuxCtor) — Steam does nothing
-      # special for it. So the host just dlopen()s the library and waits.
-      # Deterministic, seconds instead of minutes, and it exercises the real C++
-      # against the real binary.
-      #
-      # COVERAGE GIVEN UP, stated plainly: no Steam threads mutating the package
-      # cache, and no logged-in session — so package 0 is never found and the
-      # finder is only asserted as far as resolving its address. Restoring the
-      # full-stack run needs a fresh bootstrap tree and a launch path that
-      # mirrors steam.sh; run B below keeps the stack in view meanwhile.
-      - name: Load the current steamclient.so in a 32-bit host
+      # First boot is slow: the bootstrapper self-updates and pulls the Steam
+      # Runtime (~300 MB) before the client starts, so the old 25 s budget could
+      # never have worked. NOT LOGGED IN, and that is a real limit rather than an
+      # oversight: PackageId 0 only exists once a session has loaded a licence
+      # set, so the finder is asserted as far as resolving its address and no
+      # further. Hooks installing against the live client IS covered.
+      - name: Boot Steam with the Deck's injection env
         run: |
-          gcc -m32 -Wall -Wextra -o smoke_dlopen tools/smoke_dlopen.c -ldl
-          SC="$PWD/deck-env/ubuntu12_32/steamclient.so"
-          CR=/tmp/fakehome/.local/share/CloudRedirect/cloud_redirect.so
           LIB_INJECT=/tmp/fakehome/.local/share/SLSsteam/library-inject.so
           SLS=/tmp/fakehome/.local/share/SLSsteam/SLSsteam.so
+          CR=/tmp/fakehome/.local/share/CloudRedirect/cloud_redirect.so
           LUMA=/tmp/fakehome/.local/share/lumalinux/liblumalinux.so
           rm -f /tmp/fakehome/.cache/lumalinux/lumalinux.log
           ulimit -c 0
           set +e
-
-          # Run A — lumalinux alone. This is the one that gets asserted.
-          echo "── run A: lumalinux only ──"
-          HOME=/tmp/fakehome LUMA_PROCESS_ANY=1 \
-          LD_LIBRARY_PATH="$PWD/deck-env/ubuntu12_32:/usr/lib32" \
-          LD_PRELOAD="$LUMA" \
-            timeout 60 ./smoke_dlopen "$SC" 15 2>&1 | tee run-a.log
-          exA=${PIPESTATUS[0]}; echo "run A exit=$exA (NOT trustworthy, see below)"
-
-          # Run B — the full stack, same env a Deck sets (setup.sh
-          # luma_set_injection_env). INFORMATIONAL: reported, never fatal, since
-          # SLSsteam expects to be inside Steam and this host is not.
-          echo "── run B: full stack (informational) ──"
-          HOME=/tmp/fakehome LUMA_PROCESS_ANY=1 \
-          LD_LIBRARY_PATH="$PWD/deck-env/ubuntu12_32:/usr/lib32" \
+          cd "$STEAM_DIR"
+          HOME=/tmp/fakehome \
           LD_AUDIT="$LIB_INJECT:$SLS" LD_PRELOAD="$LUMA:$CR" \
-            timeout 60 ./smoke_dlopen "$SC" 15 2>&1 | tee run-b.log
-          echo "run B exit=${PIPESTATUS[0]} (informational)"
-
+            timeout 900 xvfb-run -a ./steam.sh -silent -nominidumps -nobreakpad \
+              > "$GITHUB_WORKSPACE/steam-stdout.log" 2>&1
+          echo "steam exit=$? (not trustworthy: lumalinux's atexit shim forces _exit(0))"
           set -e
-          # DO NOT gate on the exit code. lumalinux registers
-          # atexit([]{ _exit(0); }) (main.cpp, to dodge a teardown SIGABRT with
-          # the full stack loaded), so ANY process it is preloaded into exits 0
-          # no matter what main returned — this run reported "exit=0" while the
-          # host had actually failed its dlopen. The host's own stdout is the
-          # signal instead: it prints "mapped" only after dlopen succeeds.
-          grep -q "smoke_dlopen: mapped" run-a.log \
-            && echo "hostA=ok" >> "$GITHUB_ENV" || echo "hostA=fail" >> "$GITHUB_ENV"
-          echo "crashes=0" >> "$GITHUB_ENV"
-          echo "── ldd of the client library (missing deps show as 'not found') ──"
-          ldd deck-env/ubuntu12_32/steamclient.so 2>&1 | grep -i "not found" \
-            && echo "^^ unmet 32-bit deps: add them to the toolchain step" \
-            || echo "all DT_NEEDED deps resolved"
+          cd "$GITHUB_WORKSPACE"
+          echo "── last 80 lines of Steam's own output ──"
+          tail -80 steam-stdout.log || true
+          echo "── bootstrapped tree ──"
+          ls -la /tmp/fakehome/.local/share/Steam/ubuntu12_32/steamclient.so 2>&1 || \
+            echo "(no ubuntu12_32/steamclient.so — the bootstrap did not get that far)"
 
       - name: Assert loaded + hooks installed + no crash
         run: |
@@ -224,10 +208,10 @@ jobs:
           # "did not install its hooks", which on 2026-09-08 sent the diagnosis
           # off after a red herring: Steam had never mapped steamclient.so at
           # all, so the hooks were never given anything to install against.
-          test "${hostA:-fail}" = "ok" \
-            || { echo "HARNESS FAIL: the dlopen host never mapped steamclient.so — see run-a.log for the dlopen error (usually an unmet 32-bit dependency) and the ldd dump in the previous step"; exit 1; }
+          # No exit-code gates anywhere: lumalinux registers atexit(_exit(0)),
+          # so every process it is preloaded into reports 0 regardless.
           grep -aqE 'steamclient.so detected|installing hooks' "$LOG" \
-            || { echo "HARNESS FAIL: lumalinux ran but never saw steamclient.so in /proc/self/maps — the host mapped it, so this is the poller or the process gate (LUMA_PROCESS_ANY), not the hooks"; exit 1; }
+            || { echo "HARNESS FAIL: Steam never mapped steamclient.so in a process lumalinux is in — see steam-stdout.log; the client did not boot far enough, this is not the hooks"; exit 1; }
           grep -aqE 'hooks active' "$LOG" \
             || { echo "FAIL: steamclient.so WAS mapped and lumalinux saw it, but no 'X/X hooks active' — this one is ours"; exit 1; }
           grep -aqE 'name=DepotKey .*outcome=installed' "$LOG" \
@@ -260,5 +244,4 @@ jobs:
           name: smoke-lumalinux-log
           path: |
             /tmp/fakehome/.cache/lumalinux/lumalinux.log
-            run-a.log
-            run-b.log
+            steam-stdout.log
