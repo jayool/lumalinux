@@ -194,22 +194,6 @@ uintptr_t FindNotifyLicensesUpdatedFunction() {
                                    "NotifyLicensesUpdated");
 }
 
-bool MatchesAt(uintptr_t addr, const char* pattern) {
-    if (!addr) return false;
-    auto p = ParsePattern(pattern);
-    if (p.bytes.empty()) return false;
-
-    // Bound-check against the module's r-x span: `addr` comes from outside (the
-    // feed), so it must not be dereferenced on trust.
-    ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
-    if (!r.base) return false;
-    if (addr < r.base || addr + p.bytes.size() > r.base + r.size) return false;
-
-    const uint8_t* at = reinterpret_cast<const uint8_t*>(addr);
-    for (size_t j = 0; j < p.bytes.size(); ++j)
-        if (p.fixed[j] && at[j] != p.bytes[j]) return false;
-    return true;
-}
 
 uintptr_t FindDepotKeyFunction() {
     // UNIQUE-match required, since v0.16.x. This used to take the first match

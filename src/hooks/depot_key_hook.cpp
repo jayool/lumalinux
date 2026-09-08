@@ -137,19 +137,6 @@ bool Install() {
     // CI, which has the binary open anyway and can afford full scans.
     if (uintptr_t feed = RvaFeed::Resolve("DepotKey")) {
         target = feed; method = "rva";
-        // Drift note only — the feed still WINS on a mismatch, and that is
-        // load-bearing: the whole point of the feed is curing a deployed .so
-        // without a release, so a build whose patterns moved has a correct feed
-        // RVA and a STALE compiled pattern. Gating the feed on that pattern would
-        // throw away the good address precisely when it is the only one left.
-        // Checked at the address (O(pattern)) instead of by scanning .text for
-        // the pattern and comparing addresses (O(.text)) — same information,
-        // ~46 byte comparisons instead of a pass over the executable span.
-        if (!Patterns::MatchesAt(feed, Patterns::kDepotKeyFnPattern))
-            Log::Warn("DepotKey: feed 0x%lx does not match the compiled prologue "
-                      "— using the feed anyway (expected if patterns.hpp is older "
-                      "than this build's feed entry); investigate drift",
-                      (unsigned long)feed);
     }
 
     if (!target) {
