@@ -1,6 +1,7 @@
 #include "package_zero_finder.hpp"
 #include "load_package_hook.hpp"
 #include "../patterns.hpp"
+#include "../rva_feed.hpp"
 #include "../license_reconcile.hpp"
 #include "../log.hpp"
 
@@ -485,9 +486,10 @@ void Run() {
 
     using namespace std::chrono_literals;
 
-    uintptr_t got = 0;
-    int32_t   disp = 0;
-    uintptr_t cacheGlobal = 0;
+    uintptr_t   got = 0;
+    int32_t     disp = 0;
+    const char* dispMethod = "none";   // how disp was obtained: rva | scan | none
+    uintptr_t   cacheGlobal = 0;
     bool      foundOnce = false;
 
     for (;;) {
@@ -525,9 +527,41 @@ void Run() {
             if (!cacheGlobal) {
                 // Neither call needs an else: each logs its own NOT_FOUND /
                 // AMBIGUOUS cause, with the consequence, at Error severity.
+                // ficha -> escaneo, each step only if the previous came back
+                // empty. This is the shape DepotKey and GMRC have had since
+                // K′ (depot_key_hook.cpp:126-186), and the finder was the last
+                // resolver in the project still missing it: CI publishes
+                // finder.cache_global_disp on every build, res/rvas has carried
+                // it for two builds, rva-feed-design.md documents it, and
+                // nothing read it. The finder was scanning ~32 MB every launch
+                // to recompute a number already written in its own ficha.
+                //
+                // NO runtime cross-check of the feed against the scan — that is
+                // settled policy, not an oversight (ec9e840 removed exactly such
+                // a check from DepotKey). The feed is a CACHE OF THE SCAN'S
+                // RESULT, keyed by the build's SHA-256: check_patterns.py only
+                // publishes a value its own scan resolved UNIQUE (piece 4), so
+                // re-deriving it here to compare would cost the scan we are
+                // trying to skip and would warn loudest in the case where the
+                // feed is right and the compiled-in scan is the stale one.
+                //
+                // The GOT is still derived by scanning: it is base-dependent, and
+                // the feed publishes no got RVA yet. So the ficha halves the
+                // work, it does not remove it. Publishing finder.got_rva —
+                // check_patterns.py already computes it, verify_gmrc_got's
+                // distinct_got — would close that half too.
                 got = DeriveGotBase(rx);
                 if (got) {
-                    disp = FindCacheGlobalDisp(rx);
+                    if (const int32_t feed = RvaFeed::CacheGlobalDisp()) {
+                        disp = feed;
+                        dispMethod = "rva";
+                    }
+                    if (!disp) {
+                        if (const int32_t scanned = FindCacheGlobalDisp(rx)) {
+                            disp = scanned;
+                            dispMethod = "scan";
+                        }
+                    }
                 }
                 // Both outcomes below emit TWO lines, mirroring what every hook
                 // does (depot_key_hook.cpp:181-206 is the reference): a prose
@@ -563,9 +597,9 @@ void Run() {
                 Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
                           (unsigned long)got, (unsigned)disp,
                           (unsigned long)cacheGlobal);
-                Log::Info("Finder resolve: name=PKG0Finder method=scan got=0x%lx "
+                Log::Info("Finder resolve: name=PKG0Finder method=%s got=0x%lx "
                           "disp=0x%x cache_global=0x%lx outcome=resolved",
-                          (unsigned long)got, (unsigned)disp,
+                          dispMethod, (unsigned long)got, (unsigned)disp,
                           (unsigned long)cacheGlobal);
             }
 

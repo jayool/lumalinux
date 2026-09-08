@@ -93,6 +93,15 @@ finder:
 Notes:
 - A hook is written only when it resolved **UNIQUE**; a moved/ambiguous hook is
   omitted so the runtime falls back to its byte pattern for that hook alone.
+- `finder.cache_global_disp` is **not an RVA** and is not translated like one:
+  it is the GOT-relative displacement of `CPackageInfoCache`'s global slot, which
+  the finder adds to a GOT base it derives at runtime, landing in `.bss`. It is
+  read via `RvaFeed::CacheGlobalDisp()`, not `Resolve()` — `VaddrXlate` and
+  `Resolve`'s "must be inside .text" guard are both right for a code address and
+  wrong for this one. Written only when the idiom resolved **UNIQUE**, same rule
+  as the hooks. Consumed since 2026-09-08; before that it was published on every
+  build and read by nobody, while the finder rescanned ~32 MB per launch to
+  recompute it.
 - `hooks.DepotKey` is the accessor RVA the cron derived via the **RTTI vtable
   walk** (`rtti_derive_slot`) — robust-to-prologue at derive time; the runtime
   just uses the number. `depotkey_rtti.slot` enables a later `vtable[slot]`

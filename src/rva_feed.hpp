@@ -20,4 +20,14 @@ namespace RvaFeed {
 // pattern. Lazily loads + parses the feed for the current build on first call.
 uintptr_t Resolve(const char* hookName);
 
+// The package-0 finder's GOT-relative displacement for THIS build (feed key
+// `finder.cache_global_disp`), or 0 when the feed has no value for it.
+//
+// Deliberately NOT Resolve(): this is not an RVA and must not be translated or
+// checked like one. It is a displacement added to a GOT base the finder derives
+// at runtime, and the address it produces lives in .bss — so VaddrXlate and
+// Resolve()'s inSteamclientExec() guard, both of which are right for a code
+// address, would be wrong here. Same feed, different kind of number.
+int32_t CacheGlobalDisp();
+
 } // namespace RvaFeed

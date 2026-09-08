@@ -928,13 +928,21 @@ asumidos.
 | 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
 | — | `0xc58` hace **doble papel**: identifica el idiom *y* es el offset que leemos después. Si Steam mueve el campo, fallan a la vez y el diagnóstico dirá "no encontrado" | estructural | abierta |
 
-**Y una asimetría que ninguna pieza cierra todavía:** DepotKey y GMRC resuelven
-`ficha → patrón (único o nada) → rescate`. El finder no lee la ficha. El CI
-publica `finder.cache_global_disp` en cada `res/rvas/*.yaml`, está documentado en
-`rva-feed-design.md`, steamflipper lo corrobora por otro método
-(`steamflipper-analysis.md` §735) — y `grep -rn cache_global_disp src/` da cero.
-El finder escanea 32 MB en cada arranque para calcular un número que ya tiene
-escrito en su ficha.
+**La asimetría con los hooks, cerrada a medias (2026-09-08).** DepotKey y GMRC
+resuelven `ficha → patrón (único o nada) → rescate`; el finder no leía la ficha
+en absoluto, aunque el CI publicaba `finder.cache_global_disp` en cada
+`res/rvas/*.yaml`, `rva-feed-design.md` lo documentaba y steamflipper lo
+corroboraba por otro método (`steamflipper-analysis.md` §735). `grep -rn
+cache_global_disp src/` daba cero: se escaneaban 32 MB por arranque para
+recalcular un número ya escrito. Ahora el finder hace `ficha → escaneo`
+(`RvaFeed::CacheGlobalDisp()`), con el mismo criterio de no revalidar la ficha
+contra el escaneo que se fijó en `ec9e840` para DepotKey.
+
+**Lo que queda de esa asimetría:** el GOT se sigue derivando escaneando, porque
+depende de la base y la ficha no publica ningún RVA para él. O sea que la ficha
+reduce el trabajo a la mitad, no lo elimina. Publicar `finder.got_rva` lo
+cerraría: `check_patterns.py` ya lo calcula (`verify_gmrc_got`, campo
+`distinct_got`).
 
 **Lección de método**, porque el patrón de los hallazgos lo dice solo: la
 auditoría inicial miró **una función**, no el subsistema. Los diez que faltaban

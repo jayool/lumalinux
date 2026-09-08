@@ -23,6 +23,11 @@ namespace {
 std::once_flag                   g_once;
 bool                             g_loaded = false;
 std::map<std::string, uintptr_t> g_hooks;    // hook name -> file vaddr (RVA)
+// finder.cache_global_disp. Kept apart from g_hooks/g_loaded on purpose: it
+// needs neither VaddrXlate nor a non-empty hook map, and load() bails out on
+// either of those — so folding it in would have thrown the value away in cases
+// where it is perfectly usable.
+int32_t                          g_cacheGlobalDisp = 0;
 
 std::string cacheDir() {
     const char* home = std::getenv("HOME");
@@ -77,7 +82,21 @@ void load() {
         return;
     }
     try {
-        YAML::Node hooks = YAML::Load(yaml)["hooks"];
+        const YAML::Node root = YAML::Load(yaml);
+        // Read the finder's value FIRST, and independently of everything below:
+        // the hook path can still bail out (no hooks, or VaddrXlate failing) in
+        // ways that say nothing about this number's validity.
+        const YAML::Node finder = root["finder"];
+        if (finder && finder.IsMap() && finder["cache_global_disp"]) {
+            const long v = std::strtol(
+                finder["cache_global_disp"].as<std::string>().c_str(), nullptr, 16);
+            if (v) {
+                g_cacheGlobalDisp = static_cast<int32_t>(v);
+                Log::Info("RvaFeed: finder cache_global_disp = 0x%x from the feed",
+                          static_cast<unsigned>(g_cacheGlobalDisp));
+            }
+        }
+        YAML::Node hooks = root["hooks"];
         if (hooks && hooks.IsMap()) {
             for (auto it = hooks.begin(); it != hooks.end(); ++it) {
                 const std::string name = it->first.as<std::string>();
@@ -89,6 +108,7 @@ void load() {
     } catch (const std::exception& e) {
         Log::Warn("RvaFeed: parse error (%s) — falling back to byte patterns", e.what());
         g_hooks.clear();
+        g_cacheGlobalDisp = 0;
         return;
     }
     if (g_hooks.empty()) { Log::Info("RvaFeed: feed has no hooks for %s", hash.c_str()); return; }
@@ -117,6 +137,11 @@ bool inSteamclientExec(uintptr_t addr) {
 }
 
 } // namespace
+
+int32_t CacheGlobalDisp() {
+    std::call_once(g_once, load);
+    return g_cacheGlobalDisp;      // no g_loaded gate: see the note on g_hooks
+}
 
 uintptr_t Resolve(const char* hookName) {
     std::call_once(g_once, load);
