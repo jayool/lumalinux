@@ -215,51 +215,62 @@ def package_entries(man):
     return out
 
 
+def open_package_zip(key, plain, vz):
+    """Download + decompress one client package and return its ZipFile, or None.
+
+    Each package lists a plain "file" AND a "zipvz". The CDN serves the .vz
+    (LZMA) one; the plain path is usually absent -> try vz first. Diagnostics go
+    to stderr (captured in the workflow log)."""
+    variants = []
+    if vz:
+        variants.append((vz, True))
+    if plain:
+        variants.append((plain, False))
+    for fname, is_vz in variants:
+        try:
+            blob = http_get(CDN + fname)
+        except Exception as e:               # noqa: BLE001
+            print("  (%s: download failed: %s)" % (key, e), file=sys.stderr)
+            continue
+        try:
+            if is_vz or blob[:2] == b"VZ":
+                blob = vz_decompress(blob)
+            if blob[:2] != b"PK":
+                print("  (%s: not a zip after decompress, head=%r)"
+                      % (key, blob[:4]), file=sys.stderr)
+                continue
+            return zipfile.ZipFile(io.BytesIO(blob))
+        except Exception as e:               # noqa: BLE001
+            print("  (%s: decompress/open failed: %s)" % (key, e), file=sys.stderr)
+            continue
+    return None
+
+
 def extract_steamclient(man, out_path):
-    """Download packages (the vz-compressed variant Valve actually serves) until
-    we find steamclient.so; extract it to out_path. Returns the member name.
-    Diagnostics go to stderr (captured in the workflow log)."""
+    """Download packages until we find steamclient.so; extract it to out_path.
+    Returns the member name."""
     want = "steamclient.so"
     for key, plain, vz in package_entries(man):
-        # Each package lists a plain "file" AND a "zipvz". The CDN serves the
-        # .vz (LZMA) one; the plain path is usually absent -> try vz first.
-        variants = []
-        if vz:
-            variants.append((vz, True))
-        if plain:
-            variants.append((plain, False))
-        for fname, is_vz in variants:
-            try:
-                blob = http_get(CDN + fname)
-            except Exception as e:           # noqa: BLE001
-                print("  (%s: download failed: %s)" % (key, e), file=sys.stderr)
-                continue
-            try:
-                if is_vz or blob[:2] == b"VZ":
-                    blob = vz_decompress(blob)
-                if blob[:2] != b"PK":
-                    print("  (%s: not a zip after decompress, head=%r)"
-                          % (key, blob[:4]), file=sys.stderr)
-                    continue
-                zf = zipfile.ZipFile(io.BytesIO(blob))
-            except Exception as e:           # noqa: BLE001
-                print("  (%s: decompress/open failed: %s)" % (key, e), file=sys.stderr)
-                continue
-            members = zf.namelist()
-            # lumalinux hooks the 32-bit binary — exclude the 64-bit one.
-            cand = [m for m in members if m.endswith(want)
-                    and "ubuntu12_64" not in m and "linux64" not in m]
-            if cand:
-                cand.sort(key=lambda m: (0 if ("ubuntu12_32" in m or "linux32" in m)
-                                         else 1, len(m)))
-                print("  (found steamclient.so in package %s: %s)" % (key, cand[0]),
-                      file=sys.stderr)
-                with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
-                    dst.write(src.read())
-                return cand[0]
-            print("  (%s: %d members, no steamclient.so)" % (key, len(members)),
+        zf = open_package_zip(key, plain, vz)
+        if zf is None:
+            continue
+        members = zf.namelist()
+        # lumalinux hooks the 32-bit binary — exclude the 64-bit one.
+        cand = [m for m in members if m.endswith(want)
+                and "ubuntu12_64" not in m and "linux64" not in m]
+        if cand:
+            cand.sort(key=lambda m: (0 if ("ubuntu12_32" in m or "linux32" in m)
+                                     else 1, len(m)))
+            print("  (found steamclient.so in package %s: %s)" % (key, cand[0]),
                   file=sys.stderr)
-            break    # got a valid zip but no match; don't retry the plain variant
+            with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
+                dst.write(src.read())
+            return cand[0]
+        # A valid zip without the file: move on to the NEXT PACKAGE. (The
+        # variant retry that this used to skip now lives inside
+        # open_package_zip, so plain-vs-vz is already handled there.)
+        print("  (%s: %d members, no steamclient.so)" % (key, len(members)),
+              file=sys.stderr)
     raise RuntimeError("steamclient.so not found in any client package")
 
 
@@ -273,11 +284,67 @@ def sha256_file(path):
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+def extract_client_tree(man, out_dir):
+    """Extract the whole 32-bit client tree (every `ubuntu12_32/...` member) from
+    the CURRENT client packages into out_dir. Returns (file_count, member_names).
+
+    Why this exists: the runtime smoke test used to run against a 329 MB
+    `steam_ubuntu12_32.tar.gz` pinned in a GitHub release (`test-deps-v1`,
+    uploaded 2026-06-13 and never refreshed), with only steamclient.so swapped
+    for the current one — a three-month-old tree carrying a brand-new client
+    library. Pulling the whole tree from the same manifest that gives us
+    steamclient.so makes it SELF-CONSISTENT and current, and removes the pinned
+    asset entirely.
+
+    Only `ubuntu12_32/` members are taken: that is the 32-bit client directory
+    lumalinux hooks into, and it keeps the download to the bins package(s)."""
+    want = "ubuntu12_32/"
+    found_client = False
+    names = []
+    for key, plain, vz in package_entries(man):
+        # Once we have the client library, only keep looking through the sibling
+        # bins packages (rank <= 1) — the big runtime/webkit blobs are hundreds
+        # of MB and hold nothing the hooks need.
+        if found_client and _package_rank(key) > 1:
+            break
+        zf = open_package_zip(key, plain, vz)
+        if zf is None:
+            continue
+        members = [m for m in zf.namelist()
+                   if want in m and not m.endswith("/") and "ubuntu12_64" not in m]
+        if not members:
+            print("  (%s: %d members, nothing under %s)" % (key, len(zf.namelist()), want),
+                  file=sys.stderr)
+            continue
+        for m in members:
+            rel = m[m.index(want):]
+            dst = os.path.join(out_dir, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            with zf.open(m) as src, open(dst, "wb") as f:
+                f.write(src.read())
+            # The zip carries no usable mode bits, so restore the exec bit for
+            # the things that need it: shared objects and top-level binaries.
+            leaf = rel[len(want):]
+            if ".so" in leaf or "/" not in leaf:
+                os.chmod(dst, 0o755)
+            names.append(rel)
+        print("  (%s: extracted %d file(s) under %s)" % (key, len(members), want),
+              file=sys.stderr)
+        if any(m.endswith(want + "steamclient.so") for m in members):
+            found_client = True
+    if not found_client:
+        raise RuntimeError("ubuntu12_32/steamclient.so not found in any client package")
+    return len(names), names
+
+
 def main():
     ap = argparse.ArgumentParser(description="Fetch the current 32-bit steamclient.so from Valve's client CDN.")
     ap.add_argument("--version-only", action="store_true",
                     help="print just the manifest version and exit (cheap gate)")
     ap.add_argument("--output", help="path to write the extracted steamclient.so")
+    ap.add_argument("--extract-tree", metavar="DIR",
+                    help="extract the whole current ubuntu12_32/ client tree into DIR "
+                         "(for the runtime smoke test; replaces the pinned tarball)")
     args = ap.parse_args()
 
     try:
@@ -286,8 +353,15 @@ def main():
         if args.version_only:
             print(ver)
             return 0
+        if args.extract_tree:
+            n, names = extract_client_tree(man, args.extract_tree)
+            print("version=%s" % ver, file=sys.stderr)
+            print("tree=%s files=%d" % (args.extract_tree, n), file=sys.stderr)
+            sc = os.path.join(args.extract_tree, "ubuntu12_32", "steamclient.so")
+            print("sha256=%s" % sha256_file(sc))
+            return 0
         if not args.output:
-            ap.error("--output is required unless --version-only")
+            ap.error("--output is required unless --version-only or --extract-tree")
         member = extract_steamclient(man, args.output)
         sha = sha256_file(args.output)
         print("version=%s" % ver, file=sys.stderr)

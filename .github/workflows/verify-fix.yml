@@ -10,13 +10,21 @@ name: Runtime smoke test (loads lumalinux, checks hooks)
 # read in a new resolver — the DepotKey derive-by-signature risk in v0.16.18) is
 # invisible to them. This starts the engine.
 #
-# Self-contained: it fetches EVERYTHING current at run time — the steamclient.so
-# (fetch_steamclient.py), SLSsteam + library-inject (AceSLS latest), and
-# CloudRedirect (linux-test) — and builds the fix_atexit shim inline. The only
-# thing it pulls from the test-deps-v1 release is the heavy real-Steam bootstrap
-# tree (steam_ubuntu12_32.tar.gz, a manual 329 MB asset). Replaces both the old
-# atexit-crash harness AND its build-testing-harness generator (whose sos/libs
-# artifacts went stale and were mostly unused).
+# Self-contained: it fetches EVERYTHING current at run time — the whole 32-bit
+# client tree (fetch_steamclient.py --extract-tree, same manifest as the
+# steamclient.so we hook, so tree and library are consistent), SLSsteam +
+# library-inject (AceSLS latest), and CloudRedirect (linux-test). Nothing is
+# pinned any more: the 329 MB steam_ubuntu12_32.tar.gz from test-deps-v1 is
+# gone, along with the three-month drift between that frozen tree and today's
+# client library.
+#
+# HISTORY, so nobody re-derives it: this file was born to verify ONE fix (the
+# atexit crash) and was later rewritten into a full-stack harness that was never
+# actually run. Its first real execution — 2026-09-08, run 6 — failed with all
+# five Steam attempts timing out and steamclient.so never mapped, i.e. every
+# assertion in it had been decorative. It now loads the client library in a
+# purpose-built 32-bit host instead of trying to boot Steam; see the comment on
+# that step for what that trades away.
 #
 # Manual only — heavy. Run before a release, or after touching hooking code
 # (rtti.cpp, hooks/, lmhook.cpp, main.cpp, patterns). Checks out the dispatched
@@ -94,26 +102,17 @@ jobs:
           gcc -m32 -shared -fPIC -o fix_atexit.so fix_atexit.c
           echo "fetched:"; ls -la SLSsteam.so library-inject.so cloud_redirect.so fix_atexit.so
 
-      - name: Download the real-Steam bootstrap tree (test-deps-v1)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The whole 32-bit client tree, from the SAME manifest steamclient.so comes
+      # from — so it is current and self-consistent. This replaces a 329 MB
+      # steam_ubuntu12_32.tar.gz pinned in the test-deps-v1 release (uploaded
+      # 2026-06-13, never refreshed) that had the current steamclient.so dropped
+      # on top of it: a three-month-old tree carrying a brand-new client library.
+      - name: Fetch the CURRENT 32-bit client tree
         run: |
-          mkdir -p deck-env/steam-tree
-          gh release download test-deps-v1 --repo jayool/lumalinux \
-            --pattern "steam_ubuntu12_32.tar.gz" --dir deck-env
-          tar xzf deck-env/steam_ubuntu12_32.tar.gz -C deck-env/steam-tree
-
-      - name: Swap in the current steamclient.so
-        # Replace the frozen bootstrap's steamclient.so with the CURRENT one so
-        # lumalinux hooks TODAY's build. Valve keeps the bootstrap<->steamclient
-        # interface versioned, so an older bootstrap still maps a newer steamclient
-        # — all lumalinux needs to scan + hook. Overwrite every copy (robust to layout).
-        run: |
-          n=0
-          while IFS= read -r sc; do
-            cp -f current-steamclient.so "$sc"; n=$((n+1)); echo "swapped: $sc"
-          done < <(find deck-env/steam-tree -name steamclient.so)
-          test "$n" -gt 0 || { echo "ERROR: no steamclient.so in the tree to swap"; exit 1; }
+          python3 tools/fetch_steamclient.py --extract-tree deck-env
+          echo "tree:"; ls -la deck-env/ubuntu12_32 | head -20
+          test -f deck-env/ubuntu12_32/steamclient.so \
+            || { echo "ERROR: no steamclient.so in the extracted tree"; exit 1; }
 
       - name: Set up fake HOME
         run: |
@@ -137,30 +136,66 @@ jobs:
           EOF
           mkdir -p /tmp/fakehome/.steam /tmp/fakehome/.local/share/Steam
           ln -sf /tmp/fakehome/.local/share/Steam /tmp/fakehome/.steam/steam
-          ln -sf "$PWD/deck-env/steam-tree/ubuntu12_32" /tmp/fakehome/.local/share/Steam/ubuntu12_32
+          ln -sf "$PWD/deck-env/ubuntu12_32" /tmp/fakehome/.local/share/Steam/ubuntu12_32
 
-      - name: Run the full stack against the current steamclient
+      # WHY A dlopen HOST AND NOT THE REAL CLIENT.
+      # This step used to run `./steam` straight out of the pinned tree, with all
+      # output sent to /dev/null. On its first ever execution (2026-09-08, run 6
+      # — the rewritten workflow had never actually run) all five attempts hit
+      # the 25 s timeout without steamclient.so ever being mapped, so every
+      # assertion below was reporting on a process that never got started
+      # properly. Running the ubuntu12_32 binary directly skips steam.sh and the
+      # Steam runtime that a real Deck goes through, and diagnosing it was
+      # impossible with the output discarded.
+      #
+      # What the resolvers actually need is steamclient.so MAPPED IN A 32-BIT
+      # PROCESS: lumalinux's LD_PRELOAD path polls /proc/self/maps and installs
+      # the hooks itself (src/main.cpp, LumalinuxCtor) — Steam does nothing
+      # special for it. So the host just dlopen()s the library and waits.
+      # Deterministic, seconds instead of minutes, and it exercises the real C++
+      # against the real binary.
+      #
+      # COVERAGE GIVEN UP, stated plainly: no Steam threads mutating the package
+      # cache, and no logged-in session — so package 0 is never found and the
+      # finder is only asserted as far as resolving its address. Restoring the
+      # full-stack run needs a fresh bootstrap tree and a launch path that
+      # mirrors steam.sh; run B below keeps the stack in view meanwhile.
+      - name: Load the current steamclient.so in a 32-bit host
         run: |
-          cd deck-env/steam-tree/ubuntu12_32
-          ulimit -c 0
+          gcc -m32 -Wall -Wextra -o smoke_dlopen tools/smoke_dlopen.c -ldl
+          SC="$PWD/deck-env/ubuntu12_32/steamclient.so"
+          CR=/tmp/fakehome/.local/share/CloudRedirect/cloud_redirect.so
           LIB_INJECT=/tmp/fakehome/.local/share/SLSsteam/library-inject.so
           SLS=/tmp/fakehome/.local/share/SLSsteam/SLSsteam.so
-          CR=/tmp/fakehome/.local/share/CloudRedirect/cloud_redirect.so
           LUMA=/tmp/fakehome/.local/share/lumalinux/liblumalinux.so
           rm -f /tmp/fakehome/.cache/lumalinux/lumalinux.log
+          ulimit -c 0
           set +e
-          crashes=0
-          for i in $(seq 1 5); do
-            HOME=/tmp/fakehome LD_LIBRARY_PATH="/usr/lib32" \
-            LD_AUDIT="$LIB_INJECT:$SLS" LD_PRELOAD="$LUMA:$CR" \
-              timeout 25 ./steam -nominidumps -nobreakpad > /dev/null 2>&1
-            ex=$?
-            echo "run $i exit=$ex"
-            [ "$ex" -eq 134 ] && crashes=$((crashes+1))
-          done
+
+          # Run A — lumalinux alone. This is the one that gets asserted.
+          echo "── run A: lumalinux only ──"
+          HOME=/tmp/fakehome LUMA_PROCESS_ANY=1 \
+          LD_LIBRARY_PATH="$PWD/deck-env/ubuntu12_32:/usr/lib32" \
+          LD_PRELOAD="$LUMA" \
+            timeout 60 ./smoke_dlopen "$SC" 15 2>&1 | tee run-a.log
+          exA=${PIPESTATUS[0]}; echo "run A exit=$exA"
+
+          # Run B — the full stack, same env a Deck sets (setup.sh
+          # luma_set_injection_env). INFORMATIONAL: reported, never fatal, since
+          # SLSsteam expects to be inside Steam and this host is not.
+          echo "── run B: full stack (informational) ──"
+          HOME=/tmp/fakehome LUMA_PROCESS_ANY=1 \
+          LD_LIBRARY_PATH="$PWD/deck-env/ubuntu12_32:/usr/lib32" \
+          LD_AUDIT="$LIB_INJECT:$SLS" LD_PRELOAD="$LUMA:$CR" \
+            timeout 60 ./smoke_dlopen "$SC" 15 2>&1 | tee run-b.log
+          echo "run B exit=${PIPESTATUS[0]} (informational)"
+
           set -e
-          echo "crashes(SIGABRT)=$crashes"
+          crashes=0
+          [ "$exA" -eq 134 ] && crashes=1
+          echo "crashes(SIGABRT, run A)=$crashes"
           echo "crashes=$crashes" >> "$GITHUB_ENV"
+          echo "exA=$exA" >> "$GITHUB_ENV"
 
       - name: Assert loaded + hooks installed + no crash
         run: |
@@ -168,8 +203,16 @@ jobs:
           echo "── lumalinux log tail ──"
           tail -50 "$LOG" 2>/dev/null || { echo "FAIL: no log — lumalinux never ran / steamclient.so never mapped"; exit 1; }
           echo "────────────────────────"
+          # Tell a HARNESS failure apart from OURS. Both used to print the same
+          # "did not install its hooks", which on 2026-09-08 sent the diagnosis
+          # off after a red herring: Steam had never mapped steamclient.so at
+          # all, so the hooks were never given anything to install against.
+          test "${exA:-1}" -eq 0 \
+            || { echo "HARNESS FAIL: the dlopen host itself exited ${exA} — see run-a.log; steamclient.so was never mapped, so nothing below was even attempted"; exit 1; }
+          grep -aqE 'steamclient.so detected|installing hooks' "$LOG" \
+            || { echo "HARNESS FAIL: lumalinux ran but never saw steamclient.so in /proc/self/maps — the host mapped it, so this is the poller or the process gate (LUMA_PROCESS_ANY), not the hooks"; exit 1; }
           grep -aqE 'hooks active' "$LOG" \
-            || { echo "FAIL: no 'X/X hooks active' — lumalinux did not install its hooks against the current steamclient"; exit 1; }
+            || { echo "FAIL: steamclient.so WAS mapped and lumalinux saw it, but no 'X/X hooks active' — this one is ours"; exit 1; }
           grep -aqE 'name=DepotKey .*outcome=installed' "$LOG" \
             || { echo "FAIL: DepotKey did not install"; exit 1; }
           # The package-0 finder is the SOLE depot injector, and until now this
@@ -198,4 +241,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: smoke-lumalinux-log
-          path: /tmp/fakehome/.cache/lumalinux/lumalinux.log
+          path: |
+            /tmp/fakehome/.cache/lumalinux/lumalinux.log
+            run-a.log
+            run-b.log
