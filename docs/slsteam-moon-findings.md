@@ -1124,12 +1124,21 @@ un prólogo casa dos veces significa que dos funciones **distintas** comparten f
 prólogo — motivo A, ambigüedad real, y ahí bloquear es la respuesta correcta. El
 auditor acierta.
 
+> Esto acabó siendo la regla del proyecto, no una conclusión suelta:
+> **ambiguo == no resuelto**. Ya estaba en `Patterns::FindUniqueInSteamclient`
+> para los hooks; el 2026-09-08 se llevó también al localizador del paquete 0,
+> que hasta entonces se quedaba con la primera coincidencia (RESEARCH §13.5.a),
+> y al CI, que ahora bloquea en vez de dejar pasar un `AMBIGUOUS` en verde.
+> Las tres capas —runtime, CI y chuleta— se niegan a adivinar, y se niegan
+> igual.
+
 También se retira el precedente que se citaba. **LoadPackage no es un caso de
 convergencia**: su comentario (`patterns.cpp:246`) dice *"el prólogo … **puede casar con
 varias funciones**. Enumera todas las coincidencias; elige por índice con
 `LUMA_LOADPKG_IDX`"* — funciones distintas, o sea motivo A otra vez, resuelto eligiendo
 índice a mano y degradando el hook a `DIAGNOSTIC`. No es el mismo problema que el de
-moon.
+moon. (La referencia era `patterns.cpp:246`; ese comentario está hoy hacia la
+línea 233.)
 
 **Por qué a moon sí le pasó y a nosotros no:** su localizador anclaba en un sitio de
 llamada, que es una técnica legítima y distinta de la nuestra. No es que ellos lo
