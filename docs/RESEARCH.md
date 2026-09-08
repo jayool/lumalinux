@@ -921,7 +921,7 @@ asumidos.
 | 9′ | el CI reconocía **menos** que el runtime (sólo opcodes), y `derive_patterns.py` igual: aprobaba lo que la Deck rechaza | **alto** | **hecho** |
 | 7 | `DeriveGotBase` también devuelve la **primera** coincidencia, sin exigir unicidad — y está **aguas arriba** del 1 | seguro futuro | pendiente |
 | 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | pendiente |
-| 11 | el triaje busca `outcome=pattern_miss`, que sólo emite `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no caza los dos hooks críticos** | **real, hoy** | pendiente |
+| 11 | el triaje buscaba `outcome=pattern_miss`, que sólo emitía `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no cazaba los dos hooks críticos**. Y no era una fila: eran **cinco** referencias en `maintenance.md`, cuatro de ellas a hooks que nunca emitieron esa cadena | **real, hoy** | **hecho** — vocabulario unificado en `miss` |
 | 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético | pendiente |
 | 13 | `InjectDepots` **no comprueba `PkgId(pInfo)==0`** aunque el valor ya se lee para el log: dos fuentes independientes, una usada | **único del camino vivo**; una línea | pendiente |
 | 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |

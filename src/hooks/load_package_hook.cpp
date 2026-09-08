@@ -186,7 +186,13 @@ bool Install() {
     uintptr_t target = Patterns::FindLoadPackageFunction();
     if (!target) {
         Log::Error("LoadPackage hook: cannot install — target not found");
-        Log::Warn("Hook install: name=LoadPackage method=pattern outcome=pattern_miss");
+        // outcome=miss, like the other four hooks. This was the ONLY emitter of
+        // "pattern_miss" in the whole project, and maintenance.md's triage
+        // grepped for exactly that string — so the procedure caught the one
+        // diagnostic-only hook and missed DepotKey and GMRC, the two that
+        // block installs. One word for one situation. `method=` already says
+        // which resolver was in play, so nothing is lost.
+        Log::Warn("Hook install: name=LoadPackage method=pattern outcome=miss");
         return false;
     }
 
