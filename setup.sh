@@ -869,8 +869,20 @@ g_startup_crash() {
     [ -n "$_hit" ]
 }
 luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$STEAM_BIN" "$@"; }
+# NOTE ON THE -s TESTS BELOW. They used to be -f (exists). SLSsteam has shipped
+# bin/library-inject.so as a ZERO-BYTE file since its 20260903 release — AceSLS
+# disabled that component on 2026-08-26 and its Makefile now literally `touch`es
+# an empty file — and -f is true for an empty file, so we were naming a 0-byte
+# object as the FIRST entry of LD_AUDIT. ld.so then prints
+#   object '...library-inject.so' cannot be loaded as audit interface:
+#   file too short; ignored
+# into every single process Steam spawns. It is only noise (the loader skips it
+# and goes on to SLSsteam.so), but it is noise we generate, in every game, and it
+# buries real loader errors. -s means "exists and is non-empty", which is what we
+# actually meant for the three .so files WE install and name. The libextest test
+# below stays -f on purpose: that one is the distro's, not ours to second-guess.
 luma_set_injection_env() {
-    for _p in "$CR_SO" "$LL_SO"; do [ -f "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
+    for _p in "$CR_SO" "$LL_SO"; do [ -s "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
     [ -n "${LD_PRELOAD:-}" ] && export LD_PRELOAD
     if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
         for _e in /usr/lib/extest/libextest.so /usr/lib64/extest/libextest.so \
@@ -878,7 +890,7 @@ luma_set_injection_env() {
             [ -f "$_e" ] && { export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$_e"; break; }
         done
     fi
-    if [ -f "$SLS_DIR/library-inject.so" ]; then
+    if [ -s "$SLS_DIR/library-inject.so" ]; then
         export LD_AUDIT="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
     else
         export LD_AUDIT="$SLS_DIR/SLSsteam.so"

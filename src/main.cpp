@@ -22,6 +22,7 @@
 //           (CheckAppOwnership) and PICS access tokens. Nothing extra.
 
 #include "log.hpp"
+#include "proc_filter.hpp"
 #include "key_store.hpp"
 #include "license_reconcile.hpp"
 #include "hooks/depot_key_hook.hpp"
@@ -57,40 +58,9 @@ namespace {
 std::atomic<bool> g_preinitDone{false};
 std::atomic<bool> g_hooksInstalled{false};
 
-// Process allowlist: lumalinux is loaded into every child of steam.sh via
-// LD_PRELOAD (steamerrorreporter, steam-runtime-launcher-service, game
-// processes via Proton, etc). Only steam and steamwebhelper actually load
-// steamclient.so; everywhere else we end up logging banners + spawning a
-// worker that times out after ~5 minutes looking for a mapping that will
-// never appear. Filter on /proc/self/comm so non-Steam processes return
-// immediately from the constructor with zero side effects.
-//
-// Override with LUMA_PROCESS_ANY=1 for setups where a different process
-// is the steamclient.so host (custom gamescope-session, debug, etc.).
-bool IsAllowedProcess() {
-    if (std::getenv("LUMA_PROCESS_ANY")) return true;
-
-    FILE* f = std::fopen("/proc/self/comm", "r");
-    if (!f) return true;  // fail-open: if we can't read /proc, allow
-
-    char comm[256] = {0};
-    char* got = std::fgets(comm, sizeof(comm), f);
-    std::fclose(f);
-    if (!got) return true;  // fail-open
-
-    // Trim the trailing newline that /proc/self/comm always includes
-    size_t len = std::strlen(comm);
-    if (len > 0 && comm[len - 1] == '\n') comm[len - 1] = '\0';
-
-    static const char* const allowed[] = {
-        "steam",
-        "steamwebhelper",
-    };
-    for (const char* a : allowed) {
-        if (std::strcmp(comm, a) == 0) return true;
-    }
-    return false;
-}
+// The steamclient.so-host process filter lives in src/proc_filter.cpp: the
+// dlopen interposer (src/libcurl_pin.cpp) needs the same answer, and it can
+// run before anything in this file has initialised, so it cannot live here.
 
 // Called once, before Steam's main thread starts running user code, by
 // the dynamic linker auditing API. Set up logging and load the key file
@@ -380,14 +350,14 @@ LUMA_EXPORT unsigned int la_version(unsigned int version) {
 
 LUMA_EXPORT void la_preinit(uintptr_t* cookie) {
     (void)cookie;
-    if (!IsAllowedProcess()) return;
+    if (!ProcFilter::IsSteamHost()) return;
     DoPreinit();
 }
 
 LUMA_EXPORT unsigned int la_objopen(struct link_map* map, Lmid_t lmid, uintptr_t* cookie) {
     (void)lmid;
     (void)cookie;
-    if (!IsAllowedProcess()) return 0;
+    if (!ProcFilter::IsSteamHost()) return 0;
     if (!map || !map->l_name) return 0;
     if (!IsSteamclient(map->l_name)) return 0;
 
@@ -412,7 +382,7 @@ namespace {
 // atomic in InstallHooks().
 __attribute__((constructor))
 void LumalinuxCtor() {
-    if (!IsAllowedProcess()) return;
+    if (!ProcFilter::IsSteamHost()) return;
     DoPreinit();
 
     // Avoid a SIGABRT during exit cleanup when SLSsteam + CloudRedirect are
