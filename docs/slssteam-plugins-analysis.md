@@ -579,6 +579,8 @@ Aquí está lo más interesante de la capa.
 hook de `LoadPackage` (en el momento del parseo PICS) y, sobre todo, el
 `package_zero_finder`, un hilo que deriva el GOT, escanea el idiom de acceso a la
 caché y **recorre el árbol** con offsets de clase (`0xc58`, `0xc6c`, nodo `0x18`).
+(Al escribir esto el hook de `LoadPackage` todavía inyectaba; ya no —
+es diagnóstico, y el finder es el inyector único.)
 El plugin engancha `GetPackage` y **deja que Steam le entregue el puntero**.
 
 Conviene deshacer una contradicción aparente con nuestro propio
@@ -926,7 +928,9 @@ el feed de RVAs, el SafeMode, el diagnóstico y todo el despliegue.
 Pero técnicamente **nos ha enseñado tres cosas y nos ha reabierto dos**: la
 resolución por sitio de llamada y la derivación de ranura son mejores que las
 nuestras; la captura del puntero del paquete 0 vía `GetPackage` hace en 20 líneas
-lo que a nosotros nos cuesta 377 con offsets de build dentro; y el asunto del
+lo que a nosotros nos cuesta 670 con offsets de build dentro (eran 377 al
+escribir esto; la auditoría del 08-09 añadió el criterio de unicidad, el cruce
+de identidad y el bloque `KNOWN LIMITS` — la comparación empeora, no mejora); y el asunto del
 asignador y el del offset del vector quedan como trabajo real (Accionables A y C).
 
 En el otro sentido, confirma dos decisiones nuestras que costaron caro: la
@@ -1812,7 +1816,12 @@ hash, así que tras actualizar Steam la que tienes es del hash viejo e inútil**
 primer arranque; GitHub caído o el repo renombrado (URL fija a
 `jayool/lumalinux/main`). *Llega inservible* — chuleta **parcial** (sólo se
 escriben hooks `UNIQUE`); `VaddrXlate::Init` falla y se descarta entera; el YAML no
-parsea. *Nunca la hay* — el finder no usa feed en absoluto.
+parsea. *Nunca la hay* — **corregido el 2026-09-08**: el finder ya lee
+`finder.cache_global_disp` de la chuleta (`RvaFeed::CacheGlobalDisp()`), así que
+esta categoría deja de aplicarle. Con matiz: la chuleta le da uno de los dos
+números que necesita, no los dos. El GOT lo sigue derivando escaneando porque
+`finder.got_rva` no se publica (`rva-feed-design.md` §5), o sea que el finder
+está a medio camino, no fuera.
 
 El caso realista que junta dos: **el usuario actualiza Steam, reinicia, Steam
 arranca antes que el wifi, la caché es del hash anterior.** Build nuevo, sin
@@ -1961,6 +1970,17 @@ fuente que nadie deriva, nadie comprueba y nadie publica. La única red es el
 Toda la maquinaria existe para cuidar cinco frases; los cuatro números que deciden
 dónde escribimos en la memoria de Steam no los mira nadie.
 
+> **Al día 2026-09-08.** Sigue siendo cierto en lo esencial, con dos cambios. Lo
+> que mejoró: el CI ya no sólo *valida* el idiom y la cola de GMRC, **bloquea**
+> si no resuelven únicos; y antes de escribir, el finder cruza la clave del nodo
+> del árbol contra el `PackageId` que el propio objeto declara en `+0x00`, o sea
+> que hay una comprobación de identidad *antes* del intento, no sólo un
+> `SANITY FAIL` después. Lo que no cambió: `+0x38` y `+0x48` siguen sin derivar,
+> sin comprobar y sin publicar — **y no son validables** en un binario sin
+> símbolos, que es la razón de que sigan ahí. Está anotado como riesgo asumido
+> en el bloque `KNOWN LIMITS` de `package_zero_finder.cpp` (límite [14]) en vez
+> de fingir que no existe.
+
 **d) La deriva del cron ensancha la ventana.**
 El cron está en `17 7 * * *` y el run #71, con `event: schedule`, arrancó a las
 **12:08 UTC** — casi **5 horas** tarde. Los cron de Actions son *best-effort*. La
@@ -2020,7 +2040,8 @@ Nota sobre el orden interno: **J antes que el punto 3**, porque de la cadena
 `frase → GOT → sitio de uso → caminar atrás → entrada` sólo el último paso
 depende del prólogo. Arreglado ahí una vez, los cuatro hooks que adopten el
 ancla de cadena lo heredan. La alternativa, cuando caminar atrás no valga, ya
-está escrita en `package_zero_finder.cpp:96`: anclarse en el trozo de prólogo que
+está escrita en `package_zero_finder.cpp` (el comentario sobre `DeriveGotBase`,
+hoy hacia la línea 156): anclarse en el trozo de prólogo que
 **sobrevive** al detour en vez de en el que lo recibe — resuelto en julio para
 nuestro propio detour, y aplicable igual a uno ajeno **mientras el ajeno venga de
 libmem** (§4.4: en i386 son 5 bytes por construcción de la librería, y eso cubre

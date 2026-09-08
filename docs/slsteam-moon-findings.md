@@ -86,7 +86,7 @@ reads `keys.txt`.
 |---|---|---|
 | **keys.txt** (#3) | `depot_key_hook` **reads** it (it is the source for the served key) | The *generation* of keys.txt could be replaced by reading the `.lua` directly → **this is the finding** |
 | **config.vdf DecryptionKeys** (#4) | `depot_key_hook` serves the key at runtime via the `LoadDepotDecryptionKey` accessor | **Possibly redundant** — if the accessor hook already answers the key query, writing the same key into config.vdf may be unnecessary. *Needs an empirical test: drop the config.vdf write and confirm installs still decrypt.* |
-| **AdditionalApps** (#2) | No — that is **SLSsteam's** ownership layer; lumalinux's `load_package_hook` + `package_zero_finder` inject appids into Steam's **package 0** (a different layer: appinfo eligibility, not ownership) | **Still needed** (SLSsteam side) |
+| **AdditionalApps** (#2) | No — that is **SLSsteam's** ownership layer; lumalinux's `package_zero_finder` injects appids into Steam's **package 0** (a different layer: appinfo eligibility, not ownership) | **Still needed** (SLSsteam side) |
 | **AppToken** (#5) | No (SLSsteam) | **Still needed** |
 | **.acf** (#6) | No lumalinux hook writes `.acf` | **Still needed** on disk (or left to Steam on Install) |
 | **manifests in depotcache** (#1) | `gmrc_hook` fetches manifest *request codes*, but Steam still reads the actual `.manifest` **files** from `depotcache/` | **Still needed** on disk |
@@ -98,8 +98,9 @@ reads `keys.txt`.
   **keys.txt generation** (artifact #3) and *possibly* the **config.vdf key
   write** (#4, pending the test above). lumalinux already serves keys at runtime
   (`depot_key_hook`) and already injects appids into package 0
-  (`load_package_hook` + `package_zero_finder`), so those parts of the pipeline
-  are runtime-covered.
+  (`package_zero_finder` — the `load_package_hook` is diagnostic-only and does
+  not inject, see the note further down), so those parts of the pipeline are
+  runtime-covered.
 - **steamidra_lite cannot be deleted.** It still owns the artifacts no lumalinux
   hook covers: SLSsteam `AdditionalApps`/`AppTokens` (ownership), the `.acf`,
   and staging the `.manifest` files into `depotcache/`. So this is a
@@ -268,11 +269,30 @@ without it Steam reports "0 target depots" and marks the app installed with 0 B.
 | Approach | `LoadPackage` hook | **Active finder (polls the cache BST)** |
 | Timing | Fragile (early/cold/late) → needs a manual re-inject | **Robust** — catches package 0 whenever it appears |
 | Slow login | Can miss the event | Waits for it (polls forever) |
+| Build-dependent constants | **None** — Steam hands it the pointer | **Seven class offsets** it has to know (`0xc58`, `0xc6c`, node `0x18`, `+0x38`, …) |
+| When its assumptions break | The hook simply does not fire | Refuses to inject and says so (fail-closed) |
 
 Both discovered the same cold-cache / late-load problem and solved it
 differently: moon patches *around* the hook (manual re-inject + reconcile);
 lumalinux drops the hook and polls. lumalinux's approach is cleaner and
 timing-robust. **Nothing to port for the mechanism itself.**
+
+**But the verdict is not free, and the last two rows are the price** (added
+2026-09-08, after auditing the finder end to end — RESEARCH §13.5.a). Being
+*active* means deriving the pointer ourselves, and deriving it means knowing
+where Steam's fields live: seven class offsets, of which five cannot be
+validated by any tool because the binary has no symbols. moon pays none of that
+because it lets Steam hand it the pointer. So the trade is real: we win on
+timing and lose on coupling to Steam's layout.
+
+What the audit changed is the *failure* behaviour, not the trade. The finder
+now resolves UNIQUE-or-nothing on both derived addresses, cross-checks the
+object's own `PackageId` before writing, and stands down with a log line rather
+than acting on a guess. Since it is the **sole** injector, standing down means
+gate 3 stays shut and the install shows "0 target depots" with everything else
+green — noisy in the log, harmless in memory. That is the intended shape:
+writing a wrong pointer into Steam's heap is a worse outcome than not
+installing.
 
 ## Ported: moon's licence reconcile (no-restart Add Game)
 
