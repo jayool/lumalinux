@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Unit test for the cache-access idiom locator — the finder's only route to
+# CPackageInfoCache. Uses synthetic exec segments, so it needs no real
+# steamclient.so and runs anywhere.
+#
+#   python3 tools/test_cache_idiom.py     # from the repo root
+#
+# WHY THIS EXISTS
+# ---------------
+# The same 14-byte idiom is recognised in FOUR places, and they drifted:
+#
+#   src/hooks/package_zero_finder.cpp   FindCacheGlobalDisp   (the runtime)
+#   tools/check_patterns.py             verify_cache_idiom    (the nightly gate)
+#   tools/derive_patterns.py            verify_finder_cache_idiom (the Ghidra leg)
+#   tools/experiment_cache_idiom.py     scan_idiom            (the offline probe)
+#
+# Before 2026-09-08 the two CI legs checked only the three opcodes — not the mod
+# fields, not the rm exclusions, not the register chaining — so they were LOOSER
+# than the runtime and could green-light a build the Deck then refuses. A gate
+# that passes what the product rejects is worse than no gate.
+#
+# So this test does two things: it pins the PREDICATES (what counts as a match)
+# and it pins the AGREEMENT between the implementations. Adding a rule to one
+# and not the others must fail here.
+#
+# The idiom, 14 bytes:
+#   8D /r mod=10 disp32        lea  r1,[GOT + X]      <- X is what we want
+#   8B /r mod=00               mov  r2,[r1]
+#   8B /r mod=10 58 0C 00 00   mov  r3,[r2 + 0xc58]   <- 0xc58 is the anchor
+# plus CHAINED registers: reg(lea)==rm(mov1) and reg(mov1)==rm(mov2).
+# Deliberately NOT required: a fixed base register for the lea — the two real
+# sites on bc54101b29 use different ones (esi and eax).
+import os
+import struct
+import subprocess
+import sys
+import tempfile
+import textwrap
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from check_patterns import (classify_cache_idiom, emit_rvas_file,  # noqa: E402
+                            verify_cache_idiom)
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VADDR = 0x1000
+fails = 0
+
+
+def check(cond, msg):
+    global fails
+    print(("ok   " if cond else "FAIL ") + msg)
+    if not cond:
+        fails += 1
+
+
+# ── byte builders ────────────────────────────────────────────────────────────
+
+def chained(disp, lea_base=3):
+    """A real idiom. lea_base picks the GOT register (3=ebx, 0=eax, 6=esi) —
+    varying it must NOT change the outcome."""
+    m1 = 0x80 | (1 << 3) | lea_base   # mod=10 reg=ecx rm=<base>  lea ecx,[base+d]
+    m2 = 0x00 | (2 << 3) | 1          # mod=00 reg=edx rm=ecx     mov edx,[ecx]
+    m3 = 0x80 | (0 << 3) | 2          # mod=10 reg=eax rm=edx     mov eax,[edx+0xc58]
+    return (bytes([0x8D, m1]) + struct.pack("<i", disp) +
+            bytes([0x8B, m2, 0x8B, m3, 0x58, 0x0C, 0x00, 0x00]))
+
+
+def unchained(disp):
+    """Right shapes, unrelated registers: lea esi,[eax+d]; mov edi,[ecx];
+    mov eax,[edx+0xc58]. This is what the pre-2026-09-08 opcode-only check
+    accepted, and every such accident is a bogus candidate X."""
+    return (bytes([0x8D, 0xB0]) + struct.pack("<i", disp) +
+            bytes([0x8B, 0x39, 0x8B, 0x82, 0x58, 0x0C, 0x00, 0x00]))
+
+
+def bad_mod(disp):
+    """mod=01 on the lea (8-bit displacement): the instruction is 3 bytes, not
+    6, so the 0xc58 would not be where we think. Must be rejected."""
+    return (bytes([0x8D, 0x4B]) + struct.pack("<i", disp) +
+            bytes([0x8B, 0x11, 0x8B, 0x82, 0x58, 0x0C, 0x00, 0x00]))
+
+
+def naked_needle():
+    """The 0xc58 anchor with no idiom in front — a field at offset 0xc58 of some
+    other class, which is exactly the collision the anchor cannot rule out."""
+    return b"\x90" * 10 + bytes([0x58, 0x0C, 0x00, 0x00])
+
+
+def seg(*chunks):
+    buf = bytearray()
+    for c in chunks:
+        buf += c
+        buf += b"\x90" * 8
+    return [(VADDR, bytes(buf))]
+
+
+# ── the Ghidra leg, extracted from its own file ──────────────────────────────
+# derive_patterns.py runs under Jython inside Ghidra, so it cannot be imported.
+# We lift its predicate block verbatim and drive it with a byte buffer: if
+# someone edits the predicates there and not here, this stops matching.
+
+def ghidra_scan(segments):
+    src = open(os.path.join(REPO, "tools", "derive_patterns.py")).read()
+    i = src.index("            # Same predicates as Hooks::PackageZeroFinder")
+    j = src.index("            matches.append((base, disp))") + \
+        len("            matches.append((base, disp))")
+    block = textwrap.dedent(src[i:j])
+    ns = {}
+    exec("def _scan(buf, vaddr):\n"
+         "    def b(a, o): return buf[a + o]\n"
+         "    matches = []\n"
+         "    needle = bytes([0x58, 0x0C, 0x00, 0x00]); start = 0\n"
+         "    while True:\n"
+         "        h = buf.find(needle, start)\n"
+         "        if h < 0: break\n"
+         "        start = h + 1\n"
+         "        if h < 10: continue\n"
+         "        base = h - 10\n"
+         "        if base + 14 > len(buf): continue\n"
+         + textwrap.indent(block, "        ") + "\n"
+         "    return [(vaddr + bs, d) for bs, d in matches]\n", ns)
+    return sorted(x for v, b in segments for x in ns["_scan"](b, v))
+
+
+# ── the C++ leg, extracted from its own file ─────────────────────────────────
+# Compiled 64-bit with the surrounding stubs: the function only walks bytes, so
+# pointer width is irrelevant to what it decides. Skipped if g++ is missing.
+
+CXX_HARNESS = r'''
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstddef>
+struct ScRange { uintptr_t base = 0; std::size_t size = 0; };
+constexpr std::size_t kCacheRootIdxOff = 0xc58;
+namespace Log { void Info(const char*, ...) {} void Error(const char*, ...) {} }
+%(FN)s
+int main(int argc, char** argv) {
+    static uint8_t buf[65536];
+    std::size_t n = 0; FILE* f = fopen(argv[1], "rb");
+    if (!f) return 2;
+    n = fread(buf, 1, sizeof(buf), f); fclose(f);
+    ScRange rx; rx.base = (uintptr_t)buf; rx.size = n;
+    printf("%%d\n", (int)FindCacheGlobalDisp(rx));
+    return 0;
+}
+'''
+
+
+def build_cxx():
+    """Compile FindCacheGlobalDisp exactly as it stands in the .cpp. Returns the
+    binary path, or None if there is no compiler."""
+    try:
+        subprocess.run(["g++", "--version"], capture_output=True, check=True)
+    except Exception:
+        return None
+    src = open(os.path.join(REPO, "src", "hooks", "package_zero_finder.cpp")).read()
+    i = src.index("constexpr int kMaxDistinctDisp")
+    j = src.index("// ============================================================"
+                  "=================\n// Readability gate")
+    tmp = tempfile.mkdtemp()
+    cpp, exe = os.path.join(tmp, "h.cpp"), os.path.join(tmp, "h")
+    with open(cpp, "w") as f:
+        f.write(CXX_HARNESS % {"FN": src[i:j]})
+    r = subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-o", exe, cpp],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(r.stderr)
+        return None
+    return exe
+
+
+def cxx_disp(exe, segments):
+    blob = segments[0][1]
+    tmp = tempfile.mktemp()
+    with open(tmp, "wb") as f:
+        f.write(blob)
+    out = subprocess.run([exe, tmp], capture_output=True, text=True).stdout.strip()
+    return int(out) & 0xFFFFFFFF
+
+
+# ── cases ────────────────────────────────────────────────────────────────────
+
+X, Y = 0x3b7d4, 0x18240
+
+CASES = [
+    # (name, segments, expected status, expected distinct disps)
+    ("one chained site", seg(chained(X)), "UNIQUE", [X]),
+    ("two sites, same disp", seg(chained(X), chained(X, lea_base=0)), "UNIQUE", [X]),
+    ("two sites, different disps", seg(chained(X), chained(Y)), "AMBIGUOUS", [Y, X]),
+    ("unchained garbage only", seg(unchained(Y)), "NOT_FOUND", []),
+    ("unchained garbage + one good", seg(unchained(Y), chained(X)), "UNIQUE", [X]),
+    ("wrong mod on the lea", seg(bad_mod(X)), "NOT_FOUND", []),
+    ("bare 0xc58, no idiom", seg(naked_needle()), "NOT_FOUND", []),
+    ("empty", seg(b"\x90" * 32), "NOT_FOUND", []),
+]
+
+
+def main():
+    exe = build_cxx()
+    if exe is None:
+        print("note: no g++ — the C++ leg is skipped (python legs still run)")
+
+    for name, segs, want_status, want_disps in CASES:
+        idiom = verify_cache_idiom(segs)
+        status, disps = classify_cache_idiom(idiom)
+        check(status == want_status,
+              "%-34s check_patterns -> %s" % (name, status))
+        check(sorted(d & 0xFFFFFFFF for d in disps) ==
+              sorted(d & 0xFFFFFFFF for d in want_disps),
+              "%-34s disps %s" % (name, [hex(d & 0xFFFFFFFF) for d in disps]))
+        check(sorted(idiom) == ghidra_scan(segs),
+              "%-34s derive_patterns agrees" % name)
+        if exe is not None:
+            want = disps[0] & 0xFFFFFFFF if status == "UNIQUE" else 0
+            check(cxx_disp(exe, segs) == want,
+                  "%-34s C++ returns 0x%x" % (name, want))
+
+    # The lea's base register must not matter: pinning it would have discarded a
+    # real site on bc54101b29 (esi at 0xfdd2dd, eax at 0x18964e5).
+    for base, reg in ((3, "ebx"), (0, "eax"), (6, "esi")):
+        st, dd = classify_cache_idiom(verify_cache_idiom(seg(chained(X, base))))
+        check(st == "UNIQUE" and (dd[0] & 0xFFFFFFFF) == X,
+              "GOT register %-4s is accepted" % reg)
+
+    # The feed must publish X only when every site agreed on it, and must not be
+    # revived by a stale pre-2026-09-08 "PRESENT".
+    for status, disps, want in (("UNIQUE", ["0x3b7d4"], True),
+                                ("AMBIGUOUS", ["0x3b7d4", "0x18240"], False),
+                                ("NOT_FOUND", [], False),
+                                ("PRESENT", ["0x3b7d4"], False)):
+        d = tempfile.mkdtemp()
+        emit_rvas_file({"steamclient_sha256": "0" * 64, "hooks": {}, "rtti": {},
+                        "finder": {"cache_idiom": {"status": status,
+                                                   "distinct_disp32": disps,
+                                                   "sites_total": len(disps),
+                                                   "sites": []}}},
+                       d, "0")
+        txt = open(os.path.join(d, "0" * 64 + ".yaml")).read()
+        check(("cache_global_disp" in txt) == want,
+              "feed publishes X on %-9s -> %s" % (status, want))
+
+    print("\n%s" % ("FAILURES: %d" % fails if fails else "all ok"))
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

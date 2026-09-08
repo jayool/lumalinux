@@ -44,6 +44,19 @@ jobs:
             cmake \
             ninja-build
 
+      # Nothing ran tools/test_*.py until 2026-09-08: three unit tests existed
+      # and no workflow invoked them, so they could rot silently. They are cheap
+      # (synthetic inputs, no steamclient.so, no network) and they pin things a
+      # compile cannot — above all that the four implementations of the
+      # cache-access idiom still agree, which is exactly what had drifted.
+      - name: Unit tests (synthetic inputs, no steamclient.so needed)
+        run: |
+          set -e
+          for t in tools/test_*.py; do
+            echo "== $t"
+            python3 "$t"
+          done
+
       - name: Fetch libmem (pinned release tarball)
         run: ./tools/fetch_libmem.sh
 

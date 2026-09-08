@@ -41,6 +41,52 @@ constexpr std::size_t kNodeSize        = 0x18;
 
 constexpr int kMaxTreeDepth = 64;
 
+// =============================================================================
+// KNOWN LIMITS — audited 2026-09-08, accepted rather than fixed
+// =============================================================================
+// Recorded so they are not rediscovered one at a time. Numbering matches the
+// audit table in RESEARCH §13.5.
+//
+// [14] FIVE OF THE SEVEN OFFSETS ABOVE ARE VERIFIED BY NOBODY. CI checks 0xc58
+//      only, and only as a byte anchor inside the cache-access idiom — never as
+//      a struct offset. 0xc6c, 0x10, 0x14, 0x18 and load_package_hook.hpp's
+//      0x38 are checked by no tool at all; "verified across 7c4ac73e and
+//      db0d79c2" above means a human did it once, two builds ago.
+//      This is not an oversight we can close: field offsets inside a node are
+//      invisible in a stripped binary without decompiling it, so CI cannot
+//      derive them. The practical mitigation is [9] below — cross-check the
+//      object we reach against its own PackageId — not more static checking.
+//
+// [15] THE TREE WALK HAS NO CONSISTENCY CONTROL. `nodes` is read once and then
+//      indexed for up to kMaxTreeDepth iterations while Steam may be mutating
+//      or reallocating the array from another thread. IsReadable() stops a
+//      crash on unmapped memory, but not garbage read out of freed-but-still-
+//      mapped memory. Realistically that yields a STALE-but-real PackageInfo
+//      (harmless to append to); reaching an object of another type takes more
+//      coincidence. Same mitigation as [14].
+//
+// [17] GetSteamclientRx() returns lo..hi across every r-x mapping of the
+//      module, so it would read across a non-readable gap between two of them.
+//      Safe on every build seen: steamclient.so has a SINGLE executable
+//      PT_LOAD (readelf -lW on bc54101b29). If that ever stops being true this
+//      is a SIGSEGV, not a wrong answer.
+//
+// [16] …and it looks for "r-x" anywhere in the maps line rather than in the
+//      permissions field, so a path containing "r-x" would match. No such path
+//      exists today.
+//
+// [19] In FindPackage0's descent, `cur = (0 < key) ? left : right` always takes
+//      the left branch: key is unsigned and the key==0 case returned already.
+//      Correct here — 0 is the minimum, so package 0 is the leftmost node — but
+//      it is written as a general search that is not general. Do not copy it.
+//
+// [20] kMaxTreeDepth assumes a roughly balanced tree (log2(a few thousand) is
+//      ~12). A degenerate leftmost chain longer than 64 would make us give up
+//      on a package that is there. Never observed.
+//
+// [21] IsReadable(pkg, 0x50) — 0x50 is a round number that covers AppIdVec
+//      (0x38 + 16 = 0x48) with margin, not a measured object size.
+
 // Worker cadence. We poll FOREVER (never give up): PackageId=0 only exists once
 // the user has logged in and Steam has loaded the licence set, and a slow login
 // must NOT break the install — the old 5-min cap did exactly that (log in at

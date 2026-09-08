@@ -900,6 +900,49 @@ Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
 per-build offsets, everything reconstructed from stable anchors (the
 hook-surviving GMRC prologue tail and the `0xc58` class-layout offset).
 
+#### 13.5.a Auditoría del localizador (2026-09-08)
+
+El localizador de arriba se auditó entero: las nueve funciones de
+`package_zero_finder.cpp`, su superficie de CI y las cadenas de log que
+`maintenance.md` usa para el triaje. La auditoría de partida traía 3 hallazgos;
+el barrido completo sacó 20. Se apunta la lista **con el juicio de utilidad**,
+porque no pesan igual: cuatro merecían código y el resto son nits o riesgos
+asumidos.
+
+| # | hallazgo | juicio | estado |
+|---|---|---|---|
+| 1 | `FindCacheGlobalDisp` se quedaba con el **primer** `disp32` cuando varios discrepaban, y con ese número construía la dirección donde escribe | seguro futuro; el build medido ya era único | **hecho** |
+| 2 | el log salía **idéntico** con sitios coincidentes y discrepantes, así que nadie podía saber en qué caso estaba | real: es por lo que el 1 estuvo invisible | **hecho** |
+| 4 | no se comprobaba que las tres instrucciones estuvieran **encadenadas**, sólo su forma | necesario junto al 1 | **hecho** |
+| 5 | las dos ramas del `else` eran idénticas: la distinción "ambiguo" estaba documentada y no existía | síntoma del 1 | **hecho** |
+| 6 | reescaneo de ~32 MB **cada 2 s, eterno**, cuando el escaneo no resolvía | sólo en el camino de fallo | **hecho** |
+| 10 | el triaje de `maintenance.md` citaba cadenas de log que los cambios borraron | autoinfligido | **hecho** |
+| 3 | el CI no comparaba los `disp32` que recogía: `AMBIGUOUS` pasaba en verde | **alto** — el CI es el único vigilante continuo | **hecho** |
+| 9′ | el CI reconocía **menos** que el runtime (sólo opcodes), y `derive_patterns.py` igual: aprobaba lo que la Deck rechaza | **alto** | **hecho** |
+| 7 | `DeriveGotBase` también devuelve la **primera** coincidencia, sin exigir unicidad — y está **aguas arriba** del 1 | seguro futuro | pendiente |
+| 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | pendiente |
+| 11 | el triaje busca `outcome=pattern_miss`, que sólo emite `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no caza los dos hooks críticos** | **real, hoy** | pendiente |
+| 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético | pendiente |
+| 13 | `InjectDepots` **no comprueba `PkgId(pInfo)==0`** aunque el valor ya se lee para el log: dos fuentes independientes, una usada | **único del camino vivo**; una línea | pendiente |
+| 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |
+| 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
+| — | `0xc58` hace **doble papel**: identifica el idiom *y* es el offset que leemos después. Si Steam mueve el campo, fallan a la vez y el diagnóstico dirá "no encontrado" | estructural | abierta |
+
+**Y una asimetría que ninguna pieza cierra todavía:** DepotKey y GMRC resuelven
+`ficha → patrón (único o nada) → rescate`. El finder no lee la ficha. El CI
+publica `finder.cache_global_disp` en cada `res/rvas/*.yaml`, está documentado en
+`rva-feed-design.md`, steamflipper lo corrobora por otro método
+(`steamflipper-analysis.md` §735) — y `grep -rn cache_global_disp src/` da cero.
+El finder escanea 32 MB en cada arranque para calcular un número que ya tiene
+escrito en su ficha.
+
+**Lección de método**, porque el patrón de los hallazgos lo dice solo: la
+auditoría inicial miró **una función**, no el subsistema. Los diez que faltaban
+no fueron apareciendo — estaban todos ahí, y se fueron tropezando de uno en uno
+al implementar. Lo que faltó fue barrer el fichero entero, contrastar código
+contra documentación, y comparar CI contra runtime en los dos sentidos. Las tres
+cosas son mecánicas.
+
 ### 13.6 End-to-end verification (Brotato, 1942280)
 
 Clean test on the codespace with v0.10.11 and a fresh zip. The runtime

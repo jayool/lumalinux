@@ -336,6 +336,20 @@ def verify_cache_idiom(segments):
 
 # ── status helpers ───────────────────────────────────────────────────────────
 
+def classify_cache_idiom(idiom):
+    """(status, sorted distinct disp32) for verify_cache_idiom's output.
+
+    Classify over DISTINCT disp32 values, not over site count: many sites all
+    naming the same X is the healthy shape (2 on bc54101b29, and 2 on the
+    v0.10.11 build captured in RESEARCH §13.5). What the finder cannot survive
+    is sites that disagree, because FindCacheGlobalDisp then refuses to resolve.
+
+    Lives here rather than inline in main() so tools/test_cache_idiom.py can
+    pin it."""
+    disps = sorted({d for _, d in idiom})
+    return ("NOT_FOUND" if not idiom else classify_hit_count(len(disps))), disps
+
+
 def classify_hit_count(n):
     if n == 1:
         return "UNIQUE"
@@ -926,8 +940,7 @@ def main():
     # site count: many sites all naming the same X is the healthy shape (2 on
     # bc54101b29, 2 on the v0.10.11 build in RESEARCH §13.5).
     idiom = verify_cache_idiom(segments)
-    idiom_disps = sorted({d for _, d in idiom})
-    idiom_status = "NOT_FOUND" if not idiom else classify_hit_count(len(idiom_disps))
+    idiom_status, idiom_disps = classify_cache_idiom(idiom)
     result["finder"]["cache_idiom"] = {
         "status": idiom_status,
         "sites_total": len(idiom),
