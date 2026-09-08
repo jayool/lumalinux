@@ -164,13 +164,24 @@ jobs:
             *.tar.gz) tar xzf bootstrapper.bin -C steam-boot ;;
             *.deb)    ( cd steam-boot && ar x ../bootstrapper.bin && tar xf data.tar.* ) ;;
           esac
-          echo "── what came out ──"
-          find steam-boot -maxdepth 4 \( -name 'steam.sh' -o -name 'steam' -o -name '*.tar.xz' \) | head -20
-          SH=$(find steam-boot -name steam.sh | head -1)
-          test -n "$SH" || { echo "ERROR: no steam.sh inside the bootstrapper"; find steam-boot -maxdepth 4 | head -60; exit 1; }
+
+          # steam.sh is NOT in the launcher package: that package ships
+          # bootstraplinux_ubuntu12_32.tar.xz, and the Debian postinst unpacks it
+          # into ~/.local/share/Steam — steam.sh comes out of THAT. Run 9 looked
+          # for steam.sh in the package itself and found only bin_steam.sh (the
+          # /usr/bin/steam wrapper), which is why it bailed with the bootstrap
+          # sitting right there unused.
+          BOOT=$(find steam-boot -name 'bootstraplinux_ubuntu12_32.tar.xz' | head -1)
+          test -n "$BOOT" || { echo "ERROR: no bootstraplinux_ubuntu12_32.tar.xz in the package"; find steam-boot -maxdepth 4 | head -60; exit 1; }
+          echo "bootstrap=$BOOT ($(stat -c%s "$BOOT") bytes)"
+          mkdir -p /tmp/fakehome/.local/share/Steam
+          tar xJf "$BOOT" -C /tmp/fakehome/.local/share/Steam
+          echo "── unpacked into the fake HOME's Steam dir ──"
+          ls -la /tmp/fakehome/.local/share/Steam | head -20
+          SH=/tmp/fakehome/.local/share/Steam/steam.sh
+          test -x "$SH" || { echo "ERROR: no executable steam.sh after unpacking the bootstrap"; find /tmp/fakehome/.local/share/Steam -maxdepth 2 | head -40; exit 1; }
           echo "steam.sh=$SH"
-          echo "STEAM_SH=$PWD/$SH" >> "$GITHUB_ENV"
-          echo "STEAM_DIR=$PWD/$(dirname "$SH")" >> "$GITHUB_ENV"
+          echo "STEAM_DIR=/tmp/fakehome/.local/share/Steam" >> "$GITHUB_ENV"
 
       - name: Set up fake HOME
         run: |
@@ -194,6 +205,7 @@ jobs:
           EOF
           mkdir -p /tmp/fakehome/.steam /tmp/fakehome/.local/share/Steam
           ln -sf /tmp/fakehome/.local/share/Steam /tmp/fakehome/.steam/steam
+          echo "Steam dir already holds the unpacked bootstrap:"; ls /tmp/fakehome/.local/share/Steam | head
 
       # Boot Steam with EXACTLY the environment setup.sh puts on a Deck
       # (luma_set_injection_env): LD_AUDIT=library-inject:SLSsteam and
