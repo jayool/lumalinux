@@ -88,10 +88,33 @@ def emit_rvas_file(result, out_dir, steam_version):
     # published whichever came first in the binary. Gating on UNIQUE also keeps
     # the field alive across the status rename: "PRESENT" no longer exists, so
     # leaving this as it was would have silently stopped emitting it.
-    ci = result.get("finder", {}).get("cache_idiom", {})
+    #
+    # The finder needs TWO numbers, and until 2026-09-08 only the first was
+    # published, so a build with a feed entry still scanned the whole 32 MB r-x
+    # span to derive the GOT. got_rva closes that: it is the GOT base derived
+    # from the GMRC prologue tail, in the same file-vaddr space as the hook RVAs
+    # above (verify_gmrc_got returns rva(0x05) + imm32), so the runtime
+    # translates it with VaddrXlate exactly like a hook — see the note in
+    # rva_feed.cpp about why it still must NOT go through Resolve()'s .text
+    # guard: .got is not executable.
+    #
+    # Both fields gate on UNIQUE, and on their OWN anchor's verdict: a build
+    # whose idiom is ambiguous can still have an unambiguous GOT, and publishing
+    # the half we are sure of is strictly better than publishing neither. (In
+    # practice a BLOCKING verdict stops this function being called at all; this
+    # keeps the fields independent anyway, so that stays a policy decision in the
+    # caller rather than an accident of how they are written.)
+    finder = result.get("finder", {})
+    ci = finder.get("cache_idiom", {})
+    gt = finder.get("gmrc_tail", {})
+    finder_lines = []
     if ci.get("status") == "UNIQUE" and ci.get("distinct_disp32"):
-        out += ["finder:",
-                '  cache_global_disp: "%s"' % ci["distinct_disp32"][0]]
+        finder_lines.append('  cache_global_disp: "%s"' % ci["distinct_disp32"][0])
+    if gt.get("status") == "UNIQUE" and gt.get("distinct_got"):
+        finder_lines.append('  got_rva: "%s"' % gt["distinct_got"][0])
+    if finder_lines:
+        out.append("finder:")
+        out.extend(finder_lines)
 
     path = os.path.join(out_dir, sha + ".yaml")
     with open(path, "w", encoding="utf-8") as f:

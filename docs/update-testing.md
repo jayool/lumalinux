@@ -264,10 +264,12 @@ touching hooking code, a resolver, or the finder.
    ```
 
    Healthy: `3/3 hooks active`, one `outcome=installed` per hook,
-   `PKG0_FINDER: GOT UNIQUE`, `cache-access idiom UNIQUE`,
    `Finder resolve: … outcome=resolved`, and a
    `PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{size=N}` with a non-empty
-   appid list.
+   appid list. The `PKG0_FINDER: GOT UNIQUE` / `cache-access idiom UNIQUE`
+   lines are emitted by the **scans**, so their absence is not a failure — it
+   means the RVA feed answered instead. `got_method=` / `disp_method=` on the
+   resolve line say which.
 
 5. If the change touches installs, keep going into Part 1 — a library that
    loads and hooks can still get the depot logic wrong.

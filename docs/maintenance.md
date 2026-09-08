@@ -463,14 +463,14 @@ implementations together and extend `tools/test_cache_idiom.py` with a case
 that reproduces the ambiguity. Until that lands the finder is off, but hooks
 and the rest of the plugin are unaffected.
 
-**Bypass while you work on it**: if `check_patterns.py` reported a `UNIQUE`
-disp32 for the build, the RVA feed can carry it and the runtime skips the idiom
-scan on that binary — see `docs/rva-feed-design.md`, key
-`finder.cache_global_disp`. That turns a broken idiom into a data fix, no
-release needed. Two limits: it covers **only** the idiom, not the GOT
-derivation (`finder.got_rva` is not published yet), so a `GOT NOT_FOUND` still
-needs a build; and it does **not** help on `AMBIGUOUS`, because in that case CI
-has no `UNIQUE` value to publish in the first place.
+**Bypass while you work on it**: whichever half `check_patterns.py` resolved
+`UNIQUE` for this build, the RVA feed carries it and the runtime skips that
+scan — `finder.cache_global_disp` for the idiom, `finder.got_rva` for the GOT
+(see `docs/rva-feed-design.md`). They are independent, so a `NOT_FOUND` on one
+anchor can be worked around by data while the other keeps working normally, and
+a `NOT_FOUND` on either becomes a feed fix rather than a release. The limit is
+`AMBIGUOUS`: there CI has no `UNIQUE` value to publish in the first place, so
+there is nothing to fall back to — which is the point, not a gap.
 
 **Manual on-device validation** (the procedure that validated the 2026-09-08
 rework; do this before releasing a finder change — no CI job covers it,
@@ -502,9 +502,13 @@ see `docs/update-testing.md`):
         ~/.cache/lumalinux/lumalinux.log
    ```
 
-   A healthy run shows `3/3 hooks active`, `GOT UNIQUE`, `cache-access idiom
-   UNIQUE`, `Finder resolve: … outcome=resolved` and a `PKG0_FINDER: HIT
-   pkg=… PackageId=0 AppIdVec{size=N}` with a non-empty appid list.
+   A healthy run shows `3/3 hooks active`, `Finder resolve: … outcome=resolved`
+   and a `PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{size=N}` with a non-empty
+   appid list. Whether you also see `GOT UNIQUE` / `cache-access idiom UNIQUE`
+   depends on the feed: those lines come from the **scans**, and a build with a
+   complete feed entry runs neither. `got_method=` / `disp_method=` on the
+   resolve line say which half came from where — `rva` means the feed answered,
+   `scan` means it did not and the scan did.
 
 Worth opening an issue with the failing log line so the diagnostic landing
 in the next release is sharper.

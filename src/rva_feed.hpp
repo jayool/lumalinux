@@ -30,4 +30,24 @@ uintptr_t Resolve(const char* hookName);
 // address, would be wrong here. Same feed, different kind of number.
 int32_t CacheGlobalDisp();
 
+// The package-0 finder's GOT base for THIS build (feed key `finder.got_rva`),
+// already translated to a runtime address, or 0 when the feed has no usable
+// value — in which case the finder derives it by scanning the GMRC prologue
+// tail, as it always did.
+//
+// This is the OTHER half of the finder's addressing, and it is a different kind
+// of number from CacheGlobalDisp() above, which is why it gets its own accessor
+// rather than sharing either of the two that exist:
+//
+//   - unlike CacheGlobalDisp(), this IS an address, not a displacement. It is
+//     load-address-relative, so it must go through VaddrXlate exactly like a
+//     hook RVA. Returning the raw feed value would hand the finder a file
+//     offset and it would derive a garbage cache pointer from it.
+//   - unlike Resolve(), the address is NOT in .text — it is the module's `.got`,
+//     which is readable and writable but not executable. Resolve()'s
+//     inSteamclientExec() guard is exactly right for a detour target and would
+//     reject every correct value here, so this validates against the module's
+//     whole mapping instead.
+uintptr_t GotBase();
+
 } // namespace RvaFeed

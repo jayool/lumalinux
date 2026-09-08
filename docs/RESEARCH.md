@@ -950,6 +950,9 @@ Two more properties worth stating, because both were decisions:
 
 Scale note, since it justifies preferring the RVA feed: the `r-x` span being
 scanned is a **single** `LOAD R E` segment of `0x1ffe574` bytes ≈ **32 MB**.
+Both derivations are **feed-first** since 2026-09-08 (`finder.cache_global_disp`
+and `finder.got_rva`), each falling back to its own scan, so on a build the CI
+has already seen neither scan runs at all.
 
 #### 13.5.a Auditoría del localizador (2026-09-08)
 
@@ -995,11 +998,26 @@ recalcular un número ya escrito. Ahora el finder hace `ficha → escaneo`
 (`RvaFeed::CacheGlobalDisp()`), con el mismo criterio de no revalidar la ficha
 contra el escaneo que se fijó en `ec9e840` para DepotKey.
 
-**Lo que queda de esa asimetría:** el GOT se sigue derivando escaneando, porque
-depende de la base y la ficha no publica ningún RVA para él. O sea que la ficha
-reduce el trabajo a la mitad, no lo elimina. Publicar `finder.got_rva` lo
-cerraría: `check_patterns.py` ya lo calcula (`verify_gmrc_got`, campo
-`distinct_got`).
+**Y la otra mitad, cerrada también (2026-09-08).** Quedaba el GOT, que se seguía
+derivando escaneando porque la ficha no publicaba ningún RVA para él. Ya lo
+publica (`finder.got_rva`, desde `verify_gmrc_got`/`distinct_got`) y el finder lo
+lee por `RvaFeed::GotBase()`. En un build con ficha completa el finder **no
+escanea código en absoluto**.
+
+El detalle que no es simétrico, y donde estaba el error fácil: el `disp` es una
+constante que se usa tal cual, pero el GOT es una **dirección**, o sea que hay que
+traducirla por `VaddrXlate` igual que un RVA de hook. Y aun así no es un hook:
+cae en `.got`, que está mapeada y es escribible pero **no ejecutable**, así que la
+guarda `inSteamclientExec()` de `Resolve()` rechazaría todos los valores
+correctos. `GotBase()` traduce como `Resolve()` y valida contra el mapeo
+**entero** del módulo. Equivocarse ahí no habría fallado en voz alta: habría
+producido un puntero de caché de aspecto plausible construido sobre un offset de
+fichero.
+
+Las dos claves se publican **por separado**, cada una según el veredicto de su
+propia ancla: un build con el idiom ambiguo puede tener el GOT único, y publicar
+la mitad de la que estamos seguros es mejor que no publicar nada. El runtime cae
+al escaneo por número, no todo o nada.
 
 **Lección de método**, porque el patrón de los hallazgos lo dice solo: la
 auditoría inicial miró **una función**, no el subsistema. Los diez que faltaban

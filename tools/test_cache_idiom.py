@@ -344,6 +344,51 @@ def main():
         check(("cache_global_disp" in txt) == want,
               "feed publishes X on %-9s -> %s" % (status, want))
 
+    # got_rva, the finder's OTHER number, gates on its OWN anchor's verdict.
+    for status, gots, want in (("UNIQUE", ["0x2f4a34c"], True),
+                               ("AMBIGUOUS", ["0x2f4a34c", "0x2f40000"], False),
+                               ("NOT_FOUND", [], False)):
+        d = tempfile.mkdtemp()
+        emit_rvas_file({"steamclient_sha256": "0" * 64, "hooks": {}, "rtti": {},
+                        "finder": {"gmrc_tail": {"status": status,
+                                                 "distinct_got": gots,
+                                                 "count": len(gots), "rvas": []}}},
+                       d, "0")
+        txt = open(os.path.join(d, "0" * 64 + ".yaml")).read()
+        check(("got_rva" in txt) == want,
+              "feed publishes GOT on %-9s -> %s" % (status, want))
+
+    # The two are independent: a build whose idiom is ambiguous can still have an
+    # unambiguous GOT, and half a ficha beats none. This is the case that would
+    # silently regress if someone folded them back into one `if`.
+    d = tempfile.mkdtemp()
+    emit_rvas_file({"steamclient_sha256": "0" * 64, "hooks": {}, "rtti": {},
+                    "finder": {"cache_idiom": {"status": "AMBIGUOUS",
+                                               "distinct_disp32": ["0x1", "0x2"],
+                                               "sites_total": 2, "sites": []},
+                               "gmrc_tail": {"status": "UNIQUE",
+                                             "distinct_got": ["0x2f4a34c"],
+                                             "count": 1, "rvas": []}}},
+                   d, "0")
+    txt = open(os.path.join(d, "0" * 64 + ".yaml")).read()
+    check("got_rva" in txt and "cache_global_disp" not in txt,
+          "one anchor ambiguous, the other unique -> only the unique half ships")
+
+    # And the header must not be emitted with nothing under it: `finder:` alone
+    # is a YAML null, which the runtime's `finder.IsMap()` check would reject —
+    # harmlessly, but it would also make a hand-inspected feed file misleading.
+    d = tempfile.mkdtemp()
+    emit_rvas_file({"steamclient_sha256": "0" * 64, "hooks": {}, "rtti": {},
+                    "finder": {"cache_idiom": {"status": "NOT_FOUND",
+                                               "distinct_disp32": [],
+                                               "sites_total": 0, "sites": []},
+                               "gmrc_tail": {"status": "NOT_FOUND",
+                                             "distinct_got": [], "count": 0,
+                                             "rvas": []}}},
+                   d, "0")
+    txt = open(os.path.join(d, "0" * 64 + ".yaml")).read()
+    check("finder:" not in txt, "no finder values -> no empty `finder:` header")
+
     print("\n%s" % ("FAILURES: %d" % fails if fails else "all ok"))
     return 1 if fails else 0
 

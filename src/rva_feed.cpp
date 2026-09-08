@@ -28,6 +28,7 @@ std::map<std::string, uintptr_t> g_hooks;    // hook name -> file vaddr (RVA)
 // either of those — so folding it in would have thrown the value away in cases
 // where it is perfectly usable.
 int32_t                          g_cacheGlobalDisp = 0;
+uintptr_t                        g_gotRva = 0;          // file vaddr, untranslated
 
 std::string cacheDir() {
     const char* home = std::getenv("HOME");
@@ -96,6 +97,15 @@ void load() {
                           static_cast<unsigned>(g_cacheGlobalDisp));
             }
         }
+        if (finder && finder.IsMap() && finder["got_rva"]) {
+            const unsigned long v = std::strtoul(
+                finder["got_rva"].as<std::string>().c_str(), nullptr, 16);
+            if (v) {
+                g_gotRva = static_cast<uintptr_t>(v);
+                Log::Info("RvaFeed: finder got_rva = 0x%lx from the feed",
+                          static_cast<unsigned long>(g_gotRva));
+            }
+        }
         YAML::Node hooks = root["hooks"];
         if (hooks && hooks.IsMap()) {
             for (auto it = hooks.begin(); it != hooks.end(); ++it) {
@@ -109,6 +119,7 @@ void load() {
         Log::Warn("RvaFeed: parse error (%s) — falling back to byte patterns", e.what());
         g_hooks.clear();
         g_cacheGlobalDisp = 0;
+        g_gotRva = 0;
         return;
     }
     if (g_hooks.empty()) { Log::Info("RvaFeed: feed has no hooks for %s", hash.c_str()); return; }
@@ -123,6 +134,26 @@ void load() {
 
 // Light, prologue-independent sanity: is `addr` inside an executable
 // steamclient.so mapping? Guards a feed RVA that translates into non-code.
+// Is `addr` inside ANY mapping of steamclient.so, whatever its permissions?
+//
+// The looser sibling of inSteamclientExec below, and it exists for exactly one
+// caller: the finder's GOT base, which lands in `.got` — mapped, readable,
+// writable, not executable. Checking it against the r-x span would reject every
+// correct value. This is a sanity check on a translated address, not a security
+// boundary: it catches a stale or malformed feed entry pointing outside the
+// module, which is what a wrong value looks like in practice.
+bool inSteamclientAny(uintptr_t addr) {
+    std::ifstream maps("/proc/self/maps");
+    std::string line;
+    while (std::getline(maps, line)) {
+        if (line.find("steamclient.so") == std::string::npos) continue;
+        unsigned long s = 0, e = 0;
+        if (std::sscanf(line.c_str(), "%lx-%lx", &s, &e) < 2) continue;
+        if (addr >= s && addr < e) return true;
+    }
+    return false;
+}
+
 bool inSteamclientExec(uintptr_t addr) {
     std::ifstream maps("/proc/self/maps");
     std::string line;
@@ -141,6 +172,36 @@ bool inSteamclientExec(uintptr_t addr) {
 int32_t CacheGlobalDisp() {
     std::call_once(g_once, load);
     return g_cacheGlobalDisp;      // no g_loaded gate: see the note on g_hooks
+}
+
+uintptr_t GotBase() {
+    std::call_once(g_once, load);
+    if (!g_gotRva) return 0;
+
+    // Translated like a hook RVA — it is an address in the same file-vaddr space
+    // — but validated against the module's whole mapping rather than its r-x
+    // span, because .got is not executable. See the header for why this is
+    // neither Resolve() nor CacheGlobalDisp().
+    //
+    // Note this does NOT gate on g_loaded, matching CacheGlobalDisp(): g_loaded
+    // is about the hook map, and a feed that carries a usable finder value but
+    // no usable hooks should still give the finder its number.
+    const uintptr_t rt = VaddrXlate::ToRuntime(g_gotRva);
+    if (!rt) {
+        Log::Warn("RvaFeed: finder got_rva 0x%lx did not translate — the finder "
+                  "will derive the GOT by scanning",
+                  static_cast<unsigned long>(g_gotRva));
+        return 0;
+    }
+    if (!inSteamclientAny(rt)) {
+        Log::Warn("RvaFeed: finder got_rva 0x%lx -> 0x%lx is outside steamclient's "
+                  "mappings — the finder will derive the GOT by scanning",
+                  static_cast<unsigned long>(g_gotRva), static_cast<unsigned long>(rt));
+        return 0;
+    }
+    Log::Info("RvaFeed: finder GOT via feed: rva 0x%lx -> 0x%lx",
+              static_cast<unsigned long>(g_gotRva), static_cast<unsigned long>(rt));
+    return rt;
 }
 
 uintptr_t Resolve(const char* hookName) {

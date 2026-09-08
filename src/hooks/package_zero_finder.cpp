@@ -496,6 +496,7 @@ void Run() {
     uintptr_t   got = 0;
     int32_t     disp = 0;
     const char* dispMethod = "none";   // how disp was obtained: rva | scan | none
+    const char* gotMethod  = "none";   // how got  was obtained: rva | scan | none
     uintptr_t   cacheGlobal = 0;
     bool      foundOnce = false;
 
@@ -552,12 +553,30 @@ void Run() {
                 // trying to skip and would warn loudest in the case where the
                 // feed is right and the compiled-in scan is the stale one.
                 //
-                // The GOT is still derived by scanning: it is base-dependent, and
-                // the feed publishes no got RVA yet. So the ficha halves the
-                // work, it does not remove it. Publishing finder.got_rva —
-                // check_patterns.py already computes it, verify_gmrc_got's
-                // distinct_got — would close that half too.
-                got = DeriveGotBase(rx);
+                // Both halves take the same shape. The GOT was the one left
+                // scanning until the feed learned to publish finder.got_rva:
+                // the number was always computable (check_patterns.py's
+                // verify_gmrc_got has it as distinct_got), it just was not
+                // written down, so every launch re-derived it by walking the
+                // span. Now both are ficha-first, and the scan is what happens
+                // when the ficha has nothing to say.
+                //
+                // Note the two feed values are NOT interchangeable in how they
+                // are consumed: the disp is a constant used as-is, while the GOT
+                // is an address that RvaFeed::GotBase() has already translated
+                // through VaddrXlate. Getting that wrong would not fail loudly —
+                // it would produce a plausible-looking cache pointer built from
+                // a file offset. The asymmetry lives in rva_feed, not here.
+                if (const uintptr_t feedGot = RvaFeed::GotBase()) {
+                    got = feedGot;
+                    gotMethod = "rva";
+                }
+                if (!got) {
+                    if (const uintptr_t scannedGot = DeriveGotBase(rx)) {
+                        got = scannedGot;
+                        gotMethod = "scan";
+                    }
+                }
                 if (got) {
                     if (const int32_t feed = RvaFeed::CacheGlobalDisp()) {
                         disp = feed;
@@ -584,12 +603,10 @@ void Run() {
                 // The prefix is "Finder resolve:", not "Hook install:", because
                 // this installs nothing — it resolves an address. Same reason
                 // outcome=resolved rather than installed. method= names the
-                // resolver that won, exactly as in the hooks; there is only one
-                // today, so it is always `scan`. If the finder ever reads
-                // finder.cache_global_disp from the RVA feed (published on every
-                // build, read by nobody — RESEARCH §13.5.a), this becomes
-                // method=rva|scan and lines up with the hooks' method=rva|pattern
-                // without touching the format.
+                // resolver that won, exactly as in the hooks: `rva` when the
+                // displacement came from the RVA feed, `scan` when it was
+                // recovered by scanning, lining up with the hooks'
+                // method=rva|pattern.
                 if (!disp) {
                     // The cause was logged by whichever step knows it (GOT above,
                     // or FindCacheGlobalDisp's NOT_FOUND/AMBIGUOUS). One line for
@@ -604,10 +621,20 @@ void Run() {
                 Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
                           (unsigned long)got, (unsigned)disp,
                           (unsigned long)cacheGlobal);
-                Log::Info("Finder resolve: name=PKG0Finder method=%s got=0x%lx "
-                          "disp=0x%x cache_global=0x%lx outcome=resolved",
-                          dispMethod, (unsigned long)got, (unsigned)disp,
-                          (unsigned long)cacheGlobal);
+                // method= stays a single field, because the triage question is
+                // "did this build need a scan at all?" and two fields would make
+                // that a join. It reports the WEAKER of the two halves: `rva`
+                // only when the ficha supplied both, otherwise `scan`. So
+                // method=scan means at least one half was scanned, and
+                // got_method=/disp_method= say which — printed alongside for
+                // when that is the actual question.
+                const char* method = (std::strcmp(gotMethod, "rva") == 0 &&
+                                      std::strcmp(dispMethod, "rva") == 0) ? "rva" : "scan";
+                Log::Info("Finder resolve: name=PKG0Finder method=%s got_method=%s "
+                          "disp_method=%s got=0x%lx disp=0x%x cache_global=0x%lx "
+                          "outcome=resolved",
+                          method, gotMethod, dispMethod, (unsigned long)got,
+                          (unsigned)disp, (unsigned long)cacheGlobal);
             }
 
             if (cacheGlobal) {

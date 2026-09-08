@@ -102,20 +102,23 @@ Notes:
   as the hooks. Consumed since 2026-09-08; before that it was published on every
   build and read by nobody, while the finder rescanned ~32 MB per launch to
   recompute it.
-- **`finder.got_rva` is missing, and that is why the feed only halves the
-  finder's work.** The finder needs *two* numbers — the GOT base and this
-  displacement — and the feed publishes only the second. So on a build with a
-  feed entry the idiom scan is skipped but the GOT derivation still scans the
-  32 MB `r-x` span, and a `GOT NOT_FOUND` still needs a rebuild rather than a
-  data fix. The number already exists: `check_patterns.py`'s `verify_gmrc_got`
-  computes it and `emit_rvas_file` has it in reach as `finder.gmrc_tail
-  .distinct_got`. What is missing is publishing it, and the runtime side —
-  which is **not** symmetric with `cache_global_disp`: the disp is a constant,
-  but a GOT *address* has to be translated through `VaddrXlate` like a hook RVA
-  (it is a load-address-relative address, not an offset), so it needs
-  `Resolve()`-style handling minus the `.text` guard, since `.got` is not
-  executable. Write it only when `gmrc_tail` classified **UNIQUE**, same rule
-  as everything else here.
+- `finder.got_rva` is the finder's **other** number, and it closes the half the
+  feed used to leave scanning (published and consumed since 2026-09-08). It is
+  the GOT base derived from the GMRC prologue tail, in the same file-vaddr space
+  as the hook RVAs — so unlike `cache_global_disp` it **is** an address and
+  **is** translated through `VaddrXlate`. But it is not a hook either: it points
+  into `.got`, which is mapped and writable and *not executable*, so
+  `Resolve()`'s `inSteamclientExec()` guard would reject every correct value.
+  It is read via `RvaFeed::GotBase()`, which translates like `Resolve()` and
+  then validates against the module's **whole** mapping (`inSteamclientAny()`)
+  instead of its `r-x` span. Written only when `gmrc_tail` classified
+  **UNIQUE**.
+- The two finder fields gate **independently**, each on its own anchor's
+  verdict. A build whose idiom is ambiguous can still have an unambiguous GOT,
+  and shipping the half we are sure of beats shipping neither — the runtime
+  falls back to scanning for whichever half is missing, per number, not
+  all-or-nothing. `tools/test_cache_idiom.py` pins that (fold the two `if`s
+  back into one and it goes red).
 - `hooks.DepotKey` is the accessor RVA the cron derived via the **RTTI vtable
   walk** (`rtti_derive_slot`) — robust-to-prologue at derive time; the runtime
   just uses the number. `depotkey_rtti.slot` enables a later `vtable[slot]`
@@ -220,7 +223,7 @@ extra: verify `vtable[slot]` == this address and fencepost matches.)
 | **Split-mapping** / multi-bias load | `xlate` (validated live) |
 | Feed unreachable / offline | cached `updates.yaml`, then baked patterns |
 | Bad/hostile feed entry | hash-match + CI validation + `.text` check (+ optional signing) |
-| Finder anchors move on a **published** build | **half-covered**: `cache_global_disp` comes from the feed, but the GOT is still derived by scanning (no `finder.got_rva`, §5) |
+| Finder anchors move on a **published** build | RVA-first on **both** halves (`cache_global_disp` + `got_rva`), each falling back to its own scan |
 | Finder anchors become **ambiguous** | **not covered, by design**: CI blocks and publishes nothing, so there is no feed value to fall back to. Ambiguous means unresolved everywhere — runtime, CI and feed agree to refuse rather than guess |
 
 ## 12. Phased rollout
@@ -237,12 +240,15 @@ extra: verify `vtable[slot]` == this address and fencepost matches.)
    later — see §15.)*
 5. (Optional) `depotkey_vtable` cross-check + feed signing. **Signing: DECLINED
    for now** — see §14.
-6. **Finder, RVA-first.** `finder.cache_global_disp` published since the feed
-   existed, **consumed since 2026-09-08** (`RvaFeed::CacheGlobalDisp()`,
-   `ficha → escaneo`, no revalidation of the feed value against the scan — the
-   same rule fixed for DepotKey in `ec9e840`). `finder.got_rva`: **not done**,
-   see the note in §5. Until it lands the finder is half RVA-first and half
-   scan.
+6. **Finder, RVA-first.** **DONE (2026-09-08)**, both halves.
+   `finder.cache_global_disp` via `RvaFeed::CacheGlobalDisp()` and
+   `finder.got_rva` via `RvaFeed::GotBase()`, each `ficha → escaneo` and each
+   falling back on its own. No revalidation of a feed value against the scan —
+   the same rule fixed for DepotKey in `ec9e840`: the feed is a cache of the
+   scan's result keyed by the build hash, so re-deriving to compare would cost
+   exactly the scan being skipped. On a build with a complete feed entry the
+   finder now does **no code scanning at all**; the log line says which halves
+   came from where (`got_method=` / `disp_method=`).
 
 Each phase is independently shippable and fails closed to today's behavior.
 
