@@ -350,9 +350,24 @@ def verify_finder_cache_idiom():
             base = h.subtract(10)  # start of the lea
             # layout: [0]=8D [1]=MR_lea [2..5]=disp32  [6]=8B [7]=MR
             #         [8]=8B [9]=MR [10..13]=58 0C 00 00
-            if b(base, 0)  != 0x8D: continue
-            if b(base, 6)  != 0x8B: continue
-            if b(base, 8)  != 0x8B: continue
+            # Same predicates as Hooks::PackageZeroFinder::FindCacheGlobalDisp
+            # and check_patterns.py's verify_cache_idiom — mod fields, the rm
+            # exclusions that pin the 6+2+6 lengths, and the register chaining.
+            # This used to check only the three opcodes, which made it looser
+            # than the runtime: it counted matches the Deck rejects. NOT a fixed
+            # base register for the lea: the two real sites on bc54101b29 use
+            # different ones (esi, eax).
+            if b(base, 0) != 0x8D: continue
+            m1 = b(base, 1)
+            if (m1 & 0xC0) != 0x80 or (m1 & 0x07) == 0x04: continue
+            if b(base, 6) != 0x8B: continue
+            m2 = b(base, 7)
+            if (m2 & 0xC0) != 0x00 or (m2 & 0x07) == 0x04 or (m2 & 0x07) == 0x05: continue
+            if b(base, 8) != 0x8B: continue
+            m3 = b(base, 9)
+            if (m3 & 0xC0) != 0x80 or (m3 & 0x07) == 0x04: continue
+            if ((m1 >> 3) & 0x07) != (m2 & 0x07): continue   # reg(lea)  == rm(mov1)
+            if ((m2 >> 3) & 0x07) != (m3 & 0x07): continue   # reg(mov1) == rm(mov2)
             # Extract the lea's disp32 (little-endian, signed).
             disp = (b(base, 2)
                     | (b(base, 3) << 8)
@@ -497,7 +512,21 @@ else:
     for base, disp in idiom:
         print("      PRESENT @ %s   disp32=0x%x  (cache_global = GOT + disp32)" %
               (base, disp & 0xFFFFFFFF))
-    print("      OK — finder's cache locator will work on this binary.")
+    _disps = sorted(set(d & 0xFFFFFFFF for _, d in idiom))
+    if len(_disps) == 1:
+        print("      UNIQUE (%d site(s), disp32=0x%x)" % (len(idiom), _disps[0]))
+        print("      OK — finder's cache locator will work on this binary.")
+    else:
+        # Mirrors what [b] below already does for the GMRC tail. Since
+        # FindCacheGlobalDisp refuses to guess between disagreeing sites, this
+        # is NOT an "OK": on this binary the finder resolves nothing and
+        # injects nothing.
+        print("      AMBIGUOUS — %d site(s) name %d different disp32: %s"
+              % (len(idiom), len(_disps), " ".join("0x%x" % d for d in _disps)))
+        print("      NOT OK — FindCacheGlobalDisp fails closed on disagreement,")
+        print("      so the finder will not resolve or inject on this binary.")
+        print("      ACTION: the idiom needs a more specific anchor than 0x%x," % CACHE_ROOT_OFFSET)
+        print("              which is shared with whatever class matched too.")
 
 # 4b) GMRC prologue tail
 print("\n  [b] GMRC prologue tail (survives the hook detour):")

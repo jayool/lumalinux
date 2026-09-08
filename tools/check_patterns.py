@@ -82,10 +82,16 @@ def emit_rvas_file(result, out_dir, steam_version):
                 "  slot: %d" % rt["slot"],
                 '  rva: "%s"' % rt["rva"]]
 
+    # Only publish X when every site agreed on it. This used to gate on
+    # "PRESENT" and take sites[0] — first-by-address, the same coin toss the
+    # runtime no longer makes; with disagreeing sites the feed would have
+    # published whichever came first in the binary. Gating on UNIQUE also keeps
+    # the field alive across the status rename: "PRESENT" no longer exists, so
+    # leaving this as it was would have silently stopped emitting it.
     ci = result.get("finder", {}).get("cache_idiom", {})
-    if ci.get("status") == "PRESENT" and ci.get("sites"):
+    if ci.get("status") == "UNIQUE" and ci.get("distinct_disp32"):
         out += ["finder:",
-                '  cache_global_disp: "%s"' % ci["sites"][0]["disp32"]]
+                '  cache_global_disp: "%s"' % ci["distinct_disp32"][0]]
 
     path = os.path.join(out_dir, sha + ".yaml")
     with open(path, "w", encoding="utf-8") as f:
@@ -271,12 +277,27 @@ def scan_rvas(segments, patstr):
 
 
 def verify_cache_idiom(segments):
-    """Find every valid cache-access idiom and return [(rva, lea_disp32), ...].
+    """Every valid cache-access idiom, as [(rva, lea_disp32), ...].
+
     For each `58 0C 00 00` needle the layout backwards is:
-        base+0 = 8D (lea r1,[GOT+disp32])   base+2..5 = disp32
-        base+6 = 8B (mov r2,[r1])
-        base+8 = 8B (mov r3,[r2+0xc58])      base+10 = 58 0C 00 00 (the needle)
-    so base = needle_off - 10. Validate the 8D/8B/8B shape before accepting."""
+        base+0 = 8D  MODRM(mod=10, rm!=SIB)  base+2..5 = disp32   lea r1,[GOT+X]
+        base+6 = 8B  MODRM(mod=00, rm!=SIB/disp32)                mov r2,[r1]
+        base+8 = 8B  MODRM(mod=10, rm!=SIB)  base+10 = the needle  mov r3,[r2+0xc58]
+    so base = needle_off - 10.
+
+    These predicates are IDENTICAL to
+    Hooks::PackageZeroFinder::FindCacheGlobalDisp, deliberately and to the bit.
+    This used to check only the three opcodes — not the mod fields, not the rm
+    exclusions, not the register chaining — which made CI LOOSER than the
+    runtime: it could green-light a build whose extra, sloppier matches the Deck
+    then rejects as ambiguous. A gate that passes what the product refuses is
+    worse than no gate. If you touch the runtime predicates, touch these in the
+    same commit.
+
+    The chaining check (reg(lea)==rm(mov1), reg(mov1)==rm(mov2)) is what makes
+    the three instructions one expression instead of three neighbours. Note what
+    is deliberately NOT required: a fixed base register for the lea — measured on
+    bc54101b29 the two real sites use different ones (esi and eax)."""
     needle = bytes(int(t, 16) for t in CACHE_IDIOM_NEEDLE.split())
     out = []
     for vaddr, buf in segments:
@@ -287,11 +308,29 @@ def verify_cache_idiom(segments):
                 break
             start = o + 1
             base = o - 10
-            if base < 0:
+            if base < 0 or base + 14 > len(buf):
                 continue
-            if buf[base] == 0x8D and buf[base + 6] == 0x8B and buf[base + 8] == 0x8B:
-                disp = struct.unpack_from("<i", buf, base + 2)[0]
-                out.append((vaddr + base, disp))
+            if buf[base] != 0x8D:
+                continue
+            m1 = buf[base + 1]
+            if (m1 & 0xC0) != 0x80 or (m1 & 0x07) == 0x04:
+                continue
+            if buf[base + 6] != 0x8B:
+                continue
+            m2 = buf[base + 7]
+            if (m2 & 0xC0) != 0x00 or (m2 & 0x07) == 0x04 or (m2 & 0x07) == 0x05:
+                continue
+            if buf[base + 8] != 0x8B:
+                continue
+            m3 = buf[base + 9]
+            if (m3 & 0xC0) != 0x80 or (m3 & 0x07) == 0x04:
+                continue
+            if ((m1 >> 3) & 0x07) != (m2 & 0x07):      # reg(lea)  == rm(mov1)
+                continue
+            if ((m2 >> 3) & 0x07) != (m3 & 0x07):      # reg(mov1) == rm(mov2)
+                continue
+            disp = struct.unpack_from("<i", buf, base + 2)[0]
+            out.append((vaddr + base, disp))
     return out
 
 
@@ -878,16 +917,27 @@ def main():
         record(const, label, "diagnostic")
 
     # 4a) finder cache-access idiom (0xc58)
+    # The finder needs ONE answer, not a list: X is what builds cache_global,
+    # which it dereferences and ultimately writes depots through. Since
+    # FindCacheGlobalDisp refuses to guess between disagreeing sites, a build
+    # whose sites disagree is a build where the finder does not work — so
+    # anything but UNIQUE blocks here too, exactly as gmrc_tail's NOT_FOUND
+    # does. Note the classification is over DISTINCT disp32 values, not over
+    # site count: many sites all naming the same X is the healthy shape (2 on
+    # bc54101b29, 2 on the v0.10.11 build in RESEARCH §13.5).
     idiom = verify_cache_idiom(segments)
-    if idiom:
-        result["finder"]["cache_idiom"] = {
-            "status": "PRESENT",
-            "sites": [{"rva": "0x%x" % r, "disp32": "0x%x" % (d & 0xFFFFFFFF)}
-                      for r, d in idiom[:8]],
-        }
-    else:
-        result["finder"]["cache_idiom"] = {"status": "NOT_FOUND"}
-        result["blocking"].append("finder:cache_idiom(0x%x)" % CACHE_ROOT_OFFSET)
+    idiom_disps = sorted({d for _, d in idiom})
+    idiom_status = "NOT_FOUND" if not idiom else classify_hit_count(len(idiom_disps))
+    result["finder"]["cache_idiom"] = {
+        "status": idiom_status,
+        "sites_total": len(idiom),
+        "distinct_disp32": ["0x%x" % (d & 0xFFFFFFFF) for d in idiom_disps],
+        "sites": [{"rva": "0x%x" % r, "disp32": "0x%x" % (d & 0xFFFFFFFF)}
+                  for r, d in idiom[:8]],
+    }
+    if idiom_status != "UNIQUE":
+        result["blocking"].append("finder:cache_idiom(0x%x):%s"
+                                  % (CACHE_ROOT_OFFSET, idiom_status))
 
     # 4b) GMRC prologue tail
     tail_rvas = scan_rvas(segments, GMRC_PROLOGUE_TAIL)
@@ -926,7 +976,10 @@ def main():
             extra = "  (non-critical)"
         print("  %-12s %-13s%s%s" % (label, info["status"], rva, extra))
     ci = result["finder"]["cache_idiom"]
-    print("  %-12s %s" % ("cache_idiom", ci["status"]))
+    print("  %-12s %s (%d site(s), disp%s %s)"
+          % ("cache_idiom", ci["status"], ci["sites_total"],
+             "" if len(ci["distinct_disp32"]) == 1 else "s",
+             " ".join(ci["distinct_disp32"]) or "-"))
     gt = result["finder"]["gmrc_tail"]
     print("  %-12s %s (%d)" % ("gmrc_tail", gt["status"], gt["count"]))
     rt = result.get("rtti", {})
