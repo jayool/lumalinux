@@ -361,29 +361,56 @@ void Run() {
     for (;;) {
         ScRange rx = GetSteamclientRx();
         if (rx.base) {
-            // Derive GOT + cache offset once we can see steamclient.so. These
-            // are stable for the process lifetime, so compute them once.
+            // Resolve the cache address ONCE — the first time steamclient.so is
+            // visible — and never again.
+            //
+            // Both steps below read code bytes that are FINAL by then. The module
+            // has a single executable PT_LOAD (verified with readelf -lW on
+            // bc54101b29: one `R E` segment, 0x1ffe574 = ~32 MB), so seeing any
+            // r-x mapping for it means the whole text segment is mapped; there is
+            // no window in which we could see half of it. Nothing reorders those
+            // bytes afterwards either: our own detours and a plugin's are written
+            // at function ENTRIES, and neither anchor can start there — the idiom
+            // needs the GOT already in a register, which takes the 10-byte PIC
+            // preamble first, while a detour covers bytes 0..4. Same bytes, same
+            // answer: a failure here is permanent.
+            //
+            // And retrying it is not free. Neither scan can exit early — proving
+            // there is exactly ONE match means walking the whole span even when
+            // the match is at byte 0. That is the price of never writing to a
+            // guessed address (see FindCacheGlobalDisp, and the same reasoning in
+            // Patterns::FindUniqueInSteamclient), and it is a price meant to be
+            // paid once per launch, like the four hook scans — not ~32 MB every
+            // kPollSec for the life of the process, which is what this loop used
+            // to do, forever, to keep reaching the same conclusion.
+            //
+            // So: resolve, or give up and end the thread. Nothing is lost by
+            // ending it — injection, the licence reconcile and the keys.txt wake
+            // are all nested under `cacheGlobal` below, so none of them can run
+            // without an address anyway, and nothing observes this thread's
+            // liveness (it is absent from status.json). The four hooks are
+            // unaffected; only package-0 injection is off for this session.
             if (!cacheGlobal) {
                 got = DeriveGotBase(rx);
                 if (got) {
                     disp = FindCacheGlobalDisp(rx);
-                    if (disp) {
-                        cacheGlobal = got + static_cast<uintptr_t>(static_cast<intptr_t>(disp));
-                        Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
-                                  (unsigned long)got, (unsigned)disp,
-                                  (unsigned long)cacheGlobal);
-                    }
-                    // No else: FindCacheGlobalDisp has already logged the cause
-                    // (NOT_FOUND vs AMBIGUOUS) at Error severity, and both of its
-                    // messages state the consequence. The line that used to live
-                    // here re-diagnosed it as "cache-access idiom not found —
-                    // class layout changed?", which is false in the ambiguous
-                    // case: the idiom WAS found, several times, disagreeing. One
-                    // diagnosis, in the place that actually knows it.
                 } else {
-                    Log::Debug("PKG0_FINDER: GOT not derived yet (GMRC prologue tail "
-                               "not located)");
+                    Log::Error("PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail "
+                               "is not in the r-x span");
                 }
+                if (!disp) {
+                    // The cause was logged by whichever step knows it (GOT above,
+                    // or FindCacheGlobalDisp's NOT_FOUND/AMBIGUOUS). One line for
+                    // the consequence, then stop.
+                    Log::Error("PKG0_FINDER: no cache address (cause on the previous "
+                               "line) — finder ends; package-0 injection is off for "
+                               "this session, hooks are unaffected");
+                    return;
+                }
+                cacheGlobal = got + static_cast<uintptr_t>(static_cast<intptr_t>(disp));
+                Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
+                          (unsigned long)got, (unsigned)disp,
+                          (unsigned long)cacheGlobal);
             }
 
             if (cacheGlobal) {

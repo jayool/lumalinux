@@ -15,7 +15,7 @@ to grep for, and what it tells you:
 |---|---|---|
 | `SafeMode` mismatch / `Curl Res` + the hash isn't whitelisted | Steam shipped a new `steamclient.so`; patterns probably still match | **A.1** Hash bump |
 | `Hook install: name=<HOOK> … outcome=pattern_miss` | A pattern moved — that hook can't install | **A.2** / **A.3** Re-derive patterns |
-| `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT not derived yet` | The package-0 finder can't locate its anchors | **C** Finder anchors |
+| `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT NOT_FOUND` | The package-0 finder can't locate its anchors; it now says so once and ends (it no longer retries — the bytes are final) | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
 
@@ -301,13 +301,33 @@ then fail, it wasn't B — go to A.
 giving up:
 
 ```
-PKG0_FINDER: cache-access idiom not found in r-x — class layout changed?
+PKG0_FINDER: cache-access idiom NOT_FOUND (anchor 0xc58) — CPackageInfoCache layout changed? Not injecting
 ```
 
-or
+or, when the idiom is there but the sites disagree on the address:
 
 ```
-PKG0_FINDER: GOT not derived yet (GMRC prologue tail not located)
+PKG0_FINDER: cache-access idiom AMBIGUOUS — 5 site(s), 3 distinct disp32: 0x3b7d4 0x18240 0x2c9e0 — refusing to guess, not injecting
+```
+
+or, when the upstream anchor is the one missing:
+
+```
+PKG0_FINDER: GOT NOT_FOUND — the GMRC prologue tail is not in the r-x span
+```
+
+followed in every case by the one consequence line, after which the thread
+stops (it does not retry: the bytes it scans are final once steamclient.so is
+mapped, so the answer cannot change):
+
+```
+PKG0_FINDER: no cache address (cause on the previous line) — finder ends; package-0 injection is off for this session, hooks are unaffected
+```
+
+A healthy boot instead shows:
+
+```
+PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
 ```
 
 **Cause**: the finder doesn't use a byte pattern. It derives the address of
