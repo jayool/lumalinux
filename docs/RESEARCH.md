@@ -922,6 +922,46 @@ Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
 per-build offsets, everything reconstructed from stable anchors (the
 hook-surviving GMRC prologue tail and the `0xc58` class-layout offset).
 
+**Y entonces por qué la ficha no rompe eso.** Desde 2026-09-08 los dos números
+salen primero del RVA feed y sólo se escanea si la ficha no los trae, lo cual
+parece contradecir el párrafo de arriba. No lo hace, porque lo que había que
+evitar no era *calcular en frío*: era **hornear una constante dentro de
+`liblumalinux.so`**, que es lo que obliga a una release por cada build de Steam.
+La ficha no hornea nada —
+
+- está **indexada por el SHA-256 del `steamclient.so` cargado**
+  (`rva_feed.cpp`, `getFileSHA256` sobre el módulo real), así que un build nuevo
+  simplemente no tiene ficha y **se escanea**: no existe el caso "número viejo
+  aplicado a binario nuevo";
+- la calcula **el mismo algoritmo**, corriendo en CI en vez de en la Deck
+  (`check_patterns.py` reproduce los predicados del runtime, y
+  `tools/test_cache_idiom.py` falla si dejan de coincidir);
+- **se descarga del repo en cada arranque**, no viaja dentro del binario.
+
+O sea que es una **caché del cálculo en caliente**, no un sustituto suyo. La
+propiedad que importaba —*un build nuevo de Steam no obliga a una release de
+lumalinux*— sigue en pie, y de hecho se refuerza: antes, un escaneo roto exigía
+release; ahora se arregla publicando el número.
+
+Y el finder sigue derivando en caliente todo lo que la ficha no cubre, que es la
+mayor parte: recorrer el árbol, encontrar el paquete 0, cruzar su identidad,
+inyectar. Eso depende del estado vivo de Steam, no del binario, y no se puede
+precalcular.
+
+**El coste, que es real:** el escaneo pasa a ser el camino raro — sólo corre en
+las horas entre que Valve publica y el cron pasa — y el código que casi no se
+ejecuta se pudre sin avisar. Se acepta por dos motivos: es el mismo trato que ya
+tomaron DepotKey y GMRC al pasar a RVA-first, y el escaneo **sí** se ejecuta a
+diario, en el `check_patterns.py` nocturno contra el binario real y en los tests
+sintéticos de cada push. Se ejecuta en CI, no en la Deck.
+
+Lo que **no** hay es una comprobación en runtime de la ficha contra el escaneo,
+y es deliberado (`ec9e840` quitó exactamente esa comprobación de DepotKey):
+comprobarla costaría el escaneo que se está ahorrando. La red que queda son dos:
+la ficha sólo publica lo que el CI resolvió **UNIQUE**, y si el puntero
+resultante no lleva a un paquete 0 coherente, el cruce de identidad de
+`FindPackage0` se niega a escribir.
+
 **Since 2026-09-08 both derivations are UNIQUE-or-nothing** (§13.5.a): if the
 scan cannot name a single answer it returns none and the finder stands down,
 rather than taking the first match. The two classify on **different axes**, and
