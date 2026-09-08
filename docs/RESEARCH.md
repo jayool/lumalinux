@@ -887,8 +887,20 @@ the depots have actually gone missing.
 ### 13.5 The two addresses derived at runtime
 
 The cache-global pointer lives at `GOTbase + X`, and **both** values change
-across builds (`X` was `0x3a1bc` on `7c4ac73e` and `0x3967c` on `db0d79c2`).
-To avoid per-build constants, the finder derives both at runtime:
+across builds. Five builds measured so far:
+
+| `steamclient.so` | `X` (`disp32`) |
+|---|---|
+| `7c4ac73e…` | `0x3a1bc` |
+| `db0d79c2…` | `0x3967c` |
+| `d0c0ff6e…` | `0x3b314` |
+| `bc54101b29…` | `0x3b7d4` |
+| `237495b4…` (2026-09-08) | `0x3b7d4` |
+
+Every one of them yields **exactly one** distinct `disp32` — which is the
+property the whole design leans on, and the reason it is now enforced rather
+than assumed (§13.5.a). To avoid per-build constants, the finder derives both
+at runtime:
 
 1. **`GOTbase` from the tail of the GMRC prologue.** GMRC's prologue is
    `E8 <call thunk> ; 05 <add eax,imm32> ; 55 89 E5 57 56 53 …`. The
@@ -910,14 +922,49 @@ Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
 per-build offsets, everything reconstructed from stable anchors (the
 hook-surviving GMRC prologue tail and the `0xc58` class-layout offset).
 
+**Since 2026-09-08 both derivations are UNIQUE-or-nothing** (§13.5.a): if the
+scan cannot name a single answer it returns none and the finder stands down,
+rather than taking the first match. The two classify on **different axes**, and
+the distinction matters:
+
+- the **idiom** classifies over distinct `disp32`. Several matching sites are
+  normal and healthy — the current build has two, at rva `0xfdd2dd` and
+  `0x18964e5` — as long as they name the same `X`.
+- the **GOT** classifies over the **derived GOT base**, not over the site
+  count. A second PIC prologue of the same shape computes the *same* GOT, so
+  counting sites would flag a healthy binary; comparing the derived base does
+  not.
+
+Two more properties worth stating, because both were decisions:
+
+- **The base register is deliberately not pinned.** The recogniser requires the
+  three instructions to be *chained* (`reg(lea) == rm(mov1)`,
+  `reg(mov1) == rm(mov2)`) but does not demand a particular register, because
+  the two real sites on the current build use different ones (`esi` and `eax`).
+  Pinning `ebx` — the textbook PIC GOT register — would have missed both.
+- **The scan runs once.** The bytes it reads are final the moment
+  `steamclient.so` is mapped, so a failure cannot become a success by trying
+  again: it resolves once and gives up on failure. (The *tree walk* is the
+  opposite — genuinely transient, since the cache is populated
+  asynchronously — so that one does retry; see §10.)
+
+Scale note, since it justifies preferring the RVA feed: the `r-x` span being
+scanned is a **single** `LOAD R E` segment of `0x1ffe574` bytes ≈ **32 MB**.
+
 #### 13.5.a Auditoría del localizador (2026-09-08)
 
 El localizador de arriba se auditó entero: las nueve funciones de
 `package_zero_finder.cpp`, su superficie de CI y las cadenas de log que
 `maintenance.md` usa para el triaje. La auditoría de partida traía 3 hallazgos;
 el barrido completo sacó 20. Se apunta la lista **con el juicio de utilidad**,
-porque no pesan igual: cuatro merecían código y el resto son nits o riesgos
-asumidos.
+porque no pesan igual.
+
+Cierre: **13 se arreglaron con código** (todo lo que tocaba al criterio de
+resolución, al CI y al triaje), **6 se documentaron como riesgo asumido** en el
+bloque `KNOWN LIMITS` de `package_zero_finder.cpp` — nits reales, pero ninguno
+con un arreglo que compense — y **1 queda abierto** porque no tiene arreglo
+barato: el doble papel de `0xc58`. El resultado se validó en una Deck real
+(§13.5.b).
 
 | # | hallazgo | juicio | estado |
 |---|---|---|---|
@@ -929,10 +976,10 @@ asumidos.
 | 10 | el triaje de `maintenance.md` citaba cadenas de log que los cambios borraron | autoinfligido | **hecho** |
 | 3 | el CI no comparaba los `disp32` que recogía: `AMBIGUOUS` pasaba en verde | **alto** — el CI es el único vigilante continuo | **hecho** |
 | 9′ | el CI reconocía **menos** que el runtime (sólo opcodes), y `derive_patterns.py` igual: aprobaba lo que la Deck rechaza | **alto** | **hecho** |
-| 7 | `DeriveGotBase` también devuelve la **primera** coincidencia, sin exigir unicidad — y está **aguas arriba** del 1 | seguro futuro | pendiente |
-| 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | pendiente |
+| 7 | `DeriveGotBase` también devuelve la **primera** coincidencia, sin exigir unicidad — y está **aguas arriba** del 1 | seguro futuro | **hecho** — mismo trato que el 1, pero clasificando sobre el **GOT derivado**, no sobre el número de sitios (ver abajo) |
+| 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | **hecho** — las dos mitades: el CI bloquea (`finder:gmrc_tail:…`) y el runtime falla cerrado, así que el comentario ya describe la verdad |
 | 11 | el triaje buscaba `outcome=pattern_miss`, que sólo emitía `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no cazaba los dos hooks críticos**. Y no era una fila: eran **cinco** referencias en `maintenance.md`, cuatro de ellas a hooks que nunca emitieron esa cadena | **real, hoy** | **hecho** — vocabulario unificado en `miss` |
-| 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético | pendiente |
+| 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético, pero rompía `grep outcome=` como comprobación de salud: el único inyector era invisible | **hecho** — `Finder resolve: name=PKG0Finder method=… outcome=resolved\|miss` |
 | 13 | se llegaba al `PackageInfo` navegando siete offsets por una estructura viva sin comprobar la **identidad** del objeto; el propio id ya se leía **para el log** y no se usaba: dos fuentes independientes, una desperdiciada. *(Matiz: el camino de escritura no estaba desnudo — `AppendIdsToVec` ya rechazaba un `AppIdVec` inverosímil. Eso es plausibilidad, no identidad.)* | **único del camino vivo** | **hecho** — `FindPackage0` cruza el id y reintenta si discrepa; mitigación de [14] y cuarta opción para §10 |
 | 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |
 | 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
@@ -960,6 +1007,52 @@ no fueron apareciendo — estaban todos ahí, y se fueron tropezando de uno en u
 al implementar. Lo que faltó fue barrer el fichero entero, contrastar código
 contra documentación, y comparar CI contra runtime en los dos sentidos. Las tres
 cosas son mecánicas.
+
+#### 13.5.b Validación en vivo del localizador reescrito (2026-09-08)
+
+Todo lo de §13.5.a se validó **en una máquina real con Steam y sesión
+iniciada**, no sólo en CI. Importa dejarlo escrito porque es la única prueba
+que existe: `build.yml` compila, `check_patterns.py` resuelve sobre papel, y
+`verify-fix.yml` — el workflow que debería arrancar el `.so` — nunca ha dado un
+run verde (sus primeras ejecuciones reales, ese mismo día, fallaron todas en el
+arnés antes de llegar a ninguna aserción).
+
+Receta: codespace de SteamOS, stack instalado normalmente desde LumaDeck
+(`setup.sh`), y luego **sólo** `liblumalinux.so` sustituido por el build de la
+rama. Está escrita paso a paso en `maintenance.md` §C.
+
+`steamclient.so` de la sesión: `237495b4…`. Lo que salió del log:
+
+```
+PKG0_FINDER: GOT UNIQUE — 1 site(s), got=0x…
+PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
+Finder resolve: name=PKG0Finder method=… got=0x… disp=0x3b7d4 … outcome=resolved
+PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{size=196}
+```
+
+y los appids inyectados empezando por `{5,7,8,90}`. Es decir: las dos anclas
+resolvieron únicas, el cruce de identidad nuevo (hallazgo 13) dio conforme
+—`PackageId=0` leído del objeto coincide con la clave del nodo— y la inyección
+llegó hasta el final con un `AppIdVec` de tamaño plausible. `3/3 hooks active`
+en el mismo arranque, o sea que nada de esto rompió DepotKey, GMRC ni
+ShaderDepot.
+
+**Lo que sigue sin ejercitarse, y hay que decirlo:** todo lo validado es el
+camino de éxito. Las rutas de fallo — `method=rva` (leer el `disp32` de la
+ficha en vez de escanear), las dos ramas `AMBIGUOUS`, la terminación del hilo
+tras un escaneo fallido, y el `outcome=miss` del finder — no las ha ejecutado
+nadie más que los tests sintéticos de `tools/test_cache_idiom.py`. Son
+precisamente las que sólo se ven el día que Steam rompe algo, así que el test
+sintético es lo único que las cubre.
+
+**Cómo se verificó el propio arnés de pruebas.** Los cuatro escaneos del idiom
+(runtime, `check_patterns`, `derive_patterns`, la sonda) se contrastaron contra
+un ELF sintético y coinciden. Y para descartar que los tests fueran decorativos
+se hizo **mutación**: alterando los predicados uno a uno, los tests fallan
+(8/2/1 fallos según la mutación) en vez de pasar en verde. Un test que no
+muerde cuando rompes lo que vigila no es un test, y ese error ya se había
+cometido en este repo — `verify-fix.yml` llevaba meses "en verde" porque el run
+que se citaba era de otro workflow distinto.
 
 ### 13.6 End-to-end verification (Brotato, 1942280)
 
