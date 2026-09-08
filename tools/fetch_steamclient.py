@@ -342,6 +342,9 @@ def main():
     ap.add_argument("--version-only", action="store_true",
                     help="print just the manifest version and exit (cheap gate)")
     ap.add_argument("--output", help="path to write the extracted steamclient.so")
+    ap.add_argument("--list-packages", action="store_true",
+                    help="print the manifest's package keys and file names and exit "
+                         "(no downloads) — use it to find where a given file lives")
     ap.add_argument("--extract-tree", metavar="DIR",
                     help="extract the whole current ubuntu12_32/ client tree into DIR "
                          "(for the runtime smoke test; replaces the pinned tarball)")
@@ -352,6 +355,12 @@ def main():
         ver = manifest_version(man)
         if args.version_only:
             print(ver)
+            return 0
+        if args.list_packages:
+            print("version=%s" % ver, file=sys.stderr)
+            for key, plain, vz in package_entries(man):
+                print("%-28s rank=%d file=%s vz=%s" % (key, _package_rank(key),
+                                                       plain, vz))
             return 0
         if args.extract_tree:
             n, names = extract_client_tree(man, args.extract_tree)
