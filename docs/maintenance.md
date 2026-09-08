@@ -7,6 +7,9 @@ tiers of fix — start with the cheapest.
 
 Log: `~/.cache/lumalinux/lumalinux.log`.
 
+`grep outcome=` is the one-line health check: every hook and the package-0
+finder report there, `outcome=` always last.
+
 The startup toast shows `X/Y hooks active` (e.g. `3/3 hooks active` on current
 defaults: DepotKey, GMRC, ShaderDepot — BuildDep is not in the default set). What
 to grep for, and what it tells you:
@@ -16,7 +19,8 @@ to grep for, and what it tells you:
 | `SafeMode` mismatch / `Curl Res` + the hash isn't whitelisted | Steam shipped a new `steamclient.so`; patterns probably still match | **A.1** Hash bump |
 | `Hook install: name=<HOOK> … outcome=miss` | **Nothing** resolved that hook — the RVA feed, the byte pattern *and* the rescue resolver all missed (`method=none` says the same). Until 2026-09-08 this row said `outcome=pattern_miss`, which only `LoadPackage` ever emitted, so it caught the one diagnostic hook and missed DepotKey and GMRC | **A.2** / **A.3** Re-derive patterns |
 | `Hook install: … outcome=hook_install_failed` | The address resolved fine; libmem could not write the detour. Not a pattern problem, and no section below covers it — capture the log and the `target=` address | — |
-| Grep `outcome=` and a hook has **no line at all** | That hook's install never ran. A healthy boot prints one `outcome=installed` per enabled hook | **B** Wrapper not reached |
+| `Finder resolve: name=PKG0Finder method=none outcome=miss` | The package-0 finder resolved no cache address, so **nothing is injected** — the finder is the sole injector. The cause is on the line above it (see the finder row) | **C** Finder anchors |
+| Grep `outcome=` and something has **no line at all** | That subsystem never got as far as reporting. A healthy boot prints one `outcome=installed` per enabled hook **plus** one `Finder resolve: … outcome=resolved` | **B** Wrapper not reached |
 | `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT NOT_FOUND` | The package-0 finder can't locate its anchors; it now says so once and ends (it no longer retries — the bytes are final) | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |

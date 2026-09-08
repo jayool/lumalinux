@@ -490,6 +490,26 @@ void Run() {
                 if (got) {
                     disp = FindCacheGlobalDisp(rx);
                 }
+                // Both outcomes below emit TWO lines, mirroring what every hook
+                // does (depot_key_hook.cpp:181-206 is the reference): a prose
+                // line saying what happened, then a machine-readable twin whose
+                // last field is outcome=. maintenance.md's triage is "grep
+                // outcome=", and until now the finder answered nothing to it —
+                // the one subsystem that is the SOLE depot injector was the one
+                // invisible to the procedure. Field order and severities are
+                // taken from the hooks, not invented: name= method= …
+                // outcome=, outcome always last; failure is prose Error +
+                // structured Warn, success is both Info.
+                //
+                // The prefix is "Finder resolve:", not "Hook install:", because
+                // this installs nothing — it resolves an address. Same reason
+                // outcome=resolved rather than installed. method= names the
+                // resolver that won, exactly as in the hooks; there is only one
+                // today, so it is always `scan`. If the finder ever reads
+                // finder.cache_global_disp from the RVA feed (published on every
+                // build, read by nobody — RESEARCH §13.5.a), this becomes
+                // method=rva|scan and lines up with the hooks' method=rva|pattern
+                // without touching the format.
                 if (!disp) {
                     // The cause was logged by whichever step knows it (GOT above,
                     // or FindCacheGlobalDisp's NOT_FOUND/AMBIGUOUS). One line for
@@ -497,10 +517,15 @@ void Run() {
                     Log::Error("PKG0_FINDER: no cache address (cause on the previous "
                                "line) — finder ends; package-0 injection is off for "
                                "this session, hooks are unaffected");
+                    Log::Warn("Finder resolve: name=PKG0Finder method=none outcome=miss");
                     return;
                 }
                 cacheGlobal = got + static_cast<uintptr_t>(static_cast<intptr_t>(disp));
                 Log::Info("PKG0_FINDER: GOT=0x%lx disp=0x%x cache_global=0x%lx",
+                          (unsigned long)got, (unsigned)disp,
+                          (unsigned long)cacheGlobal);
+                Log::Info("Finder resolve: name=PKG0Finder method=scan got=0x%lx "
+                          "disp=0x%x cache_global=0x%lx outcome=resolved",
                           (unsigned long)got, (unsigned)disp,
                           (unsigned long)cacheGlobal);
             }
