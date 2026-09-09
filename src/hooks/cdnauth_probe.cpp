@@ -116,32 +116,36 @@ void logToken(const char* label, const OutBuf& out, bool rc) {
 
 void runMatrix(void* this_, char* realHost) {
     std::ifstream mf(markerPath());
-    std::string host = realHost ? std::string(realHost) : std::string();
 
     struct Case { uint32_t app; uint32_t depot; };
     std::vector<Case> cases;
+    std::vector<std::string> hosts;
     for (std::string line; std::getline(mf, line); ) {
-        if (line.rfind("host=", 0) == 0) { host = line.substr(5); continue; }
+        if (line.rfind("host=", 0) == 0) { if (line.size() > 5) hosts.push_back(line.substr(5)); continue; }
         if (line.rfind("case=", 0) != 0) continue;
         unsigned long a = 0, d = 0;
         if (std::sscanf(line.c_str() + 5, "%lu:%lu", &a, &d) == 2)
             cases.push_back({ (uint32_t)a, (uint32_t)d });
     }
-    if (host.empty()) host = "cache1-par1.steamcontent.com";
+    // Always include the host Steam really used, plus whatever the marker lists.
+    if (realHost && *realHost) hosts.insert(hosts.begin(), std::string(realHost));
+    if (hosts.empty()) hosts.push_back("cache1-par1.steamcontent.com");
 
-    Log::Info("CDNAUTH_PROBE: start — host='%s', %zu case(s); real call this=%p",
-              host.c_str(), cases.size(), this_);
+    Log::Info("CDNAUTH_PROBE: start — %zu host(s) x %zu case(s); this=%p",
+              hosts.size(), cases.size(), this_);
 
-    // A mutable host buffer: the callee takes char*, not const.
-    std::vector<char> hostbuf(host.begin(), host.end());
-    hostbuf.push_back('\0');
-
-    for (const auto& c : cases) {
-        OutBuf out; std::memset(&out, 0, sizeof(out));
-        bool rc = g_origFn(this_, c.app, c.depot, hostbuf.data(), &out);
-        char label[40];
-        std::snprintf(label, sizeof(label), "app=%u depot=%u", c.app, c.depot);
-        logToken(label, out, rc);
+    // Iterate host x case: we're hunting a host that returns a NON-empty token.
+    for (const auto& h : hosts) {
+        std::vector<char> hostbuf(h.begin(), h.end());
+        hostbuf.push_back('\0');
+        for (const auto& c : cases) {
+            OutBuf out; std::memset(&out, 0, sizeof(out));
+            bool rc = g_origFn(this_, c.app, c.depot, hostbuf.data(), &out);
+            char label[128];
+            std::snprintf(label, sizeof(label), "host=%s app=%u depot=%u",
+                          h.c_str(), c.app, c.depot);
+            logToken(label, out, rc);
+        }
     }
     Log::Info("CDNAUTH_PROBE: end");
 }
