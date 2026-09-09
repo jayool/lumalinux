@@ -8,7 +8,9 @@
 #include "../log.hpp"
 #include <atomic>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
+#include <vector>
 #include <fstream>
 #include <string>
 
@@ -106,36 +108,58 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
             char brEmpty[]  = "";
             char brBeta[]   = "beta";
 
-            struct Case { const char* name; uint32_t a; uint32_t d; bool needsOwned; char* b; };
-            const Case cases[] = {
-                { "baseline",             app_id,   depot_id,   false, branch   },
-                { "branch=public",        app_id,   depot_id,   false, brPublic },
-                { "branch=empty",         app_id,   depot_id,   false, brEmpty  },
-                { "branch=beta",          app_id,   depot_id,   false, brBeta   },
-                { "app=0",                0,        depot_id,   false, branch   },
-                { "depot=0",              app_id,   0,          false, branch   },
-                { "depot=app",            app_id,   app_id,     false, branch   },
-                { "app=depot",            depot_id, depot_id,   false, branch   },
-                { "ownedapp+ourdepot",    ownedApp, depot_id,   true,  branch   },
-                { "ownedapp+owneddepot",  ownedApp, ownedDepot, true,  branch   },
-            };
-            for (const auto& c : cases) {
-                if (c.needsOwned && (ownedApp == 0 || ownedDepot == 0)) {
-                    Log::Info("GMRC_PROBE: %-22s SKIPPED (no owned_app/owned_depot "
-                              "in the marker file)", c.name);
-                    continue;
+            // The manifest MUST vary with the app/depot. A first version of this
+            // probe held manifest_lo/hi fixed while varying app and depot, so the
+            // "owned" cases asked Valve for one game's depot with another game's
+            // manifest — nonsense triples that could only ever be denied. Every
+            // case now carries its own manifest, and the matrix includes triples
+            // that are KNOWN to be issued, so a run that produces no ISSUED line
+            // at all means the probe is broken rather than that Valve refuses.
+            struct Case { const char* name; uint32_t a; uint32_t d; uint64_t m; char* b; };
+            std::vector<Case> cases;
+
+            // The call we intercepted, verbatim: the negative control.
+            cases.push_back({ "baseline",        app_id, depot_id, gid, branch   });
+            cases.push_back({ "baseline+public", app_id, depot_id, gid, brPublic });
+            cases.push_back({ "baseline+beta",   app_id, depot_id, gid, brBeta   });
+            cases.push_back({ "baseline+empty",  app_id, depot_id, gid, brEmpty  });
+            // Degenerate fields, to see which ones Valve even parses.
+            cases.push_back({ "app=0",           0,      depot_id, gid, branch   });
+            cases.push_back({ "depot=app",       app_id, app_id,   gid, branch   });
+
+            // Extra triples from the marker file, one per line:
+            //   case=<app>:<depot>:<manifest>
+            // This is where the POSITIVE controls go — a triple the account owns
+            // (expected: issued) and the Brotato shader triple that was measured
+            // issued on 2026-09-09 despite the game being unowned. Both together
+            // separate "Valve refuses this depot" from "the probe is wired wrong".
+            mf.clear();
+            mf.seekg(0);
+            for (std::string line; std::getline(mf, line); ) {
+                if (line.rfind("case=", 0) != 0) continue;
+                unsigned long a = 0, d = 0; unsigned long long m = 0;
+                if (std::sscanf(line.c_str() + 5, "%lu:%lu:%llu", &a, &d, &m) == 3 && m) {
+                    Case c{ "file-case", (uint32_t)a, (uint32_t)d, (uint64_t)m, branch };
+                    cases.push_back(c);
                 }
-                uint64_t probeOut = 0;
-                const int32_t prc = g_origFn(this_, c.a, c.d, manifest_lo, manifest_hi,
-                                             c.b, &probeOut);
-                Log::Info("GMRC_PROBE: %-22s app=%-9u depot=%-9u branch='%s' -> rc=%d "
-                          "code=%llu %s",
-                          c.name, c.a, c.d, c.b ? c.b : "(null)", (int)prc,
-                          (unsigned long long)probeOut,
-                          (prc && probeOut) ? "<<<<< ISSUED" : "(denied)");
             }
-            Log::Info("GMRC_PROBE: end — manifest under test was %llu",
-                      (unsigned long long)gid);
+            for (const auto& c : cases) {
+                uint64_t probeOut = 0;
+                const int32_t prc = g_origFn(this_, c.a, c.d,
+                                             (uint32_t)(c.m & 0xffffffffu),
+                                             (uint32_t)(c.m >> 32), c.b, &probeOut);
+                // rc is an EResult, not a bool: 1 = OK, 8 = InvalidParam,
+                // 15 = AccessDenied. Only rc==1 with a non-zero code is a real
+                // issuance.
+                Log::Info("GMRC_PROBE: %-16s app=%-9u depot=%-9u manifest=%-20llu "
+                          "branch='%s' -> rc=%d code=%llu %s",
+                          c.name, c.a, c.d, (unsigned long long)c.m,
+                          c.b ? c.b : "(null)", (int)prc,
+                          (unsigned long long)probeOut,
+                          (prc == 1 && probeOut) ? "<<<<< ISSUED" : "(denied)");
+            }
+            Log::Info("GMRC_PROBE: end — %zu case(s); rc 1=OK 8=InvalidParam "
+                      "15=AccessDenied", cases.size());
         }
     }
 
