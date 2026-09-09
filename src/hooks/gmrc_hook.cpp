@@ -7,6 +7,8 @@
 #include "../lmhook.hpp"
 #include "../log.hpp"
 #include <cstdlib>
+#include <fstream>
+#include <string>
 
 #include <cstdint>
 
@@ -49,9 +51,18 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     // asking client has SLSsteam's ownership spoof and the package-0 injection in
     // place. If it answers with a usable code, the provider cascade is not needed
     // at all; if it denies, that is the measurement that closes the question.
+    // Two ways to arm it, because ONE OF THEM DOES NOT SURVIVE THE STEAM RUNTIME:
+    // steam-runtime-tool re-execs the client through a filtered environment and
+    // drops variables outside its allow-list, so LUMA_* set in the wrapper never
+    // reaches the process that loads us (measured 2026-09-09). The marker FILE is
+    // the reliable one; the env var is kept for launches that bypass the runtime.
     static const bool kPassthrough = [] {
         const char* e = std::getenv("LUMA_GMRC_PASSTHROUGH");
-        return e && *e && e[0] != '0';
+        if (e && *e && e[0] != '0') return true;
+        const char* home = std::getenv("HOME");
+        if (!home || !*home) return false;
+        std::string marker = std::string(home) + "/.config/lumalinux/gmrc_passthrough";
+        return std::ifstream(marker).good();
     }();
 
     if (kPassthrough) {
