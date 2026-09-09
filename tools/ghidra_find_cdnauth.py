@@ -1,8 +1,9 @@
+# -*- coding: utf-8 -*-
 # Ghidra headless postScript: locate the UNTESTED content-authorization RPCs and
 # dump their decompiled signatures, so a hook probe can call them SAFELY.
 #
 # Why this exists (2026-09-09): Valve added a server-side ownership check to
-# GetManifestRequestCode — measured, our fully-spoofed session is denied for
+# GetManifestRequestCode - measured, our fully-spoofed session is denied for
 # paid unowned content, and the sole provider backend (wudrm/opensteamtool) is
 # a relay whose upstream now denies it too. Reading the current steamclient
 # protobufs (OpenSteam001/steam-monitor, build 1788652215) shows the
@@ -10,8 +11,8 @@
 #
 #   GetCDNAuthToken{depot_id,host_name,app_id} -> {token,expiration_time}
 #       The legacy per-depot CDN auth token. SteamKit's changelog says it is now
-#       only for "country specific servers that still require it" — so the main
-#       CDN likely wants the request code — BUT it is a SEPARATE RPC and may be
+#       only for "country specific servers that still require it" - so the main
+#       CDN likely wants the request code - BUT it is a SEPARATE RPC and may be
 #       gated differently (or not at all) on ownership. Untested.
 #   RequestPeerContentServer / GetPeerContentInfo
 #       Steam's own peer-to-peer content path (download from another owning PC).
@@ -20,7 +21,7 @@
 # We CANNOT hook + call these blind: the function's C++ signature (arg count,
 # order, calling convention, the out-struct shape) is not in the .proto. Calling
 # with a wrong signature corrupts the stack and crashes Steam. So the required
-# FIRST step is decompiling each function to read its real signature — exactly
+# FIRST step is decompiling each function to read its real signature - exactly
 # what this script prints. Only then is the probe hook (mirroring gmrc_hook)
 # safe to write.
 #
@@ -80,7 +81,7 @@ for needle in needles:
             seen.add(key)
             print("\n================= FUNCTION %s  entry=%s  RVA=0x%x  (ref@%s) ================="
                   % (f.getName(), ep, key - base, r.getFromAddress()))
-            # Signature line first — this is the whole point of the script.
+            # Signature line first - this is the whole point of the script.
             try:
                 proto = f.getSignature().getPrototypeString()
                 print("SIGNATURE: %s" % proto)
