@@ -35,6 +35,7 @@
 // never shipped (gated off by default, build-pinned).
 #include "cdnauth_probe.hpp"
 #include "../vaddr_xlate.hpp"
+#include "../globals.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
@@ -146,6 +147,15 @@ bool HookFn(void* this_, uint32_t app_id, uint32_t depot_id, char* host_name, vo
 bool Install() {
     if (!probeArmed()) return false;   // never touch anything unless explicitly armed
 
+    // VaddrXlate must be Init'd before ToRuntime — RvaFeed does this internally,
+    // but this probe resolves the RVA directly so it has to init it too. Path is
+    // the loaded steamclient.so, populated by InstallHooks() via LM_FindModule.
+    const char* scPath = g_modSteamClient.path;
+    if (!scPath || !*scPath || !VaddrXlate::Init(scPath)) {
+        Log::Warn("CDNAUTH_PROBE: VaddrXlate::Init failed (path=%s) — not hooking",
+                  scPath ? scPath : "(null)");
+        return false;
+    }
     const uintptr_t target = VaddrXlate::ToRuntime(kCdnAuthRva);
     if (!target) {
         Log::Warn("CDNAUTH_PROBE: RVA 0x%lx did not translate — wrong build? not hooking",
