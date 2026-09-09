@@ -53,7 +53,34 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     }
 
     if (!g_origFn) return 0;
-    return g_origFn(this_, app_id, depot_id, manifest_lo, manifest_hi, branch, out_code);
+    const int32_t rc = g_origFn(this_, app_id, depot_id, manifest_lo, manifest_hi,
+                                branch, out_code);
+
+    // DIAGNOSTIC (2026-09-09). Logs the code VALVE's own path returns, for the
+    // content we deliberately do not touch — i.e. games the account owns.
+    //
+    // Why it is here: on 2026-09-09 Valve began returning 401 for every manifest
+    // fetched with a provider-minted code, and the ecosystem produced three
+    // incompatible explanations (ownership is now required / the (app, depot,
+    // manifest) triple is now validated and providers send a filler depot /
+    // provider-side maintenance). All three yield the same 401, so the 401 alone
+    // cannot separate them.
+    //
+    // This line can. Ask a provider for a code for a manifest of a game the
+    // account OWNS, and compare it against what Valve hands Steam for the exact
+    // same manifest, within the same rotation window:
+    //   - codes IDENTICAL -> the provider mints correctly; the rejection is about
+    //     who is asking, not how.
+    //   - codes DIFFERENT -> the provider is minting for a different tuple, which
+    //     is a bug with a fix on our side: this hook already knows app_id and
+    //     depot_id, and Gmrc::GetCode() is currently given only the gid.
+    //
+    // Debug severity, so it costs nothing at the default level. Remove it once
+    // the question is settled.
+    Log::Debug("GMRC: passthrough app=%u depot=%u manifest=%llu -> rc=%d code=%llu",
+               app_id, depot_id, (unsigned long long)gid, (int)rc,
+               (unsigned long long)(out_code ? *out_code : 0));
+    return rc;
 }
 
 } // namespace
