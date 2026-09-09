@@ -79,22 +79,38 @@ bool probeArmed() {
 // Best-effort: read the token as a C string if the first pointer in the out
 // buffer looks like a readable heap pointer. Never dereferences a wild pointer
 // blindly — checks the range and caps the length.
+// Try to read a printable C string at `p` (guarded). Returns len, fills buf.
+std::size_t tryReadStr(uintptr_t p, char* buf, std::size_t cap) {
+    if (p < 0x1000 || p > 0xfffff000) return 0;
+    const char* s = reinterpret_cast<const char*>(p);
+    std::size_t n = 0;
+    for (; n < cap - 1; ++n) {
+        char c = s[n];
+        if (c == '\0') break;
+        if (c < 0x20 || c > 0x7e) return 0;   // not a clean string
+        buf[n] = c;
+    }
+    buf[n] = '\0';
+    return n;
+}
+
 void logToken(const char* label, const OutBuf& out, bool rc) {
-    uintptr_t p = 0;
-    std::memcpy(&p, out.bytes, sizeof(p) >= 4 ? 4 : sizeof(p));   // i386: first 4 bytes
-    if (rc && p > 0x10000 && p < 0xfffff000) {
-        char tok[80]; std::size_t n = 0;
-        const char* s = reinterpret_cast<const char*>(p);
-        for (; n < sizeof(tok) - 1; ++n) {
-            char c = s[n];
-            if (c == '\0') break;
-            if (c < 0x20 || c > 0x7e) { n = 0; break; }   // not printable -> bail
-            tok[n] = c;
-        }
-        tok[n] = '\0';
-        Log::Info("CDNAUTH_PROBE:   %-20s rc=%d token='%s'", label, (int)rc, n ? tok : "(unreadable)");
-    } else {
-        Log::Info("CDNAUTH_PROBE:   %-20s rc=%d (denied / no token)", label, (int)rc);
+    // Hexdump the first 32 bytes of the out struct so we can locate the token
+    // regardless of the exact CUtlString/std::string layout.
+    char hex[32 * 3 + 1]; int hp = 0;
+    for (int i = 0; i < 32; ++i) hp += std::snprintf(hex + hp, sizeof(hex) - hp, "%02x ", out.bytes[i]);
+    Log::Info("CDNAUTH_PROBE:   %-20s rc=%d  out[0..32]= %s", label, (int)rc, hex);
+
+    // Token candidates: (a) inline at offset 0 (SSO / CUtlString small), and
+    // (b) pointer at each of the first 4 dwords dereferenced as char*.
+    char tok[96];
+    if (std::size_t n = tryReadStr(reinterpret_cast<uintptr_t>(out.bytes), tok, sizeof(tok))) {
+        Log::Info("CDNAUTH_PROBE:     token(inline)='%s'", tok);
+    }
+    for (int off = 0; off <= 12; off += 4) {
+        uintptr_t p = 0; std::memcpy(&p, out.bytes + off, 4);
+        if (std::size_t n = tryReadStr(p, tok, sizeof(tok)))
+            Log::Info("CDNAUTH_PROBE:     token(*+0x%x)='%s'", off, tok);
     }
 }
 
