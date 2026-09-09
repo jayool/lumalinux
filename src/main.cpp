@@ -31,6 +31,7 @@
 #include "hooks/package_zero_finder.hpp"
 #include "hooks/gmrc_hook.hpp"
 #include "hooks/shader_depot_hook.hpp"
+#include "hooks/cdnauth_probe.hpp"
 #include "sls_achievement_unblock.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
@@ -172,6 +173,11 @@ void InstallHooks() {
     }
     if (const char* dbg = std::getenv("LUMA_LOADPKG_DEBUG"); dbg && dbg[0] && dbg[0] != '0') {
         specs.push_back({"LoadPackage", "LUMA_NO_LOADPKG", &Hooks::LoadPackage::Install});
+    }
+    // EXPERIMENT: GetCDNAuthToken ownership-gating probe. Inert unless
+    // LUMA_CDNAUTH_PROBE=1 (its Install() bails otherwise). Build-pinned.
+    if (const char* p = std::getenv("LUMA_CDNAUTH_PROBE"); p && p[0] && p[0] != '0') {
+        specs.push_back({"CDNAuthProbe", "LUMA_NO_CDNAUTH", &Hooks::CdnAuthProbe::Install});
     }
 
     int active = 0, expected = 0;

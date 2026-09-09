@@ -91,6 +91,7 @@ set(LUMA_SOURCES
     src/hooks/load_package_hook.cpp
     src/hooks/package_zero_finder.cpp
     src/hooks/gmrc_hook.cpp
+    src/hooks/cdnauth_probe.cpp
     src/hooks/shader_depot_hook.cpp
     src/globals.cpp
     src/status.cpp
