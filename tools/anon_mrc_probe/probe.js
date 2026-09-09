@@ -43,10 +43,14 @@ user.on('loggedOn', async () => {
   console.log('== logged on ANONYMOUSLY, steamID=' + user.steamID + ' ==');
   for (const [app, depot, manifest, label] of CASES) {
     try {
-      const code = await user.getManifestRequestCode(app, depot, manifest);
+      let code = await user.getManifestRequestCode(app, depot, manifest);
+      // steam-user may return a BigInt/Long/object; normalise to a decimal string.
+      if (code && typeof code === 'object')
+        code = (code.manifest_request_code !== undefined) ? code.manifest_request_code : code.toString();
+      code = String(code);
       console.log(`\n[${label}] app=${app} depot=${depot}`);
       console.log(`  getManifestRequestCode -> ${code}`);
-      if (code && code !== '0') {
+      if (code && code !== '0' && /^[0-9]+$/.test(code)) {
         const http = await cdnCheck(depot, manifest, code);
         console.log(`  CDN /depot/${depot}/manifest/${manifest}/5/${code} -> HTTP ${http}`+
                     (http === 200 ? '   <<<<< DOWNLOADS' : ''));
