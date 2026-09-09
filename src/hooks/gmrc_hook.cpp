@@ -6,7 +6,9 @@
 #include "../gmrc_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
+#include <atomic>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -51,6 +53,92 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     // asking client has SLSsteam's ownership spoof and the package-0 injection in
     // place. If it answers with a usable code, the provider cascade is not needed
     // at all; if it denies, that is the measurement that closes the question.
+    // =====================================================================
+    // GMRC_PROBE (2026-09-09) — map WHAT Valve checks before issuing a code.
+    // =====================================================================
+    // Armed by ~/.config/lumalinux/gmrc_probe. Runs ONCE per process, on the
+    // first call that concerns one of our depots, then gets out of the way.
+    //
+    // Why a probe and not reasoning: what reaches Valve is the RPC
+    // "ContentServerDirectory.GetManifestRequestCode#1" over the CM connection
+    // (RESEARCH §GMRC), whose protobuf carries exactly four things we control —
+    // app_id, depot_id, manifest_id, branch. The verdict is that RPC's own
+    // return value: 0 = Access Denied, 1 = issued (code at response+0x10). So
+    // the entire policy surface is those four fields, and the only way to learn
+    // the rule is to vary them and read Valve's answer.
+    //
+    // Measured before this existed, which is why the obvious rules are already
+    // ruled out:
+    //   Proton / redistributables (real licence)  -> issued
+    //   Brotato shader depot (depot == appid)     -> issued, and unowned
+    //   Brotato content depot                     -> Access Denied
+    //   Abyssal Terrors DLC (depot == appid too)  -> Access Denied
+    // So neither "depot == appid" nor "the account owns the app" is the rule.
+    //
+    // Optional reference values for the cases that need an app the account
+    // really owns, read from the marker file:
+    //   owned_app=262060
+    //   owned_depot=262065
+    // Leave them out and those cases are skipped.
+    //
+    // Every case is a real RPC to Valve. The matrix is small and runs once.
+    static std::atomic<bool> g_probeDone{false};
+    if (out_code && g_origFn && !g_probeDone.load(std::memory_order_relaxed)
+        && (KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id))) {
+        const char* home = std::getenv("HOME");
+        std::string mk = home ? std::string(home) + "/.config/lumalinux/gmrc_probe"
+                              : std::string();
+        std::ifstream mf(mk);
+        if (mf.good() && !g_probeDone.exchange(true)) {
+            uint32_t ownedApp = 0, ownedDepot = 0;
+            for (std::string line; std::getline(mf, line); ) {
+                if (line.rfind("owned_app=", 0) == 0)
+                    ownedApp = (uint32_t)std::strtoul(line.c_str() + 10, nullptr, 10);
+                else if (line.rfind("owned_depot=", 0) == 0)
+                    ownedDepot = (uint32_t)std::strtoul(line.c_str() + 12, nullptr, 10);
+            }
+            Log::Info("GMRC_PROBE: start — real call app=%u depot=%u manifest=%llu "
+                      "branch='%s' (owned_app=%u owned_depot=%u)",
+                      app_id, depot_id, (unsigned long long)gid,
+                      branch ? branch : "(null)", ownedApp, ownedDepot);
+
+            char brPublic[] = "public";
+            char brEmpty[]  = "";
+            char brBeta[]   = "beta";
+
+            struct Case { const char* name; uint32_t a; uint32_t d; bool needsOwned; char* b; };
+            const Case cases[] = {
+                { "baseline",             app_id,   depot_id,   false, branch   },
+                { "branch=public",        app_id,   depot_id,   false, brPublic },
+                { "branch=empty",         app_id,   depot_id,   false, brEmpty  },
+                { "branch=beta",          app_id,   depot_id,   false, brBeta   },
+                { "app=0",                0,        depot_id,   false, branch   },
+                { "depot=0",              app_id,   0,          false, branch   },
+                { "depot=app",            app_id,   app_id,     false, branch   },
+                { "app=depot",            depot_id, depot_id,   false, branch   },
+                { "ownedapp+ourdepot",    ownedApp, depot_id,   true,  branch   },
+                { "ownedapp+owneddepot",  ownedApp, ownedDepot, true,  branch   },
+            };
+            for (const auto& c : cases) {
+                if (c.needsOwned && (ownedApp == 0 || ownedDepot == 0)) {
+                    Log::Info("GMRC_PROBE: %-22s SKIPPED (no owned_app/owned_depot "
+                              "in the marker file)", c.name);
+                    continue;
+                }
+                uint64_t probeOut = 0;
+                const int32_t prc = g_origFn(this_, c.a, c.d, manifest_lo, manifest_hi,
+                                             c.b, &probeOut);
+                Log::Info("GMRC_PROBE: %-22s app=%-9u depot=%-9u branch='%s' -> rc=%d "
+                          "code=%llu %s",
+                          c.name, c.a, c.d, c.b ? c.b : "(null)", (int)prc,
+                          (unsigned long long)probeOut,
+                          (prc && probeOut) ? "<<<<< ISSUED" : "(denied)");
+            }
+            Log::Info("GMRC_PROBE: end — manifest under test was %llu",
+                      (unsigned long long)gid);
+        }
+    }
+
     // Two ways to arm it, because ONE OF THEM DOES NOT SURVIVE THE STEAM RUNTIME:
     // steam-runtime-tool re-execs the client through a filtered environment and
     // drops variables outside its allow-list, so LUMA_* set in the wrapper never
