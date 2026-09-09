@@ -21,6 +21,7 @@
 //         - Packet/858 hook REMOVED: SLSsteam already covers ownership
 //           (CheckAppOwnership) and PICS access tokens. Nothing extra.
 
+#include <fstream>
 #include "log.hpp"
 #include "proc_filter.hpp"
 #include "key_store.hpp"
@@ -174,10 +175,17 @@ void InstallHooks() {
     if (const char* dbg = std::getenv("LUMA_LOADPKG_DEBUG"); dbg && dbg[0] && dbg[0] != '0') {
         specs.push_back({"LoadPackage", "LUMA_NO_LOADPKG", &Hooks::LoadPackage::Install});
     }
-    // EXPERIMENT: GetCDNAuthToken ownership-gating probe. Inert unless
-    // LUMA_CDNAUTH_PROBE=1 (its Install() bails otherwise). Build-pinned.
-    if (const char* p = std::getenv("LUMA_CDNAUTH_PROBE"); p && p[0] && p[0] != '0') {
-        specs.push_back({"CDNAuthProbe", "LUMA_NO_CDNAUTH", &Hooks::CdnAuthProbe::Install});
+    // EXPERIMENT: GetCDNAuthToken ownership-gating probe. Armed by the marker
+    // FILE ~/.config/lumalinux/cdnauth_probe (NOT an env var — the Steam runtime
+    // filters LUMA_* out of the process that loads us). Build-pinned; Install()
+    // bails safely if the marker is absent or the RVA is stale.
+    {
+        const char* home = std::getenv("HOME");
+        std::string mk = home ? std::string(home) + "/.config/lumalinux/cdnauth_probe"
+                              : std::string();
+        if (!mk.empty() && std::ifstream(mk).good()) {
+            specs.push_back({"CDNAuthProbe", "LUMA_NO_CDNAUTH", &Hooks::CdnAuthProbe::Install});
+        }
     }
 
     int active = 0, expected = 0;

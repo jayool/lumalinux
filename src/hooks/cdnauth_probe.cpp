@@ -61,14 +61,18 @@ std::atomic<bool> g_done{false};
 // "empty" out that the callee's assign can overwrite without freeing garbage.
 struct OutBuf { uint8_t bytes[64]; };
 
-bool probeArmed() {
-    const char* e = std::getenv("LUMA_CDNAUTH_PROBE");
-    return e && *e && e[0] != '0';
-}
-
 std::string markerPath() {
     const char* home = std::getenv("HOME");
     return home ? std::string(home) + "/.config/lumalinux/cdnauth_probe" : std::string();
+}
+
+// Armed by the marker FILE, not an env var: the Steam runtime re-execs the
+// client through a filtered environment and drops LUMA_* (measured 2026-09-09),
+// so an env-var gate never reaches the process that loads us. The file does.
+bool probeArmed() {
+    const std::string mk = markerPath();
+    if (mk.empty()) return false;
+    return std::ifstream(mk).good();
 }
 
 // Best-effort: read the token as a C string if the first pointer in the out
