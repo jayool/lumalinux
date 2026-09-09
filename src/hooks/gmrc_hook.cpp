@@ -6,6 +6,7 @@
 #include "../gmrc_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
+#include <cstdlib>
 
 #include <cstdint>
 
@@ -40,7 +41,24 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     //       denies the download with Access Denied, which Steam surfaces as
     //       "No connection" in the UI.
     // Everything else still goes to Steam's normal (owned) path.
-    if (out_code && (KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id))) {
+    // EXPERIMENT (2026-09-09), LUMA_GMRC_PASSTHROUGH=1: do not inject for our
+    // depots either — let Steam ask Valve itself and log what comes back.
+    //
+    // This path has never been observed. The hook has short-circuited our depots
+    // since it was written, so nobody knows what Valve's CM answers when the
+    // asking client has SLSsteam's ownership spoof and the package-0 injection in
+    // place. If it answers with a usable code, the provider cascade is not needed
+    // at all; if it denies, that is the measurement that closes the question.
+    static const bool kPassthrough = [] {
+        const char* e = std::getenv("LUMA_GMRC_PASSTHROUGH");
+        return e && *e && e[0] != '0';
+    }();
+
+    if (kPassthrough) {
+        Log::Info("GMRC: LUMA_GMRC_PASSTHROUGH=1 — NOT injecting for app=%u depot=%u "
+                  "manifest=%llu; letting Steam ask Valve", app_id, depot_id,
+                  (unsigned long long)gid);
+    } else if (out_code && (KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id))) {
         auto code = Gmrc::GetCode(gid);
         if (code) {
             *out_code = *code;
