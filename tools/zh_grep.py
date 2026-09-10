@@ -13,8 +13,11 @@ page title and date-looking strings.
 
 import argparse
 import html
+import json
 import re
 import sys
+import time
+import urllib.parse
 import urllib.request
 
 DEFAULT_KW = ["请求码", "清单", "wudrm", "opensteamtool", "steam.run", "服务器", "封号",
@@ -47,16 +50,56 @@ def to_blocks(doc):
     return (html.unescape(title.group(1)).strip() if title else ""), [b for b in blocks if len(b) > 8]
 
 
+def discourse_topic(url, maxlen=700):
+    """Discourse forums (3a.lol, linux.do) render by JS; /t/<id>.json has the posts."""
+    m = re.match(r"(https?://[^/]+)/t/(?:[^/]+/)?(\d+)", url)
+    if not m:
+        return False
+    base, tid = m.group(1), m.group(2)
+    try:
+        d = json.loads(fetch(f"{base}/t/{tid}.json"))
+    except Exception as e:
+        print(f"  discourse fetch failed: {e}")
+        return True
+    print(f"  title: {d.get('title')}  posts: {d.get('posts_count')}  created: {str(d.get('created_at'))[:10]}")
+    for p in d.get("post_stream", {}).get("posts", []):
+        txt = re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", p.get("cooked", "")))).strip()
+        print(f"  - [{str(p.get('created_at'))[:10]} {p.get('username')}] {txt[:maxlen]}")
+    return True
+
+
+def discourse_search(base, query, n=20):
+    q = urllib.parse.quote(query + " order:latest")
+    try:
+        d = json.loads(fetch(f"{base}/search.json?q={q}"))
+    except Exception as e:
+        print(f"  search failed: {e}")
+        return
+    for t in d.get("topics", [])[:n]:
+        print(f"  {t['id']:>7}  {str(t.get('created_at'))[:10]}  {t.get('title')}")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("urls", nargs="+")
+    ap.add_argument("urls", nargs="*")
+    ap.add_argument("--search", action="append", default=[], metavar="BASE::QUERY",
+                    help='Discourse search, e.g. "https://3a.lol::请求码"')
+    ap.add_argument("--sleep", type=float, default=4, help="pause between requests (Discourse rate-limits)")
     ap.add_argument("--kw", action="append", default=[])
     ap.add_argument("--max", type=int, default=40)
     ap.add_argument("--all", action="store_true", help="print every block, not only matches")
     a = ap.parse_args()
     kws = [k.lower() for k in (a.kw or DEFAULT_KW)]
+    for spec in a.search:
+        base, _, query = spec.partition("::")
+        print(f"\n===== search {base}: {query}")
+        discourse_search(base, query)
+        time.sleep(a.sleep)
     for url in a.urls:
         print(f"\n===== {url}")
+        if discourse_topic(url):
+            time.sleep(a.sleep)
+            continue
         try:
             doc = fetch(url)
         except Exception as e:
