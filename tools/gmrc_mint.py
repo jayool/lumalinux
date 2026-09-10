@@ -125,6 +125,52 @@ def burst(client, n, gid_cache):
         print("  -> no throttling seen at this volume; a rate limit is not what killed the providers")
 
 
+# Cell ids to ask GetServersForSteamPipe with. The exact numbering is Valve's;
+# these just need to spread across continents so the returned host names carry
+# different region tokens (lhr1, fra2, iad1, sea1, sgp1, hkg1, sha1, syd1, ...).
+REGION_CELLS = [0, 1, 4, 5, 14, 15, 25, 31, 33, 38, 40, 50, 52, 63, 64, 65, 66, 70, 71,
+                80, 89, 92, 95, 99, 100, 103, 113, 115, 116, 117, 118, 119, 120, 121, 122]
+
+
+def cdn_hosts_by_region():
+    """{region_token: (host, vhost)} — one Steam cache per region we can find."""
+    import re as _re
+    seen = {}
+    for cell in REGION_CELLS:
+        hosts, _ = gp.cdn_hosts(cell)
+        for host, vhost in hosts:
+            m = _re.search(r'-([a-z]{3}\d)\.', host)
+            region = m.group(1) if m else host.split('.', 1)[-1]
+            seen.setdefault(region, (host, vhost))
+    return seen
+
+
+def regions(client, target):
+    """Same code, many regions. If a code works on some caches and not others,
+    Valve has started binding codes to the minting region — which would kill
+    every provider (they mint in one region and serve the world) while a
+    single owner minting and downloading in one place never notices."""
+    label, app, depot, gid = target
+    print(f"=== REGIONS: {label} depot={depot} gid={gid}")
+    er, ours, _ = mint(client, app, depot, gid)
+    wcode, wmeta = fetch_wudrm(gid)
+    print(f"  ours (cell {client.cell_id}): {er} {ours}    wudrm: {wcode} ({wmeta})")
+    by_region = cdn_hosts_by_region()
+    print(f"  {len(by_region)} region(s) found: {', '.join(sorted(by_region))}")
+    print(f"  {'region':8s} {'host':34s} {'bogus':>6s} {'ours':>6s} {'wudrm':>6s}")
+    for region in sorted(by_region):
+        host, vhost = by_region[region]
+        row = [region, host[:34]]
+        for code in (1, ours, wcode):
+            if not code:
+                row.append("-")
+                continue
+            st, _ = gp.cdn_check([(host, vhost)], depot, gid, code)
+            row.append(str(st))
+        print(f"  {row[0]:8s} {row[1]:34s} {row[2]:>6s} {row[3]:>6s} {row[4]:>6s}")
+    print("  200 for wudrm anywhere = the code is real and region-bound; 401 everywhere = it is not a code.")
+
+
 def watch(client, hosts, target, minutes):
     """Re-mint the same manifest every 60s and keep testing the FIRST code
     against the CDN, to measure how long a code stays valid and when the CM
@@ -143,7 +189,9 @@ def watch(client, hosts, target, minutes):
         st_first, _ = gp.cdn_check(hosts, depot, gid, first)
         er, now, _ = mint(client, app, depot, gid)
         same = "same" if now == first else f"ROTATED -> {now}"
-        print(f"  t+{el:4d}s  first code CDN -> {st_first}   fresh mint: {er} {same}")
+        wcode, _ = fetch_wudrm(gid)
+        wst = gp.cdn_check(hosts, depot, gid, wcode)[0] if wcode else "-"
+        print(f"  t+{el:4d}s  first code CDN -> {st_first}   fresh mint: {er} {same}   wudrm {wcode} CDN -> {wst}")
 
 
 def fetch_wudrm(gid):
@@ -163,6 +211,9 @@ def main():
     ap.add_argument("--user", metavar="USERNAME", help="log in as this account instead of anonymously")
     ap.add_argument("--probe-json", metavar="FILE", help="gmrc_probe.py --json output to compare wudrm codes against")
     ap.add_argument("--cell", type=int, default=0)
+    ap.add_argument("--regions", action="store_true",
+                    help="region-binding probe: take our code AND wudrm's for the first target to one "
+                         "Steam cache per region and print the status matrix")
     ap.add_argument("--burst", type=int, default=0, metavar="N",
                     help="rate-limit probe: mint N codes back-to-back over every depot of the free "
                          "apps this login owns, and report the eresult distribution + latency")
@@ -267,6 +318,8 @@ def main():
         print(line)
         print()
 
+    if args.regions and resolved:
+        regions(client, resolved[0])
     if args.burst:
         burst(client, args.burst, gid_cache)
     if args.watch and resolved:
