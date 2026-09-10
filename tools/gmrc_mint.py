@@ -28,11 +28,22 @@ previous gmrc_probe run (--probe-json), says whether wudrm returned the SAME
 number as before — a code that never changes across runs minutes apart is a
 cached one.
 
-Needs the ValvePython `steam` package (stdlib otherwise):
+Needs the ValvePython `steam` package WITH its `client` extra (gevent +
+protobuf); a bare `pip install steam` only brings the Web API half. Stdlib
+otherwise:
 
-    pip install --user --break-system-packages steam
+    pip install --user --break-system-packages 'steam[client]'
     python3 tools/gmrc_mint.py --target 2875150:2875151:275796854305563747 \\
         --probe-json /tmp/gmrc.json
+
+Fallback if the Steam client library cannot be installed: DepotDownloader
+(self-contained release, no .NET needed) mints its own code internally, so an
+ANONYMOUS `-manifest-only` download of the free control depot succeeding today
+proves the same thing as the "our code -> 200" line above (minus the URL check):
+
+    curl -fsSL -o /tmp/dd.zip https://github.com/SteamRE/DepotDownloader/releases/latest/download/DepotDownloader-linux-x64.zip
+    mkdir -p /tmp/dd && unzip -qo /tmp/dd.zip -d /tmp/dd && chmod +x /tmp/dd/DepotDownloader
+    /tmp/dd/DepotDownloader -app 228980 -depot 228989 -manifest-only -dir /tmp/dd-out
 
 Login: anonymous by default (enough for free depots such as the control).
 For a depot only an owning account can mint for, pass --user USERNAME; the
@@ -87,11 +98,13 @@ def main():
     try:
         from steam.client import SteamClient
         from steam.enums import EResult
-    except ImportError:
-        print("The ValvePython 'steam' package is missing. Install it with:\n"
-              "    pip install --user --break-system-packages steam\n"
-              "(if that fails on this Python, try: python3 -m venv ~/steamvenv && "
-              "~/steamvenv/bin/pip install steam && ~/steamvenv/bin/python " + sys.argv[0] + " ...)")
+    except ImportError as e:
+        print(f"cannot import the ValvePython Steam client: {e}\n"
+              "A bare 'pip install steam' is NOT enough — the CM client lives behind the\n"
+              "'client' extra (gevent + protobuf). Install it with:\n"
+              "    pip install --user --break-system-packages 'steam[client]'\n"
+              "If gevent has no wheel for this Python, use a venv on an older one, or run\n"
+              "the DepotDownloader fallback described in the docstring of this script.")
         sys.exit(2)
 
     print(f"gmrc_mint — {time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
