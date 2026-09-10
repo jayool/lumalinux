@@ -76,6 +76,76 @@ def mint(client, app, depot, gid, branch="public"):
     return er.name, (code or None), str(resp.body).strip().replace("\n", " ")
 
 
+# Apps an ANONYMOUS login can mint for (free tools + the dedicated-server
+# package 17906). Their depots are resolved live; together they give a few
+# dozen distinct (depot, gid) pairs, enough to see a per-account rate limit
+# without touching anything paid.
+BURST_APPS = [228980, 1007, 740, 232250, 232330, 232370, 4020, 90, 1690800, 2394010]
+
+
+def burst(client, n, gid_cache):
+    """Mint n codes as fast as the CM answers, cycling over every depot of
+    BURST_APPS. A provider serves thousands of these per hour from a handful of
+    accounts; if Valve now throttles or denies past some count, it shows here
+    as a change in eresult after a certain point."""
+    import collections
+    from steam.enums import EResult
+    pairs = []
+    for app in BURST_APPS:
+        if app not in gid_cache:
+            gid_cache[app] = gp.resolve_gids(app)[0]
+        for depot, gid in sorted(gid_cache[app].items()):
+            pairs.append((app, depot, gid))
+    if not pairs:
+        print("burst: no depots resolved (api.steamcmd.net down?)")
+        return
+    print(f"=== BURST: {n} mints over {len(pairs)} distinct (depot, gid) pairs from {len(BURST_APPS)} free apps")
+    counts = collections.Counter()
+    first_bad = None
+    t0 = time.time()
+    lat = []
+    for i in range(n):
+        app, depot, gid = pairs[i % len(pairs)]
+        t = time.time()
+        er, code, _ = mint(client, app, depot, gid)
+        lat.append(time.time() - t)
+        counts[er] += 1
+        if er != "OK" and first_bad is None:
+            first_bad = (i + 1, er, app, depot)
+        if (i + 1) % 25 == 0:
+            print(f"  {i+1:4d} done  {time.time()-t0:5.1f}s  " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    lat.sort()
+    print(f"  total {n} in {time.time()-t0:.1f}s; latency p50={lat[len(lat)//2]*1000:.0f}ms "
+          f"p95={lat[int(len(lat)*0.95)]*1000:.0f}ms max={lat[-1]*1000:.0f}ms")
+    print("  eresults: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+    if first_bad:
+        print(f"  first non-OK at request #{first_bad[0]}: {first_bad[1]} (app {first_bad[2]} depot {first_bad[3]})")
+        print("  -> a threshold like this is what a provider minting for everyone would hit constantly")
+    else:
+        print("  -> no throttling seen at this volume; a rate limit is not what killed the providers")
+
+
+def watch(client, hosts, target, minutes):
+    """Re-mint the same manifest every 60s and keep testing the FIRST code
+    against the CDN, to measure how long a code stays valid and when the CM
+    starts handing out a different one."""
+    label, app, depot, gid = target
+    print(f"=== WATCH ({minutes} min): {label} depot={depot} gid={gid}")
+    er, first, _ = mint(client, app, depot, gid)
+    if not first:
+        print(f"  cannot mint ({er}); nothing to watch")
+        return
+    t0 = time.time()
+    print(f"  t+0s  minted {first}")
+    while time.time() - t0 < minutes * 60:
+        time.sleep(60)
+        el = int(time.time() - t0)
+        st_first, _ = gp.cdn_check(hosts, depot, gid, first)
+        er, now, _ = mint(client, app, depot, gid)
+        same = "same" if now == first else f"ROTATED -> {now}"
+        print(f"  t+{el:4d}s  first code CDN -> {st_first}   fresh mint: {er} {same}")
+
+
 def fetch_wudrm(gid):
     name, tmpl, kind = gp.PROVIDERS[1]
     assert name == "wudrm"
@@ -93,6 +163,12 @@ def main():
     ap.add_argument("--user", metavar="USERNAME", help="log in as this account instead of anonymously")
     ap.add_argument("--probe-json", metavar="FILE", help="gmrc_probe.py --json output to compare wudrm codes against")
     ap.add_argument("--cell", type=int, default=0)
+    ap.add_argument("--burst", type=int, default=0, metavar="N",
+                    help="rate-limit probe: mint N codes back-to-back over every depot of the free "
+                         "apps this login owns, and report the eresult distribution + latency")
+    ap.add_argument("--watch", type=int, default=0, metavar="MINUTES",
+                    help="validity-window probe: re-mint the first target every 60s for this long, "
+                         "and keep asking the CDN whether the FIRST code still works")
     args = ap.parse_args()
 
     try:
@@ -190,6 +266,11 @@ def main():
                 line += "   (== ours!)" if ours == wcode else "   (!= ours)"
         print(line)
         print()
+
+    if args.burst:
+        burst(client, args.burst, gid_cache)
+    if args.watch and resolved:
+        watch(client, hosts, resolved[0], args.watch)
 
     ok_ours = [v for v in verdicts if v[0] == "ours" and v[2] == 200]
     bad_ours = [v for v in verdicts if v[0] == "ours" and v[2] != 200]
