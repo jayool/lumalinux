@@ -104,8 +104,14 @@ def head(url):
 
 
 def branch_readme(app):
+    """Bot metadata from the branch README; old-format branches (2025) have no
+    README but do have appinfo.vdf/config.json, so fall back to those."""
     r = gp.http_get(raw_url(app, "README.md"), gp.UA_CURL, timeout=25)
     if r["status"] != 200:
+        for probe in ("appinfo.vdf", "config.json"):
+            st, _ = head(raw_url(app, probe))
+            if st == 200:
+                return {"build": "?", "time": "? (old-format branch, no README)"}
         return None
     txt = r["body"].decode("utf-8", "replace")
     b = re.search(r"Build Id\*\*\s*`(\d+)`", txt)
@@ -219,13 +225,14 @@ def main():
             print(f"--- {app} {name}: no public content depots on steamcmd.net"); continue
         newest = max(t for _, t in content.values())
         age_h = (now - newest) / 3600 if newest else float("inf")
+        age_s = f"{age_h:.1f} h ago" if newest else "n/a on steamcmd.net"
         if args.hours and age_h > args.hours:
             print(f"--- {app} {name}: Valve update {age_h/24:.1f} d ago — skipped"); continue
         rd = branch_readme(app)
         if rd is None:
-            print(f"--- {app} {name}: Valve updated {age_h:.1f} h ago; repo: NO BRANCH")
+            print(f"--- {app} {name}: Valve updated {age_s}; repo: NO BRANCH")
             rows.append((app, name, "NOBRANCH")); continue
-        print(f"--- {app} {name}: Valve updated {age_h:.1f} h ago; repo build {rd['build']} @ {rd['time']} CST")
+        print(f"--- {app} {name}: Valve updated {age_s}; repo build {rd['build']} @ {rd['time']} CST")
         verdicts, fresh_target = [], None
         for d, (gid, t) in sorted(content.items()):
             st, e = head(raw_url(app, f"{d}_{gid}.manifest"))
@@ -233,8 +240,7 @@ def main():
             verdicts.append(v)
             if v == "FRESH" and fresh_target is None:
                 fresh_target = (d, gid)
-            when = time.strftime("%Y-%m-%d %H:%M", time.gmtime(t)) if t else "?"
-            print(f"      depot {d:<9} valve gid {gid} ({when} UTC)  -> {v}")
+            print(f"      depot {d:<9} valve gid {gid:<20} -> {v}")
         if args.cdn and fresh_target and hosts:
             d, gid = fresh_target
             r = gp.http_get(raw_url(app, f"{d}_{gid}.manifest"), gp.UA_CURL, timeout=60)
