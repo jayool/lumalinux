@@ -60,6 +60,9 @@ import urllib.request
 
 # ── the same table as src/gmrc_store.hpp ────────────────────────────────────
 PROVIDERS = [
+    # Found 2026-09-10 inside dx3906's tool (manifest.lua + opensteamtool.toml):
+    # caigamer's own code source, "measured 200, steadier than wudrm".
+    ("depotcn",       "https://depotcn.caigamer.cn/manifest/{gid}",    "plain"),
     ("opensteamtool", "https://manifest.opensteamtool.com/{gid}",      "plain"),
     ("wudrm",         "http://gmrc.wudrm.com/manifest/{gid}",          "plain"),
     ("steamrun",      "https://manifest.steam.run/api/manifest/{gid}", "json"),

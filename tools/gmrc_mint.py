@@ -195,8 +195,7 @@ def watch(client, hosts, target, minutes):
 
 
 def fetch_wudrm(gid):
-    name, tmpl, kind = gp.PROVIDERS[1]
-    assert name == "wudrm"
+    name, tmpl, kind = next(p for p in gp.PROVIDERS if p[0] == "wudrm")
     r = gp.http_get(tmpl.format(gid=gid), gp.UA_OST)
     if r["error"]:
         return None, r["error"]
