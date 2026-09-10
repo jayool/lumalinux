@@ -32,6 +32,9 @@ Targets come from three places, all optional:
   - ~/.config/lumalinux/keys.txt Extended lines (depot;app;gid;size;key).
     gid=0 (no-pin) lines get their CURRENT gid from api.steamcmd.net.
   - --target APP:DEPOT[:GID] on the command line (GID resolved if omitted).
+  - --lua FILE: a Hubcap .lua — every setManifestid(depot, "gid", size) becomes
+    a target under the .lua's main addappid. Point it at the zip you were
+    installing when things broke: that is the manifest whose code you need.
 
 The verdict per (target, provider) is one of:
   DOWN            transport error (DNS / connect / TLS / timeout)
@@ -237,6 +240,27 @@ def read_keys_targets(path):
     return out
 
 
+def read_lua_targets(path):
+    """Targets from a Hubcap .lua: main app = first addappid(N, 1, ...) (or the
+    first addappid at all), one target per setManifestid(depot, "gid", size)."""
+    try:
+        text = open(path, encoding="utf-8", errors="replace").read()
+    except OSError as e:
+        print(f"--lua {path}: {e}")
+        return []
+    apps = re.findall(r'addappid\(\s*(\d+)\s*,\s*1\b', text) or re.findall(r'addappid\(\s*(\d+)', text)
+    if not apps:
+        print(f"--lua {path}: no addappid() found")
+        return []
+    app = int(apps[0])
+    out = []
+    for depot, gid in re.findall(r'setManifestid\(\s*(\d+)\s*,\s*"(\d+)"', text):
+        out.append((f"{os.path.basename(path)} depot {depot}", app, int(depot), int(gid)))
+    if not out:
+        print(f"--lua {path}: no setManifestid() found")
+    return out
+
+
 def tail_grep(path, pattern, n=20):
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
@@ -250,6 +274,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--target", action="append", default=[], metavar="APP:DEPOT[:GID]",
                     help="extra target (repeatable). GID resolved from api.steamcmd.net if omitted")
+    ap.add_argument("--lua", action="append", default=[], metavar="FILE",
+                    help="Hubcap .lua to pull targets from (repeatable)")
     ap.add_argument("--keys", default=os.path.expanduser("~/.config/lumalinux/keys.txt"),
                     help="keys.txt to pull Extended-format depots from (default: %(default)s)")
     ap.add_argument("--no-keys", action="store_true", help="ignore keys.txt")
@@ -270,6 +296,8 @@ def main():
         kt = read_keys_targets(args.keys)
         print(f"keys.txt: {args.keys} -> {len(kt)} Extended depot(s)")
         targets += kt
+    for f in args.lua:
+        targets += read_lua_targets(f)
     for t in args.target:
         p = t.split(":")
         if len(p) < 2 or not all(x.isdigit() for x in p):
