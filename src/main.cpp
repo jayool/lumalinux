@@ -139,7 +139,8 @@ void InstallHooks() {
     // depots"). The package-0 finder (started below, on its own thread) injects
     // the depot ids into PackageId=0 so the per-depot license check passes and
     // the depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
-    // keys; GMRC injects the manifest request code. Mirrors LumaCore.
+    // keys; GMRC (opt-in since v0.20.0) injected the manifest request code back
+    // when public providers existed. Mirrors LumaCore.
     //
     // The legacy LoadPackage hook is OPT-IN as a diagnostic only — set
     // LUMA_LOADPKG_DEBUG=1 to install it and log every PackageId+AppIdVec
@@ -155,9 +156,23 @@ void InstallHooks() {
     struct HookSpec { const char* name; const char* disableEnv; bool (*install)(); };
     std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
-        {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
         {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},
     };
+    // GMRC is OPT-IN since v0.20.0 (LUMA_GMRC=1). The public request-code
+    // providers it fed on (opensteamtool, wudrm, steam.run) all stopped issuing
+    // valid codes on 2026-09-09, and Steam's own GetManifestRequestCode already
+    // does everything the hook can still do: Valve grants codes for public
+    // depots (Workshop / their shader caches) and denies the rest. Worse, a
+    // provider that answers with a *wrong* number (wudrm did, for days) made the
+    // hook inject it, the CDN 401'd every content server and Steam abandoned the
+    // whole install ("Unknown error") — measured on 2026-09-10 in the SteamOS codespace.
+    // Content never needed the code once its manifest sits in depotcache/,
+    // which is how LumaDeck installs anyway. The cascade stays in the tree
+    // behind the env for the day a real provider exists again.
+    const bool gmrcOptIn = std::getenv("LUMA_GMRC") != nullptr;
+    if (gmrcOptIn) {
+        specs.push_back({"GMRC", "LUMA_NO_GMRC", &Hooks::Gmrc::Install});
+    }
     // BuildDep is OFF by default since SLSsteam 20260714 hooks
     // BuildDepotDependency itself (for its ManifestIds / DepotBlacklist
     // features) and loads first (LD_AUDIT before our LD_PRELOAD), overwriting
@@ -176,15 +191,25 @@ void InstallHooks() {
 
     int active = 0, expected = 0;
     // Critical-hook gate (the "abort if the scan fails" that #17 promised but never
-    // wrote). DepotKey + GMRC are the CRITICAL set (mirrors check_patterns.py):
-    // both must be active or a forced download can't complete. Track whether each
-    // installed, and whether a critical's absence is a genuine FAILED (its pattern
-    // moved) vs a deliberate env-disable — only the former marks the session
-    // blocked for LumaDeck.
-    bool depotKeyOk = false, gmrcOk = false, criticalFailed = false;
+    // wrote). DepotKey is the CRITICAL set (mirrors check_patterns.py): without
+    // the keys a forced download can't decrypt. GMRC left the set in v0.20.0 —
+    // with the manifest pre-seeded in depotcache/ Steam never asks for a request
+    // code, so the hook is not load-bearing (see the opt-in note above). Track
+    // whether the critical installed, and whether its absence is a genuine FAILED
+    // (its pattern moved) vs a deliberate env-disable — only the former marks the
+    // session blocked for LumaDeck.
+    bool depotKeyOk = false, criticalFailed = false;
     std::string failed;
     std::string installed;   // names of the pieces actually installed, derived
                              // from the loop so the summary never goes stale
+    if (!gmrcOptIn) {
+        // Record the intentional off-state so status.json is self-documenting:
+        // DISABLED, not FAILED (LumaDeck only trips "not supported" on a FAILED
+        // critical, and GMRC is no longer critical anyway).
+        Log::Info("Install: GMRC hook off by default (opt in with LUMA_GMRC=1; "
+                  "no public request-code provider is alive since 2026-09-09)");
+        Status::RecordHook("GMRC", Status::DISABLED);
+    }
     for (const auto& s : specs) {
         if (std::getenv(s.disableEnv)) {
             Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
@@ -195,14 +220,13 @@ void InstallHooks() {
         if (s.install()) {
             ++active;
             if (std::strcmp(s.name, "DepotKey") == 0) depotKeyOk = true;
-            if (std::strcmp(s.name, "GMRC") == 0)     gmrcOk     = true;
             if (!installed.empty()) installed += ", ";
             installed += s.name;
             Status::RecordHook(s.name, Status::INSTALLED);
         } else {
             Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
                        "updated — see docs/RESEARCH.md to re-derive patterns)", s.name);
-            if (std::strcmp(s.name, "DepotKey") == 0 || std::strcmp(s.name, "GMRC") == 0)
+            if (std::strcmp(s.name, "DepotKey") == 0)
                 criticalFailed = true;
             if (!failed.empty()) failed += ", ";
             failed += s.name;
@@ -231,17 +255,22 @@ void InstallHooks() {
     // BY DEFAULT (disable with LUMA_NO_PKG0_FINDER); the hook no longer injects.
     //
     // CRITICAL-HOOK GATE (#17 fail-closed): the finder surfaces our forced depots
-    // as Steam download targets, but a forced download can only COMPLETE if both
-    // critical hooks are active — DepotKey (keys) and GMRC (request codes). Since
-    // the hash check is now advisory, a build whose critical pattern moved reaches
-    // here anyway; injecting then would strand the user at "Invalid content
-    // configuration" / "No connection" instead of leaving Steam clean. So THIS is
-    // the real gate #17's comment promised ("abort if the scan fails"): if a
-    // critical isn't active, DON'T inject. The passive hooks that did install stay
-    // put (Uninstall doesn't remove the detour — it would break them) and pass
-    // through harmlessly; owned games are unaffected. Reconcile and the SLS-
-    // achievement patch below still run — they don't touch the download path.
-    const bool criticalsActive = depotKeyOk && gmrcOk;
+    // as Steam download targets, but a forced download can only COMPLETE if the
+    // critical hook is active — DepotKey (keys). Since the hash check is now
+    // advisory, a build whose critical pattern moved reaches here anyway;
+    // injecting then would strand the user at "Invalid content configuration"
+    // instead of leaving Steam clean. So THIS is the real gate #17's comment
+    // promised ("abort if the scan fails"): if the critical isn't active, DON'T
+    // inject. The passive hooks that did install stay put (Uninstall doesn't
+    // remove the detour — it would break them) and pass through harmlessly;
+    // owned games are unaffected. Reconcile and the SLS-achievement patch below
+    // still run — they don't touch the download path.
+    //
+    // GMRC is deliberately NOT part of this gate since v0.20.0: with the
+    // manifests pre-seeded in depotcache/ Steam never requests a code, so a
+    // missing GMRC hook must not switch the finder off (it did until v0.19 and
+    // produced "installed" games with an empty directory — 0 target depots).
+    const bool criticalsActive = depotKeyOk;
     if (!criticalsActive) {
         Status::RecordHook("PackageZeroFinder", Status::DISABLED);
         // No Status::SetBlocked() here: the critical hook's own FAILED entry (set

@@ -2,7 +2,6 @@
 #include "../patterns.hpp"
 #include "../rva_feed.hpp"
 #include "../key_store.hpp"
-#include "../gmrc_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
@@ -28,9 +27,22 @@ namespace {
 // suspend / the recurring "Missing decryption key" loop (RESEARCH §13.8).
 // Returning 0 for exactly those games routes them down Steam's own clean skip.
 //
+// Since v0.20.0 the skip covers EVERY lumalinux-managed game, keyed or not.
+// The shader manifest is never in a Hubcap zip, so with a key the job still has
+// to ask Valve for a manifest request code, and Valve only grants that for apps
+// whose depot <appid> is public (games with a Steam Workshop — the workshop and
+// shader depots share the id) and denies it for the rest. There is no public
+// request-code provider left to fill the gap (all died 2026-09-09), and the
+// denied path is not free: Steam shows "No internet connection", stalls the
+// install for 30 s, and only then goes on without shaders. Returning 0 up front
+// gives the same end state with no popup and no stall (verified 2026-09-10 on
+// Valheim / Lethal Company in the SteamOS codespace). The cost is the precompiled shaders
+// of the Workshop-carrying games (Brotato, RimWorld...), which compile at
+// runtime like on any game without a cache. Owned games are never touched.
+//
 // See RESEARCH §13.9 for the full disassembly and why this is preferred over
 // both the fragile manifest-fabrication path ("path B") and the global
-// DisableShaderCache toggle.
+// DisableShaderCache toggle (what moon writes; it kills owned games' shaders too).
 
 using ShaderDepotFn = uint32_t (*)(void* /*appinfo*/);
 
@@ -48,41 +60,19 @@ uint32_t HookFn(void* appinfo) {
     const uint32_t id = g_origFn(appinfo);
     if (id == 0) return id;
 
-    // (1) OUR keyless games (presence-only in keys.txt): the shader depot's
-    // manifest is encrypted with a key we don't have, so the pre-cache can NEVER
-    // succeed. Skip cleanly — the original v0.14 behaviour.
-    if (KeyStore::IsPresenceOnly(id)) {
-        Log::Info("ShaderDepot: depot %u is keyless (presence-only) "
-                  "-> returning 0 so Steam skips its shader pre-cache cleanly", id);
-        return 0;
-    }
-
-    // (2) Not a lumalinux-managed depot: the user's genuinely-owned games. Never
+    // Not a lumalinux-managed depot: the user's genuinely-owned games. Never
     // touch them — their shader pre-cache goes down Steam's normal owned path.
-    if (!KeyStore::HasDepot(id)) return id;
+    if (!KeyStore::HasDepot(id) && !KeyStore::IsPresenceOnly(id)) return id;
 
-    // (3) A KEYED, lumalinux-managed shader depot — the common case for modern
-    // games (Silksong, Brotato, Formula Legends...). Its manifest is never in the
-    // Hubcap zip, so the shader job is about to ask GMRC for a request code. If NO
-    // code provider is reachable right now, that request would be denied and Steam
-    // would surface the cosmetic "No internet connection" popup. Avoid it: probe
-    // the providers first.
-    //   - a provider is up   -> let the job run; the shader manifest is fetched
-    //                           and shaders pre-cache normally (no popup, no loss).
-    //   - all providers down -> skip the shader pre-cache THIS ONCE (the game
-    //                           still installs from its content depots; shaders
-    //                           pre-cache the next install/update when a provider
-    //                           is back up).
-    // This makes the skip conditional on code availability instead of on the key,
-    // so a keyed game never triggers the "No connection" popup. See RESEARCH §13.11.
-    if (Gmrc::ProvidersReachable()) {
-        Log::Info("ShaderDepot: depot %u keyed, a code provider is reachable "
-                  "-> letting the shader pre-cache run", id);
-        return id;
-    }
-    Log::Warn("ShaderDepot: depot %u keyed but NO code provider is reachable "
-              "-> skipping shader pre-cache to avoid the 'No connection' popup "
-              "(shaders will pre-cache when a provider is back up)", id);
+    // Ours (the shader depot id == the app id, registered from the .lua with or
+    // without a key): skip the pre-cache via Steam's own "invalid shader depot"
+    // path. Keyless -> could never decrypt; keyed -> the manifest request code
+    // is denied to us for anything without a Workshop and there is no provider
+    // to fetch it from (see the file header). The game still installs from its
+    // content depots, which never go through here.
+    Log::Info("ShaderDepot: depot %u is lumalinux-managed (%s) -> returning 0 so "
+              "Steam skips its shader pre-cache cleanly",
+              id, KeyStore::IsPresenceOnly(id) ? "keyless" : "keyed");
     return 0;
 }
 
