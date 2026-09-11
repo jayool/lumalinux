@@ -1,5 +1,11 @@
 # Testing
 
+> **2026-09-09:** Part 1 below exercises the *follow-Valve* auto-update, which
+> needs a manifest request code from a provider. The providers are dead, so that
+> procedure now ends in "No internet connection" and must not be used as a
+> health check. Updates are delivered by moving the pin (method.md §6, status
+> box); the codespace tests that validated that are logged in RESEARCH §19.
+
 Two different questions, and it is worth being blunt about which is which,
 because they get confused:
 
