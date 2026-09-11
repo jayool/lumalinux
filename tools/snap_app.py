@@ -75,6 +75,10 @@ if not out[-1].startswith("/") and not out[-1].startswith("  "): out.append("<ni
 
 txt = "\n".join(out) + "\n"
 os.makedirs(f"{H}/gmrc", exist_ok=True)
+# copia integra de config.vdf para poder diffear lo que Steam reescribe
+import shutil
+if os.path.exists(vdf):
+    shutil.copy(vdf, f"{H}/gmrc/config_{app}_{label}.vdf")
 path = f"{H}/gmrc/snap_{app}_{label}.txt"
 open(path, "w").write(txt)
 print(txt)
@@ -84,4 +88,9 @@ if label != "before":
     if os.path.exists(before):
         print("\n========== DIFF before -> " + label + " ==========")
         for l in difflib.unified_diff(open(before).read().splitlines(), txt.splitlines(), "before", label, lineterm="", n=1):
+            print(l)
+    bv, av = f"{H}/gmrc/config_{app}_before.vdf", f"{H}/gmrc/config_{app}_{label}.vdf"
+    if os.path.exists(bv) and os.path.exists(av):
+        print("\n========== DIFF config.vdf before -> " + label + " ==========")
+        for l in difflib.unified_diff(open(bv, errors="replace").read().splitlines(), open(av, errors="replace").read().splitlines(), "before", label, lineterm="", n=2):
             print(l)
