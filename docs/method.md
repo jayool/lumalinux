@@ -33,10 +33,18 @@ opened:
 
 Gates 1–5 can be faked **locally** — you only have to convince *your own* Steam.
 Gate 6 is the hard one: the manifest request code is validated **server-side by
-Valve**, so it cannot be fabricated locally. It has to be obtained from a
-**third-party service** — lumalinux tries a cascade of the same three
-OpenSteamTool ships (`opensteamtool` → `wudrm` → `steamrun`; see §5 and
-RESEARCH §7). Those services are **not** manifest-file mirrors; they return the
+Valve**, so it cannot be fabricated locally. It used to be obtained from a
+**third-party service** — lumalinux tried a cascade of the same three
+OpenSteamTool shipped (`opensteamtool` → `wudrm` → `steamrun`; see §5 and
+RESEARCH §7).
+
+> **Status 2026-09-09: all three providers are dead**, and no replacement is
+> known. Gate 6 is now **avoided rather than passed**: the manifest of every
+> depot Steam will plan is pre-seeded into `depotcache/` and the game is pinned
+> to exactly those gids (SLSsteam `ManifestIds`), so Steam never asks Valve for
+> a code. Updates happen by moving the pin once a hub has the new manifest
+> (LumaDeck's `pins.py`). The GMRC hook is opt-in (`LUMA_GMRC=1`). RESEARCH §19
+> has the evidence. Those services are **not** manifest-file mirrors; they return the
 **code** (a uint64), minted on-demand by a logged-in Steam session behind the
 scenes and cached for the code's short (~5 min) TTL. Valve is always the
 ultimate source.
@@ -105,8 +113,10 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 
 **Phase 0 — on-disk setup (`tools/steamidra_lite.py`, before Steam runs):**
 1. Read the Hubcap `.zip` (one `.lua` + the `.manifest` files).
-2. Copy the `.manifest` files into `depotcache/` and `config/depotcache/`
-   (pre-seeding, so Steam doesn't have to request them).
+2. Copy the `.manifest` files into `depotcache/` (pre-seeding, so Steam never
+   has to request them). Only there: Steam does **not** read
+   `config/depotcache/` (verified 2026-09-11, RESEARCH §19); steamidra stopped
+   writing that copy in 0.20.1.
 3. Write `~/.config/lumalinux/keys.txt`: per depot →
    `depot;parent_app;manifest_gid;size;AES_key`.
 4. Add the AppID to SLSsteam's `config.yaml` `AdditionalApps`.
@@ -128,8 +138,9 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
    Steam is already querying — **not** load-bearing; the LumaDeck flow writes no
    AppTokens. moon/LumaCore confirm ownership is established purely by package-0 +
    `CheckAppOwnership`.)
-9. **lumalinux** installs the DepotKey / GMRC hooks (plus the **ShaderDepot**
-   per-game shader-skip hook, §13.10) and starts the **package-0 finder** (see
+9. **lumalinux** installs the DepotKey hook (plus the **ShaderDepot**
+   per-game shader-skip hook, §13.10; GMRC only under `LUMA_GMRC=1`) and starts
+   the **package-0 finder** (see
    RESEARCH §13). (The **BuildDep** hook is disabled since v0.16.10 — SLSsteam
    20260714 owns `BuildDepotDependency`; see gate 4 below.)
 
@@ -150,16 +161,17 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
     > The finder says which case it is in the log
     > (`Finder resolve: … outcome=miss`, cause on the line above), and
     > `maintenance.md` §C is the triage.
-11. **Gate 4** (manifest pinning) is only needed when a game is pinned to an
-    older version. It is now handled by **SLSsteam's `ManifestIds`** (written by
-    `steamidra_lite --pin-installed`), not lumalinux: SLSsteam 20260714 hooks
-    `BuildDepotDependency` itself, so lumalinux's BuildDep hook is disabled. In
-    the default no-pin flow nothing pins, and Steam fetches the current manifest.
+11. **Gate 4** (manifest pinning) is handled by **SLSsteam's `ManifestIds`**
+    (written by `steamidra_lite --pin` / `--pin-installed` / `--set-pin`), not
+    lumalinux: SLSsteam 20260714 hooks `BuildDepotDependency` itself, so
+    lumalinux's BuildDep hook is disabled. Since 2026-09 **every** managed game
+    is pinned to the gids whose manifests sit in `depotcache/` — an unpinned game
+    would ask Valve for the current manifest's code and be denied.
 12. **DepotKey** clears **gate 5**: serves each depot's AES key from `keys.txt`
     when Steam asks.
-13. **GMRC** clears **gate 6**: when Steam asks Valve for a manifest request code
-    and is denied, the hook fetches it from the provider cascade (§5) and
-    returns it.
+13. **Gate 6** is never reached: the pinned manifest is already in `depotcache/`,
+    so Steam does not request a code. (With `LUMA_GMRC=1` the GMRC hook would
+    fetch one from the provider cascade of §5 — dead since 2026-09-09.)
     **This is the load-bearing piece** — without it nothing downloads. (It's
     still needed despite the pre-seeded manifests in Phase 0, because Steam
     re-requests codes at runtime for content manifests it re-validates and for
@@ -188,6 +200,12 @@ Concretely, with **lumalinux + SLSsteam + steamidra_lite/LumaDeck** on Linux:
 ---
 
 ## 5. The manifest request code — the one piece that needs a third party
+
+> **2026-09-09:** the three providers below (`opensteamtool`, `wudrm`,
+> `steamrun`) all stopped answering, and the ecosystem tools that depended on
+> them (KeySteam, SteaMidra, LuaTools' Windows client) broke the same day. This
+> section is kept as the record of how the code used to be obtained. lumalinux
+> no longer needs it: see the status box in §1 and RESEARCH §19.
 
 Every tool has to solve gate 6, and they do it in two distinct ways:
 
@@ -234,6 +252,31 @@ Finding 1.
 ---
 
 ## 6. Game lifecycle: install, update, and manifest pinning
+
+> **Status 2026-09.** Everything below the next paragraph describes the
+> *follow-Valve* lifecycle that worked while the request-code providers were
+> alive (validated 2026-06, RESEARCH §14). It stopped working on 2026-09-09:
+> an unpinned game asks Valve for the current manifest's code, is denied, and
+> loops on "No internet connection". The lifecycle is now:
+>
+> - **Install: pinned.** LumaDeck runs `steamidra_lite --pin`, so the zip's gids
+>   go into SLSsteam `ManifestIds` and Steam only ever plans manifests that are
+>   already in `depotcache/`.
+> - **Update: the pin moves.** LumaDeck's `pins.py` polls Valve's current gids
+>   (api.steamcmd.net) every 30 min; when a hub has the new manifests (GitHub
+>   `P-ToyStore/SteamManifestCache_Pro`, else Hubcap) it seeds them and rewrites
+>   the pin with `steamidra_lite --set-pin APPID DEPOT:GID …`. Steam applies it
+>   the next time the game is launched or Steam starts, like a native update. A
+>   build that adds a depot we hold no key for goes through a fresh Hubcap zip.
+> - **Freeze.** The per-game toggle only tells that job to leave the pin alone.
+> - **Heal.** Every 60 s, pinned manifests missing from `depotcache/` (Steam
+>   purges it on uninstall and after commits) are put back from LumaDeck's
+>   archive (`~/.local/share/lumadeck/manifests/`).
+>
+> Zip-less modes of `steamidra_lite`: `--pin-installed APPID` (freeze to the
+> `.acf`'s `InstalledDepots`), `--set-pin APPID DEPOT:GID …` (merge explicit
+> gids; refuses depots without a key in `keys.txt`), `--unpin APPID`,
+> `--pin-status APPID`.
 
 Once a game is installed, its life is governed by whether its depots are pinned
 to a specific **manifest GID** in SLSsteam's `config.yaml` `ManifestIds` (map
@@ -384,6 +427,10 @@ per-depot manifest GID differed. So an "old manifest under the current buildid"
 is enough for Steam to update once the pin is removed.
 
 ### Where GMRC stays load-bearing
+
+> **2026-09:** nowhere, any more. The shader pre-cache case below is handled by
+> the ShaderDepot hook returning 0 for every managed depot (v0.20.0), so Steam
+> skips it cleanly; the DLC case is covered by the pin. Kept for the record.
 
 Even with manifests pre-seeded (§5), the runtime GMRC hook still matters for any
 manifest Steam requests that you did **not** pre-seed:

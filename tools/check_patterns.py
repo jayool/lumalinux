@@ -29,6 +29,8 @@
 #   0  CLEAN             all criticals UNIQUE, finder anchors present,
 #                        ShaderDepot UNIQUE  -> A.1: PR the hash, no issue.
 #   2  NONCRITICAL_MOVED criticals + anchors OK but ShaderDepot moved
+#                        (criticals = DepotKey only since v0.20.0; GMRC is
+#                        diagnostic — opt-in hook, no provider to feed it)
 #                        -> A.1: PR the hash AND open a ShaderDepot issue.
 #   3  BLOCKING          a critical pattern, a finder anchor, or the DepotKey
 #                        RTTI ground-truth (§15/#19: exactly one CConfigStore
@@ -140,7 +142,6 @@ def emit_rvas_file(result, out_dir, steam_version):
 #                 20260714 owns BuildDepotDependency and hooks it first) live here.
 CRITICAL = {
     "kDepotKeyFnPattern":          "DepotKey",
-    "kGmrcFunctionPattern":        "GMRC",
 }
 NONCRITICAL = {
     "kShaderCacheDepotPattern":    "ShaderDepot",
@@ -157,6 +158,15 @@ CAP_TOKEN = {
 }
 DIAGNOSTIC = {
     "kLoadPackagePattern": "LoadPackage",
+    # GMRC is opt-in at runtime since v0.20.0 (LUMA_GMRC=1): the public
+    # request-code providers are gone and content installs from a pre-seeded
+    # depotcache/ without ever asking for a code. A pattern miss loses nothing
+    # that ships by default, so it must NOT block the whitelist. Validate for
+    # information only; re-promote to CRITICAL if a provider comes back and the
+    # hook is switched on by default again. (The package-0 finder's GOT
+    # derivation scans the GMRC PROLOGUE TAIL on its own — verify_gmrc_got /
+    # finder:gmrc_tail below — and stays BLOCKING; it never used this pattern.)
+    "kGmrcFunctionPattern": "GMRC",
     # BuildDep is disabled at runtime since SLSsteam 20260714 owns
     # BuildDepotDependency (it hooks the prologue in memory first). We no longer
     # install the hook, so a pattern miss must NOT block the whitelist. Validate
@@ -965,10 +975,9 @@ def main():
         pat_rvas = result["hooks"].get(GMRC_XREF["label"], {}).get("rvas", [])
         if pat_rvas:
             gx["agrees_with_pattern"] = (pat_rvas[0] == gx["rva"])
-            if not gx["agrees_with_pattern"]:
-                result["blocking"].append(
-                    "GMRC-xref:disagrees(pattern %s vs xref %s)"
-                    % (pat_rvas[0], gx["rva"]))
+            # Informational since v0.20.0: the GMRC hook is opt-in, so a
+            # pattern/xref disagreement can't strand a default install. It is
+            # still reported (result["gmrc_xref"]) for whoever turns the hook on.
 
     # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
     # derive but still PR-able. Record per-hook capability (ok/moved) so the

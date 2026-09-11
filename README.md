@@ -85,10 +85,12 @@ game you configured locally:
 - **depot keys** from a local `keys.txt` (DepotKey hook)
 - **manifest pinning** to the right version per depot (SLSsteam `config.yaml`
   `ManifestIds`; lumalinux's BuildDep hook is disabled by default)
-- the **manifest request code** fetch via a provider cascade — `opensteamtool`
-  (primary) → `wudrm` → `steamrun` (GMRC hook)
-- a per-game **shader-cache skip** so keyless games don't loop on `Missing
-  decryption key` (ShaderDepot hook)
+- a per-game **shader-cache skip** for every managed game, keyed or not, so Steam
+  never has to request a shader manifest code (ShaderDepot hook)
+- *(opt-in, `LUMA_GMRC=1`)* the **manifest request code** fetch via a provider
+  cascade — `opensteamtool` → `wudrm` → `steamrun` (GMRC hook). All three went
+  dark on 2026-09-09; since v0.20.0 installs rely on the manifests LumaDeck
+  pre-seeds into `depotcache/` and Steam never asks for a code
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
   Steam's per-depot licence filter so content depots aren't dropped
 
@@ -146,7 +148,11 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   `info`. Set `debug` for the per-call hook traces.
 - `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC`: disable one install-path
   hook. (`LUMA_NO_BUILDDEP` is a no-op unless `LUMA_FORCE_BUILDDEP` is also set,
-  since BuildDep isn't installed by default.)
+  since BuildDep isn't installed by default; `LUMA_NO_GMRC` only matters together
+  with `LUMA_GMRC`.)
+- `LUMA_GMRC=1`: install the GMRC hook (the request-code provider cascade). Off by
+  default since v0.20.0 — the providers are gone and, with manifests pre-seeded,
+  the code is never requested. Kept in case a provider ever comes back.
 - `LUMA_NO_SHADERSKIP`: disable the per-game shader-skip (ShaderDepot); installs are
   unaffected.
 - `LUMA_NO_PKG0_FINDER=1`: disable the package-0 finder (the sole depot injector, on
@@ -166,8 +172,9 @@ Almost always a Steam client or SLSsteam update. The log tells the cases apart, 
   a Steam update regenerated a `.desktop`, or the Game Mode `steam-launcher.service`
   drop-in was dropped). Reinstall the components (see [After a Steam update](#after-a-steam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
-  §A). DepotKey + GMRC (plus the package-0 finder) failing breaks installs;
-  BuildDep is disabled by default and non-critical, and ShaderDepot is cosmetic.
+  §A). DepotKey (plus the package-0 finder) failing breaks installs; GMRC is
+  opt-in and non-critical, BuildDep is disabled by default, and ShaderDepot is
+  cosmetic.
 - **Install hangs at "0 target depots"**: the package-0 finder couldn't locate its
   anchors (maintenance §C).
 - **Native achievements off / `SLS-ach: could not resolve`**: SLSsteam changed;
@@ -241,8 +248,10 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
   [`docs/cloudredirect.md`](docs/cloudredirect.md) for the `LD_PRELOAD` ordering.
-- Manifest request codes come from a provider cascade: `manifest.opensteamtool.com`
-  (primary), with `gmrc.wudrm.com` and `manifest.steam.run` as fallbacks
-  (RESEARCH §7).
+- Manifest request codes are **not** fetched any more: the provider cascade
+  (`manifest.opensteamtool.com`, `gmrc.wudrm.com`, `manifest.steam.run`; RESEARCH
+  §7) died on 2026-09-09. Games install and update from manifests pre-seeded in
+  `depotcache/` and pinned in SLSsteam's `ManifestIds`, which LumaDeck keeps
+  current (RESEARCH §19).
 - Research / educational. Use with your own Steam account and content. Do not
   redistribute Valve binaries.

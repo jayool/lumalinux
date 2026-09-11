@@ -7,8 +7,9 @@ Lee un .zip estilo Hubcap (nombre típico: {appid}.zip, contiene UN .lua y N
 un juego no-owned cuando lumalinux + SLSsteam están cargados.
 
 Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
-  1. Extrae los .manifest del ZIP a AMBOS ~/.local/share/Steam/depotcache/ y
-     ~/.local/share/Steam/config/depotcache/ (Steam lee de cualquiera).
+  1. Extrae los .manifest del ZIP a ~/.local/share/Steam/depotcache/. SOLO ahí:
+     Steam NO lee config/depotcache/ (comprobado 2026-09-11: con el manifest
+     solo en esa copia sigue pidiendo el request code a Valve).
   2. Añade SOLO el AppID principal a AdditionalApps de
      ~/.config/SLSsteam/config.yaml (replica sff/app_injector/sls.py:add_ids;
      meter los depots ahí confunde a Steam).
@@ -272,27 +273,20 @@ def parse_manifest_size(manifest_path):
     return _find_pb_field(meta, 5, 0)
 
 
-def _write_manifest_both(data, base, depotcache, config_depotcache):
-    """Escribe un .manifest a depotcache/ Y a config/depotcache/.
-    SteaMidra (sff/steam_tools_compat.py:sync_manifest_to_config_depotcache)
-    coloca los manifests en AMBOS sitios — Steam lee de cualquiera de los dos
-    según la fase, y sincronizarlos evita un 'Missing manifest' intermitente."""
+def _write_manifest(data, base, depotcache):
+    """Escribe un .manifest a depotcache/. Hasta 2026-09 se duplicaba en
+    config/depotcache/ (herencia de SteaMidra: "Steam lee de cualquiera de los
+    dos"). Comprobado en el devcontainer que Steam NO lee esa copia: con el
+    manifest solo ahí, sigue pidiendo el request code y falla. Ya no se escribe."""
     dest = depotcache / base
     dest.write_bytes(data)
-    if config_depotcache is not None:
-        try:
-            (config_depotcache / base).write_bytes(data)
-        except OSError:
-            pass
     return dest
 
 
-def extract_zip(zip_path, depotcache, config_depotcache):
-    """Extrae el .lua y copia .manifest files a depotcache (+ config/depotcache).
+def extract_zip(zip_path, depotcache):
+    """Extrae el .lua y copia .manifest files a depotcache.
     Devuelve (lua_text, manifests_copied, manifests_from_names, manifest_sizes)."""
     depotcache.mkdir(parents=True, exist_ok=True)
-    if config_depotcache is not None:
-        config_depotcache.mkdir(parents=True, exist_ok=True)
     lua_text = None
     copied = []
     manifests_from_names = {}
@@ -307,7 +301,7 @@ def extract_zip(zip_path, depotcache, config_depotcache):
                     lua_text = zf.read(member).decode("utf-8", errors="ignore")
             elif base.endswith(".manifest"):
                 data = zf.read(member)
-                dest = _write_manifest_both(data, base, depotcache, config_depotcache)
+                dest = _write_manifest(data, base, depotcache)
                 copied.append(base)
                 parsed = parse_manifest_gid_from_name(base)
                 if parsed:
@@ -321,11 +315,9 @@ def extract_zip(zip_path, depotcache, config_depotcache):
     return lua_text, copied, manifests_from_names, manifest_sizes
 
 
-def copy_manifests_from_dir(manifests, src_dir, depotcache, config_depotcache):
-    """Modo legacy: copia desde dir suelto a depotcache (+ config/depotcache)."""
+def copy_manifests_from_dir(manifests, src_dir, depotcache):
+    """Modo legacy: copia desde dir suelto a depotcache."""
     depotcache.mkdir(parents=True, exist_ok=True)
-    if config_depotcache is not None:
-        config_depotcache.mkdir(parents=True, exist_ok=True)
     copied, missing = [], []
     for depot_id, gid in manifests.items():
         target_name = f"{depot_id}_{gid}.manifest"
@@ -335,31 +327,30 @@ def copy_manifests_from_dir(manifests, src_dir, depotcache, config_depotcache):
             missing.append((depot_id, gid))
             continue
         data = candidates[0].read_bytes()
-        _write_manifest_both(data, target_name, depotcache, config_depotcache)
+        _write_manifest(data, target_name, depotcache)
         copied.append(target_name)
     return copied, missing
 
 
-def prune_stale_manifests(depotcache, config_depotcache, keep):
-    """Modo NO-PIN: borra de depotcache (+ config/depotcache) los manifests
+def prune_stale_manifests(depotcache, keep):
+    """Modo NO-PIN: borra de depotcache los manifests
     VIEJOS de los content depots de este juego, dejando SOLO el gid que acabamos
     de seedear (`keep` = {depot_id: gid_del_zip}). Sin esto, un manifest pinneado
     viejo de una instalación previa puede reusarse y bloquear el auto-update — es
     el 'nuke your depotcache' del flujo de SteaMidra, pero scoped a este juego
     (no toca depots de otros juegos)."""
     removed = []
+    if not depotcache.exists():
+        return removed
     for depot_id, keep_gid in keep.items():
-        for base in (depotcache, config_depotcache):
-            if base is None or not base.exists():
-                continue
-            for f in base.glob(f"{depot_id}_*.manifest"):
-                parsed = parse_manifest_gid_from_name(f.name)
-                if parsed and parsed[1] != int(keep_gid):
-                    try:
-                        f.unlink()
-                        removed.append(f.name)
-                    except OSError:
-                        pass
+        for f in depotcache.glob(f"{depot_id}_*.manifest"):
+            parsed = parse_manifest_gid_from_name(f.name)
+            if parsed and parsed[1] != int(keep_gid):
+                try:
+                    f.unlink()
+                    removed.append(f.name)
+                except OSError:
+                    pass
     return removed
 
 
@@ -1164,20 +1155,19 @@ def _toggle_stplugin_pin(steam_root, app_id, pin):
     return lua_path
 
 
-def purge_depot_manifests(depotcache, config_depotcache, depot_ids):
-    """Borra TODOS los manifests de los depots dados (ambos depotcache). Para
-    --unpin: así Steam re-pide el manifest ACTUAL a Valve en el próximo arranque."""
+def purge_depot_manifests(depotcache, depot_ids):
+    """Borra TODOS los manifests de los depots dados. Para --unpin: así Steam
+    re-pide el manifest ACTUAL a Valve en el próximo arranque."""
     removed = []
+    if not depotcache.exists():
+        return removed
     for did in depot_ids:
-        for base in (depotcache, config_depotcache):
-            if base is None or not base.exists():
-                continue
-            for f in base.glob(f"{did}_*.manifest"):
-                try:
-                    f.unlink()
-                    removed.append(f.name)
-                except OSError:
-                    pass
+        for f in depotcache.glob(f"{did}_*.manifest"):
+            try:
+                f.unlink()
+                removed.append(f.name)
+            except OSError:
+                pass
     return removed
 
 
@@ -1298,6 +1288,53 @@ def run_unpin(args):
     print("== Despinneado. SLSsteam recarga el config solo; volverá a seguir a Valve. ==")
 
 
+def run_set_pin(args):
+    """--set-pin APPID DEPOT:GID [DEPOT:GID ...]: escribe esos gids en ManifestIds
+    (merge con lo existente). Es el modo que usa LumaDeck para MOVER el pin de un
+    juego a un build nuevo una vez tiene sus manifests en depotcache. Rechaza
+    depots sin key en keys.txt (Steam no podría descifrarlos) y nunca pinea los
+    redistribuibles compartidos (228980)."""
+    if len(args.set_pin) < 2:
+        sys.exit("ERROR: --set-pin APPID DEPOT:GID [DEPOT:GID ...]")
+    try:
+        app_id = int(args.set_pin[0])
+    except ValueError:
+        sys.exit(f"ERROR: appid inválido: {args.set_pin[0]}")
+    pairs = {}
+    for tok in args.set_pin[1:]:
+        m = re.fullmatch(r"(\d+):(\d+)", tok.strip())
+        if not m:
+            sys.exit(f"ERROR: par inválido (esperaba DEPOT:GID): {tok}")
+        did, gid = int(m.group(1)), int(m.group(2))
+        if gid == 0:
+            sys.exit(f"ERROR: gid 0 para el depot {did}: un pin necesita un gid real")
+        pairs[did] = gid
+    print(f"== Set pin (SLSsteam ManifestIds): appid {app_id} ==")
+    keyed = set(_load_keys_file(args.luma_keys).keys())
+    to_pin, skipped = {}, []
+    for did, gid in pairs.items():
+        if did in _KNOWN_REDIST_DEPOTS:
+            skipped.append((did, "redistribuible compartido, nunca se pinea"))
+        elif did not in keyed:
+            skipped.append((did, "sin key en keys.txt"))
+        else:
+            to_pin[did] = gid
+    for did, why in skipped:
+        print(f"  [!] depot {did}: omitido ({why})")
+    if skipped and any(why.startswith("sin key") for _, why in skipped):
+        sys.exit("ERROR: hay depots sin key en keys.txt; no se escribe nada "
+                 "(Steam no podría descifrarlos). Mete primero las keys.")
+    if not to_pin:
+        sys.exit("ERROR: nada que pinear.")
+    manifest_ids = _read_manifest_ids(args.sls_config)
+    manifest_ids.update(to_pin)
+    _write_manifest_ids(args.sls_config, manifest_ids)
+    for did, gid in sorted(to_pin.items()):
+        print(f"  [+] depot {did} → gid {gid} (ManifestIds)")
+    print("== Pin escrito. SLSsteam recarga el config solo; Steam lo aplica en su "
+          "siguiente evaluación (arranque o lanzamiento del juego). ==")
+
+
 def run_pin_status(args):
     """--pin-status APPID: imprime JSON {appid, pinned, depots}. pinned=True si
     algún content depot de este app está en ManifestIds del config de SLSsteam."""
@@ -1359,6 +1396,11 @@ def main():
                          "de ManifestIds en el config.yaml de SLSsteam.")
     ap.add_argument("--pin-status", type=int, default=None, metavar="APPID",
                     help="(modo sin-zip) Imprime JSON {appid,pinned,depots} (para LumaDeck).")
+    ap.add_argument("--set-pin", nargs="+", default=None, metavar="ARG",
+                    help="(modo sin-zip) --set-pin APPID DEPOT:GID [DEPOT:GID ...]: escribe "
+                         "esos gids en ManifestIds del config.yaml de SLSsteam (merge). Es "
+                         "como LumaDeck mueve el pin a un build nuevo cuando ya tiene sus "
+                         "manifests en depotcache. Rechaza depots sin key en keys.txt.")
     args = ap.parse_args()
 
     if args.accela_mark is not None:
@@ -1373,6 +1415,9 @@ def main():
     if args.pin_status is not None:
         run_pin_status(args)
         return
+    if args.set_pin is not None:
+        run_set_pin(args)
+        return
 
     if args.input is None:
         sys.exit("ERROR: falta el archivo de entrada (.zip/.lua), o usa --accela-mark APPID")
@@ -1380,7 +1425,6 @@ def main():
         sys.exit(f"ERROR: no existe: {args.input}")
 
     depotcache = args.steam_root / "depotcache"
-    config_depotcache = args.steam_root / "config" / "depotcache"
 
     # ── Cargar lua (desde zip o suelto) y copiar manifests ────────────────
     manifests_from_names = {}
@@ -1388,7 +1432,7 @@ def main():
     if args.input.suffix.lower() == ".zip":
         print(f"== Extrayendo ZIP {args.input} ==")
         lua_text, copied, manifests_from_names, manifest_sizes = extract_zip(
-            args.input, depotcache, config_depotcache)
+            args.input, depotcache)
         print(f"  [+] .lua encontrado y leído")
         for n in copied: print(f"  [+] {n} -> depotcache/")
         if not copied:
@@ -1436,8 +1480,8 @@ def main():
 
     # En modo .lua suelto, copiar manifests ahora que sabemos los GID
     if args.input.suffix.lower() != ".zip":
-        print(f"== Copiando manifests desde {args.manifests_dir} a {depotcache} (+ config/depotcache) ==")
-        copied, missing = copy_manifests_from_dir(manifests, args.manifests_dir, depotcache, config_depotcache)
+        print(f"== Copiando manifests desde {args.manifests_dir} a {depotcache} ==")
+        copied, missing = copy_manifests_from_dir(manifests, args.manifests_dir, depotcache)
         for n in copied: print(f"  [+] {n}")
         for d, g in missing:
             print(f"  [!] Falta .manifest para depot {d} gid {g}")
@@ -1472,7 +1516,7 @@ def main():
     if not args.pin:
         content_keep = {d: manifests[d] for d in depot_keys
                         if d != app_id and d not in shared_depots and manifests.get(d)}
-        removed = prune_stale_manifests(depotcache, config_depotcache, content_keep)
+        removed = prune_stale_manifests(depotcache, content_keep)
         if removed:
             print(f"  [+] depotcache: borrados {len(removed)} manifest(s) viejos de este juego "
                   f"(se conserva el del zip)")

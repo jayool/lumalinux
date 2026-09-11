@@ -2079,3 +2079,79 @@ default-ON with kill-switch `LUMA_NO_RECONCILE`):
 **Maintenance.** The pattern is **non-load-bearing**: a break disables no-restart
 (→ restart fallback), never blocks installs, never crashes. Re-derive via the RTTI
 anchor `"17LicensesUpdated_t"` — see `docs/maintenance.md` A.2.
+
+## 19. The request-code providers die (2026-09-09) — what still works
+
+All three GMRC providers (`manifest.opensteamtool.com`, `gmrc.wudrm.com`,
+`manifest.steam.run`) stopped serving codes on 2026-09-09; the tools built on
+them (KeySteam, SteaMidra, the LuaTools Windows client) broke the same day and
+the 3a.lol / caigamer threads confirmed nobody had a replacement. Everything
+below was measured on the SteamOS devcontainer between 2026-09-10 and
+2026-09-11, one change at a time.
+
+### 19.1 What actually broke in lumalinux: the shader depot
+
+Installs from a Hubcap zip never needed a code — the content manifests are
+pre-seeded. What produced "Unknown error" was the **shader pre-cache**: Steam
+asked for the shader depot's manifest, the GMRC hook fed it whatever the dying
+providers returned (garbage), and Steam went into a 401 storm on the CDN and
+stuck the whole download queue. With the hook returning nothing ("clean
+fallthrough") Steam only shows the "No internet connection" popup, stalls ~30 s
+and then installs the content. **v0.20.0** removes the case: `ShaderDepot`
+returns 0 for every managed depot (keyed or keyless), Steam logs "skipping
+because shader depot ID is invalid", and GMRC is opt-in (`LUMA_GMRC=1`) and no
+longer a critical hook — its absence must not switch the package-0 finder off
+(that produced 0-target-depot phantom installs during testing).
+
+### 19.2 Which codes Valve still grants anonymously
+
+`tools/gmrc_mint.py`: Valve grants a request code for **public** depots and
+denies the rest. Public means the Steamworks redistributables (app 228980,
+depots 228988–229005) and the **Workshop depot**, whose id equals the app id —
+which is also the shader depot's id. So Workshop games (Brotato, RimWorld) get
+their shader manifest anonymously and non-Workshop games (Lethal Company,
+Silksong, Vampire Survivors) don't. Content depots are always denied. A gid
+Valve has never seen (e.g. 1) is granted, which makes it useless as a probe.
+
+### 19.3 What Steam needs on disk, and what it does with it
+
+- A content install needs only `depotcache/<depot>_<gid>.manifest`, the depot
+  key (never rotates) and the chunks (public on the CDN, retained ≥14 months).
+- **`config/depotcache/` is not read.** Test: manifest only there → Steam still
+  requests the code and fails; copy it into `depotcache/` → picked up on the next
+  ~30 s retry with no other change. steamidra stopped writing that copy (0.20.1).
+- **Steam's uninstall** deletes the game's `depotcache/` manifests and the
+  `.acf`, rewrites `config.vdf`, and touches nothing of ours (`keys.txt`, the
+  stplug-in lua, SLSsteam's config). A reinstall in the same session asks for
+  the same gid and fails until the manifest is put back — then it installs.
+- **`ManifestIds` (SLSsteam) is re-read** at Steam start, when the game is
+  launched, and on every retry while an update is pending. It is **not**
+  re-read while the game sits idle in "Play", and nothing pushed from outside
+  (`steam -ifrunning steam://…`, `~/.steam/steam.pipe`) made it. SLSsteam itself
+  hot-reloads the file instantly ("Config reloaded!"). Consequence: a pin moved
+  with the manifests in place is applied at the next launch or Steam start,
+  exactly like a native update.
+- **DLC licences seen by the downloader come from package 0**, i.e. from
+  `keys.txt` via the package-0 finder, not from SLSsteam's DLC hooks (those fool
+  the game's Steamworks calls). A DLC without a key line is invisible to
+  Steam's downloader — no popup, no loop. Adding the key + manifest and
+  restarting Steam made it download the DLC by itself (Brotato, 55 MB,
+  "Update Optional").
+
+### 19.4 Where manifests come from now
+
+- **Hubcap** still generates zips on demand (lua + keys + manifests) from
+  owning accounts, with a daily API cap per key.
+- **`P-ToyStore/SteamManifestCache_Pro`** (pjy612, via Fluent-Steam-Lua):
+  branch = appid, one `<depot>_<gid>.manifest` per depot of the current build,
+  pushed by a bot minutes after Valve (Valheim: 15 min); tags `<depot>_<gid>`
+  keep a partial history. Files are a 10-byte header + raw deflate of a normal
+  manifest (`tools/smc_fresh.py` inflates and verifies a chunk on the CDN: 22/22
+  OK). No keys. Raw URL, no API, no auth.
+- **`api.993499094.xyz/depotkeys.json`**: 221,727 depot keys (unverified use).
+- LuaTools version "manifests" are bare luas (keys + `setManifestid`), no
+  `.manifest` files.
+
+LumaDeck's `manifests.py` chains depotcache → its own archive → repo branch →
+repo tag → Hubcap (current build only, once a day per app); `pins.py` keeps
+every managed game pinned and moves the pin when a hub has the new build.
