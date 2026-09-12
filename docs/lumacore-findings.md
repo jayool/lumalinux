@@ -503,6 +503,86 @@ base de 368.230 claves de depot alimentada por sus usuarios — `provider.py`
 recolecta y sube las del usuario con deduplicación por huella. Es una diferencia
 de modelo de datos, no de técnica.)*
 
+## Re-sweep 2026-09-12 — `a26a359` → `fa44fc9` (SteaMidra 6.6.6)
+
+**Cuatro commits nuevos, el último del 2026-08-21. Nada después del día 9:
+Midrag no ha reaccionado en el repo a la caída de los request-code providers.**
+
+- `0b7e846` (2026-08-21) "Release SteaMidra v6.6.6", 48 ficheros, 41.301
+  inserciones (release aplastada, como siempre). En `LumaCore/` dos líneas:
+  - `hooks/client/LicenseHooks.cpp`: el hook de `GetRemoteStorageSyncState`
+    devolvía 1 cuando LumaCore bloquea el cloud sync de un juego; ahora 2
+    ("synchronized, not syncing"). Steam mostraba "sincronizando" eterno. Nuestro
+    cloud lo lleva CloudRedirect, no tocamos ese estado. Nada.
+  - `runtime/HookStatus.cpp`: `kLumaCoreVersion` V35 → V36.
+- `ca99dd4` + `fddb164` (README: meta de Google site verification, puesta y
+  quitada) y `fa44fc9` "check" (`googlef63bb3dabc2e56bf.html`). Nada.
+
+Del launcher Python (`sff/`), contrastado con nosotros:
+
+- **Downgrade escribe el build en el ACF**: `buildid` + `TargetBuildID` + los
+  manifest IDs pineados en el `.acf`, con Steam cerrado; si el ACF no existe o
+  Steam lo tiene abierto, cola persistente con reintento cada 30 s hasta 7 días
+  (`download_bridge.py:1000-1016`, `writer.py:126,199`). Texto del changelog:
+  "no MountedDepots, no AutoUpdateBehavior; LumaCore handles pinning". Es lo que
+  quitamos en LumaDeck 0.8.0 (`self_heal_acf_build`): no editamos el ACF, Steam
+  lo gestiona a partir del pin de `ManifestIds`. No se vuelve a meter.
+- **steamcmd.net como fuente primaria de app-info** (`steam_client.py`, 170 L):
+  mirror HTTP primero, Steam CM como fallback en un hilo dedicado, un solo login
+  anónimo por sesión, `quick=True` con tope de 35 s. Ya vamos a steamcmd.net en
+  `steamcmd_app_info`. Nada.
+- `move_manifests_to_depotcache` recibía un `PosixPath` en vez del dict: llevaba
+  versiones sin mover manifests a depotcache. Nada.
+- **Linux**: el descargador CDN nativo unía nombres de manifest con `\` y creaba
+  ficheros planos `Some\File\Name.exe` (regresión 6.6.5); ahora
+  `_normalize_manifest_path` (`\`→`/`, guarda de `..`) y un `flat_file_repair.py`
+  que repara instalaciones rotas una vez al día. `sff/zip.py` con
+  `safe_extract_zip`/`safe_extract_7z` en todas las extracciones. Nuestra
+  extracción de fixes ya tenía Zip Slip y desde `f67b4ec` resuelve mayúsculas.
+- ACF `chmod 0o444` solo en Linux (en Windows daba "Disk write error"). No
+  marcamos ACFs de solo lectura. Nada.
+- Lista de juegos: "Valve rejected the bundled key again" → catálogo
+  `store_metadata/` empaquetado (~190k apps) y mirrors GitHub. Mismo síntoma que
+  la retirada de `GetAppList` vista en SLSDeck (§16.1 de `slsdeck-analysis.md`);
+  decisión ya tomada: dejamos lo nuestro.
+- Migración de `config/lua` de SteamTools a `stplug-in`, cola de descargas,
+  matching de cracks por prefijo de palabra, limpieza de memoria horaria:
+  Windows/launcher. Nada.
+
+### La base pública de claves (`fallback_depotkeys.json`) — candidata, no acción
+
+`sff/lua/fallback_depotkeys.json` cambia 70.902 líneas. Es la base de claves de
+depot alimentada por los usuarios de SteaMidra (`provider.py` sube las locales a
+`stea-provider-api.steamidra.workers.dev/submit`; Midrag las fusiona en
+[`KoriaPolis/Steam-Depot`](https://github.com/KoriaPolis/Steam-Depot), raw en
+GitHub y un mirror R2, 66,9 MB, último merge 2026-08-21). Medido el 2026-09-12:
+
+| | |
+|---|---|
+| Entradas | 369.408 |
+| Con clave | 190.465 (KoriaPolis) / 190.451 (copia empaquetada) |
+| De ellas DLC o depot de DLC | 27.849 |
+| Depots nuestros de prueba con clave | Balatro, Brotato + DLC Abyssal Terrors (2868390), Vampire Survivors (3), Backpack Battles (3), Ubisoft Connect compartido (1716751) |
+
+Dónde encajaría, y por qué no ahora:
+
+- P-ToyStore trae los manifests de los DLC (rama Brotato: `2868390_….manifest`
+  presente, `listofdlc` completo en `appinfo.vdf`) **pero cero claves**. Las
+  claves nos llegan solo del lua de Hubcap o del fix de LuaTools.
+- `pins.py` `check_update` ya detecta cada 30 min los depots nuevos (DLC
+  nuevo) comparando steamcmd.net con `keys.txt`, pide el zip a Hubcap una vez al
+  día y reinstala pineado. El único hueco es la clave cuando Hubcap no la trae:
+  los mensajes `new depots [X] need a zip; no source returned one` y
+  `zip is stale or lacks the new depots`. Esta base sería el sustituto para ESA
+  clave; el manifest saldría de P-ToyStore como con cualquier depot.
+- Contras: claves aportadas por usuarios sin verificación (una mala deja el DLC
+  en error de descifrado, no rompe nada más); 67 MB, a cachear en
+  `~/.cache/lumadeck` y refrescar cada varios días, nunca por consulta.
+- No toca el problema del día 9: los request codes no dependen de claves.
+
+**Decisión: apuntado. No se implementa hasta ver en un log real el caso "DLC
+nuevo sin clave y Hubcap no la trae".**
+
 ## References
 
 - LumaCore (`Midrags/SFF` @ `6d2fb30`, `LumaCore/`): `docs/LumaCore.md`;
