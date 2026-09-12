@@ -1262,31 +1262,220 @@ de anclaje, y la munición fechada de §D12 para `verify_mask.py`.
 
 *Barrido sobre el clon de `swwayps/slsteam-moon` el 2026-09-12. Rama principal
 `slsteam-moon` desde `997a1a3` (donde acaba el delta anterior): 11 commits propios
-entre el 30-ago y el 3-sep, más 13 commits de upstream SLSsteam (julio/agosto,
-autor AceSLS) que entran por merge y que ya están cubiertos en
-`slssteam-analysis.md` §7.7–§7.8. Rama `beta`: un commit el 4-sep que borra el zip
-binario que iba en el árbol. Rama `millennium`: nada desde julio. Sin tag nuevo
-(sigue v2.8, 21-jul).*
+entre el 30-ago y el 3-sep, más 13 commits de upstream SLSsteam (19-jul → 7-ago,
+autor AceSLS: `162cae6`, `c494838`/`5a9b17a`, `b779174`, `937d889`, `fa924a0`,
+`6a5bc71`, `f594328`, `3e831b0`, `2a92806`, `02c55e3`, `fe1e71d`, `13dbce5`) que
+entran por merge y ya están leídos en `slssteam-analysis.md` §7.7–§7.8. Rama
+`beta`: un commit el 4-sep (`62767b3`, quita `dist/slsteam-moon-linux.zip` del
+árbol). Rama `millennium`: nada desde el 22-jul. Sin tag nuevo (sigue v2.8,
+21-jul). **Profundidad de lectura:** los 11 commits propios leídos como diff
+completo (1.639 líneas el de `0e7d207`, 455 el de `2668620`), contrastados contra
+`setup.sh`, `src/` y, en LumaDeck, `pins.py` / `downloads.py`. Nada compilado.*
 
 **Lo primero: nada después del 4 de septiembre.** Ni un commit tras la caída de los
 providers del día 9, en ninguna rama. moon ya traía desde agosto la maquinaria para
 "providers caídos" (`ManifestFetch::areProvidersOffline`, el `ManifestStore` de §3.9
 de `slsdeck-analysis.md`, el `prewarm`, y el guard de instalaciones de `b43b317` del
-26-ago), pero la trataba como un enfriamiento transitorio: el 31-ago (`07d6d17`)
-**quita** el publicador de "install readiness" que alimentaba a su UI Lumen para
-bloquear instalaciones mientras los providers estaban fríos. No hay señal en el
-repo de que hayan asumido que los providers no vuelven. Las issues no se han podido
-leer desde esta sesión.
+26-ago), pero la trataba como un enfriamiento transitorio: el 31-ago (**D17**) quita
+justo la pieza que avisaba al usuario. No hay señal en el repo de que hayan asumido
+que los providers no vuelven; las issues no se han podido leer desde esta sesión.
 
-| commit | qué hace | nos afecta |
-|---|---|---|
-| `50a5959` (30-ago) → `52c03f5` (1-sep, revert) → `d7d263c`, `2668620`, `cae57d2`, `6fa9a2d` (2-sep) | Family Share: enganchan los paquetes CM entrantes para descartar los dos mensajes de bloqueo familiar. Lo meten, lo revierten porque "gateaba la inicialización del cliente", y lo vuelven a portar con parseo acotado del paquete, un locator **opcional** del catálogo de patrones y tests. `2668620` solo renombra el tipo de paquete en `manifestcode.cpp` (`CNetPacket` → `CRemoteClientPacket`). | No: capa de mensajes CM, que lumalinux no toca. |
-| `305d028` (30-ago) | Adapta a sus patrones el hook de lobbies de upstream (`GetFriendGamePlayed`). | No. |
-| `168c478` (31-ago) | `ManifestPins`: ignora entradas con appId, depot o gid a 0 en los índices de bloqueo y fallback. | No, pero es la misma regla que aplicamos: `steamidra --set-pin` rechaza gid 0 y el modo `--pin` solo pinea gids ≠ 0. |
-| `07d6d17` (31-ago) | Borra `InstallReadiness` (heartbeat JSON para que Lumen bloquease el Install Wizard con providers fríos), conservando los objetivos del prewarm. | No. Contexto: ver arriba. |
-| `9f5d8fc` (2-sep) | `autofix.sh`: si la API o la descarga de GitHub fallan, cae a un mirror en jsDelivr con `sha256` publicado en un `manifest.json` propio. | No hoy. Idea anotada para `install.sh` si GitHub Releases fallara alguna vez: un espejo con hash. |
-| `0e7d207` (3-sep) | Grande (26 ficheros): metadatos gestionados autoritativos durante el refresh, detalles de DLC publicados en sesión, `Ascii::` (ctype sin locale, porque corren desde el namespace de `rtld-audit`), decisión de Proton por `common.oslist` + depots de contenido, y el wrapper de `setup.sh` con `chmod 0755` explícito (un umask 0002 daba 0775 y su shim con root lo rechazaba). | No. Lo de `Ascii::` es un problema de `LD_AUDIT`, nosotros vamos por `LD_PRELOAD`; lo de Proton es el equivalente de nuestro `set_compat_tool_for_app` + `_platform_for`; el 0755 no aplica (D13: nada nuestro corre con root en el PATH). |
-| `62767b3` (4-sep, `beta`) | Quita `dist/slsteam-moon-linux.zip` del árbol. | No. |
+### D14 — Family Share por descarte de paquetes CM: puesto, revertido y vuelto a poner en cuatro días
 
-**Accionable: ninguno.** El próximo barrido arranca en `0e7d207` (`slsteam-moon`) y
-`62767b3` (`beta`).
+Seis commits para una sola función: descartar, con `DisableFamilyShareLock`
+activo, los dos mensajes CM entrantes que bloquean una biblioteca compartida
+(`EMsg 9406 SharedLibraryStopPlaying`, y `ServiceMethod 146` cuando
+`CMsgProtoBufHeader.target_job_name == "FamilyGroupsClient.NotifyRunningApps#1"`).
+Upstream ya lo hace así desde julio (`5a9b17a`, "Replace patches with message
+choking", en §7.7 de `slssteam-analysis.md`); lo que moon narra es el coste de
+portarlo a su árbol.
+
+- **`50a5959` (30-ago).** Hook nuevo sobre `CCMInterface::RecvPkt` (patrón
+  `8B 8D 54 FB FF FF 83 EC ? 8B 01 51 FF 50 ? 83 C4 ?` con `PrologueUpwards`),
+  un espejo propio `CCMNetPacket` (`pad[4]`, `body*`, `size`, `refs`,
+  `originalBody*`; `isProtoBuf` = bit 31 del tipo) y `release()` que libera el
+  body con `Steam::free`. Metido **en la cadena `&&` de `Hooks::setup()`**: un
+  patrón que no resuelve tumba toda la carga.
+- **`52c03f5` (1-sep), revert completo.** Mensaje: *"Remove the unverified CM
+  packet hook so Family Share filtering no longer gates client initialization."*
+  Es decir: el patrón falló en algún cliente y se llevó la inicialización por
+  delante. Exactamente el fallo que nuestro `main.cpp` evita con la distinción
+  crítico / no crítico (DepotKey bloquea; el resto, `DISABLED`, pasa).
+- **`2668620` (2-sep), el port bueno.** Cambia cuatro cosas: (1) el patrón pasa a
+  una firma completa de prólogo (`55 89 E5 57 56 E8 … 8B 86`, `SigFollowMode::None`)
+  y se marca **`optional = true`**; (2) el hook se coloca sólo si resolvió
+  (`familyShareHookReady`), con `warn` si no ("message filtering disabled"); (3)
+  `CNetPacket::deserializeHeader` pasa a devolver `bool` y a **acotar**: falla si
+  `headerSize > size − sizeof(CNetPacketBody)` o `> INT_MAX`; `free()` tolera
+  `body == nullptr`; (4) **borra** de `CNetPacket` el búfer estático
+  `PACKETS_ARRAY[8192 × 64]` y `serializeBody/deserializeBody` que venían de
+  upstream (moon deja de poder reescribir un paquete CM entrante in situ; upstream
+  lo sigue usando, p. ej. en el bypass parental `a456396` de su rama `dev`). De
+  paso renombra el struct del websocket a `CRemoteClientPacket` para que deje de
+  chocar con el `CNetPacket` de upstream (`manifestcode.cpp/.hpp`, su puente de
+  request codes, sólo cambia el tipo del parámetro). Y añade la firma a
+  `tools/test_optional_locators.cpp`, su auditor offline de locators opcionales.
+- **`cae57d2` (2-sep).** `getType()` devuelve `INVALID_MESSAGE_TYPE` si
+  `size < sizeof(CNetPacketBody)`, así `isValid()` y `isProtoBuf()` no leen un
+  header que no cabe.
+- **`d7d263c`, `6fa9a2d` (2-sep).** Tests de tabla: parseo acotado, hook opcional
+  no cableado si no resuelve, los dos mensajes descartados y el resto pasando.
+
+**Nuestra posición.** No tocamos la capa CM (§5 de `slssteam-analysis.md`: hooks
+disjuntos), así que ni el hook ni el patrón nos afectan. Lo que sí es nuestro es
+la lección de método, y la teníamos ya: un hook no crítico nunca debe ser condición
+de carga. `main.cpp` lo hace desde v0.20.0 con un solo crítico (DepotKey); moon lo
+aprendió el 1-sep a base de revertir.
+
+### D15 — `305d028`: el hook de lobbies de upstream, cableado a sus patrones
+
+Upstream arregló en agosto (`02c55e3`, `fe1e71d`) los lobbies e invitaciones de
+juegos con FakeAppId. moon lo cablea a su ciclo de hooks resolviendo
+`IClientFriends::GetFriendGamePlayed` por patrón
+(`C7 45 ? A2 F1 5B 33 6A 04 50 57 E8 ? ? ? ?`, prólogo hacia arriba) y quita la
+dependencia de `steam.hpp` en `GamePlayed_t` (`AppId_t` → `uint32_t`). FakeAppId es
+suyo, no nuestro. Nada.
+
+### D16 — `168c478`: pins con appId, depot o gid a cero, inertes
+
+En `ManifestPins`: `flattenDepots` salta `appId == 0` y `depotId == 0 || gid == 0`;
+`lockedAppSet` sólo cuenta un app `locked` si tiene **al menos un** depot válido
+(un `locked: true` sin depots ya no bloquea nada); `getPin` y
+`getPinForUniqueOwner` devuelven 0 ante ids a cero. Tests para las cuatro formas
+malformadas.
+
+**Nuestra posición.** Misma regla, repartida: `steamidra_lite --set-pin` rechaza
+`gid == 0`; el modo `--pin` sólo escribe gids ≠ 0 en `ManifestIds`; `pins.py` sólo
+pinea depots para los que tiene un gid (`InstalledDepots` o un único manifest en
+depotcache/archivo). Lo que no controlamos es una entrada `depot: 0` escrita a mano
+en `ManifestIds`: la leería SLSsteam vanilla, y no hemos verificado si trata el 0
+como "sin override" o como gid literal. No vale la pena: nada nuestro lo escribe.
+
+### D17 — `07d6d17`: fuera el "install readiness", el aviso al usuario con providers caídos
+
+Lo borrado es exactamente el mecanismo que nosotros decidimos no tener. Era un
+heartbeat JSON en `~/.config/SLSsteam/install-readiness.json`
+(`{version:1, updated_at, apps:{id:{blocked, targets, local, exact_pins}}}`),
+escrito desde el bucle de `prewarm` con `chmod 0600` y rename atómico, y una regla
+`shouldBlock`: con providers offline, un app con `targets > 0` se bloquea si
+(`exactPins ? local < targets : local == 0`), es decir, un build pineado hasta que
+todos sus manifests estén en local, y uno "latest" mientras no haya ninguno. Lumen
+lo leía para **bloquear el Install Wizard** de Steam, fail-open si el fichero
+faltaba o estaba viejo. Lo quitan como "unused", nueve días antes de que los
+providers cayeran para siempre.
+
+**Nuestra posición.** Decisión tomada el 2026-09-11 en el plan de LumaDeck: ningún
+estado nuevo en la UI; en su lugar, pin por defecto + resiembra + el job que mueve
+el pin (RESEARCH §19, LumaDeck `pins.py`). Un juego sin manifest no llega a pedir
+nada a Valve porque su pin sólo apunta a gids que tenemos; el caso "no hay build en
+ningún hub" se queda en el build anterior, jugable, sin aviso. Nada que copiar.
+
+### D18 — `9f5d8fc`: `autofix.sh` con espejo en jsDelivr y hash publicado
+
+Su instalador de emergencia ya no muere si `api.github.com` o la descarga del
+asset fallan: consulta `https://cdn.jsdelivr.net/gh/swwayps/jsdelivr@main/manifest.json`
+(`{schema:1, components:{"slsteam-moon":{url, sha256}}}`) y sólo acepta la entrada
+si la URL es del espejo **fijada a un commit de 40 hex**
+(`…/jsdelivr@<sha>/releases/slsteam-moon/…zip`) y el `sha256` tiene 64 hex; tras
+descargar del espejo verifica con `sha256sum -c`. La regex del asset de GitHub pasa
+a anclada (`^…$`), con lo que ignora los `.uploading` temporales, y añade
+`AUTOFIX_LIB_ONLY=1` para poder `source`ar las funciones desde
+`scripts/test-autofix-release.sh`.
+
+**Nuestra posición.** `install.sh` baja de GitHub Releases sin alternativa;
+LumaDeck `update_checks.py` usa la API con caché de 6 h y tolera el fallo
+(degrada a la caché). No es accionable hoy: GitHub no ha fallado nunca en nuestro
+historial, y un espejo con hash exige mantener otro repo. Anotado como la forma
+correcta de hacerlo si algún día hiciera falta: URL fijada a commit + hash
+publicado, nunca `@main`.
+
+### D19 — `0e7d207`: "harden live library updates" (26 ficheros, +678/−113)
+
+Cinco cosas distintas bajo un solo commit.
+
+**a. `Ascii::` — ctype sin locale, con test que lo prohíbe en todo `src/`.**
+Nuevo `src/ascii.hpp` (`isSpace/isDigit/isAlnum/isHexDigit/toLower`, `constexpr`)
+sustituye a `std::isdigit/isspace/tolower/isxdigit/isalnum` en once ficheros, y
+`tools/test_audit_policy.cpp` recorre `src/` y falla si aparece `<cctype>`,
+`<ctype.h>` o cualquier `std::is*(`/`std::tolower(`. La razón, en el comentario:
+*"glibc's ctype functions consult per-thread locale TLS, which is not guaranteed to
+exist on Steam-owned threads entering the audit module"* — moon corre como
+**módulo `rtld-audit`** (`LD_AUDIT`), en su propio namespace de enlace, con su
+propia copia de libc cuyo TLS de locale no está inicializado en hilos que Steam
+creó antes. Un crash real que parchean.
+*Nuestra posición:* no aplica. lumalinux entra por `LD_PRELOAD` en el namespace
+principal y comparte la libc y su TLS con Steam; además `src/` no usa `<cctype>`
+en absoluto (comprobado). Sí aplica a **SLSsteam vanilla**, que también es
+`LD_AUDIT`: si algún día vemos un crash de SLSsteam en `isspace`/`tolower` desde
+un hilo de Steam, ésta es la explicación.
+
+**b. "Autoridad local" del appinfo: de "sólo sintéticos" a "todo lo gestionado".**
+Contexto: moon provisiona el appinfo de sus apps (gate 2) con una fuente CM
+anónima y lo empalma en la caché de Steam. Steam, al refrescar con el token de
+cuenta (denegado), recibe un registro **vacío** y pisa lo empalmado ("Invalid
+install path", 0 B). Hasta ahora la protección (quitar el app de la petición
+saliente `PICSProductInfoRequest` y de la respuesta `PICSChangesSince`) sólo
+cubría apps *sintéticos* (marcador `SynthMark`). Ahora `locallyAuthoritativeApps()`
+la extiende a **cualquier app gestionado y activo cuya caché provisionada sea
+válida y provenga del proveedor normalizado** (`cache::locallyAuthoritative`:
+sintético → sí; si no, `managed && cacheValid && (sin marcador || normalized)`; una
+caché marcada explícitamente "raw PICS" sigue siendo refrescable), y **suma los
+appids hijos (DLC)** de los sidecars de metadatos validados. El hot reload publica
+esa autoridad **antes** del conjunto guardado ("a newly guarded record must never
+be observable with a real SHA during the gap"), y filtra de las peticiones de
+appinfo del planificador los ids ya autoritativos. La protección se apaga cuando
+el app está *fully installed* (`installStateAllowsStrip`), sin límite de tiempo ni
+de cuenta. Tests que además leen el código fuente y comprueban que los tres puntos
+(`apps.cpp`, `pics.cpp`, `hotreload.cpp`) usan `AppInfoState::isAuthoritative`.
+*Nuestra posición:* es su gate 2, que en nuestro stack lleva SLSsteam vanilla (con
+el `AppTokens` que LumaDeck mete desde el lua) y no lumalinux. Cero solape. Vale
+como confirmación de un riesgo que moon paga por provisionar appinfo: cada refresco
+de Steam es un intento de pisado. Nosotros no provisionamos, así que no hay nada
+que proteger.
+
+**c. Decisión de Proton por `common.oslist` + migración de cachés viejas.**
+`requiresProtonMapping(keptContent, depotOs, commonOsList)`: sólo si hay ≥ 1 depot
+de contenido (los DLC "virtuales", con `dlcappid` y sin `manifests`, no cuentan);
+si ningún depot trae `config.oslist`, cae a `common.oslist`; Proton hace falta
+cuando el conjunto efectivo no contiene `linux`. `parsePlatformOsList` recorta
+espacios alrededor de las comas. Y en `flushPendingProtonMappings` re-deriva la
+necesidad desde las cachés validadas (`cachedWireRequiresProton`) para migrar
+instalaciones hechas por builds anteriores, que no forzaban Proton a juegos cuyos
+depots venían sin `oslist`.
+*Nuestra posición:* equivalente ya cubierto, en dos sitios. LumaDeck fuerza
+`proton_experimental` al instalar salvo que el lua traiga depot Linux
+(`_enrich_lua_with_linux_depot` exige `oslist == linux` **y** `osarch == 64`); y
+`pins._platform_for` decide la plataforma del job por el `oslist` de steamcmd.net
+de los depots con clave (linux si alguno es linux; un depot sin `oslist` cuenta
+como neutral, como su `""`). El caso que moon migra (todos los depots sin `oslist`,
+`common.oslist = windows`) en nuestro flujo ya iba con Proton desde la instalación.
+Nada que hacer.
+
+**d. Cobertura de escritorio.** `dc_activate_shortcut` (chmod 0755 + `gio set
+metadata::trusted` + `xfdesktop --reload`) para el acceso directo del escritorio;
+un `steam.desktop` del usuario que sea **symlink colgante** (lo deja el bootstrap
+Debian de Valve apuntando a `deb-installer/`) se descarta y se reemplaza por una
+entrada sembrada normal; el guardian re-afirma la confianza GIO en el camino rápido
+(la huella barata no la cubre); `DC_FINGERPRINT_VERSION` 2 → 3. Y en `setup.sh`,
+el wrapper pasa de `chmod +x` a **`chmod 0755` explícito**: con `umask 0002` salía
+0775 y su shim con root rechaza wrappers escribibles por el grupo.
+*Nuestra posición:* nuestro `setup.sh` ya hace `chmod 0755 "$WRAPPER"` (línea 1203)
+y no tiene shim con root que pueda rechazar nada (D13). Lo del symlink colgante es
+un caso Debian de escritorio que no se da en SteamOS ni en el port CachyOS. Nada.
+
+**e. Menor.** `test_process_lock` mueve una declaración; `safeAuthority` de
+`contentserverdirectory.cpp` usa `Ascii::isAlnum`.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | Hook no crítico como condición de carga (D14) | — | **Verificado y ya resuelto**: `main.cpp` sólo bloquea por DepotKey desde v0.20.0 |
+| 2 | Pins con gid/depot a cero (D16) | — | Cubierto por `--set-pin` y `pins.py`; una entrada manual `depot: 0` en `ManifestIds` queda sin verificar contra vanilla |
+| 3 | Aviso al usuario con providers caídos (D17) | — | **Decisión contraria tomada** el 2026-09-11: sin estado en UI |
+| 4 | Espejo de releases con hash (D18) | Baja | Anotado; no accionable |
+| 5 | ctype sin locale en `LD_AUDIT` (D19.a) | — | No aplica a `LD_PRELOAD`; explica un posible crash futuro de SLSsteam vanilla |
+| 6 | Proton por `common.oslist` (D19.c) | — | Equivalente ya cubierto en LumaDeck |
+
+**Ninguno produce trabajo.** El próximo barrido arranca en `0e7d207`
+(`slsteam-moon`) y `62767b3` (`beta`).
