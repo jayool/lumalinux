@@ -576,9 +576,27 @@ public gids taken from `api.steamcmd.net` the same minute:
 | Black Myth 2358720 | 2358721 | 2026-01-14 | 200 (6.288.801 B) |
 
 **17 of 17 current gids present, DLC depot included.** `manifestwanted`
-returned an empty list at probe time (nothing outstanding). **Not yet shown:**
-a build published *after* 2026-09-09 — none of the seven games has updated
-since. Until one does, the archive is proven current through 2026-08-30 builds.
+returned an empty list at probe time (nothing outstanding).
+
+**Builds published after 2026-09-09** (second probe, 40 frequently patched
+titles scanned via steamcmd.net, only public builds dated ≥ 09-09 queried):
+
+| Game (public build) | Depots | Archive |
+|---|---|---|
+| Valheim 892970 (2026-09-11) | 892971 / 892972 / 892973 | 404 / 200 / 200 |
+| Rust 252490 (2026-09-11) | 252492 / 252494 / 252495 | 200 / 200 / 200 |
+| No Man's Sky 275850 (2026-09-10) | 275851 / 275852 | 200 / 404 |
+| Phasmophobia 739630 (2026-09-11) | 739631 | 200 |
+| Borderlands 4 1285190 (2026-09-10) | 1285191 / 1285192 / 1285193 / 1285195 | 404 ×4 |
+| Hunt: Showdown 594650 (2026-09-10) | 594651 / 594652 / 594653 / 594654 | 404 / 404 / 200 / 404 |
+
+**8 of 15 post-09-09 depots present**, Rust and Phasmophobia complete with
+one-day-old patches. **[inferred]** Those can only come from codes minted
+after 09-09 by accounts that own the games — the donation pipeline works and
+the archive is the first source seen to carry post-shutdown builds. The 404s
+are gaps the donors have not covered yet (v1.0.2 was withdrawn 14 minutes after
+publication, so the donor population is small); per their client a miss is
+queued server-side.
 
 **[inferred] Actionable — the only new manifest source of the whole
 2026-09-12 sweep.** It slots into LumaDeck `manifests.resolve_manifest` as a
@@ -586,8 +604,8 @@ tier between P-ToyStore and Hubcap: fetch by `(depot, gid)`, validate with the
 existing `validate_manifest` identity check, archive, place. It costs no
 credential and no daily budget, so it should be tried *before* Hubcap. Caveats:
 single operator (`luastools.xyz` is mendy/madoiscool's, who also mirrors
-lua.tools); coverage of post-09-09 builds unproven; a 404 is definitive there
-(their own client treats it so). **Proposed; awaiting go-ahead.**
+lua.tools); post-09-09 coverage is partial and donor-dependent; a 404 is
+definitive at that moment (their own client treats it so) and falls through. **Proposed; awaiting go-ahead.**
 
 ### `7243c60` (2026-09-12) — example toml `[donate]` section only. Nothing.
 
@@ -625,7 +643,7 @@ lua.tools); coverage of post-09-09 builds unproven; a 404 is definitive there
 | Item | Verdict |
 |---|---|
 | Explanation of the 09-09 change (depot-bound codes, carrier accounts) | consistent with RESEARCH §19; recorded |
-| `manifest.luastools.xyz/m/<depot>/<gid>` | **17/17 current gids served; proposed as a `resolve_manifest` tier** |
+| `manifest.luastools.xyz/m/<depot>/<gid>` | **17/17 current gids, 8/15 post-09-09 gids served; proposed as a `resolve_manifest` tier** |
 | Code donation from users' own accounts | their risk; not applicable to a lua-only stack |
 | depotcache pre-seed inside `BuildDepotDependency` | independent confirmation of §19.3 |
 | Product Key, OnlineFix, Tokeer URI, auto-update, mirrors | not applicable |
