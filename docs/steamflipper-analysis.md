@@ -1421,3 +1421,143 @@ than *absent from upstream*.
   `res/rvas/bc54101b….yaml` (the shared-build cross-check in §4.5–§4.6),
   `tools/derive_patterns.py`, `.github/workflows/watch-steam.yml`,
   `docs/rva-feed-design.md`, `RESEARCH.md` §15 (RTTI resolution).
+
+---
+
+## §10 Delta — 2026-09-12 (`e505aef` → `7b6e5f7`)
+
+**Frozen reference for this section.** `main` @ `7b6e5f7` (2026-09-10). Method:
+every commit after `e505aef` (2026-09-02) listed; the 2026-09-08 → 09-10 commits,
+the 2026-09-03 subsystem commits (UI, updater, cloud saves, sources, lua.tools
+sign-in, patterns) and `CHANGELOG.md` read in full; the installer releases
+(1.1.4 → 1.3.0) read at changelog and commit-message level. Four cross-checks
+were run against our own code and our published `.so`; one upstream claim was
+checked against the released CloudRedirect asset.
+
+**Volume.** 89 commits in eight days, 17.920 insertions, 1.0.0 → 1.3.0 in five
+days (2026-09-03 → 09-07). 9 of the 89 carry an AI co-author trailer; 11
+`tools/*_test.*` scripts were added. The project is now an OpenSteamTool port
+with an in-client UI (`LuaFlipperUI`, injected over Steam's CEF debugger, API on
+`127.0.0.1:1987`), a git-based updater, in-process cloud saves and a Deck-UI
+launcher.
+
+### §10.1 No reaction to 2026-09-09
+
+**[read]** `src/Utils/SteamMetadata/ManifestClient.cpp:51-54` still hardcodes
+the three dead request-code providers (`manifest.opensteamtool.com`,
+`gmrc.wudrm.com`, `manifest.steam.run`) plus the Lua `fetch_manifest_code_ex`
+hook. No commit or changelog entry after 09-09 mentions any of them. Installs
+keep working for the reason ours do: `LuaFlipperDownload.cpp` writes the zip's
+`.manifest` files into `depotcache` (`:374`, `:634`), so Steam never asks for a
+code. Sources now: Sushi (raw GitHub), Hubcap with the user's own key ("Sadie
+(Hubcap)", `/api/v1/status`, `/api/v1/manifest`), and three sources served only
+through lua.tools' proxy (`/api/manifest/download`: Luie, TwentyTwo Cloud,
+Skyflare; 401 without a session, 25 downloads/day). Ryuu was dropped.
+
+### §10.2 2026-09-08 → 09-10, cross-checked
+
+- **[read] `fe716a1` + `4e3de49` depot keys.** Verbatim: the key hook "needs a
+  byte pattern for a function Valve gives no VProf scope, so the key has to
+  reach config.vdf, and Steam rewrites that file on exit". Keys are therefore
+  written into `config.vdf` with Steam closed, from a UI button, plus an opt-in
+  `[keys] auto_sync` that restarts Steam at startup. **Ours:** the
+  `LoadDepotDecryptionKey` hook serves keys live, no restart. Lead retained.
+- **[read] `9b40d74` `addappid` flag.** Their `sync_depot_keys.py` matched only
+  `addappid(id,1,"key")` and silently dropped keys written with `0` (291 keys
+  across 64 manifests on one machine; "content still encrypted" days later).
+  **[read] Ours:** `tools/steamidra_lite.py:110`, LumaDeck `downloads.py:700,751,1039`
+  and `slssteam_ops.py:1169` all use `\d` in that position. Not affected.
+- **[read] `4e3de49` package-0 room.** Valve's `CUtlMemory::Grow` is advisory
+  (measured 196 → 454 for a request of 131, and short on other bases); their
+  injection treated a short result as abort — nothing injected, nothing owned,
+  no message. New `EnsureRoom` loops until the depots fit, and `/api/status`
+  gains a "Depot injection" row. **[read] Ours:** `src/hooks/load_package_hook.cpp:128-150`
+  never calls Valve's Grow; it `realloc`s to `max(2×capacity, total)` itself,
+  so the allocation always fits. Not affected.
+- **[read] `38bc2e1`, `baa03b7`, `6e4d9be`, `038bf6d`, `b1ee62f`, `7b6e5f7`
+  Deck UI.** The tab hangs off the desktop client's SuperNavBar, absent in Game
+  Mode ("cost one user a week"). Now: a corner launcher and own panel that owns
+  nothing of Valve's (the Decky route is rejected explicitly as "why a Steam
+  update routinely breaks Decky"); Big Picture recognised as the client window
+  from `/json/list`; Steam's root hidden behind the panel; installer reports
+  the `-steamdeck` flag and removes it only with `--no-steamdeck`; a CDP probe
+  for the class names the UI needs. Author, verbatim: "Untested against a real
+  Deck UI … I have no device". A competitor on our surface, without hardware.
+  Nothing to adopt.
+
+### §10.3 2026-09-03 subsystems
+
+- **[read] `c868df4` on-machine recalibration.** When no published pattern set
+  matches the running binary's hash, the module runs the generator itself from
+  inside Steam (host `readelf`, runtime escaped through `SYSTEM_*`).
+  `d9b8da6` derives `CUtlMemoryGrow` from an equivalence class of 243
+  byte-identical instantiations; `7ed4110` resolves the NetPacket entry points
+  by class-qualified VProf scope. Our answer to the same problem is
+  `watch-steam.yml` + the RVA feed + the pattern scan. F3 (VProf as a second
+  derivation path) stays evidence-gated; nothing here changes it.
+- **[read] `14dddce` in-process cloud saves.** Answers `Cloud.*` RPCs in the
+  client for manifest-added apps with a loopback HTTP backend. Justification,
+  verbatim: "CloudRedirect cannot fill this role on Linux. Its released library
+  exports only CR_GetVersion and the crash-context pair … and its own vtable
+  scan does not match the current client". **[read] Checked against the
+  released `cloud_redirect.so` 2.6.5 (2026-09-12):** it exports `CloudHooks::*`,
+  `HttpServer::*`, `CreateCloudProvider`, `CreateTokenStore` and more — the
+  first half is false (what is not exported is the host API in `cr_api.h`
+  that SteamFlipper wanted to call). The vtable-scan half is **unverified**
+  here; `docs/cloudredirect.md` records the Linux path as RTTI-class-name
+  resolution, version-independent. Field check: CloudRedirect active in
+  LumaDeck's Components panel with saves syncing refutes it.
+- **[read] `f82fec0` / `29a8793` / `bd76afa` lua.tools sign-in.** First a
+  six-character Discord-bot code, then Discord OAuth with PKCE in the real
+  browser landing on `127.0.0.1:1987` (lua.tools' redirect allow-list permits
+  it); only the refresh token is stored, rotated per use; fix download resolves
+  a signed R2 link and takes a `slot` (`fix` / `manifest`), extraction into the
+  game folder over `.sfbak` copies. Ours harvests the session from Steam's
+  browser and works; no reason to change.
+- **[read] `35d2f23` / `d0f2c75` updater.** `git pull --ff-only` of the tracked
+  branch head, then a detached helper closes Steam, builds, installs, restarts;
+  `auto_install` opt-in. Running a branch head in the client with no signed
+  release: one bad push reaches every opted-in user. Not our model.
+- **[read] `5542d30` / `6c2623d` / `45359d5` / `dd11ffc`.** Hubcap with a
+  user key, user-ordered sources hot-reloaded from `steamflipper.toml`, the
+  Hubcap website's `steam://hubcaptools/setapikey/` Activate button caught from
+  Steam's console log, online-fix.me links as title searches because title
+  matching confuses sequels. Nothing to adopt.
+
+### §10.4 Installer releases 1.1.4 → 1.3.0, and our own `.so`
+
+Nearly every entry is a Bazzite / Fedora / Deck user whose install "verified
+and did nothing": container builds, Flatpak vs native Steam, a self-verifying
+installer, an executable stack refused by hardened kernels (1.3.0), and
+libstdc++ (1.2.9): "Steam's runtime ships libstdc++ from GCC 5, and where that
+copy wins over the host's the module silently failed to load".
+
+**[read] Cross-check on our published `liblumalinux.so` (latest release,
+2026-09-12):**
+
+| | liblumalinux.so |
+|---|---|
+| `GNU_STACK` | RW, no exec — loads on hardened kernels |
+| libstdc++ symbol version required | `GLIBCXX_3.4.32` (GCC 13) |
+| glibc required | `GLIBC_2.38` |
+
+**[inferred]** On SteamOS and Bazzite the host libraries are newer and Steam's
+runtime picks the newer copy, which is why the Deck works. On a host with GCC
+≤ 12 or glibc < 2.38 (Debian 12, Ubuntu 22.04) the module would fail to load
+silently. Not a problem for the platform we target; recorded as a portability
+fact. The fix, if ever wanted, is `-static-libstdc++` or an older build
+toolchain. **Noted, not changed.**
+
+### §10.5 Summary
+
+| Item | Verdict |
+|---|---|
+| Reaction to 09-09 | none; dead providers still hardcoded; installs survive via depotcache pre-seed like ours |
+| `addappid` flag 0/1 | our parsers accept both |
+| Package-0 Grow shortfall | ours reallocs itself; not affected |
+| Depot keys via config.vdf + restart | we serve keys live; lead retained |
+| CloudRedirect "exports only CR_GetVersion" | false against 2.6.5; vtable claim unverified, field-checkable |
+| Deck-UI launcher, in-client updater, in-process cloud | not adopted |
+| Our `.so` needs GLIBCXX_3.4.32 / GLIBC_2.38 | portability fact, noted |
+
+Nothing in this window changes the §7 verdicts.
