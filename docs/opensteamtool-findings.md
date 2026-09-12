@@ -501,6 +501,135 @@ nothing for lumalinux/LumaDeck/SLSsteam.
 
 ---
 
+## Delta — 2026-09-12: BetterSteamTools, the live fork, and the first real answer to 2026-09-09
+
+**Frozen reference.** `OpenSteam001/OpenSteamTool` is stale at `2a08b0b`
+(2026-07-06). Development continues in
+[`madoiscool/BetterSteamTools`](https://github.com/madoiscool/BetterSteamTools):
+14 commits on top of `2a08b0b`, 2026-08-11 → **2026-09-12** (author mendy-tools /
+madoiscool, plus one cherry-pick from Tesla697). Read as full diffs; the
+archive it introduces was probed from the SteamOS devcontainer on 2026-09-12.
+
+### `4a97d9d` (2026-09-12) "mrc donations system - with backend perma cache" — 1.697 lines
+
+**[read] What Valve changed on 09-09, in their words** (`ManifestClient.cpp:55`):
+"Valve made the request code depot-bound on 2026-09-09: it is derived from
+(depot_id, manifest_id, time, secret), and the CDN answers 401 for a code minted
+against any other depot. A gid-only request cannot name the depot, so the server
+falls back to a free-to-play carrier and the resulting code only works for
+731/571/441 — every other depot 401s at the CDN". **[inferred]** This is the
+mechanism behind our own measurements: the providers minted codes with
+free-to-play "carrier" accounts that hold no licence for the requested depot;
+since 09-09 the code is bound to the depot and only an account with access to
+*that* depot can mint one. It matches RESEARCH §19.2 (`gmrc_mint.py`: only public
+depots granted) and the §19.1 401 storm exactly. Their provider URL gains a
+depot-aware form (`manifest.opensteamtool.com/{app}/{depot}/{gid}`), which only
+helps if the backend holds an account with that depot — hence the next piece.
+
+**[read] Code donation.** New `ManifestDonor`: with `[donate] enabled = true`
+(**the default**) the module pulls `manifest.luastools.xyz/manifestwanted`
+(`app:depot:gid` lines, ~5 MB), intersects it with the depots the account
+*owns* (parsed from `CMsgClientLicenseList` at logon, each package resolved via
+the captured `GetPackageInfo`), mints a genuine request code for each owned
+entry from the user's own session (a self-originated
+`ContentServerDirectory.GetManifestRequestCode#1` using a captured real header
+and a jobid from a private range), and POSTs `depot:gid:code` lines to
+`/manifestcode/submit`; the server downloads the manifest from the CDN with the
+donated code and archives it permanently. Passive capture too: every genuine
+code Steam receives for a depot the user actually downloads is submitted.
+Limits: 25 mints per cycle, 2 s between mints, 30 s cycles, a `HEAD /m/<depot>/<gid>`
+before each mint so a manifest is minted about once. **[inferred]** A manifest
+pool fed by BST users' own licences and accounts. The account risk (mass,
+out-of-download code requests from real accounts) is theirs; the lua-only
+model we run does not participate.
+
+**[read] depotcache pre-seed.** `ManifestCache::EnsureCached` fetches
+`manifest.luastools.xyz/m/<depot>/<gid>` (raw manifest, validated by payload
+magic `D0 17 F6 71` and EOF magic `AB 15 C4 32`, atomic write) into
+`<steam>\depotcache` — **synchronously inside `BuildDepotDependency`** with a
+15 s budget and 5 s per fetch, then again at the request-code send. Verbatim:
+"verified: a manifest present in <steam>\depotcache installs with no 'manifest
+request received'", and "a manifest already present in config\depotcache does
+NOT let us skip this … Measured 2026-09-09". **[inferred]** An independent
+confirmation of RESEARCH §19.3, including that `config/depotcache` is not read.
+Misses raise one debounced dialog: "Missing N manifest(s) from the cache - not
+archived yet. They've been queued; try the download again in a little while."
+
+**[read] Release state.** v1.0.2 carrying all this was pushed to the `updates`
+channel at 04:57 UTC and deleted at 05:11 UTC the same day (`6aa1a82`), so the
+built DLL may not be in users' hands yet; the source is on `main`.
+
+### The archive, probed from our side (2026-09-12, SteamOS devcontainer)
+
+`https://manifest.luastools.xyz/m/<depot>/<gid>` — no account, no key,
+Cloudflare edge cache, `content-type: application/octet-stream`. Current
+public gids taken from `api.steamcmd.net` the same minute:
+
+| App | Depots | Public build | Archive |
+|---|---|---|---|
+| Vampire Survivors 1794680 | 1794681 / 1794684 / 1794685 | 2026-08-30 | 200 / 200 / 200 |
+| Backpack Battles 2427700 | 2427701 / 2427702 / 2427703 | 2026-08-12 | 200 ×3 |
+| Brotato 1942280 | 1942281 / 1942282 / 1942283 / **DLC 2868390** | 2026-05-27 | 200 ×4 |
+| Balatro 2379780 | 2379781 / 2379782 | 2025-02-24 | 200 ×2 (4.083 B, byte-identical size to P-ToyStore) |
+| Silksong 1030300 | 1030301 / 1030302 / 1030303 | 2026-03-25 | 200 ×3 |
+| R.E.P.O. 3241660 | 3241661 | 2026-05-25 | 200 |
+| Black Myth 2358720 | 2358721 | 2026-01-14 | 200 (6.288.801 B) |
+
+**17 of 17 current gids present, DLC depot included.** `manifestwanted`
+returned an empty list at probe time (nothing outstanding). **Not yet shown:**
+a build published *after* 2026-09-09 — none of the seven games has updated
+since. Until one does, the archive is proven current through 2026-08-30 builds.
+
+**[inferred] Actionable — the only new manifest source of the whole
+2026-09-12 sweep.** It slots into LumaDeck `manifests.resolve_manifest` as a
+tier between P-ToyStore and Hubcap: fetch by `(depot, gid)`, validate with the
+existing `validate_manifest` identity check, archive, place. It costs no
+credential and no daily budget, so it should be tried *before* Hubcap. Caveats:
+single operator (`luastools.xyz` is mendy/madoiscool's, who also mirrors
+lua.tools); coverage of post-09-09 builds unproven; a 404 is definitive there
+(their own client treats it so). **Proposed; awaiting go-ahead.**
+
+### `7243c60` (2026-09-12) — example toml `[donate]` section only. Nothing.
+
+### August 2026 (`2c7af78` … `f7b7caf`, 08-11 → 08-13)
+
+- **[read] `c3d89e9` Product Key.** Answers `k_EMsgClientGetLegacyGameKey` (730,
+  a non-proto struct message) locally with a configured third-party retail key
+  (`setlegacycdkey(appid, "…")`) or a deterministic synthetic one, for the
+  "Updating product key" step of Ubisoft Connect / Rockstar titles; the
+  synthesised 785 response is delivered from the `RecvPkt` hook. The same
+  Ubisoft Connect seam we met on shared depot 1716751, but in the Windows
+  client's wire layer, which on our side is SLSsteam's. Research note only.
+- **[read] `f721ebe`.** Pattern-feed mirror chain of five (OpenSteam001 ×2,
+  madoiscool ×2, git.lua.tools), `url_template` may be an array. Nothing.
+- **[read] `d03f4e4` + `49a2d11` auto-update.** Downloads the DLL from the
+  `updates` branch (`latest.toml`, SHA-256), stages it beside Steam; `[update]
+  enabled = true` by default. Unsigned channel, auto by default. Nothing.
+- **[read] `88539a9`.** Default Lua dir becomes `config/stplug-in` (was
+  `config/lua`); watch dirs deduplicated by canonical path. Converges with the
+  LuaTools / moon layout. Nothing.
+- **[read] `7936adc` + `c7b435f`.** `[[inject]]` entries per appid / cmdline,
+  OnlineFix even for owned games, the 480 AppID flip only once
+  SteamNetworkingSockets is active (#146), and `-realappid` to opt out per
+  launch (Bodycam black-screens with the flip). Windows OnlineFix layer. Nothing.
+- **[read] `e55c90b`** (Tesla697 Denuvo: structural detection, env-less
+  tracking, on-demand eticket minting) — already covered by the aitronz delta
+  above. **[read] `f7b7caf`** registers a `bst://redeem/<code>` URI handler
+  (HKCU) with a `rundll32` export so websites can hand Tokeer codes to the DLL.
+  Windows / Tokeer. Nothing.
+- **[read] `2c7af78`** is the rename/rebrand commit (672 insertions, 672
+  deletions). Nothing.
+
+### Summary
+
+| Item | Verdict |
+|---|---|
+| Explanation of the 09-09 change (depot-bound codes, carrier accounts) | consistent with RESEARCH §19; recorded |
+| `manifest.luastools.xyz/m/<depot>/<gid>` | **17/17 current gids served; proposed as a `resolve_manifest` tier** |
+| Code donation from users' own accounts | their risk; not applicable to a lua-only stack |
+| depotcache pre-seed inside `BuildDepotDependency` | independent confirmation of §19.3 |
+| Product Key, OnlineFix, Tokeer URI, auto-update, mirrors | not applicable |
+
 ## References
 
 - OST (`OpenSteam001/OpenSteamTool` @ `main`): `src/dllmain.cpp`;
