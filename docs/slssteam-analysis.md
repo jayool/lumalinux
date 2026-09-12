@@ -4070,3 +4070,39 @@ proyecto que en nueve días quitó y devolvió su propia API pública dos veces.
 que vigilar es un evento concreto: **`dev` mergeado a `main` y tagueado.** Ese día
 todo lo de arriba pasa de hipotético a desplegado, el fila 1 se vuelve urgente, y
 tocará re-verificar §7.9.10 contra el binario publicado en vez de contra el fuente.
+
+### 7.10 Ventana `20260903114323` → 2026-09-12 — nada después del día 9
+
+*Barrido el 2026-09-12 sobre el clon de `AceSLS/SLSsteam`. Cobertura previa: §7.9
+(rama `dev` hasta el 1 de septiembre) y `slssteam-plugins-analysis.md` (base `main`
+`71021ad`, la release del día 3). Quedaban sin leer commit a commit los 14 de `main`
+del 1 al 3 de septiembre y 3 de `dev` (3 y 8 de septiembre, sin publicar).*
+
+**Lo primero: no hay nada después del 9 de septiembre.** Ni commit, ni tag, ni
+release en `main` ni en `dev` tras el 8. SLSsteam no ha reaccionado en código a la
+caída de los providers de request code, y no tenía por qué: SLSsteam no toca ese
+gate. Lo que sí queda tocado es el plugin `download.lua` de `slssteam-plugins-analysis.md`:
+pide el código a `gmrc.wudrm.com` **en solitario y por HTTP en claro** (§3.3 de ese
+doc), así que está muerto desde el día 9. El solape DepotKey/GMRC que ese análisis
+marcaba como el conjunto crítico compartido **queda sin efecto** mientras no aparezca
+otra fuente de códigos — y lumalinux ya no la necesita (RESEARCH §19: manifests
+pre-sembrados, GMRC opt-in).
+
+Los 14 commits de `main` entre §7.9 y la release del día 3:
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `3d45b14` | Al arrancar, pone permisos `u=rwx` al directorio de plugins y a cada `.lua`; si no puede, desactiva los plugins esa sesión. | No. LumaDeck no escribe plugins. |
+| `5f8ce3a`, `a7c47f5`, `b1fd214` | Propiedades de `LuaHook` como `Ptr_t`; `hexdump` por referencia; "ran lua" a nivel info. | No. API Lua. |
+| `6015c05` | Tipos en `CServerPipe` (`HSteamPipe`, `HSteamUser`), sin cambio de layout. | No. |
+| `c95b119` | Regenera `enums.pb`. | No. |
+| `eafd3ea` | Corrige el path de la caché `.updates.yaml` (sobraba una barra). Nuestro `update.cpp` no copió ese código. | No. |
+| `fc96f26`, `71021ad` | Hashes de cliente del 2 y 3 de septiembre. El del día 2 (`bc54101b…`, ubuntu12_32 + steamdeck_stable) está en nuestro `res/updates.yaml`; el del día 3 (`237495b4…`, sólo ubuntu12_32) **no**. | Cosmético: en lumalinux el hash es aviso, la puerta es el escaneo de patrones (main.cpp), y `watch-steam` sigue `steamdeck_stable`. |
+| `11f0970`, `f2d6544`, `75acfce`, `94e9341` | Bump de versión, PKGBUILDs, luajit en nix, comentario en `example.lua`. | No. |
+
+Los 3 de `dev` (`faeaf9b` newlines en logs, `a456396` bypass de controles parentales
+en `ClientLogOnResponse`, `bbe1e3f` crash en `Process_t::getRealExe` con `/proc`
+inaccesible) no se han publicado y no tocan nada nuestro; se anotan para que el
+próximo barrido arranque en `bbe1e3f`.
+
+**Accionable: ninguno.** La coexistencia (§5) no cambia en esta ventana.
