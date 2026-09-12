@@ -2424,3 +2424,274 @@ Field *analyses* are peer claims and get checked like any other. Conflating the
 two would have led this document to retract a conclusion that was correct, on the
 authority of a remark that was not.
 
+
+---
+
+## §16 Delta — 2026-09-12 (commits after `c243cf3`, the reaction to 2026-09-09)
+
+**Frozen references for this section.** `main` @ `9708316` (2026-09-10) and the
+work branches `manifest-sources` / `vpn-bypass` / `tokeer-generation` /
+`cloudredirect-dev` @ `eb2a93e` (2026-09-11). Method as in §0: every commit after
+`c243cf3` (v0.9.61, 2026-08-26) was listed; the ones touching manifest sources,
+client repair, pins/fixes and CloudRedirect were read as full diffs; Tokeer and
+Store Roulette were read at commit-subject level plus module headers. Provider
+reachability was probed from the analysis sandbox on 2026-09-12; hosts the
+sandbox proxy refuses are marked *unverifiable*, not dead.
+
+**Volume.** 171 commits on `main` between 2026-08-27 and 2026-09-10, plus 2 on
+the work branches on 2026-09-11. By subject: 62 Tokeer / Ubisoft ticket
+automation, 50 Store Roulette, 16 manifest sources, 12 CloudRedirect, 9 client
+repair (Headcrab / moon), 9 releases, 13 other. Author of every commit:
+"Vibe-coder Jimmy".
+
+### §16.1 Manifest sources — the actual reaction to the request-code shutdown
+
+**[read] `6e36758` + `eb2a93e` (2026-09-11, work branches only, NOT on `main`)
+"Add aggregated keyless manifest providers".** New `py_modules/lt/free_providers.py`
+(240 L) and `smart_merge.py`, a Python port of luatools-moon's `smart_merge.lua`.
+Four keyless providers are queried, every `.manifest` is validated by parsing its
+protobuf metadata (depot and gid must match the filename), depot keys are voted
+across sources (exact-current > votes > priority), and the result is one zip
+handed to the existing install pipeline as a new tier after `api.json`
+(Ryuu, Sushi, Sushi CDN, TwentyTwo Cloud, Morrenus/Hubcap) and before Charon:
+
+| Provider | What it is | Probed 2026-09-12 |
+|---|---|---|
+| "trionine": keys from `raw.githubusercontent.com/fylsdy/ManifestHub/main/depotkeys.json`, gids from `api.steamcmd.net`, manifest from `qwe213312/k25FCdfEOoEJ42S6/main/<depot>_<gid>.manifest` | plugin builds the lua itself (`addappid(depot,1,key)` + `setManifestid(depot, current gid)` + `listofdlc`) | `depotkeys.json` → **404**, repo requires auth (private or gone). The tier cannot produce keys → dead on arrival. The manifest repo itself is public (flat `main`, served Balatro `2379781_3512319404653808464`, 4083 B). |
+| "revobd": `api.luagen.revobd.club/<appid>.zip` | lua + manifests bundle | *unverifiable* (proxy CONNECT refused) |
+| "ManifestHub" `steamtoolsapp/ManifestHub`, "ManifestHub3" `steamtools-games/ManifestHub3` | branch `<appid>`: `<appid>.json` (appinfo), `<appid>.lua`, `key.vdf`, `<depot>_<gid>.manifest` (raw Steam format; our `manifests.manifest_identity` validates it) | 62 288 branches each, identical content (mirrors). **Every branch checked (Balatro, Brotato, Vampire Survivors, Backpack Battles) has its last commit on 2025-07-26.** A frozen snapshot, over a year old. P-ToyStore, our repo, had Brotato at 2026-05-27, VS at 2026-08-30, Backpack at 2026-08-12. |
+
+**[inferred]** None of the four gives SLSDeck installs of *current* builds: one is
+dead, two are a July-2025 archive, one is unverifiable. For our stack the only
+conceivable use is as a source of *old* gids (a LuaTools fix targeting an old
+build when P-ToyStore has neither branch nor tag for it) — rejected on review:
+the fixes we have seen target 2026 builds, which a 2025 snapshot cannot contain.
+**Not adopted.**
+
+**[read] `0aea879` + `7346c61` (2026-09-10, `main`) "Continue after failed
+manifest sources".** `_record_source_error(appid, source, type, code, detail)`;
+a valid zip with an empty or wrong-app lua is now a failure of *that* source and
+the loop continues; the add-complete event carries `sourceFailures[]`; new
+setting `toastOnSourceFailure` (default off) → Advanced toggle "Surface failed
+sources" and toast "SLSDeck · manifest sources skipped". Our
+`resolve_manifest`/`resolve_all` has continued per source since it was written.
+Nothing to do.
+
+**[read] `18da82e` (2026-09-09) "Replace retired Steam app list endpoint".**
+Valve retired unauthenticated `ISteamApps/GetAppList/v2` (the replacement needs
+an API key). SLSDeck used it only for the roulette and switched to the Store's
+paginated `search/results/` HTML. **Affects us:** LumaDeck `backend/config.py`
+`APPLIST_URL` is that same endpoint and `init_applist()` fetches it on a
+cache-less start — the 404 seen in the Decky log. Consequence: the name cache
+is never created on a fresh install and names come from Store `appdetails` per
+app (slower, not broken). Fallback `applist.morrenus.xyz` (Morrenus = the
+Hubcap operator's mirror of the same list, in the code since the fork) was
+unverifiable from the sandbox. **Decision: leave as is** (one wasted request per
+cache-less start; a one-line removal was offered and declined).
+
+**[read] `f30d08e` + `a595184` (2026-09-09) NERAI.** New `nerai.py`: public fix
+catalogue `nerai.qd.je/api/fixes` (bypass / game / online), exact normalised-title
+or `app_id` match, 1 h cache, exposed as `neraiFixes` next to the other fix
+providers. Another account-less crack source. We use LuaTools signed in, which
+also gives the paired manifest. Nothing to do.
+
+**[read]** Charon DB (BlissBlender, lua only, keyless) predates this window
+(`6da03a1`, v0.9.59, 2026-08-20). Sushi still serves zips with manifests; the
+Balatro zip is dated 2025-05-27, also stale.
+
+### §16.2 Client repair — Headcrab and moon (9 commits, all `slssteam.py`)
+
+Context: moon loads only when `steamclient.so`'s hash is on its list; after a
+Steam update SLSDeck runs Headcrab (AceSLS' `h3adcr-b`), which **downloads and
+installs an older Steam client** and blocks updates with `steam.cfg`
+`BootStrapperInhibitAll=enable`. None of this exists in our stack (pattern
+scan, advisory hash, client never touched), so the whole block is
+informational.
+
+- **[read] `90a0b03` + `89c0993` (08-28) CachyOS.** Bundled static `7zz`
+  recognised as extractor; `sudo`/`pkexec` shims in Headcrab's PATH returning
+  exit 1 (Headcrab detects Cachy as Arch and called `sudo pacman` in a job with
+  no terminal); Headcrab started in its own session and the watchdog now
+  `killpg`s the group because a surviving `pacman`/downloader child inherited
+  stdout and blocked the reader forever.
+- **[read] `a80372a` (08-29) temp permissions and honest result.** Root-created
+  0700 `mkdtemp` trees are chowned to the desktop user before moon's `setup.sh`
+  runs (bash exited 126 before reading it). `_run_headcrab_shimmed` returned
+  `bool(find_installed_lib())` — "a .so exists" counted as success even when the
+  downgrade failed; now `rc == 0`, and the installer marks `failed` accordingly.
+- **[read] `0fa1000` (08-29) detached repair.** Headcrab stops Steam; in Gaming
+  Mode that kills Decky and the worker that launched it. The repair is now
+  handed to a transient user service (`systemd-run --user
+  --unit=slsdeck-headcrab-repair-<ts>` as the desktop user, `PYTHONPATH` to the
+  plugin) that survives the shell restart, restores moon afterwards and, in
+  Desktop Mode, relaunches `steam` itself. **The one technique worth
+  remembering:** it is the answer to "the plugin cannot restart Steam without
+  killing itself". We never restart Steam from the plugin, so not needed.
+- **[read] `78da18a` (08-29) Headcrab loop.** If moon aborts on hash but the
+  client already *is* Headcrab's target build, new `engineOnly` mode reinstalls
+  moon, re-activates injection and runs `pattern-refresh` instead of
+  re-downloading Steam. Failure text, verbatim: "the latest slsteam-moon still
+  cannot match this Steam binary … upstream moon pattern coverage is required".
+  **[inferred]** An explicit admission that without moon patterns for a binary
+  there is no fix — the structural weakness of their approach vs. ours.
+- **[read] `f077711` (08-29).** Recovers a lost `steam.sh.slsorig` from
+  Headcrab's `client.sh`; reconciles a dead transient service before honouring
+  the in-memory lock ("A task is already running" forever).
+- **[read] `02ffead` (08-29).** Stops running moon's `setup.sh` from the plugin
+  (sudo/pkexec prompts, Steam restarts, competing launch wrappers); reads the
+  compatible client version from the cached `headcrab.sh` because "Decky's HTTP
+  client can be offline or return a stale raw-GitHub response". **[inferred]**
+  Relevant reminder for us: raw GitHub can serve stale content; our
+  `fetch_repo_manifest` validates each file by depot/gid identity, so a stale
+  raw is a miss, never a wrong manifest.
+- **[read] `adb2b51` (09-05).** Headcrab's upstream script copies stock AceSLS
+  SLSsteam over the engine on every Steam start (no depot-key support → 0 B
+  downloads). SLSDeck patches the script (`copySLSsteam(){ echo …; }` inserted
+  before the final `main`), requires moon before touching the client, and
+  verifies `installed_lib_is_moon()` at the end ("stock SLSsteam was not
+  accepted"). Engine download moves to the shared HTTP client; moon release via
+  `ghrel`.
+- **[read] `820538a` (09-09).** Enumerates five possible `steam.cfg` roots
+  (`~/.steam/steam`, `~/.local/share/Steam`, `~/.steam/root`, two Flatpak
+  paths); suspends only Headcrab's directive, preserves user settings, restores
+  without duplicating `BootStrapper`; rejects the repair if the final client
+  build ≠ Headcrab's target.
+- **[read] `d05247e` (09-05).** Real plugin uninstall now removes
+  `homebrew/settings/<id>` too; normal updates keep settings, credentials and
+  pins.
+
+Actionable: nothing.
+
+### §16.3 Pins and fixes
+
+- **[read] `f507172` (08-28) "Match fix targets case-insensitively".** New
+  `_existing_case_rel(install_path, rel)`: for each path component that does not
+  exist exactly, use the single case-insensitive match on disk; ambiguous
+  directories keep the archive spelling. Applied to zip and rar extraction and
+  to the exe-dir mirror. Verbatim rationale: fix archives are assembled on
+  Windows, where `acshadows.exe` and `ACShadows.exe` are one file; on Linux the
+  crack landed beside the original, which the game kept launching.
+  **[read] Our `fixes.py` `_extract_fix_sync` had the identical hole**: it wrote
+  `os.path.join(install_path, rel)` with the archive spelling and
+  `_backup_original_file` could not find the original either.
+  **Adopted — LumaDeck `f67b4ec`** (`_existing_case_rel` ported, used in both
+  extraction branches, Zip Slip check repeated after resolution, the `[FIX]` log
+  records the resolved path so unfix restores the right file). Verified with a
+  synthetic game dir in the sandbox, not on device: `game.exe` over `Game.exe`
+  replaces and backs up; nested `binaries/win64/…` resolves per component; an
+  ambiguous directory (`a.txt` + `A.txt`) is not guessed; `../evil.txt` still
+  blocked.
+- **[read] `79c78e9` (08-29) "Restore source-aware fix build handling".**
+  `luatools.py` stops using a fix's `title` as `manifest_id` ("title is a Steam
+  BuildID, not a depot manifest GID"); `pinsource.py` never substitutes the
+  generic/latest manifest for the fix's own; `pin_app_gids` no longer treats an
+  existing pin as proof the files on disk match (checks InstalledDepots);
+  `hvauto.py` only reports the compatible build, never pins. Frontend
+  `buildApply.ts`: a fix with a paired manifest whose pin fails now aborts
+  (`pin_failed`) instead of applying onto the wrong build; new phase
+  `awaiting_reinstall` with this verbatim comment: "Steam does not reliably
+  switch an already-installed app to historical ManifestPins by launching or
+  validating it. It frequently launches the current build instead. Keep the
+  exact pin, but require a reinstall". **[inferred]** The same three defects we
+  fixed in LumaDeck 0.8.0 (bare-number fix titles, InstalledDepots build check,
+  never replace the fix gid with the current one) and the same observation as
+  our Backpack Battles test. Converged. Nothing to do.
+- **[read] `dabd874` (08-28, `archived-stable`).** Pin snapshot persisted in
+  settings by `pin_app_gids` / `pin_app_current` / `purge_pins_for_app`; unfix
+  raises if the fix record is still present. Nothing to do.
+- **[read] `dd29fdb` (08-28).** Progress for "Install a specific build…" via
+  their bundled DepotDownloader (`depotdl.py`) — a path that needs request
+  codes and is therefore dead since 09-09. Nothing to do.
+- **[read] `d852153` + `16ce9a7` + `eb833b2` (09-06).** Explicit `percent`
+  phases (downloading ≤80, extracting 82, applying 90, finalizing 96, done 100);
+  ryuu fix downloads use system `curl` with `LD_PRELOAD`/`LD_AUDIT` stripped
+  because ryuu answers 401 to other clients. Cosmetic. Nothing to do.
+- **[read] `1bb64da`, `ea245d8`, `60ee455`.** Tokeer button state; "vibecoded"
+  attribution badge. Nothing to do.
+
+### §16.4 CloudRedirect (12 commits)
+
+Ours: Selectively11's Flatpak + `cloud_redirect.so` installed by `installer.py`;
+provider sign-in in the Flatpak GUI from Desktop Mode; tokens at
+`~/.config/CloudRedirect/tokens_<provider>.json`; Components shows
+`not_authed` / `Configured`.
+
+- **[read] `bf26d23` (09-07) "Show SLSsteam games in CloudRedirect".**
+  `sync_registered_games()`: moon discovers games from `stplug-in/*.lua` but
+  CloudRedirect reads `AdditionalApps`, so moon-added games were invisible.
+  They are mirrored into `AdditionalApps` and empty
+  `~/.config/CloudRedirect/storage/<accountid>/<appid>` dirs are seeded
+  (accountid = low 32 bits of the `MostRecent 1` SteamID64 in
+  `loginusers.vdf`). A moon-specific breakage; stock SLSsteam registers games in
+  `AdditionalApps` directly. Nothing to do.
+- **[read] `29f978b` (09-09) "Port CloudRedirect fixes to hoodless"** (425 L in
+  `cloudredirect.py`, 384 L in `cloudredirect_reinstall.py`; "hoodless" is one
+  of their release variants). Drops the Flatpak for `swwayps/cloudredirect-moon`
+  (32-bit `cloud_redirect.so` via `LD_PRELOAD` in their `steam.sh` wrapper).
+  Provider selection (`local`/`gdrive`/`onedrive`), OAuth PKCE with a localhost
+  listener, tokens written 0600, migration of the legacy Flatpak files, sign-out
+  — all inside the plugin. Google / Microsoft `client_id`s hardcoded (they are
+  cloudredirect-moon's). Also a "Full purge on uninstall" setting (default off).
+- **[read] `7c254aa` + `36a0bf8` (09-09).** Callback port fixed at 53692 (the
+  one cloudredirect-moon registered with Google); the callback listener moves
+  to a backend thread because "Steam's browser hides or unmounts the plugin UI";
+  Gaming Mode fallback: paste the failed callback URL by hand.
+- **[read] `37970e0` (09-09) "Complete CloudRedirect OAuth token exchange".**
+  `7c254aa` had *removed* the hardcoded `client_secret`s (`v6V3fKV_…`,
+  `qtyfaBBY…`); Google requires one for the code exchange, so the plugin now
+  downloads
+  `raw.githubusercontent.com/swwayps/cloudredirect-moon/<commit>/ui-linux/src/oauthservice.cpp`
+  at runtime and regex-extracts `GDRIVE_CLIENT_SECRET` /
+  `ONEDRIVE_CLIENT_SECRET`. Verbatim: "This keeps third-party credentials out
+  of SLSDeck". **[inferred]** The plugin impersonates cloudredirect-moon's
+  desktop app towards Google and Microsoft with a secret scraped from that
+  project's source on every start. If swwayps rotates the credential or the
+  commit disappears, sign-in breaks for every SLSDeck user; if Google flags the
+  usage, the client — and cloudredirect-moon's own users — can be revoked.
+  Same risk pattern as §5's third-party-credential paths. **Not adopting**
+  in-plugin OAuth on this basis; the Flatpak performs OAuth with its own
+  credentials, which is the correct arrangement.
+- **[read] `b52810d` + `2465971` + `fd1ee74` + `15aec89` (09-09).** Read-only
+  save list: selectable cards with Steam artwork, local time (newest mtime
+  under `storage/<account>/<appid>`) and remote time from
+  `userdata/<account>/<appid>/remotecache.vdf` (`remotetime`) or
+  `state.cloudredirect` / `manifest.cloudredirect`. Nothing to do.
+
+### §16.5 Tokeer and Store Roulette (112 commits, subject level)
+
+**[read] Tokeer** (`tokeer.py`, `tokeer_health.py`, `ubisoft_packages.py`):
+integration with `Tesla697/TokeerDRM-App`, a Denuvo *token activation* service —
+the original game is activated with a token someone else generates. The user
+requests a "ticket" on a Discord server, a bot returns the token; the Ubisoft
+Connect variant additionally uploads a TLX1 machine file and waits. SLSDeck
+automates the whole Discord flow from the Deck with an embedded BrowserView
+driven by CSS selectors (hence "Make Tokeer selectors resilient to Discord
+layout changes", "match current Discord availability label formats", "discover
+new tickets by thread identity"). 48 h cooldown per game, requires
+`GE-Proton10-34`; `tokeer_health.py` guesses whether a stored activation still
+holds by fingerprinting the prefix and install because the service has no API
+for it. The 62 commits are selector breakage, stuck ticket states and page
+layout. Already covered as a trust-risk path in §5.7. Nothing to do.
+
+**[read] Store Roulette** (`minigame.py`, `Minigame.tsx`): a mini-game in the
+Advanced page and the Quick Access menu — random Store games (tag, price,
+review and Deck-compatibility filters) spun CS:GO-case-opening style with
+sound; the winner is added through SLSsteam and opened. 50 commits of
+animation, centring, audio, artwork. This is what triggered `18da82e`
+(§16.1). Nothing to do.
+
+### §16.6 Summary
+
+| Item | Verdict |
+|---|---|
+| Keyless providers (`6e36758`) | one dead, two a 2025-07-26 snapshot, one unverifiable; **not adopted** |
+| GetAppList retirement (`18da82e`) | affects LumaDeck's name cache only; **left as is** by decision |
+| Case-insensitive fix targets (`f507172`) | same hole in our `fixes.py`; **adopted, LumaDeck `f67b4ec`** |
+| Fix build handling (`79c78e9`, `dabd874`) | converged with LumaDeck 0.8.0 |
+| Headcrab / moon repair (9 commits) | not applicable; transient-service technique noted |
+| CloudRedirect in-plugin OAuth | built on scraped third-party credentials; **not adopted** |
+| NERAI, Tokeer, Roulette | not applicable |
+
+**[inferred]** The only substantive reaction to 2026-09-09 is `6e36758`, and it
+does not restore installs of current builds for SLSDeck. Nothing in this window
+changes the §7 verdicts.
