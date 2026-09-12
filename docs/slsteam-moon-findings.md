@@ -1257,3 +1257,36 @@ de anclaje, y la munición fechada de §D12 para `verify_mask.py`.
 `tools/launcher-shim.lib.sh`. Contrastado contra lumalinux `src/patterns.cpp`,
 `src/rtti.cpp`, `tools/derive_patterns.py`, `tools/check_patterns.py`,
 `.github/workflows/watch-steam.yml` y `setup.sh`.*
+
+## Delta — 2026-09-12 (desde el delta del 2026-09-01)
+
+*Barrido sobre el clon de `swwayps/slsteam-moon` el 2026-09-12. Rama principal
+`slsteam-moon` desde `997a1a3` (donde acaba el delta anterior): 11 commits propios
+entre el 30-ago y el 3-sep, más 13 commits de upstream SLSsteam (julio/agosto,
+autor AceSLS) que entran por merge y que ya están cubiertos en
+`slssteam-analysis.md` §7.7–§7.8. Rama `beta`: un commit el 4-sep que borra el zip
+binario que iba en el árbol. Rama `millennium`: nada desde julio. Sin tag nuevo
+(sigue v2.8, 21-jul).*
+
+**Lo primero: nada después del 4 de septiembre.** Ni un commit tras la caída de los
+providers del día 9, en ninguna rama. moon ya traía desde agosto la maquinaria para
+"providers caídos" (`ManifestFetch::areProvidersOffline`, el `ManifestStore` de §3.9
+de `slsdeck-analysis.md`, el `prewarm`, y el guard de instalaciones de `b43b317` del
+26-ago), pero la trataba como un enfriamiento transitorio: el 31-ago (`07d6d17`)
+**quita** el publicador de "install readiness" que alimentaba a su UI Lumen para
+bloquear instalaciones mientras los providers estaban fríos. No hay señal en el
+repo de que hayan asumido que los providers no vuelven. Las issues no se han podido
+leer desde esta sesión.
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `50a5959` (30-ago) → `52c03f5` (1-sep, revert) → `d7d263c`, `2668620`, `cae57d2`, `6fa9a2d` (2-sep) | Family Share: enganchan los paquetes CM entrantes para descartar los dos mensajes de bloqueo familiar. Lo meten, lo revierten porque "gateaba la inicialización del cliente", y lo vuelven a portar con parseo acotado del paquete, un locator **opcional** del catálogo de patrones y tests. `2668620` solo renombra el tipo de paquete en `manifestcode.cpp` (`CNetPacket` → `CRemoteClientPacket`). | No: capa de mensajes CM, que lumalinux no toca. |
+| `305d028` (30-ago) | Adapta a sus patrones el hook de lobbies de upstream (`GetFriendGamePlayed`). | No. |
+| `168c478` (31-ago) | `ManifestPins`: ignora entradas con appId, depot o gid a 0 en los índices de bloqueo y fallback. | No, pero es la misma regla que aplicamos: `steamidra --set-pin` rechaza gid 0 y el modo `--pin` solo pinea gids ≠ 0. |
+| `07d6d17` (31-ago) | Borra `InstallReadiness` (heartbeat JSON para que Lumen bloquease el Install Wizard con providers fríos), conservando los objetivos del prewarm. | No. Contexto: ver arriba. |
+| `9f5d8fc` (2-sep) | `autofix.sh`: si la API o la descarga de GitHub fallan, cae a un mirror en jsDelivr con `sha256` publicado en un `manifest.json` propio. | No hoy. Idea anotada para `install.sh` si GitHub Releases fallara alguna vez: un espejo con hash. |
+| `0e7d207` (3-sep) | Grande (26 ficheros): metadatos gestionados autoritativos durante el refresh, detalles de DLC publicados en sesión, `Ascii::` (ctype sin locale, porque corren desde el namespace de `rtld-audit`), decisión de Proton por `common.oslist` + depots de contenido, y el wrapper de `setup.sh` con `chmod 0755` explícito (un umask 0002 daba 0775 y su shim con root lo rechazaba). | No. Lo de `Ascii::` es un problema de `LD_AUDIT`, nosotros vamos por `LD_PRELOAD`; lo de Proton es el equivalente de nuestro `set_compat_tool_for_app` + `_platform_for`; el 0755 no aplica (D13: nada nuestro corre con root en el PATH). |
+| `62767b3` (4-sep, `beta`) | Quita `dist/slsteam-moon-linux.zip` del árbol. | No. |
+
+**Accionable: ninguno.** El próximo barrido arranca en `0e7d207` (`slsteam-moon`) y
+`62767b3` (`beta`).
