@@ -590,7 +590,13 @@ titles scanned via steamcmd.net, only public builds dated ≥ 09-09 queried):
 | Borderlands 4 1285190 (2026-09-10) | 1285191 / 1285192 / 1285193 / 1285195 | 404 ×4 |
 | Hunt: Showdown 594650 (2026-09-10) | 594651 / 594652 / 594653 / 594654 | 404 / 404 / 200 / 404 |
 
-**8 of 15 post-09-09 depots present**, Rust and Phasmophobia complete with
+**Re-probe 2026-09-13 (from Windows, PowerShell, 12 games / 32 depots, current
+gids):** P-ToyStore 32/32, luastools 31/32 — every gap of the day before
+(Valheim 892971, Borderlands 4 ×4, Hunt ×3, NMS 275852) is now served; the one
+non-200 is a `522` on NMS 275852 (Cloudflare origin error, transient). The
+donor base closed eight holes in under 24 hours.
+
+**Day-one result (2026-09-12): 8 of 15 post-09-09 depots present**, Rust and Phasmophobia complete with
 one-day-old patches. **[inferred]** Those can only come from codes minted
 after 09-09 by accounts that own the games — the donation pipeline works and
 the archive is the first source seen to carry post-shutdown builds. The 404s
@@ -697,7 +703,7 @@ that owns no licences.
 | Item | Verdict |
 |---|---|
 | Explanation of the 09-09 change (depot-bound codes, carrier accounts) | consistent with RESEARCH §19; recorded |
-| `manifest.luastools.xyz/m/<depot>/<gid>` | **17/17 current gids, 8/15 post-09-09 gids served; proposed as a `resolve_manifest` tier** |
+| `manifest.luastools.xyz/m/<depot>/<gid>` | **17/17 current gids on day one, 31/32 on day two (all post-09-09 gaps closed); adopted as a `resolve_manifest` tier, LumaDeck `4638a97`** |
 | Code donation from users' own accounts | their risk; not applicable to a lua-only stack |
 | depotcache pre-seed inside `BuildDepotDependency` | independent confirmation of §19.3 |
 | Product Key, OnlineFix, Tokeer URI, auto-update, mirrors | not applicable |
