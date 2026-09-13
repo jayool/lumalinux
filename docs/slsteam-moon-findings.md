@@ -1479,3 +1479,10 @@ un caso Debian de escritorio que no se da en SteamOS ni en el port CachyOS. Nada
 
 **Ninguno produce trabajo.** El próximo barrido arranca en `0e7d207`
 (`slsteam-moon`) y `62767b3` (`beta`).
+
+> **Nota 2026-09-13.** LuaTools ha anunciado que su motor pasa a ser
+> BetterSteamTools con el archivo crowd-sourced `manifest.luastools.xyz`
+> (ver `opensteamtool-findings.md`, addendum 2026-09-13) y que "los
+> desarrolladores de Linux publicarán una actualización con el nuevo sistema".
+> A 2026-09-13 `swwayps/slsteam-moon`, `luatools-moon` y `cloudredirect-moon`
+> no tienen commits posteriores al 2026-09-02. Re-barrer cuando llegue.

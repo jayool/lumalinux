@@ -607,6 +607,41 @@ single operator (`luastools.xyz` is mendy/madoiscool's, who also mirrors
 lua.tools); post-09-09 coverage is partial and donor-dependent; a 404 is
 definitive at that moment (their own client treats it so) and falls through. **Proposed; awaiting go-ahead.**
 
+### Addendum 2026-09-13 — LuaTools makes BetterSteamTools its official engine
+
+**[read] LuaTools Discord announcement "LuaTools is back!"** (2026-09-12/13,
+relayed by the user): the LuaTools desktop app's **Mode** tab now selects
+**BetterSteamTools**; LuaTools "should automatically update when your Steam
+client restarts". How it works, verbatim: "We are now crowd-sourcing app
+manifests from all of our users, whenever you download a game, the manifest
+that your steam client uses to download the game is uploaded to our servers
+and cached for the rest of our users … Your client also requests a 'wanted
+list' from our servers ~every 5 minutes", pointing at
+`https://manifest.luastools.xyz/manifestwanted` and a wiki page
+(`wiki.lua.tools/docs/luatools/bettersteamtools/mrc-system`, not reachable
+from the analysis sandbox). Linux: "Please be patient while our Linux
+developers release an update using the new system".
+
+**[read] What actually ships.** `updates` branch `e4e1152` (2026-09-13 01:12
+UTC) publishes **v1.0.3** (`OpenSteamTool.dll`, 1.675.264 B, SHA-256 in
+`latest.toml`); `main` is unchanged since `7243c60`. `strings` on the DLL shows
+exactly the `4a97d9d` code: `/manifestwanted`, `/manifestcode/submit`,
+`{}/m/{}/{}`, `SubmitCapturedCode`, the three legacy providers and the
+depot-aware `manifest.opensteamtool.com/%u/%u/%llu`. **[inferred]** The
+announcement's "the manifest … is uploaded" is loose: the client donates
+*request codes* (captured and minted), the server fetches the manifest from
+the CDN with them. Same conclusion, first-party wording.
+
+**Consequences for us.** (1) `manifest.luastools.xyz` is no longer one
+developer's side project: it is LuaTools' production infrastructure, fed by
+its whole Windows user base, which raises the expected coverage of the tier
+added in LumaDeck `4638a97` and lowers the single-operator risk noted above.
+(2) The Linux side (slsteam-moon / luatools-moon, `swwayps/*`) has **no commit
+after 2026-09-02** as of 2026-09-13; the moon delta in
+`slsteam-moon-findings.md` will need a re-sweep when "the new system" lands
+there. (3) Contributing codes back is not on the table for a lua-only stack
+that owns no licences.
+
 ### `7243c60` (2026-09-12) — example toml `[donate]` section only. Nothing.
 
 ### August 2026 (`2c7af78` … `f7b7caf`, 08-11 → 08-13)
