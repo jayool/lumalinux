@@ -632,6 +632,25 @@ announcement's "the manifest … is uploaded" is loose: the client donates
 *request codes* (captured and minted), the server fetches the manifest from
 the CDN with them. Same conclusion, first-party wording.
 
+**[read] The wiki page** (`wiki.lua.tools/docs/luatools/bettersteamtools/mrc-system`,
+relayed by the user 2026-09-13) matches the code and adds four facts:
+- An MRC "is tied to one exact depot and one exact version", "expires within
+  about 5 minutes", and "only an account that actually owns the game can
+  generate one (following the exploit getting patched)".
+- **A miss enqueues.** Flow chart, verbatim: "Manifest in the archive? No →
+  Nothing is saved → Steam asks for a code and the download fails → You see:
+  manifests not ready popup → That version is added to the wanted list". So a
+  404 on `/m/<depot>/<gid>` is itself the request that puts the version on
+  `manifestwanted` for donors. **[inferred]** Our `resolve_manifest` misses
+  therefore enqueue the gid for LuaTools' donor base; the 30-minute update
+  pass keeps the request alive without any code on our side.
+- "This code is the same for everyone so this does not identify you" — the
+  code is deterministic per (depot, manifest, time window), consistent with
+  BST's `(depot_id, manifest_id, time, secret)` reading.
+- Ownership comes from "the license list Steam already sends … read as it
+  arrives"; codes are "never stored"; opt-out is `[donate] enabled = false`
+  ("don't be a leech").
+
 **Consequences for us.** (1) `manifest.luastools.xyz` is no longer one
 developer's side project: it is LuaTools' production infrastructure, fed by
 its whole Windows user base, which raises the expected coverage of the tier
