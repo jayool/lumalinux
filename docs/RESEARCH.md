@@ -2155,3 +2155,25 @@ Valve has never seen (e.g. 1) is granted, which makes it useless as a probe.
 LumaDeck's `manifests.py` chains depotcache → its own archive → repo branch →
 repo tag → Hubcap (current build only, once a day per app); `pins.py` keeps
 every managed game pinned and moves the pin when a hub has the new build.
+
+### 19.x First production update through the pinned model (2026-09-13)
+
+Lonely Mountains: Snow Riders (2545360) on the user's Deck, LumaDeck 0.8.0 +
+lumalinux 0.20.1, nothing touched by hand. From LumaDeck's log
+(`~/homebrew/logs/`) and Steam's `content_log.txt`:
+
+- 2026-09-12 18:40 — `ensure_pinned` pins the game to its installed build
+  (`2545361 → 6942462877456514386`) and archives the present manifest.
+- 2026-09-12 19:09 — the 30-minute pass sees build 25172008, fetches
+  `2545361_9107064576136045598.manifest` **from P-ToyStore (branch)**, archives
+  it, seeds `depotcache/` (file mode 0600 = written by us), moves the pin:
+  `update check 2545360: pin moved to build 25172008`.
+- 2026-09-13 08:46:50 — first Steam start afterwards: `state changed : Update
+  Required … Update Started`, `Downloading 626 chunks for depot 2545361
+  (9107064576136045598)`, commit at 08:47:07, `finished update, 1 mounted
+  depots (BuildID 25172008)`. 17 seconds. `.acf` now `buildid 25172008`,
+  `StateFlags 4`; `config.yaml` `ManifestIds 2545361: 9107064576136045598`.
+
+No request code was asked for, Hubcap was not used, the game stayed on
+"Play" throughout. The two `failed to update ownership ticket (Access Denied)`
+lines an hour later are SLSsteam's usual noise for unowned apps.
