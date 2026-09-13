@@ -2156,7 +2156,7 @@ LumaDeck's `manifests.py` chains depotcache → its own archive → repo branch 
 repo tag → Hubcap (current build only, once a day per app); `pins.py` keeps
 every managed game pinned and moves the pin when a hub has the new build.
 
-### 19.x First production update through the pinned model (2026-09-13)
+### 19.5 First production update through the pinned model (2026-09-13)
 
 Lonely Mountains: Snow Riders (2545360) on the user's Deck, LumaDeck 0.8.0 +
 lumalinux 0.20.1, nothing touched by hand. From LumaDeck's log
