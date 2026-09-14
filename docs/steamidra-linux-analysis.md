@@ -126,8 +126,26 @@ en modo juego solo con `steam.sh` de usuario y el drop-in de systemd
 
 **Los reportes de Discord se refieren al SteaMidra original (Midrags, hasta
 v6.6.6 del 21-08), no a este fork.** [user report] El usuario probó el original
-en su Deck: sin crash, pero inusable (UI incomprensible). Atribución por
-versión, con el original `fa44fc9` delante:
+en su Deck: sin crash, pero inusable (UI incomprensible).
+
+**La fuente [external, Discord]:** hilo del servidor de FMHY del 2026-09-10
+(canal `1546879201565610075`) para retirar la estrella a SteaMidra, al menos en
+Linux, pegado por el usuario el 09-14. Lo que dice: Midrag lleva unas tres
+semanas desaparecido y era el único programador; el desarrollador de SLSsteam
+afirma que SteaMidra "ha estado haciendo daño a mucha gente", que "él y sus
+amigos" han tenido que arreglar los destrozos en los dispositivos de los
+usuarios, y que el caso de una Steam Deck rota "fue muy real" (alguien de sus
+canales de soporte, no un amigo); FMHY lleva "unas semanas" recomendando ACCELA
+para Linux y LuaTools para Windows; la versión de Windows sigue funcionando
+"con el fix de migo3" (los patrones de MigoReleases, `ffd70db` en el fork);
+"downloading is globally broken rn" (09-10); y se menciona una alternativa
+open source por salir, **OpenValve**, del autor de ese comentario. Lo que **no**
+dice: ninguna versión, ningún log, ningún síntoma concreto, ningún mecanismo. El
+fork `drappula/SFF` no aparece en el hilo: para la comunidad SteaMidra está
+muerto y nadie menciona que siga en otro repo. La disputa de créditos
+(LumaCore como derivado de OpenSteamTool) ya está en `lumacore-findings.md`.
+
+Atribución por versión, con el original `fa44fc9` delante:
 
 - **Original:** el flujo de terminal (`linux_download.py:341`) instalaba
   SLSsteam **sin Headcrab** (`install_from_github`: 7z, apt/pacman, limpieza del
@@ -333,4 +351,6 @@ Cuatro. **Ninguno es código.**
 - **F4 — exclusiones explícitas.** Contributor de keys, scraping de SteamDB,
   rclone, kit de DRM, logros: vistos, fuera, por diseño.
 
-Pendiente de barrido: `drappula/SFF` desde `92d6813`.
+Pendiente de barrido: `drappula/SFF` desde `92d6813`. **A vigilar:** "OpenValve",
+la alternativa open source anunciada en el hilo de FMHY (§3.3); sin repo
+conocido a 2026-09-14.
