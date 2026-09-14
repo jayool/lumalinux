@@ -14,7 +14,7 @@ hallazgo es código.** Es la continuación de `lumacore-findings.md`, que congel
 
 | Lado | Componentes |
 |---|---|
-| **Nosotros** | lumalinux (`.so`) + SLSsteam stock vía Headcrab + LumaDeck (Decky) + CloudRedirect |
+| **Nosotros** | lumalinux (`.so`) + SLSsteam stock + LumaDeck (Decky) + CloudRedirect, instalados por nuestro `setup.sh` con wrapper propio (desacoplado de Headcrab, `decouple-headcrab-plan.md` WS1.1/WS1.2) |
 | **Ellos** | SteaMidra (PyQt6/QtWebEngine, AppImage) + DepotDownloaderMod o descargador nativo + SLSsteam stock vía Headcrab (editado) |
 
 - **Referencia congelada:** `github.com/drappula/SFF`, `main` @ `92d6813`
@@ -117,10 +117,12 @@ mandaba al usuario hacer `steamos-readonly disable`, backup, `sudo kate
 loop — boot to Desktop Mode, restore steam-jupiter from backup"**. El fork lo
 convirtió en botón el 07-09.
 
-**Headcrab no toca `/usr`** (`headcrab.sh` [read hoy]) y nuestra Deck funciona
-en modo juego solo con `steam.sh` de usuario y el drop-in de systemd
-(`RESEARCH.md:212-220`, `decouple-headcrab-plan.md` WS1.1). El parche de
-`steam-jupiter` es innecesario para inyectar en modo juego.
+**Headcrab no toca `/usr`** (`headcrab.sh` [read hoy]), y nuestra pila tampoco:
+`steam.sh` queda vanilla, la inyección va en un wrapper propio alcanzado por el
+`Exec` de los `.desktop` en escritorio y por un drop-in de systemd en
+`steam-launcher.service` en modo juego, con un fail-safe que arranca vanilla al
+tercer crash seguido (`decouple-headcrab-plan.md` WS1.1/WS1.2, validado en
+Deck). El parche de `steam-jupiter` es innecesario para inyectar en modo juego.
 
 ### 3.3 Vectores de "brickeo", del más al menos probable
 
@@ -309,8 +311,8 @@ ManifestHub2 con key, como ASSella. No hay ninguna fuente nueva que adoptar.
 
 | Puerta | SteaMidra (fork, Linux) | Nosotros | Diferencia |
 |---|---|---|---|
-| G1 Propiedad | SLSsteam stock vía Headcrab editado al vuelo + 3 parches encima. | SLSsteam stock vía Headcrab, sin tocar. | Misma capa; ellos la desmontan y remontan. |
-| G1b Inyección modo juego | `steam.sh` de usuario + botón sudo sobre `/usr/bin/steam-jupiter`. | `steam.sh` de usuario + drop-in systemd. Nunca `/usr`. | Vector 2 de §3.3. |
+| G1 Propiedad | SLSsteam stock vía Headcrab editado al vuelo + 3 parches encima. | SLSsteam stock instalado por `setup.sh`, sin Headcrab. | Misma capa; ellos la instalan con un script ajeno recortado y parcheado. |
+| G1b Inyección | `steam.sh` reescrito y en 644 + botón sudo sobre `/usr/bin/steam-jupiter`. | Wrapper propio: `.desktop` Exec + drop-in systemd, `steam.sh` vanilla, fail-safe anti-crash-loop. Nunca `/usr`. | Vectores 1, 2 y 3 de §3.3. |
 | G2 Keys | Solo para DDMod/nativo. Nunca a Steam. | `config.vdf`; Steam las reusa. | Steam no descarga en su modelo. |
 | G3 Manifests | request code (muerto) → Hubcap → 3 repos planos (snapshot) → ManifestHub2. | depotcache → archivo → P-ToyStore → luastools → Hubcap zip. | 0/6 contra 6/6 hoy. |
 | G4 Request code | Lo piden primero y falla. | No se pide. | Un intento muerto por depot. |

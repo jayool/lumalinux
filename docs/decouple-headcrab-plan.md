@@ -446,5 +446,7 @@ puede dejar una Deck "de fábrica" (crash en bucle en modo juego → gamescope
   cubre con el drop-in de systemd en `steam-launcher.service` (WS1.1).
 - Nunca SIGKILL a Steam para instalar o reparar; cierre ordenado.
 - `SafeMode` como lo deje Headcrab (en SteamOS, `yes`); no forzarlo a `no`.
-- No dejar `steam.sh` sin bit de ejecución ni reescribirlo por encima del de
-  Headcrab; el wrapper propio de este plan sustituye esa dependencia.
+- No tocar `steam.sh` (WS1.1 lo deja vanilla); SteaMidra lo reescribe y lo deja
+  en 644, y Steam lo repone en el siguiente update llevándose la inyección.
+- Mantener el fail-safe de WS1.2: tres crashes seguidos → vanilla, antes de que
+  gamescope llegue a `short_session_recover`.
