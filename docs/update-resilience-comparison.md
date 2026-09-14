@@ -264,9 +264,15 @@ es la más robusta, y por eso es nuestro paracaídas.
   ShaderDepot (no crítico). Decisión: **nada ahora**; si ShaderDepot se mueve
   alguna vez por ese byte, enmascararlo entonces y validarlo con
   `verify_mask.py` en el runner, que es donde está el binario.
-- **C2 — Lookahead de beta en el cron**: derivar contra `steamdeck_publicbeta`
-  sin whitelistear, para llegar cubiertos al día de promoción
-  (`slsdeck-analysis.md` §8).
+- **C2 — Lookahead de beta en el cron.** Un segundo job en `watch-steam.yml`
+  con `LUMA_STEAM_MANIFEST=steam_client_steamdeck_publicbeta_ubuntu12` (override
+  ya existente en `fetch_steamclient.py:65`), mismo flujo: CLEAN → feed + hash
+  (whitelistear un beta es inocuo, el hash es consultivo); patrón movido →
+  Ghidra y PR **antes** de que el build llegue a estable; issues con "(beta)".
+  Coste: un run de segundos al día, descarga solo cuando el beta cambia. Riesgo:
+  trabajo tirado en betas que Valve descarte; mitigación: no cortar release por
+  un beta, solo mergear el feed. **Decisión 2026-09-14: anotado, no ahora.** El
+  usuario no usa el canal beta ni piensa usarlo; queda escrito por si cambia.
 - **C3 — Cerrar issue #26**: derivar el "target" seguro de Steam de nuestro
   propio cron en vez del pin de Headcrab.
 - **C4 — VProf como segunda vía automática** (SteamFlipper F3, evidence-gated en
