@@ -10,7 +10,10 @@ name: watch-steam-selftest
 # check_patterns.py — and ASSERT it comes back CLEAN.
 #
 #   target=shaderdepot (default): corrupt ShaderDepot -> exit 2 (noncritical)
-#   target=criticals:             corrupt BuildDep + GMRC -> exit 3 (blocking),
+#   target=criticals:             corrupt DepotKey -> exit 3 (blocking; since
+#                                 v0.20.0 DepotKey is the ONLY critical hook —
+#                                 BuildDep and GMRC are diagnostic and cannot
+#                                 produce exit 3 any more),
 #                                 routed through blocking_constants.py exactly
 #                                 like the production exit-3 path.
 #
@@ -84,7 +87,7 @@ jobs:
           TARGET: ${{ inputs.target }}
         run: |
           if [ "$TARGET" = "criticals" ]; then
-            CONSTS="kBuildDepotDependencyPattern kGmrcFunctionPattern"
+            CONSTS="kDepotKeyFnPattern"
             WANT=3
           else
             CONSTS="kShaderCacheDepotPattern"
