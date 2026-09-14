@@ -2156,6 +2156,13 @@ LumaDeck's `manifests.py` chains depotcache → its own archive → repo branch 
 repo tag → Hubcap (current build only, once a day per app); `pins.py` keeps
 every managed game pinned and moves the pin when a hub has the new build.
 
+> **2026-09-14, measured:** the "Free Providers" chain that SteaMidra's live
+> fork (`drappula/SFF`) added on 09-10 brings no live source. Its key DB
+> (`fylsdy/ManifestHub`) is 404 and its GitHub manifest mirrors
+> (`steamtoolsapp/ManifestHub`, `steamtools-games/ManifestHub3`,
+> `qwe213312/k25FCdfEOoEJ42S6`) carry 0 of the 6 current gids that P-ToyStore
+> had the same day. See `steamidra-linux-analysis.md` §5.
+
 ### 19.5 First production update through the pinned model (2026-09-13)
 
 Lonely Mountains: Snow Riders (2545360) on the user's Deck, LumaDeck 0.8.0 +

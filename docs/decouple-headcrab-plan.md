@@ -432,3 +432,19 @@ downgrade/mirror en vivo una vez (ver WS5).
   el `LD_PRELOAD` en `steam.sh` (`src/main.cpp`) parcheado por `_HEADCRAB_PATCHES`
   en `installer.py` — ya retirado de la ruta feliz. `backend/paths.py`
   (`injection_missing`) ahora modela "cobertura del wrapper perdida".
+
+---
+
+## Nota cruzada 2026-09-14 — lo que no hacemos, y por qué (SteaMidra)
+
+`steamidra-linux-analysis.md` §3.3 lista los vectores por los que SteaMidra
+puede dejar una Deck "de fábrica" (crash en bucle en modo juego → gamescope
+`short_session_recover` → borrado de `~/.local/share/Steam` → OOBE, medido en
+`RESEARCH.md` §17.3). Este plan ya los evita, y conviene que siga así:
+
+- Nunca escribir en `/usr` ni pedir `steamos-readonly disable`. Modo juego se
+  cubre con el drop-in de systemd en `steam-launcher.service` (WS1.1).
+- Nunca SIGKILL a Steam para instalar o reparar; cierre ordenado.
+- `SafeMode` como lo deje Headcrab (en SteamOS, `yes`); no forzarlo a `no`.
+- No dejar `steam.sh` sin bit de ejecución ni reescribirlo por encima del de
+  Headcrab; el wrapper propio de este plan sustituye esa dependencia.

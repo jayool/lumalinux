@@ -601,3 +601,5 @@ nuevo sin clave y Hubcap no la trae".**
 - SLSsteam (`AceSLS/SLSsteam`): `ticket.cpp`, `apps.cpp`, `Achievements::sendAndRecvGetUserStats`.
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.
 - LumaDeck: `backend/achievements.py`, `FIXES_MAP.md` (Steamless / Goldberg / netsock / Override).
+
+> **2026-09-14:** `Midrags/SFF` no se ha movido desde `fa44fc9` (2026-08-21). El desarrollo de SteaMidra continúa en el fork `drappula/SFF`; su capa Linux, su cadena de adquisición y los vectores de "brickeo" de la Deck están en `steamidra-linux-analysis.md` (congelado en `92d6813`, 2026-09-13). El próximo barrido de SFF arranca ahí.
