@@ -51,7 +51,10 @@ análisis propios; CloudRedirect 2.6.5. Etiquetas: [read], [inferred],
   solo sobre UNIQUE, re-validación, y solo en un "pattern moved" real.
   `watch-steam-selftest.yml` corrompe patrones a propósito para probar los
   caminos 2 y 3. `verify-fix.yml` nunca ha estado en verde y lo dice en su
-  cabecera.
+  cabecera. **DepotKey no lo deriva Ghidra**: su walk `CALL [reg+0x18]` no
+  resuelve en headless (medido el 14-09, run #7), así que el camino 3 lo hace
+  `derive_depotkey_byname.py` desde la dirección que ya da la resolución por
+  nombre, sin Ghidra, en segundos (`maintenance.md` A.2/A.3).
 - **Entrega.** CLEAN: `whitelist_hash.py` + `res/rvas/<sha>.yaml`, PR
   auto-mergeado. Medido en los cinco builds desde julio: PR #22 creado 06:03:32,
   mergeado 06:03:35; #27 12:08:50 → 12:08:53 [measured]. Patrón movido: PR de
@@ -89,9 +92,25 @@ Lectura: en la misma ventana en que Ace tocó firmas cuatro veces y moon cinco,
 nosotros cero. Parte es elección de funciones (las nuestras son prólogos de
 funciones que Valve no reordena; las suyas incluyen despachadores IPC con
 raíces de búsqueda que cambian al añadir métodos), parte es que enganchamos
-cuatro funciones y ellos treinta. La contrapartida está en §9: el camino de
-re-derivación nuestro solo se ha ensayado en el selftest del 30-06, y la cadena
-ha cambiado mucho desde entonces (17-08, 07/08-09) sin volver a ensayarse.
+cuatro funciones y ellos treinta. La contrapartida está en §9: hasta el 14-09
+el camino de re-derivación solo se había ensayado en el selftest del 30-06, y
+la cadena había cambiado mucho desde entonces (17-08, 07/08-09).
+
+**Selftest del 14-09-2026, build `bc54101b` [measured].** Nueve runs de
+`watch-steam-selftest.yml` en un día, sobre el binario estable real:
+
+| Run | Objetivo | Resultado | Qué destapó |
+|---|---|---|---|
+| #4 | shaderdepot (exit 2) | verde, 15 min | Ghidra re-deriva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve en este build ("type_info not referenced by any function"), no bloquea. |
+| #5 | criticals | rojo, 18 s | el test corrompía BuildDep+GMRC, diagnósticos desde v0.20.0: `check_patterns` decía CLEAN y nunca llegaba a Ghidra. Arreglado (`dda90dc`). |
+| #6 | criticals | rojo, 15 s | `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y devolvía vacío: un DepotKey movido iba a issue sin pasar por Ghidra. Arreglado (`63a5a0a`). |
+| #7 | criticals | rojo, 20 min | Ghidra: "vcall derivation failed: found 2 dispatcher candidate(s) but none had a resolvable CALL [reg+0x18]". Headless no resuelve llamadas indirectas. Además `derive_patterns.py` validaba una copia desfasada del patrón, "UNIQUE, keep it" en `0x189fca0`, que no es DepotKey (`0x11a4500`). |
+| #8 | criticals | rojo, 16 s | el by-name resolvió y la herramienta nueva cascó en un `print` (KeyError). |
+| #9 | criticals | **verde, 23 s** | exit 3 → `blocking_constants` → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → apply → re-validación CLEAN con RTTI y nombre de acuerdo. Sin Ghidra. |
+
+Conclusión: el camino de exit 3 para el único crítico que existe hoy no era
+autónomo hasta el run #9, y en producción habría acabado en issue con un log
+que además engañaba. La Deck no se habría roto (rescate RTTI desde 07-06).
 
 ---
 
@@ -276,6 +295,12 @@ es la más robusta, y por eso es nuestro paracaídas.
   documentado en su cabecera; la validación en dispositivo sigue siendo manual
   (`update-testing.md` Parte 2).
 - *"El pin de Headcrab sigue en LumaDeck."* Cierto, issue #26.
+- *"La re-derivación automática nunca ha corrido en producción."* Sigue siendo
+  cierto, y el selftest del 14-09 (§1.1) enseña por qué importa: tres huecos
+  reales en el camino de exit 3, uno de ellos de fondo (Ghidra no resuelve el
+  vcall de DepotKey), se destaparon en un día de ensayos y no en 75 runs del
+  cron. Desde el run #9 el camino está verde de punta a punta sobre el binario
+  real; lo que sigue sin ensayarse es que Valve mueva DepotKey de verdad.
 
 ---
 

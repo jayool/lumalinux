@@ -186,13 +186,28 @@ RTTI walk against the byte pattern on the new binary (see E).
      BuildDep doesn't block installs).
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
-   - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) tries an
-     *indirect* anchor: the dispatcher refs
-     `"Software\Valve\Steam\Depots\"`, the script then follows the
-     `CALL [reg+0x18]` to reach the inner accessor (RESEARCH §12.5). When the
-     vcall walk resolves (best-effort — depends on Ghidra's analysis on the
-     new build), the pattern is auto-derived; otherwise it falls back to
-     validating the current pattern and points you at A.3.
+   - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) is
+     **not derived by Ghidra**. `derive_patterns.py` still tries the *indirect*
+     anchor (the dispatcher refs `"Software\Valve\Steam\Depots\"`, then
+     `CALL [reg+0x18]` to the inner accessor, RESEARCH §12.5), but headless
+     Ghidra does not resolve indirect calls, so that walk fails on every build
+     tried (`selftest` run #7, 2026-09-14: "found 2 dispatcher candidate(s) but
+     none had a resolvable CALL [reg+0x18]"). The tool that works is
+     `tools/derive_depotkey_byname.py`: it takes the address `check_patterns.py`
+     1c already resolves **by name** (`IClientConfigStoreMap` "GetBinary" → map
+     slot → `CConfigStore`'s vtable → the accessor, the same resolver the Deck
+     uses as its last resort), reads the prologue from the ELF and masks it
+     with `extract_pattern`'s rules (call rel32, the PIC `add imm32`, any
+     `[picbase+disp32]`), growing by whole instructions until UNIQUE:
+     ```sh
+     python3 tools/derive_depotkey_byname.py /tmp/steamclient.so --derived derived.json
+     python3 tools/apply_derived_pattern.py --derived derived.json --only kDepotKeyFnPattern
+     ```
+     No Ghidra, seconds instead of ~20 min. This is what `watch-steam.yml`'s
+     exit-3 leg runs (Ghidra only starts if something *else* is blocking).
+     Verified end to end by `watch-steam-selftest.yml` target=criticals
+     (2026-09-14, build `bc54101b`): pattern corrupted → exit 3 →
+     `blocking_constants.py` → by-name derive → apply → re-validate CLEAN.
    - **LoadPackage** (since v0.13.1) is diagnostic-only; the script flags it
      as such, and a `miss` here does NOT block installs (the package-0
      finder injects).
@@ -253,11 +268,24 @@ RTTI walk against the byte pattern on the new binary (see E).
 
 ### A.3 Manually re-derive an anchorless hook (DepotKey)
 
-DepotKey has no anchor string, so `derive_patterns.py` only auto-**validates**
-it: if its current `kDepotKeyFnPattern` still matches uniquely in the new
-binary, the script says "keep it"; if not, it flags it for manual work.
+Since 2026-09-14 this is a **last resort**: run
+`tools/derive_depotkey_byname.py` first (A.2). It fails only if the by-name
+resolver itself cannot find the accessor (`by-name did not resolve`) — which
+is also the day the Deck's RTTI rescue stops working, so treat that as a
+code problem in `src/rtti.cpp`, not a pattern problem. Two things to know
+about its output before you go manual:
 
-Manual re-derivation in Ghidra:
+- It refuses rather than guesses. `decoder refused` means the prologue holds
+  an opcode its mini-decoder does not know: add it to `insn_len` (with a case
+  in `tools/test_derive_depotkey_byname.py`) — do not hand-wildcard around it.
+- `derive_patterns.py` no longer carries its own copy of the "current"
+  pattern: it reads `src/patterns.hpp`. The old hardcoded copy was stale and,
+  when the vcall walk failed, it validated "UNIQUE — keep it" at RVA
+  `0x189fca0`, a function that is not DepotKey (the accessor is `0x11a4500`
+  on `bc54101b`). If you ever see "keep it" for DepotKey, check the address
+  against `res/rvas/<sha>.yaml` before believing it.
+
+Manual re-derivation in Ghidra (only if both of the above are exhausted):
 
 1. Locate the cache function (its own pattern) and follow its virtual call
    to the inner accessor — same chain documented in RESEARCH §12.5:
