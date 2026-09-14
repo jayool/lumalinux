@@ -167,6 +167,25 @@ desarrollador de SLSsteam y pegado entero por el usuario el 09-14. Lo que dice:
 Lo que **no** hay en todo el hilo: una versión, un log, un síntoma técnico, un
 mecanismo. Las capturas del 08-09 serían lo más cercano y no se han visto.
 
+**Los síntomas [external, capturas del hilo, transcritas por el usuario el
+09-14].** Las ocho capturas son mensajes de usuarios pidiendo ayuda en el
+servidor de SLSsteam, todos con el original (anteriores al 08-09). Sin versión
+ni log, pero con síntoma. Cruce con el código, cada fila [inferred]:
+
+| Síntoma reportado | Qué del código lo produce | Confianza |
+|---|---|---|
+| Deck: "tenía ACCELA funcionando, abrí SteaMidra por error y me rompió Steam; desinstalé y reinstalé con Headcrab y ahora dice `slssteam loaded successfully` pero Steam no abre nunca" | Headcrab repone `steam.sh` y `config.yaml`, pero no toca lo que SteaMidra dejó fuera: `steam.cfg` bloqueando el cliente, un `steam-jupiter` editado a mano si siguió la guía, y la raíz desbloqueada. SLSsteam se inyecta (el toast) y Steam muere o se queda después. Compatible con los vectores 1 y 2; sin log no se distingue. | media |
+| Deck: "formateé la Deck ayer porque nada funcionaba tras probar SteaMidra; ahora CachyOS" | El resultado final que describe §3.3 vector 1 (OOBE) o el usuario rindiéndose. No distinguible. | baja |
+| Bazzite: "rompió el sistema entero: Steam ya no recibe updates, rompió los plugins de Decky, y solo puedo jugar sin internet" | "Sin updates" = `steam.cfg` `BootStrapperInhibitAll=enable` (`create_steam_cfg`), que SteaMidra crea y su desinstalación no quita. "Decky roto" y "solo offline" encajan con Steam lanzado desde el propio SteaMidra (`start_steam`: `env LD_AUDIT=... steam` con el entorno del AppImage limpiado), fuera de la sesión que Decky y gamescope esperan, o con la inyección perdida: online Steam pide comprar, offline arranca lo que tiene en caché. | media |
+| ROG Ally X, Bazzite: "funcionaba en el escritorio, en la Ally Steam no arranca en absoluto; ¿cómo lo quito del todo?" | `patch_steam_sh`: `steam.sh` en 644 y reescrito. Si el launcher hace `exec` directo, "Permission denied" y Steam no arranca (vector 3). No hay desinstalador de esos parches. | media |
+| "Me ha jodido ACCELA y SLS enteros; aunque desinstale, todos mis juegos dicen comprar" | Dos caminos. (a) `_add_to_slssteam` reescribe `config.yaml` entero con `yaml.dump` y `patch_slssteam_config` lo regexea: SLSsteam carga un config que no reconoce (o sin sus `AdditionalApps`) y no desbloquea nada. (b) Inyección perdida: Headcrab deja `steam.sh` en **555**, y Steam re-extrae `steam.sh` cuando su tamaño no coincide con el manifest (`slsteam-moon-findings.md` M7); el 555 de Headcrab es lo que impide esa sobreescritura, y el `chmod 644` de SteaMidra la vuelve a permitir. En el siguiente update del cliente, `steam.sh` vuelve a ser el de Valve, sin SLSsteam, y todo dice "comprar". | media-alta |
+| Linux: "cuando le doy a jugar, Steam borra la carpeta entera del juego" | ACF escrito a mano (`acf_writer.py`), sin keys en Steam y sin manifests que Steam pueda usar para reconciliar. Al lanzar, Steam valida, no puede reconstruir el estado del depot y limpia el contenido como si fuera una instalación inválida. El disparador exacto no está en el código de SteaMidra sino en cómo Steam trata un ACF que no escribió él; el `InstalledDepots` vacío de `46a421d` (09-09, "fixing update issue with newly downloaded games") es su propio intento de arreglar algo en esa zona. | baja-media |
+
+Lo que estas capturas confirman sin duda: **los daños son en Deck, Bazzite y
+CachyOS, en Steam y en SLSsteam/ACCELA, y sobreviven a desinstalar SteaMidra**,
+porque los parches a `steam.sh`, `steam.cfg`, `config.yaml` y `/usr` no tienen
+desinstalador. Lo que no confirman: qué parche concreto rompió cada máquina.
+
 Atribución por versión, con el original `fa44fc9` delante:
 
 - **Original:** el flujo de terminal (`linux_download.py:341`) instalaba
@@ -195,11 +214,13 @@ Atribución por versión, con el original `fa44fc9` delante:
    actualización de SteamOS a medias con la raíz desbloqueada. Pantalla negra
    en modo juego. [read el vector; inferred el resultado]
 3. **`steam.sh` en modo 644.** Steam re-extrae `steam.sh` del bootstrap cuando
-   su tamaño no coincide con el manifest (`slsteam-moon-findings.md` M7), así
-   que lo más probable es que reponga el original limpio, sin inyección, y no
-   un brick. Si el launcher hace `exec` directo antes de ese chequeo, es
-   "Permission denied" y Steam no arranca. [inferred; `bin_steam.sh` de Valve
-   no disponible desde aquí]
+   su tamaño no coincide con el manifest (`slsteam-moon-findings.md` M7).
+   Headcrab lo deja en **555** y eso es, con toda probabilidad, lo que impide la
+   sobreescritura; el `chmod 644` de SteaMidra la vuelve a permitir. Dos
+   resultados posibles: Steam repone el original limpio y la inyección
+   desaparece ("todos mis juegos dicen comprar"), o, si el launcher hace `exec`
+   directo antes de ese chequeo, "Permission denied" y Steam no arranca.
+   [inferred; `bin_steam.sh` de Valve no disponible desde aquí]
 4. **`headcrab.pages.dev/reset` + `steam.cfg`** en el "hash fix": baja el
    bootstrap del cliente y bloquea sus updates. En SteamOS nuevo con cliente
    pineado viejo, gamescope y cliente pueden desencajar. [inferred]
