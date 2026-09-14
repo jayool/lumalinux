@@ -287,7 +287,21 @@ es la más robusta, y por eso es nuestro paracaídas.
   respaldo. Pierde la prueba en vivo; gana existir. **Decisión 2026-09-14:
   anotado, no ahora.** Solo actúa tras una rotura real con downgrade, que no ha
   ocurrido en producción.
-- **C4 — VProf como segunda vía automática** (SteamFlipper F3, evidence-gated en
-  su §5.9).
+- **C4 — VProf / anclas de texto como segunda vía automática** (SteamFlipper
+  F3, evidence-gated en su §5.9). Lo que alcanza VProf no son nuestras
+  funciones: `CheckAppOwnership` es de SLSsteam, BuildDep está apagado,
+  `GetOrAddAppData` no se usa, y DepotKey no tiene ancla de texto (por eso lleva
+  RTTI y nombre). La técnica equivalente, texto → referencia única → entrada por
+  `.eh_frame_hdr`, ya existe en `gmrc_xref_derive` (CI) y `src/gmrc_xref.cpp`
+  (runtime) para GMRC. **Generalizarla ya se estudió y tiene límites medidos**:
+  issue #13 la acotó a GMRC en junio (DepotKey: la cadena la construye el
+  llamante y la llamada es virtual; LoadPackage: el precedente v0.10.3 ancló en
+  cadenas de otra función y se revirtió); el 09-07 se intentó llevar el
+  resolvedor por nombre a GMRC y no aplica (`b599366`: no es método de
+  interfaz). Lo único no probado: usar el ancla de ShaderDepot y BuildDep en
+  Python para **emitir** un patrón nuevo sin Ghidra, que hoy hace
+  `derive_patterns.py` en Ghidra y funciona. **Decisión 2026-09-14: anotado, no
+  ahora.** Correr §5.9 cuando un patrón con ancla se mueva de verdad; el runner
+  tendrá el binario.
 - **C5 — `fencepost` de vtable y atestación de hooks en runtime** (BST `ipc`,
   moon), y un segundo mirror del feed.
