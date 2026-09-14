@@ -375,6 +375,12 @@ y ejecuta comandos escritos ahí (`echo "install|<appid>|<library>" > /tmp/SLSst
 hot-reloadable. lumalinux no expone control en runtime; si hiciera falta (p.ej.
 "recarga keys ahora"), este es un patrón mínimo y sin dependencias.
 
+**Cierre [2026-09-14]:** no aplica a nuestra pila. El único uso real del pipe en el
+ecosistema es el modo experimental de ASSella (`assella-analysis.md` §3.4): tras
+descargar el juego fuera de Steam con DepotDownloaderMod, manda `install|appid|0`
+para que Steam cree el ACF. Nosotros nunca descargamos fuera de Steam y el ACF lo
+escribe Steam al bajar. Sin caso de uso, no se presta.
+
 ### 4.3 Completar `config.yaml` — headcrab **y** LumaDeck (coexistencia) [2026-08]
 
 Contexto del problema: SLSsteam escribe su config completo **solo cuando el
