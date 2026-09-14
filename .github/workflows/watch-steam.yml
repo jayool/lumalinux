@@ -329,8 +329,9 @@ jobs:
           gh issue create --title "$TITLE" --body-file issue_body.md
 
       # ── blocking (3): try AUTO-DERIVATION of the moved critical hooks ────
-      # Same Ghidra path as ShaderDepot, but for the string-anchored CRITICAL
-      # hooks (BuildDep / GMRC, and DepotKey if the vcall walk resolves).
+      # DepotKey (the only critical since v0.20.0) is re-derived from its RTTI
+      # name by tools/derive_depotkey_byname.py — no Ghidra. Ghidra's string
+      # anchored path stays for anything else blocking_constants.py lists.
       # blocking_constants.py decides what's auto-derivable: if a finder anchor
       # moved (a code fix, not a pattern) or an unknown hook is blocking, it
       # prints nothing and we go straight to the issue. Unlike ShaderDepot this
@@ -352,13 +353,30 @@ jobs:
           fi
           echo "only=$ONLY" >> "$GITHUB_OUTPUT"
           git checkout -f ${{ github.sha }}
-          set +e
-          bash tools/run_ghidra_derive.sh steamclient.so derived.json
-          dcode=$?
-          set -e
-          if [ "$dcode" -ne 0 ]; then
-            echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+          rm -f derived.json
+          # DepotKey is derived from its RTTI NAME, not by Ghidra: the vcall walk
+          # in derive_patterns.py never resolves on headless Ghidra (selftest #7,
+          # 2026-09-14). Ghidra only runs for whatever else is blocking, so a
+          # DepotKey-only move skips the ~20 min analysis entirely.
+          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | paste -sd, - || true)
+          if [ -n "$GHIDRA_ONLY" ]; then
+            set +e
+            bash tools/run_ghidra_derive.sh steamclient.so derived.json
+            dcode=$?
+            set -e
+            if [ "$dcode" -ne 0 ]; then
+              echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+            fi
           fi
+          case ",$ONLY," in *,kDepotKeyFnPattern,*)
+            set +e
+            python3 tools/derive_depotkey_byname.py steamclient.so --derived derived.json
+            bcode=$?
+            set -e
+            if [ "$bcode" -ne 0 ]; then
+              echo "DepotKey by-name derivation failed (exit $bcode) — falling back to issue."; exit 0
+            fi
+          ;; esac
           set +e
           python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
           acode=$?

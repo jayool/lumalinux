@@ -20,7 +20,11 @@
 #     path "Software\Valve\Steam\Depots\". From the dispatcher we can follow a
 #     virtual call (this->vtable[+0x18]) to the inner accessor we actually hook
 #     (RESEARCH §12.5). Tries that automatically; falls back to validating the
-#     current pattern if the vcall walk fails.
+#     current pattern if the vcall walk fails. In practice the walk FAILS on
+#     headless Ghidra (indirect calls are not resolved; selftest run #7,
+#     2026-09-14), so CI derives DepotKey by RTTI NAME instead, with
+#     tools/derive_depotkey_byname.py (no Ghidra needed). Kept here as a
+#     best-effort extra opinion, not as the path that matters.
 #   - LoadPackage: diagnostic-only since v0.13.1. NOT installed by default; only
 #     enabled by LUMA_LOADPKG_DEBUG=1. A broken pattern here doesn't break
 #     installs (the package-0 finder injects, not this hook). Output is
@@ -76,33 +80,77 @@ except Exception:
 # ambiguous or anchor-less is left out so a human keeps the call.
 DERIVED = {}
 
-# String-anchored hooks: (label, anchor_string, current_pattern_for_validation)
+# The CURRENT patterns (what we validate against when a walk fails) are READ
+# FROM src/patterns.hpp at run time — never copied here. A copy drifts: this
+# script carried a stale kDepotKeyFnPattern for months and, when the vcall walk
+# failed, "validated" it UNIQUE at a function that was not DepotKey at all
+# (selftest run #7, 2026-09-14: stale copy matched @ RVA 0x189fca0, the real
+# accessor is @ 0x11a4500). "keep it" on the wrong function is worse than no
+# fallback. Path: next to this script (../src/patterns.hpp), else cwd, else
+# $LUMA_PATTERNS_HPP.
+import os
+import re
+
+
+def _locate_patterns_hpp():
+    cands = []
+    if os.environ.get("LUMA_PATTERNS_HPP"):
+        cands.append(os.environ["LUMA_PATTERNS_HPP"])
+    try:
+        here = os.path.dirname(getSourceFile().getAbsolutePath())
+        cands.append(os.path.join(here, "..", "src", "patterns.hpp"))
+    except Exception:
+        pass
+    cands.append(os.path.join(os.getcwd(), "src", "patterns.hpp"))
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def _load_current_patterns():
+    path = _locate_patterns_hpp()
+    if path is None:
+        print("WARNING: src/patterns.hpp not found — current patterns cannot be validated")
+        return {}
+    txt = open(path).read()
+    cur = {}
+    for m in re.finditer(r'\b(k\w+Pattern)\s*=\s*"([0-9A-Fa-f? ]+)"', txt):
+        cur[m.group(1)] = " ".join(m.group(2).split())
+    print("current patterns read from %s (%d constants)" % (path, len(cur)))
+    return cur
+
+
+CURRENT = _load_current_patterns()
+
+
+def current_pattern(label):
+    """The shipped pattern for `label`, or None if patterns.hpp was not found."""
+    return CURRENT.get(label)
+
+
+# String-anchored hooks: (label, anchor_string)
 ANCHORED_HOOKS = [
-    ("kBuildDepotDependencyPattern", "BuildDepotDependency",
-     "55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 2C 02 00 00 8B 45 08 89 85"),
-    ("kGmrcFunctionPattern", "ContentServerDirectory.GetManifestRequestCode#1",
-     "E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"),
+    ("kBuildDepotDependencyPattern", "BuildDepotDependency"),
+    ("kGmrcFunctionPattern", "ContentServerDirectory.GetManifestRequestCode#1"),
     # ShaderDepot (v0.14): GetShaderCacheDepot reads the appinfo KeyValues
     # "shadercachedepot" and references that string literal directly inside
     # itself — so it's a clean direct anchor exactly like BuildDep. Its prologue
     # loads the shader-manager global (mov eax,[picbase+0x2b758]); extract_pattern
     # now wildcards that per-build disp32 automatically (RESEARCH §13.10). A miss
     # here does NOT break installs — only the per-game shader skip.
-    ("kShaderCacheDepotPattern", "shadercachedepot",
-     "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0"),
+    ("kShaderCacheDepotPattern", "shadercachedepot"),
 ]
 
 # DepotKey: indirect-anchored. The dispatcher constructs / refs the KeyValues
 # path; we follow the vcall to reach the inner accessor we hook.
 DEPOTKEY_LABEL = "kDepotKeyFnPattern"
-DEPOTKEY_CURRENT = "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 20 8B 74 24 34 8B 7C 24 3C 8B 6C 24 40"
 DEPOTKEY_ANCHOR  = "Software\\Valve\\Steam\\Depots\\"
 DEPOTKEY_VTABLE_OFFSET = 0x18  # see RESEARCH §12.5: fn = *(vtable + 0x18)
 
 # LoadPackage: diagnostic-only in v0.13.1+ (opt-in via LUMA_LOADPKG_DEBUG=1).
 # A broken pattern here does NOT break installs.
 LOADPKG_LABEL    = "kLoadPackagePattern"
-LOADPKG_CURRENT  = "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00"
 
 # NotifyLicensesUpdated (v0.16.15, the no-restart licence reconcile). Indirect
 # RTTI anchor: the callback-poster function references the type_info for
@@ -113,7 +161,6 @@ LOADPKG_CURRENT  = "55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 
 # recipe, exactly like DepotKey.
 NOTIFY_LABEL   = "kNotifyLicensesUpdatedPattern"
 NOTIFY_ANCHOR  = "17LicensesUpdated_t"
-NOTIFY_CURRENT = "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B B8 ?? ?? 00 00 89 9D ?? ?? FF FF 85 FF"
 
 # Package-0 finder anchors (§13.5)
 CACHE_ROOT_OFFSET = 0xc58
@@ -286,7 +333,7 @@ def try_derive_notifylicenses():
     So: string -> (name-field ref, so type_info = ref - 0x4) -> functions
     referencing that type_info -> the one whose fresh prologue matches UNIQUELY.
     Returns (addr, pattern, 1) or (None, errmsg). This walk is UNTESTED on a live
-    binary; the caller falls back to validating NOTIFY_CURRENT."""
+    binary; the caller falls back to validating the shipped pattern (patterns.hpp)."""
     sa = find_string_addrs(NOTIFY_ANCHOR)
     if not sa:
         return None, "anchor string %r not found" % NOTIFY_ANCHOR
@@ -418,7 +465,7 @@ def verify_gmrc_prologue_tail():
 print("\n================= lumalinux derive_patterns =================")
 
 # 1) String-anchored: BuildDep, GMRC
-for label, anchor, cur in ANCHORED_HOOKS:
+for label, anchor in ANCHORED_HOOKS:
     print("\n---- %s ----" % label)
     sa = find_string_addrs(anchor)
     if not sa:
@@ -465,9 +512,15 @@ if result is not None:
         print("  -> derived but not UNIQUE; double-check or tighten manually")
 else:
     print("  vcall derivation failed: %s" % errmsg)
-    hits = pattern_matches(DEPOTKEY_CURRENT)
-    if len(hits) == 1:
-        print("  CURRENT pattern still matches UNIQUELY @ %s — keep it." % hits[0])
+    print("  (expected on headless Ghidra — it does not resolve indirect calls.")
+    print("   CI derives DepotKey from its RTTI NAME with tools/derive_depotkey_byname.py;")
+    print("   run that against this binary instead of re-deriving by hand.)")
+    _cur = current_pattern(DEPOTKEY_LABEL)
+    hits = pattern_matches(_cur) if _cur else []
+    if _cur is None:
+        print("  CURRENT pattern unknown (patterns.hpp not found) — nothing to validate.")
+    elif len(hits) == 1:
+        print("  CURRENT pattern (from patterns.hpp) still matches UNIQUELY @ %s — keep it." % hits[0])
     elif len(hits) == 0:
         print("  CURRENT pattern NO LONGER MATCHES — re-derive manually:")
         print("    open steamclient.so in Ghidra, locate the function (RESEARCH §12.5),")
@@ -490,8 +543,11 @@ if result is not None:
                              "rva": "0x%x" % addr.getOffset()}
 else:
     print("  RTTI derivation failed: %s" % errmsg)
-    hits = pattern_matches(NOTIFY_CURRENT)
-    if len(hits) == 1:
+    _cur = current_pattern(NOTIFY_LABEL)
+    hits = pattern_matches(_cur) if _cur else []
+    if _cur is None:
+        print("  CURRENT pattern unknown (patterns.hpp not found) — nothing to validate.")
+    elif len(hits) == 1:
         print("  CURRENT pattern still matches UNIQUELY @ %s — keep it." % hits[0])
     elif len(hits) == 0:
         print("  CURRENT pattern NO LONGER MATCHES — re-derive manually:")
@@ -507,8 +563,11 @@ else:
 print("\n---- %s ----" % LOADPKG_LABEL)
 print("  (diagnostic-only since v0.13.1: installed only with LUMA_LOADPKG_DEBUG=1.")
 print("   a broken pattern here does NOT break installs — the package-0 finder injects.)")
-hits = pattern_matches(LOADPKG_CURRENT)
-if len(hits) == 0:
+_cur = current_pattern(LOADPKG_LABEL)
+hits = pattern_matches(_cur) if _cur else []
+if _cur is None:
+    print("  CURRENT pattern unknown (patterns.hpp not found) — nothing to validate.")
+elif len(hits) == 0:
     print("  CURRENT pattern no longer matches. Diagnostic is unavailable until re-derived.")
     print("  (Optional: locate CPackageInfoCache::LoadPackage in Ghidra, re-extract prologue.)")
 elif len(hits) >= 1:

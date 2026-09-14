@@ -45,6 +45,7 @@ on:
       - 'tools/run_ghidra_derive.sh'
       - 'tools/derive_patterns.py'
       - 'tools/apply_derived_pattern.py'
+      - 'tools/derive_depotkey_byname.py'
       - 'tools/check_patterns.py'
       - 'tools/blocking_constants.py'
       - 'tools/whitelist_hash.py'
@@ -125,7 +126,19 @@ jobs:
           else
             ONLY=kShaderCacheDepotPattern
           fi
-          bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          # Same split as watch-steam.yml: DepotKey comes from its RTTI name
+          # (tools/derive_depotkey_byname.py, no Ghidra); Ghidra only runs for
+          # the string-anchored hooks. A criticals run therefore never starts
+          # Ghidra at all — that is the production path, exercised as-is.
+          rm -f derived.json
+          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | paste -sd, - || true)
+          if [ -n "$GHIDRA_ONLY" ]; then
+            bash tools/run_ghidra_derive.sh steamclient.so derived.json
+          fi
+          case ",$ONLY," in *,kDepotKeyFnPattern,*)
+            python3 tools/derive_depotkey_byname.py steamclient.so --derived derived.json
+          ;; esac
+          echo "── derived.json ──"; cat derived.json
           python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
           set +e
           python3 tools/check_patterns.py steamclient.so
@@ -135,4 +148,8 @@ jobs:
           test "$rc" -eq 0
           echo "── auto-derived pattern(s) (diff vs the corrupted ones) ──"
           git --no-pager diff -- src/patterns.hpp
-          echo "SELFTEST PASSED ($TARGET): forced exit $([ "$TARGET" = criticals ] && echo 3 || echo 2) -> Ghidra re-derived UNIQUE -> CLEAN"
+          if [ "$TARGET" = "criticals" ]; then
+            echo "SELFTEST PASSED (criticals): forced exit 3 -> DepotKey re-derived by RTTI name (no Ghidra) UNIQUE -> CLEAN"
+          else
+            echo "SELFTEST PASSED (shaderdepot): forced exit 2 -> Ghidra re-derived UNIQUE -> CLEAN"
+          fi
