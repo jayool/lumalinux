@@ -275,8 +275,18 @@ es la más robusta, y por eso es nuestro paracaídas.
   trabajo tirado en betas que Valve descarte; mitigación: no cortar release por
   un beta, solo mergear el feed. **Decisión 2026-09-14: anotado, no ahora.** El
   usuario no usa el canal beta ni piensa usarlo; queda escrito por si cambia.
-- **C3 — Cerrar issue #26**: derivar el "target" seguro de Steam de nuestro
-  propio cron en vez del pin de Headcrab.
+- **C3 — Cerrar issue #26** (el "target" de Steam sin Headcrab). Lo que queda
+  de Headcrab es un número, `HeadcrabCompatibleClientVer`, que LumaDeck usa para
+  la chapa "compatible" y para levantar una congelación propia tras un
+  `downgrade.sh` (`target > current AND lumalinux_ready`). La issue pide
+  fabricarlo con un Steam real en CI, y eso está bloqueado: `verify-fix.yml`
+  nunca ha arrancado Steam (comentario del 09-08). **Variante barata**:
+  `stack_target` = build más nuevo cuyo hash está en nuestro `updates.yaml`
+  **y** en el de SLSsteam (hash + `steam_version` nuestro; CloudRedirect
+  resuelve por RTTI y no necesita lista), ~20 líneas en LumaDeck, Headcrab como
+  respaldo. Pierde la prueba en vivo; gana existir. **Decisión 2026-09-14:
+  anotado, no ahora.** Solo actúa tras una rotura real con downgrade, que no ha
+  ocurrido en producción.
 - **C4 — VProf como segunda vía automática** (SteamFlipper F3, evidence-gated en
   su §5.9).
 - **C5 — `fencepost` de vtable y atestación de hooks en runtime** (BST `ipc`,
