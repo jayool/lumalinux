@@ -252,7 +252,11 @@ es la más robusta, y por eso es nuestro paracaídas.
 
 ---
 
-## §10 Candidatos (a decidir uno a uno; ninguno es código todavía)
+## §10 Candidatos — decididos uno a uno el 2026-09-14; ninguno es código hoy
+
+Resumen: C1 ya estaba hecho o refutado (#16); C2 anotado (sin canal beta);
+C3 anotado con variante barata; C4 anotado con lo ya intentado (#13,
+`b599366`); C5 solo la atestación por contadores queda como candidato real.
 
 - **C1 — Máscara de bytes de layout en `patterns.hpp`** (moon M1.1). **Ya
   hecho donde tiene sentido y refutado donde no** (issue #16, cerrada 07-06 con
@@ -303,5 +307,23 @@ es la más robusta, y por eso es nuestro paracaídas.
   `derive_patterns.py` en Ghidra y funciona. **Decisión 2026-09-14: anotado, no
   ahora.** Correr §5.9 cuando un patrón con ancla se mueva de verdad; el runner
   tendrá el binario.
-- **C5 — `fencepost` de vtable y atestación de hooks en runtime** (BST `ipc`,
-  moon), y un segundo mirror del feed.
+- **C5 — tres cosas distintas, decididas por separado (2026-09-14):**
+  - *`fencepost` / cross-check de slot en runtime* (BST `ipc`): comprobar tras
+    resolver DepotKey por feed que `vtable[slot]` de `CConfigStore` es el
+    target. Lo que protegería (feed de otro binario) ya lo impide la clave por
+    hash, y el resolvedor por nombre es una segunda opinión mejor. **No.**
+  - *Atestación de hooks* (moon `res/runtime-probes.toml`: `locator-resolved`,
+    `hook-installed`, `hook-invoked`, usada por su validador sobre Steam real
+    antes de aceptar un catálogo): nuestro `status.json` dice `installed`,
+    `failed`, `disabled`, pero no distingue "instalado" de "instalado y
+    sirviendo" (`grep served|fired|hits` en `status.cpp`: nada). La versión
+    barata es un contador por pieza (keys servidas por DepotKey, depots
+    sembrados por el finder) en `status.json`, ~30 líneas en el `.so`, sin
+    tocar la UI. Es el residual de la issue #13 Parte 2 ("package-0 state
+    block", "reason per failed hook"). **Anotado, candidato real para una
+    release futura de lumalinux.**
+  - *Segundo mirror del feed* (jsDelivr, como SLSsteam, BST y moon): nuestro
+    propio diseño (§14 de `rva-feed-design.md`) fija que añadir un mirror que
+    no controlamos es el disparador para firmar el feed, y jsDelivr cachea las
+    refs de rama hasta 12 h. Hoy `raw.githubusercontent.com` llega a la Deck.
+    **No, mientras GitHub raw funcione.**
