@@ -1505,8 +1505,13 @@ Skyflare; 401 without a session, 25 downloads/day). Ryuu was dropped.
   first half is false (what is not exported is the host API in `cr_api.h`
   that SteamFlipper wanted to call). The vtable-scan half is **unverified**
   here; `docs/cloudredirect.md` records the Linux path as RTTI-class-name
-  resolution, version-independent. Field check: CloudRedirect active in
-  LumaDeck's Components panel with saves syncing refutes it.
+  resolution, version-independent. **[measured 2026-09-14] Field check done:**
+  CloudRedirect at its latest release (2.6.5) active on the user's Deck, on
+  current `steamdeck_stable`, with the 2026-09-13 play session's saves uploaded
+  to Google Drive. The vtable-scan claim is false for 2.6.5 on the current
+  client; whether it held for the client of 2026-09-03 was not tested and does
+  not matter to us. The first half stays what it was: a limitation of using
+  CloudRedirect as an embedded library through `cr_api.h`, which we do not do.
 - **[read] `f82fec0` / `29a8793` / `bd76afa` lua.tools sign-in.** First a
   six-character Discord-bot code, then Discord OAuth with PKCE in the real
   browser landing on `127.0.0.1:1987` (lua.tools' redirect allow-list permits
