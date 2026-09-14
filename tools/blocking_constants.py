@@ -35,6 +35,28 @@ HOOK_CONST = {
 }
 
 
+# check_patterns.py's DepotKey second opinions (1b RTTI constraint, 1c by-name)
+# take kDepotKeyFnPattern as their input, so when THAT pattern misses they fail
+# too and land in `blocking` beside the plain "DepotKey" entry. They are the same
+# defect seen from another angle, not a second blocker: a fresh DepotKey pattern
+# resolves all of them at once (and the re-validation requires exactly that —
+# one CConfigStore slot matching the new pattern, and by-name agreeing — before
+# anything is published). Measured 2026-09-14, selftest run #6: with only
+# kDepotKeyFnPattern corrupted the list was
+#   "DepotKey, DepotKey-RTTI:no-slot-matches-pattern"
+# and the unknown-blocker bail below sent the production exit-3 path straight to
+# an issue, so a moved DepotKey would never have reached Ghidra. The two that
+# stay a bail are NOT pattern defects: "DepotKey-RTTI:pattern-missing" (the
+# constant is absent from the header) and "DepotKey-RTTI:walk-failed(...)"
+# (CConfigStore's vtable itself could not be found — re-deriving a pattern
+# cannot make that walk succeed).
+_DEPOTKEY_PATTERN_SYMPTOMS = (
+    "DepotKey-RTTI:no-slot-matches-pattern",
+    "DepotKey-RTTI:ambiguous(",
+    "DepotKey-byname:disagrees(",
+)
+
+
 def constants_for(result):
     blocking = result.get("blocking", [])
     if not blocking:
@@ -44,6 +66,9 @@ def constants_for(result):
         b = str(b)
         if b.startswith("finder:"):
             return []          # code fix, not a pattern bump -> bail to issue
+        if any(b.startswith(sym) for sym in _DEPOTKEY_PATTERN_SYMPTOMS):
+            consts.append(HOOK_CONST["DepotKey"])
+            continue
         c = HOOK_CONST.get(b)
         if not c:
             return []          # unknown blocker -> can't promise CLEAN -> bail
