@@ -252,10 +252,18 @@ es la más robusta, y por eso es nuestro paracaídas.
 
 ## §10 Candidatos (a decidir uno a uno; ninguno es código todavía)
 
-- **C1 — Máscara de bytes de layout en `patterns.hpp`** (moon M1.1). Auditar qué
-  bytes de cada firma son de carga y cuáles solo están presentes; wildcardear
-  offsets de miembro y de frame que no leemos. Reduce "pattern moved" a "hash
-  bump". Herramientas latentes: `verify_mask.py`, `experiment_framesize_mask.py`.
+- **C1 — Máscara de bytes de layout en `patterns.hpp`** (moon M1.1). **Ya
+  hecho donde tiene sentido y refutado donde no** (issue #16, cerrada 07-06 con
+  medida en el build `fa20a21d`): wildcardear el tamaño de frame deja BuildDep
+  con 70 coincidencias y LoadPackage con 222; en DepotKey y GMRC es seguro pero
+  inútil (el frame no ha derivado en 11 builds, DepotKey tiene RTTI y nombre, y
+  los bytes de frame de GMRC son el ancla de la GOT del finder). Lo que sí se
+  enmascara ya: el disp32 de la global en ShaderDepot (`8B 83 ?? ?? ?? ??`) y en
+  Reconcile el frame, el offset de miembro de `CUser` y el spill, calcados de
+  moon. Único byte de layout sin decidir: el `0x44` de `mov eax,[eax+0x44]` en
+  ShaderDepot (no crítico). Decisión: **nada ahora**; si ShaderDepot se mueve
+  alguna vez por ese byte, enmascararlo entonces y validarlo con
+  `verify_mask.py` en el runner, que es donde está el binario.
 - **C2 — Lookahead de beta en el cron**: derivar contra `steamdeck_publicbeta`
   sin whitelistear, para llegar cubiertos al día de promoción
   (`slsdeck-analysis.md` §8).
