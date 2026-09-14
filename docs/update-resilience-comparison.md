@@ -66,6 +66,33 @@ análisis propios; CloudRedirect 2.6.5. Etiquetas: [read], [inferred],
 - **Anti-brick.** `guard.sh`: minidumps en los 180 s tras el arranque, tres
   seguidos o uno tras cambio de `steamclient.so` → vanilla latcheado.
 
+### §1.1 Cuántas veces ha roto Steam un patrón, en cada proyecto [read, historiales git al 09-14]
+
+| Proyecto | Fecha | Qué pasó | Firmas tocadas |
+|---|---|---|---|
+| **lumalinux** | jun–sep 2026, 11 builds | **Ninguna re-derivación.** Un solo grupo SafeMode (`20260611150000`) desde el 11-06; las huellas de DepotKey, BuildDep, GMRC y LoadPackage son byte a byte las de mayo. Cron en marcha desde el 01-07: 75 runs programados, 75 verdes, 5 hash bumps automáticos (22-07, 23-07, 28-07, 04-08, 02-09), 0 "moved". Única máscara preventiva: ShaderDepot 24-06 (disp32 de global), mismo día de su creación. | 0 |
+| SLSsteam | 20-12-2025 | "Fix for latest stable Steam client version" | 12 líneas de patrón + hooks |
+| SLSsteam | 10-03-2026 | "chore(patterns): Update", mismo día que nace el grupo `20260310103750` | 6 |
+| SLSsteam | 28-05-2026 | "chore(patterns): Update", grupo `20260528151547` | 3 |
+| SLSsteam | 30-06-2026 | "Add more wildcards to hopefully increase stability" | 2 |
+| SLSsteam | 22-07-2026 | "chore(patterns): Update", grupo `20260722152506` (build `dd3ca9f5`, el mismo que nuestro cron pasó CLEAN ese día) | 5 |
+| SLSsteam | 25-07-2026 | "Refine patterns" + migración de hooks a `VFTIndexes` | 9 |
+| moon | 10-06-2026 | RemoteClientManager: byte de desplazamiento de struct pineado; el scan fallaba y abortaba la carga | 1 (wildcard) |
+| moon | 24-06-2026 | **Seis firmas derivaron en el cliente del 23-06** (`1cbb4f59`): cuatro `RunIPCFrame` (raíz de búsqueda binaria), `RequiresLegacyCDKey` y `NotifyLicensesUpdated` (offset de miembro +4). Mismo día: self-heal estructural (M1). Nuestras huellas pasaron ese build sin cambios (`ada282ad`, whitelisteado). | 6 |
+| moon | 22-07-2026 | "adapt locators to the latest client" | 3 |
+| moon | 09-08 / 23-08-2026 | RemoteStorage fingerprint; "drifted optional locators" (GOT disp + ownership field) | 4 |
+| BST (Windows) | 17-05-2026 | Tres commits a mano en `Patterns.h` para stable `1778281814` / beta `1778803745`; el 25-05 pasan al feed remoto y **no hay más commits de patrones desde entonces** | 18 + 12 + 3 |
+| SteamFlipper | 02-09-2026 | Nace ya con dos builds pineados en `VERIFIED`; sin historial de roturas todavía | n/a |
+| LumaCore | — | Patrones en TOML por hash; sin historial legible (releases squasheadas). Su feed murió el 19-08. | n/a |
+
+Lectura: en la misma ventana en que Ace tocó firmas cuatro veces y moon cinco,
+nosotros cero. Parte es elección de funciones (las nuestras son prólogos de
+funciones que Valve no reordena; las suyas incluyen despachadores IPC con
+raíces de búsqueda que cambian al añadir métodos), parte es que enganchamos
+cuatro funciones y ellos treinta. La contrapartida está en §9: el camino de
+re-derivación nuestro solo se ha ensayado en el selftest del 30-06, y la cadena
+ha cambiado mucho desde entonces (17-08, 07/08-09) sin volver a ensayarse.
+
 ---
 
 ## §2 SLSsteam + Headcrab
