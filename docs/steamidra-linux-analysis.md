@@ -124,13 +124,32 @@ en modo juego solo con `steam.sh` de usuario y el drop-in de systemd
 
 ### 3.3 Vectores de "brickeo", del más al menos probable
 
+**Los reportes de Discord se refieren al SteaMidra original (Midrags, hasta
+v6.6.6 del 21-08), no a este fork.** [user report] El usuario probó el original
+en su Deck: sin crash, pero inusable (UI incomprensible). Atribución por
+versión, con el original `fa44fc9` delante:
+
+- **Original:** el flujo de terminal (`linux_download.py:341`) instalaba
+  SLSsteam **sin Headcrab** (`install_from_github`: 7z, apt/pacman, limpieza del
+  paquete pacman), y la GUI probaba Headcrab con **fallback silencioso** al
+  instalador propio. Sin `.headcrabd`, `patch_slssteam_config` corría y forzaba
+  **`SafeMode: no`**. El parche de `steam-jupiter` no estaba automatizado: la
+  webui mandaba al usuario hacerlo con `kate` como root tras `steamos-readonly
+  disable`. Vectores 1 y 2 de la lista, en su forma manual.
+- **Fork:** botón automático de `steam-jupiter` desde el 07-09 (`3cc8c41`,
+  `410a3c7` añade `SafeMode: yes` al pulsarlo) y Headcrab sin fallback desde el
+  13-09 (`92d6813`), que en SteamOS deja `SafeMode: yes`. En el vector 1 el fork
+  es más seguro que el original; en el 2 es el mismo vector con botón.
+
+
 1. **Steam en bucle de crash en modo juego → gamescope `short_session_recover`
    → borrado de `~/.local/share/Steam` → OOBE.** [measured en nuestra pila,
    `RESEARCH.md` §17.3, v0.16.2]. La Deck aparece "de fábrica", sin juegos: eso
-   es lo que la gente llama brickeada. Steamidra lo puede disparar por
-   `SafeMode: no` forzado (instalaciones sin Headcrab, antes del 13-09) con un
-   cliente actualizado y SLSsteam viejo, o por cualquier parche mal aplicado.
-   [inferred en la atribución]
+   es lo que la gente llama brickeada. El original lo podía disparar por
+   `SafeMode: no` forzado (instalación propia sin Headcrab) con un cliente
+   actualizado y SLSsteam viejo; el fork, desde el 13-09, ya no fuerza
+   `SafeMode: no` tras Headcrab. Cualquier parche mal aplicado en modo juego
+   también lo dispara. [inferred en la atribución]
 2. **`/usr/bin/steam-jupiter` parcheado con sudo y raíz en escritura.** Un
    `exec` movido, un backup con otro nombre (cambió el 07-09), o una
    actualización de SteamOS a medias con la raíz desbloqueada. Pantalla negra
@@ -274,9 +293,11 @@ descarga fuera de Steam, ACF a mano bloqueado por permisos, `DisableUpdates:
 yes`, sin pin. Su cadena gratis del 10-09 está hoy muerta (keys 404) o congelada
 (mirrors sin builds recientes), así que acaba en Hubcap o ManifestHub2 con key.
 El 13-09 delegaron en Headcrab y lo primero que hacen después es deshacerle el
-`steam.sh`. Sobre el brickeo: hay un mecanismo conocido y medido por nosotros
-(§3.3 vector 1) y tres formas en su código de dispararlo; es compatible con los
-mensajes de Discord sin poder atribuir ningún caso.
+`steam.sh`. Sobre el brickeo: los reportes son del original, no del fork. Hay un
+mecanismo conocido y medido por nosotros (§3.3 vector 1) y el original tenía dos
+formas claras de dispararlo (`SafeMode: no` forzado y la edición manual de
+`steam-jupiter` con la raíz desbloqueada); el fork quita la primera y automatiza
+la segunda. Compatible con los mensajes de Discord sin poder atribuir ningún caso.
 
 ### 8.2 Adversaria
 
