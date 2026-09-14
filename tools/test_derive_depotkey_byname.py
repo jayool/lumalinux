@@ -95,5 +95,41 @@ out = wildcard_prologue(raw, 10)
 check(out[:7] == ["55", "81", "C3", "11", "22", "33", "44"],
       "add imm32 without a preceding call is kept literal")
 
+# derive() end to end on synthetic segments: by-name is stubbed to point at a
+# function whose first 28 bytes are shared with a decoy, so the tool has to
+# GROW the pattern until it is unique — and must land on the by-name address.
+import derive_depotkey_byname as ddb  # noqa: E402
+
+VADDR = 0x1000
+toks = shipped("kDepotKeyFnPattern")
+random.seed(1)
+fill = lambda: bytes(random.randrange(256) if t == "??" else int(t, 16) for t in toks)  # noqa: E731
+real = fill()
+decoy = bytearray(fill())
+decoy[30] ^= 0xFF                          # differs only past the 28-byte prologue
+buf = bytearray(0x800)
+buf[0x100:0x100 + len(real)] = real
+buf[0x400:0x400 + len(decoy)] = bytes(decoy)
+ddb.load_exec_segments = lambda path: [(VADDR, bytes(buf))]
+ddb.rtti_derive_slot_byname = lambda *a, **k: ({"status": "UNIQUE", "slot": 6,
+                                                "rva": "0x%x" % (VADDR + 0x100)}, "ok")
+entry, note = ddb.derive("synthetic.so")
+check(entry is not None, "derive() succeeds on synthetic segments (%s)" % note)
+if entry:
+    check(entry["rva"] == "0x%x" % (VADDR + 0x100), "derive() lands on the by-name address")
+    n = len(entry["pattern"].split())
+    check(n > 28, "pattern grew past the shared 28-byte prologue (%d bytes)" % n)
+    check(entry["matches"] == 1 and entry["source"] == "rtti-byname", "entry shaped for derived.json")
+# and with no decoy it must not grow beyond the first whole-instruction cut
+buf[0x400:0x400 + len(decoy)] = bytes(len(decoy))
+ddb.load_exec_segments = lambda path: [(VADDR, bytes(buf))]
+entry, note = ddb.derive("synthetic.so")
+cut = len(wildcard_prologue(real, 28))          # first whole-instruction cut >= 28
+check(entry is not None and len(entry["pattern"].split()) == cut,
+      "no decoy: pattern stops at the first whole-instruction cut >= 28 (%d bytes)" % cut)
+ddb.rtti_derive_slot_byname = lambda *a, **k: ({"status": "NOT_RESOLVED"}, "no slot")
+entry, note = ddb.derive("synthetic.so")
+check(entry is None and note.startswith("by-name"), "by-name miss is reported as such")
+
 print("\n%d failure(s)" % fails)
 sys.exit(1 if fails else 0)

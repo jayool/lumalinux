@@ -29,7 +29,7 @@
 #
 # Usage:
 #   tools/derive_depotkey_byname.py steamclient.so [--derived derived.json]
-#       [--min-bytes 28] [--max-bytes 96] [--patterns src/patterns.hpp]
+#       [--min-bytes 28] [--max-bytes 96]
 # Exit codes: 0 derived UNIQUE (and written) | 2 by-name did not resolve |
 #             3 could not build a unique pattern (decoder or ambiguity) |
 #             4 internal sanity failure (the pattern does not match at its
@@ -37,7 +37,6 @@
 import argparse
 import json
 import os
-import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -239,7 +238,8 @@ def derive(path, min_bytes=PROLOGUE_BYTES, max_bytes=96):
     if len(raw) < min_bytes:
         return None, "only %d byte(s) readable at 0x%x" % (len(raw), rva)
     print("  by-name: %s %r -> map slot %d -> %s @ 0x%x"
-          % (bn["map_class"], bn["method"], bn["slot"], bn["impl_class"], rva))
+          % (BYNAME_DEPOTKEY["map_class"], BYNAME_DEPOTKEY["method"], bn["slot"],
+             BYNAME_DEPOTKEY["impl_class"], rva))
     want = min_bytes
     last = None
     while True:
