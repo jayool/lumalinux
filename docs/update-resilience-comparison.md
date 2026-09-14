@@ -74,9 +74,11 @@ Filosofía contraria: Headcrab **congela Steam** en un build que Ace ha probado
 (`HeadcrabCompatibleClientVer` en el script, manifest pineado en su rama de
 SteamTracking), le prohíbe actualizarse (`steam.cfg` `BootStrapperInhibitAll`),
 y cuando Ace valida uno nuevo el usuario ejecuta el "Headcrab Updater", que
-lanza Steam con `-forcesteamupdate -forcepackagedownload -overridepackageurl
-http://localhost:1666/` contra `dgsc`, un servidor local que le sirve al
-bootstrapper el cliente pineado [read `headcrab.sh`].
+baja el manifest del cliente pineado a `package/`, escribe `steam.cfg` y relanza
+Steam con `-forcesteamupdate -forcepackagedownload -overridepackageurl` para que
+el bootstrapper instale ese build; el antiguo proxy local `dgsc` en
+`localhost:1666` está comentado en el script y los paquetes vienen del mirror de
+`stable-sources.txt` [read `headcrab.sh`; es lo que porta nuestro `downgrade.sh`].
 
 | Eje | SLSsteam + Headcrab | Diferencia |
 |---|---|---|
