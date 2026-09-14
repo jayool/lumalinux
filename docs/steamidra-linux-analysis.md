@@ -128,22 +128,44 @@ en modo juego solo con `steam.sh` de usuario y el drop-in de systemd
 v6.6.6 del 21-08), no a este fork.** [user report] El usuario probó el original
 en su Deck: sin crash, pero inusable (UI incomprensible).
 
-**La fuente [external, Discord]:** hilo del servidor de FMHY del 2026-09-10
-(canal `1546879201565610075`) para retirar la estrella a SteaMidra, al menos en
-Linux, pegado por el usuario el 09-14. Lo que dice: Midrag lleva unas tres
-semanas desaparecido y era el único programador; el desarrollador de SLSsteam
-afirma que SteaMidra "ha estado haciendo daño a mucha gente", que "él y sus
-amigos" han tenido que arreglar los destrozos en los dispositivos de los
-usuarios, y que el caso de una Steam Deck rota "fue muy real" (alguien de sus
-canales de soporte, no un amigo); FMHY lleva "unas semanas" recomendando ACCELA
-para Linux y LuaTools para Windows; la versión de Windows sigue funcionando
-"con el fix de migo3" (los patrones de MigoReleases, `ffd70db` en el fork);
-"downloading is globally broken rn" (09-10); y se menciona una alternativa
-open source por salir, **OpenValve**, del autor de ese comentario. Lo que **no**
-dice: ninguna versión, ningún log, ningún síntoma concreto, ningún mecanismo. El
-fork `drappula/SFF` no aparece en el hilo: para la comunidad SteaMidra está
-muerto y nadie menciona que siga en otro repo. La disputa de créditos
-(LumaCore como derivado de OpenSteamTool) ya está en `lumacore-findings.md`.
+**La fuente [external, Discord]:** hilo "Remove SteaMidra" del servidor de
+FMHY (canal `1546879201565610075`), abierto el **2026-09-08** por el
+desarrollador de SLSsteam y pegado entero por el usuario el 09-14. Lo que dice:
+
+- Apertura (08-09): "no hace la mayoría de lo que anuncia, o no correctamente";
+  el desarrollador "le dice a un LLM que haga las cosas, incluso las
+  decisiones"; el lado Linux "es muy improbable que lo prueben", "cada supuesto
+  fix rompe otras cosas", "malfunciona en Linux, potencialmente dejando las
+  instalaciones de los usuarios rotas sin forma de deshacerlo". Ocho capturas
+  adjuntas de "los problemas más terroríficos", **no incluidas en el volcado**.
+- Otros usuarios (08/09-09): fallos al instalar juegos en CachyOS con Steam
+  limpio; "siempre me ha destrozado las instalaciones de Steam en Linux"; en
+  Windows tampoco funcionaba ese día: hacía falta bajar de versión Steam o
+  copiar ficheros que reparte un moderador en su Discord ("el fix de migo3",
+  los patrones de MigoReleases que el fork adoptó en `ffd70db`).
+- El administrador de FMHY: se probó en dos hilos enteros y funcionaba
+  entonces; "que algo se rompa con el tiempo no es que añadamos cosas rotas";
+  lo retira en la siguiente actualización de la wiki.
+- El caso de la Deck (10-09): "no era mi amigo, alguien de nuestros canales de
+  soporte, pero sí, fue muy real", y "por cada reporte hay más gente con el
+  mismo problema que no lo dice". Sin versión, sin log, sin síntoma. Se remite
+  a un "previous topic" que no está en el volcado.
+- Midrag desaparecido "algo más de dos semanas" el 08-09, "tres" el 10-09;
+  único programador. FMHY recomienda ACCELA en Linux y LuaTools en Windows.
+- **OpenValve**: alternativa open source anunciada por un miembro de FMHY con
+  rol [CODE] ("it's mine", "release by the end of this month", "NoUI early
+  access, 6 testers", "un fichero de config que abres en un editor", "OST pero
+  con esteroides y crack"). No es del autor de OpenSteamTool; ese mismo usuario
+  llama a OST "vibecoded slop". Sin repo conocido.
+- Un usuario pregunta por una alternativa Linux "que no sea ACCELA" porque
+  "me gusta bajar el juego desde el propio cliente de Steam"; le responden
+  LuaTools ("lo añades y lo bajas por Steam"). Es exactamente nuestro modelo.
+- El fork `drappula/SFF` no aparece en ningún momento: para la comunidad
+  SteaMidra está muerto. La disputa de créditos (LumaCore como derivado de
+  OpenSteamTool, "tried to hide the evidence") ya está en `lumacore-findings.md`.
+
+Lo que **no** hay en todo el hilo: una versión, un log, un síntoma técnico, un
+mecanismo. Las capturas del 08-09 serían lo más cercano y no se han visto.
 
 Atribución por versión, con el original `fa44fc9` delante:
 
@@ -352,5 +374,5 @@ Cuatro. **Ninguno es código.**
   rclone, kit de DRM, logros: vistos, fuera, por diseño.
 
 Pendiente de barrido: `drappula/SFF` desde `92d6813`. **A vigilar:** "OpenValve",
-la alternativa open source anunciada en el hilo de FMHY (§3.3); sin repo
-conocido a 2026-09-14.
+la alternativa open source anunciada en el hilo de FMHY (§3.3) para finales de
+septiembre, sin UI, por fichero de config; sin repo conocido a 2026-09-14.
