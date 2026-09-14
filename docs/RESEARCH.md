@@ -2177,3 +2177,34 @@ lumalinux 0.20.1, nothing touched by hand. From LumaDeck's log
 No request code was asked for, Hubcap was not used, the game stayed on
 "Play" throughout. The two `failed to update ownership ticket (Access Denied)`
 lines an hour later are SLSsteam's usual noise for unowned apps.
+
+### 19.6 The installed build's manifest, healed on device (2026-09-14)
+
+§19.3 established that Steam needs **both** the installed manifest and the
+target to compute an update (Balatro, 2026-09-13: old manifest removed →
+`BYldRequestDepotManifest … 'Access Denied'`, game stuck on "Update"; put back
+→ the 30 s retry finished). LumaDeck's local pass only guarded the *pinned*
+manifest, so a pruned installed manifest stayed missing. Commit `0f4a14e`
+(merged as `3e4a155`) adds the installed build's manifests to the 60 s heal and
+makes the 30-minute pass refuse to move a pin while they cannot be resolved.
+
+Validated on the SteamOS codespace, Balatro 2379780, depot 2379781, branch
+deployed on top of 0.8.1, Decky restarted, Steam up:
+
+- installed `3512319404653808464` (B), pin B, archive holds B and the older
+  `3742336026811834465` (A) from the 09-13 experiment.
+- `steamidra_lite.py --set-pin 2379780 2379781:A` → pin A, installed B — the
+  mid-update state.
+- `rm depotcache/2379781_B.manifest`; 61 s later the file is back and the log
+  reads `restored installed-build 2379781_3512319404653808464.manifest for
+  2379780 from the archive (Steam needs it to compute the update)`.
+- Control from a first attempt where `--set-pin` had failed (pin still B): the
+  pre-existing pinned-manifest heal restored the same file two minutes later
+  with the old `restored … from the archive` line. The two heals coexist.
+- Reset: `--set-pin 2379780 2379781:B`.
+
+Not exercised: the second half of the change (the update pass declining to move
+the pin when the installed manifest is in no source), which needs a real Valve
+update; and the case where the archive lacks the installed manifest, which
+falls through to P-ToyStore / luastools online, and past that to the Hubcap
+single-manifest plan B in `assella-analysis.md` §8-F1 (not implemented).
