@@ -2,6 +2,8 @@
 #include "../patterns.hpp"
 #include "../rva_feed.hpp"
 #include "../key_store.hpp"
+#include "../gmrc_store.hpp"
+#include "gmrc_hook.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
 
@@ -27,18 +29,21 @@ namespace {
 // suspend / the recurring "Missing decryption key" loop (RESEARCH §13.8).
 // Returning 0 for exactly those games routes them down Steam's own clean skip.
 //
-// Since v0.20.0 the skip covers EVERY lumalinux-managed game, keyed or not.
-// The shader manifest is never in a Hubcap zip, so with a key the job still has
-// to ask Valve for a manifest request code, and Valve only grants that for apps
-// whose depot <appid> is public (games with a Steam Workshop — the workshop and
-// shader depots share the id) and denies it for the rest. There is no public
-// request-code provider left to fill the gap (all died 2026-09-09), and the
-// denied path is not free: Steam shows "No internet connection", stalls the
-// install for 30 s, and only then goes on without shaders. Returning 0 up front
-// gives the same end state with no popup and no stall (verified 2026-09-10 on
-// Valheim / Lethal Company in the SteamOS codespace). The cost is the precompiled shaders
-// of the Workshop-carrying games (Brotato, RimWorld...), which compile at
-// runtime like on any game without a cache. Owned games are never touched.
+// Three cases, decided per game (RESEARCH §13.10, §13.11):
+//   keyless (presence-only in keys.txt) -> 0: could never decrypt.
+//   not ours                           -> pass through, never touched.
+//   keyed, ours                        -> the shader manifest is never in a
+//     Hubcap zip, so the job has to ask for a manifest request code. Valve
+//     grants it only for apps whose depot <appid> is public (Workshop games)
+//     and denies the rest, and the denied path is not free: Steam shows "No
+//     internet connection", stalls the install 30 s, then goes on without
+//     shaders. So the job may run ONLY when the GMRC hook is installed AND a
+//     provider is answering right now (Gmrc::ProvidersReachable); otherwise 0,
+//     which is Steam's own clean skip — same end state, no popup, no stall
+//     (verified 2026-09-10 on Valheim / Lethal Company in the SteamOS codespace).
+//     v0.20.0 returned 0 unconditionally because no provider existed after
+//     2026-09-09; with one again (see gmrc_store.hpp) the shaders of the
+//     Workshop-carrying games (Brotato, RimWorld...) are back within reach.
 //
 // See RESEARCH §13.9 for the full disassembly and why this is preferred over
 // both the fragile manifest-fabrication path ("path B") and the global
@@ -60,19 +65,32 @@ uint32_t HookFn(void* appinfo) {
     const uint32_t id = g_origFn(appinfo);
     if (id == 0) return id;
 
+    // Keyless (presence-only in keys.txt): the pre-cache can never decrypt.
+    if (KeyStore::IsPresenceOnly(id)) {
+        Log::Info("ShaderDepot: depot %u is keyless (presence-only) -> returning 0 "
+                  "so Steam skips its shader pre-cache cleanly", id);
+        return 0;
+    }
+
     // Not a lumalinux-managed depot: the user's genuinely-owned games. Never
     // touch them — their shader pre-cache goes down Steam's normal owned path.
-    if (!KeyStore::HasDepot(id) && !KeyStore::IsPresenceOnly(id)) return id;
+    if (!KeyStore::HasDepot(id)) return id;
 
-    // Ours (the shader depot id == the app id, registered from the .lua with or
-    // without a key): skip the pre-cache via Steam's own "invalid shader depot"
-    // path. Keyless -> could never decrypt; keyed -> the manifest request code
-    // is denied to us for anything without a Workshop and there is no provider
-    // to fetch it from (see the file header). The game still installs from its
-    // content depots, which never go through here.
-    Log::Info("ShaderDepot: depot %u is lumalinux-managed (%s) -> returning 0 so "
-              "Steam skips its shader pre-cache cleanly",
-              id, KeyStore::IsPresenceOnly(id) ? "keyless" : "keyed");
+    // Keyed, ours: the job is about to ask for the shader manifest's request
+    // code. Let it only when the GMRC hook can answer (installed, provider up).
+    if (!Hooks::Gmrc::Active()) {
+        Log::Info("ShaderDepot: depot %u keyed but the GMRC hook is off -> "
+                  "returning 0 so Steam skips its shader pre-cache cleanly", id);
+        return 0;
+    }
+    if (Gmrc::ProvidersReachable()) {
+        Log::Info("ShaderDepot: depot %u keyed, a code provider is reachable "
+                  "-> letting the shader pre-cache run", id);
+        return id;
+    }
+    Log::Warn("ShaderDepot: depot %u keyed but NO code provider is reachable "
+              "-> skipping shader pre-cache to avoid the 'No connection' popup "
+              "(shaders pre-cache on a later install/update when one is back)", id);
     return 0;
 }
 

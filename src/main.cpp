@@ -158,17 +158,17 @@ void InstallHooks() {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
         {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},
     };
-    // GMRC is OPT-IN since v0.20.0 (LUMA_GMRC=1). The public request-code
-    // providers it fed on (opensteamtool, wudrm, steam.run) all stopped issuing
-    // valid codes on 2026-09-09, and Steam's own GetManifestRequestCode already
-    // does everything the hook can still do: Valve grants codes for public
-    // depots (Workshop / their shader caches) and denies the rest. Worse, a
-    // provider that answers with a *wrong* number (wudrm did, for days) made the
-    // hook inject it, the CDN 401'd every content server and Steam abandoned the
-    // whole install ("Unknown error") — measured on 2026-09-10 in the SteamOS codespace.
-    // Content never needed the code once its manifest sits in depotcache/,
-    // which is how LumaDeck installs anyway. The cascade stays in the tree
-    // behind the env for the day a real provider exists again.
+    // GMRC is OPT-IN since v0.20.0 (LUMA_GMRC=1). The providers it fed on
+    // (opensteamtool, wudrm, steam.run) stopped issuing valid codes on
+    // 2026-09-09; a provider answering a *wrong* number (wudrm did, for days)
+    // made the hook inject it, the CDN 401'd every content server and Steam
+    // abandoned the whole install ("Unknown error") — measured 2026-09-10 in
+    // the SteamOS codespace. Content never needs the code once its manifest
+    // sits in depotcache/, which is how LumaDeck installs. Since 2026-09-15 the
+    // cascade points at a live provider again (20770407.xyz, see
+    // gmrc_store.hpp) — the native path: Steam fetches manifests itself and
+    // depotcache/ pins become the fallback. It stays opt-in until that path is
+    // validated end to end.
     const bool gmrcOptIn = std::getenv("LUMA_GMRC") != nullptr;
     if (gmrcOptIn) {
         specs.push_back({"GMRC", "LUMA_NO_GMRC", &Hooks::Gmrc::Install});
@@ -206,8 +206,7 @@ void InstallHooks() {
         // Record the intentional off-state so status.json is self-documenting:
         // DISABLED, not FAILED (LumaDeck only trips "not supported" on a FAILED
         // critical, and GMRC is no longer critical anyway).
-        Log::Info("Install: GMRC hook off by default (opt in with LUMA_GMRC=1; "
-                  "no public request-code provider is alive since 2026-09-09)");
+        Log::Info("Install: GMRC hook off by default (opt in with LUMA_GMRC=1)");
         Status::RecordHook("GMRC", Status::DISABLED);
     }
     for (const auto& s : specs) {

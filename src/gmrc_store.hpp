@@ -5,37 +5,45 @@
 // community endpoints and caches results. The GMRC hook calls GetCode() to fill
 // in the code the Steam server denied for unowned content.
 //
-// The three providers below are exactly the ones OpenSteamTool ships
-// (ManifestClient.cpp `kProviders`): opensteamtool, wudrm, steamrun. Earlier
-// versions of lumalinux hit only wudrm over a raw HTTP socket, so when wudrm
-// 502'd (which it does often) the shader/base-depot manifest could not be
-// resolved and Steam surfaced the cosmetic "No connection" popup even though
-// the game content itself installed fine. We now try all three in order and
-// take the first that returns a usable code.
+// What a request code is, and what changed on 2026-09-09: the code is a bearer
+// token. Valve signs it for (depot, manifest) and the CDN serves the manifest to
+// whoever presents it — the CDN GET is anonymous, so a code minted elsewhere
+// works from any machine (measured 2026-09-15: a code from 20770407.xyz fetched
+// the manifest from steampipe.akamaized.net out of a codespace). The check is
+// AT ISSUE TIME: since 09-09 Valve only mints a code for an account that holds a
+// licence for the app. opensteamtool, wudrm and steam.run lived off the missing
+// check (bare accounts asking for anything) and died that day. The provider
+// below (20770407.xyz, found in huanyuejue/OpenSteamTool commit 224931d) runs a
+// pool of accounts that DO own the games: Valve mints the code for them, the
+// token serves everyone. Hence its Valve-shaped signature (depot AND gid — it
+// resolves the app id itself, "Auto getAppid") and its structural limit: a game
+// nobody in the pool owns gets "Unauthorized", the same answer as a bad gid.
 //
-// Transport: all three go through Curl::getString (libcurl, dlopen'd at
-// runtime) because opensteamtool and steam.run are HTTPS. A non-'curl' User-
-// Agent is REQUIRED for opensteamtool: its Cloudflare WAF challenges the default
-// curl UA (returns the "Just a moment..." JS interstitial) but lets any other
-// UA straight through to the plain uint64 body. This was verified on-device:
-//   curl -s "https://manifest.opensteamtool.com/<gid>"                 -> CF challenge
-//   curl -s -A "OpenSteamTool/1.0" "https://manifest.opensteamtool.com/<gid>" -> <code>
-// so we send OpenSteamTool/1.0 (the same UA their WinHTTP client uses).
+// The provider's own status page: 10 requests per 10 s per IP (Cloudflare
+// 429 with body "error code: 1015" beyond that), ~170k requests/day from
+// ~70k users, and it degrades for EVERYONE when one client floods it (31 %
+// failures for an hour on 2026-09-15, body "Service temporarily unavailable -
+// please retry"). So this client throttles itself to one request per second,
+// waits and retries a bounded number of times on those two answers, and gives
+// up definitively on "Unauthorized". A caller that gets nullopt falls through
+// to Steam's own path; with the manifest already in depotcache/ (LumaDeck's
+// pins) Steam never asks in the first place — that is the fallback.
 //
-// Curl::getString returns 0 on transport success WITHOUT checking HTTP status,
-// so a Cloudflare challenge page, a 502, or a 404 all come back as a non-numeric
-// body — the per-provider parser rejects those (returns nullopt) and we fall
-// through to the next provider. nullopt from GetCode = no code from anyone
-// (download falls through to Steam's server path / the popup).
+// Transport: Curl::getString (libcurl, dlopen'd at runtime). It returns 0 on
+// transport success WITHOUT failing on HTTP status; the status is reported via
+// its out-param and the body is classified below. A parsed uint64 is the only
+// success; anything else is one of the failure classes in `Outcome`.
 
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include "curl.hpp"
 #include "log.hpp"
@@ -44,14 +52,35 @@ namespace Gmrc {
 
 namespace detail {
 
-// The UA that gets past manifest.opensteamtool.com's Cloudflare WAF (see header
-// comment). Harmless for the other two providers.
+// A non-'curl' UA: the old opensteamtool WAF challenged the default one, and
+// 20770407.xyz sits behind Cloudflare too. Same string OpenSteamTool sends.
 inline constexpr const char* kUserAgent = "OpenSteamTool/1.0";
 
-// Parse a bare uint64 body (opensteamtool, wudrm). Rejects anything that isn't a
-// run of digits after optional leading whitespace — which is how a Cloudflare
-// HTML challenge / 5xx / 404 body gets rejected so the caller tries the next
-// provider. A parsed 0 is treated as "no code".
+// Self-imposed pacing. The provider allows 10 requests / 10 s per IP; Steam
+// asks one code per depot of an install (a big game has 5–10), so one per
+// second never trips the limit and never contributes to the floods that take
+// the service down for everyone.
+inline constexpr int kMinGapMs        = 1000;
+// Bounded waits. A 429 window is 10 s by the provider's own rule; a backend
+// "unavailable" clears in seconds when transient. Three attempts in total.
+inline constexpr int kRateLimitWaitMs = 10000;
+inline constexpr int kTransientWaitMs = 5000;
+inline constexpr int kMaxAttempts     = 3;
+// Codes rotate on Valve's side (~15–20 min measured) and the provider caches
+// them itself for a while, so a long-lived entry could hand Steam a stale code
+// (which the CDN rejects, and Steam then abandons the whole install with
+// "Unknown error" — the 2026-09-10 wudrm failure). Steam only re-asks within
+// seconds (a retry of the same job), so a short TTL keeps that benefit and
+// nothing else. A denial is remembered for the same span so a retrying job
+// does not re-spend the request budget on a depot the pool does not own.
+inline constexpr int kCacheTtlSec     = 120;
+// Provider request timeouts: measured P95 is under a second; a wedged provider
+// must not hold Steam's manifest job for the SafeMode-sized 15 s / 30 s.
+inline constexpr long kConnectTimeoutSec = 5;
+inline constexpr long kTotalTimeoutSec   = 10;
+
+// Parse a bare uint64 body. Rejects anything that isn't a run of digits after
+// optional leading whitespace. A parsed 0 is treated as "no code".
 inline std::optional<uint64_t> ParsePlainUint(const std::string& body) {
     const char* p = body.c_str();
     while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
@@ -61,105 +90,211 @@ inline std::optional<uint64_t> ParsePlainUint(const std::string& body) {
     return code;
 }
 
-// Parse steam.run's JSON body: {"content":"<uint64>", ...} — pull the string
-// value of "content". Mirrors OpenSteamTool's ParseSteamRunJson.
-inline std::optional<uint64_t> ParseSteamRunJson(const std::string& body) {
-    size_t key = body.find("\"content\"");
-    if (key == std::string::npos) return std::nullopt;
-    size_t q1 = body.find('"', key + 9);
-    if (q1 == std::string::npos) return std::nullopt;
-    size_t q2 = body.find('"', q1 + 1);
-    if (q2 == std::string::npos) return std::nullopt;
-    return ParsePlainUint(body.substr(q1 + 1, q2 - q1 - 1));
-}
-
 struct Provider {
     const char* name;
-    const char* urlTemplate;   // exactly one %llu (the manifest gid)
+    // printf template. needsDepot: two %llu — depot id, then manifest gid
+    // (Valve's own GetManifestRequestCode shape). Otherwise one %llu, the gid.
+    const char* urlTemplate;
+    bool needsDepot;
     std::optional<uint64_t> (*parse)(const std::string&);
 };
 
-// opensteamtool first: it responds where wudrm has been 502'ing. Order otherwise
-// mirrors OpenSteamTool's own table.
+// The cascade. One live provider today; the table stays a table so the next
+// one is a line, not a rewrite. The three pre-09-09 providers are gone: they
+// answered nothing usable after that date and a dead entry costs a timeout per
+// depot before the fallback.
 inline const Provider kProviders[] = {
-    {"opensteamtool", "https://manifest.opensteamtool.com/%llu",      &ParsePlainUint},
-    {"wudrm",         "http://gmrc.wudrm.com/manifest/%llu",          &ParsePlainUint},
-    {"steamrun",      "https://manifest.steam.run/api/manifest/%llu", &ParseSteamRunJson},
+    {"20770407", "https://20770407.xyz/manifest/%llu/%llu", true, &ParsePlainUint},
 };
 
-inline std::map<uint64_t, uint64_t>& Cache() {
-    static std::map<uint64_t, uint64_t> c;
+// LUMA_GMRC_URL=<template> replaces the table with a single provider for
+// testing: two %llu (depot, gid). Point it at a black hole to exercise the
+// pins fallback, or at a local server that answers a bogus number to check
+// that a wrong code cannot corrupt an install.
+inline const Provider* OverrideProvider() {
+    static Provider ov{"env-override", nullptr, true, &ParsePlainUint};
+    static const char* tmpl = std::getenv("LUMA_GMRC_URL");
+    if (!tmpl || !tmpl[0]) return nullptr;
+    ov.urlTemplate = tmpl;
+    return &ov;
+}
+
+enum class Outcome { CODE, RATE_LIMITED, TRANSIENT, DENIED, NO_CODE, TRANSPORT };
+
+inline const char* OutcomeName(Outcome o) {
+    switch (o) {
+        case Outcome::CODE:         return "code";
+        case Outcome::RATE_LIMITED: return "rate-limited (429)";
+        case Outcome::TRANSIENT:    return "unavailable (5xx / retry)";
+        case Outcome::DENIED:       return "denied (no licence in pool / bad gid)";
+        case Outcome::NO_CODE:      return "no usable code in body";
+        case Outcome::TRANSPORT:    return "transport error";
+    }
+    return "?";
+}
+
+inline bool StartsWith(const char* s, const char* prefix) {
+    while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n') ++s;
+    return std::strncmp(s, prefix, std::strlen(prefix)) == 0;
+}
+
+// Body + status -> class. The literal strings are what the provider answers
+// (measured 2026-09-15); the status codes are the generic reading so a provider
+// that changes its wording still lands in the right class.
+inline Outcome Classify(long status, const std::string& body,
+                        std::optional<uint64_t>* code,
+                        std::optional<uint64_t> (*parse)(const std::string&)) {
+    if (auto c = parse(body)) { *code = c; return Outcome::CODE; }
+    const char* b = body.c_str();
+    if (status == 429 || body.find("error code: 1015") != std::string::npos)
+        return Outcome::RATE_LIMITED;
+    if (status >= 500 || StartsWith(b, "Service temporarily unavailable"))
+        return Outcome::TRANSIENT;
+    if (status == 401 || status == 403 || StartsWith(b, "Unauthorized"))
+        return Outcome::DENIED;
+    return Outcome::NO_CODE;
+}
+
+struct CacheEntry {
+    uint64_t code;      // 0 = remembered denial
+    std::chrono::steady_clock::time_point until;
+};
+inline std::map<uint64_t, CacheEntry>& Cache() {
+    static std::map<uint64_t, CacheEntry> c;
     return c;
 }
 inline std::mutex& Mtx() { static std::mutex m; return m; }
 
+// Global pacing: at most one provider request per kMinGapMs, across threads.
+inline void Pace() {
+    static std::mutex m;
+    static std::chrono::steady_clock::time_point last{};
+    std::lock_guard<std::mutex> lk(m);
+    auto now  = std::chrono::steady_clock::now();
+    auto wait = std::chrono::milliseconds(kMinGapMs) - (now - last);
+    if (last.time_since_epoch().count() != 0 && wait.count() > 0) {
+        std::this_thread::sleep_for(wait);
+        now = std::chrono::steady_clock::now();
+    }
+    last = now;
+}
+
+inline void FormatUrl(char* out, size_t n, const Provider& p, uint32_t depot, uint64_t gid) {
+    if (p.needsDepot)
+        std::snprintf(out, n, p.urlTemplate, (unsigned long long)depot, (unsigned long long)gid);
+    else
+        std::snprintf(out, n, p.urlTemplate, (unsigned long long)gid);
+}
+
+// One paced request. Fills *code on Outcome::CODE.
+inline Outcome Request(const Provider& p, uint32_t depot, uint64_t gid,
+                       std::optional<uint64_t>* code,
+                       long connectSec = kConnectTimeoutSec, long totalSec = kTotalTimeoutSec) {
+    char url[512];
+    FormatUrl(url, sizeof url, p, depot, gid);
+    Pace();
+    std::string body;
+    long status = 0;
+    int rc = Curl::getString(url, body, kUserAgent, connectSec, totalSec, &status);
+    if (rc != 0) {
+        Log::Warn("GMRC: %s transport error (curl rc=%d) depot %u manifest %llu",
+                  p.name, rc, depot, (unsigned long long)gid);
+        return Outcome::TRANSPORT;
+    }
+    Outcome o = Classify(status, body, code, p.parse);
+    if (o != Outcome::CODE) {
+        std::string head = body.substr(0, 60);
+        for (auto& ch : head) if (ch == '\n' || ch == '\r') ch = ' ';
+        Log::Warn("GMRC: %s -> %s (HTTP %ld, body \"%s\") depot %u manifest %llu",
+                  p.name, OutcomeName(o), status, head.c_str(), depot,
+                  (unsigned long long)gid);
+    }
+    return o;
+}
+
 } // namespace detail
 
-// Returns the manifest request code for `gid`, fetching from the provider
-// cascade on first use and caching it. Tries each provider in order and takes
-// the first usable code; a provider that errors, is Cloudflare-challenged, or
-// returns a non-numeric body is skipped. nullopt = no provider had a code.
-inline std::optional<uint64_t> GetCode(uint64_t gid) {
+// Returns the manifest request code for (depot, gid), fetching from the
+// provider cascade on first use and caching it briefly. Per provider: up to
+// kMaxAttempts paced attempts, waiting on RATE_LIMITED / TRANSIENT, giving up
+// at once on DENIED (that provider has no licence for the depot) and on
+// TRANSPORT / NO_CODE (dead or changed). nullopt = no provider had a code.
+inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
+    using namespace detail;
+    const auto now = std::chrono::steady_clock::now();
     {
-        std::lock_guard<std::mutex> lk(detail::Mtx());
-        auto it = detail::Cache().find(gid);
-        if (it != detail::Cache().end()) return it->second;
+        std::lock_guard<std::mutex> lk(Mtx());
+        auto it = Cache().find(gid);
+        if (it != Cache().end()) {
+            if (now < it->second.until) {
+                if (it->second.code) return it->second.code;
+                Log::Info("GMRC: manifest %llu denied %ds ago — not re-asking yet",
+                          (unsigned long long)gid, kCacheTtlSec);
+                return std::nullopt;
+            }
+            Cache().erase(it);
+        }
     }
 
-    for (const auto& p : detail::kProviders) {
-        char url[256];
-        std::snprintf(url, sizeof url, p.urlTemplate, (unsigned long long)gid);
+    auto remember = [&](uint64_t code) {
+        std::lock_guard<std::mutex> lk(Mtx());
+        Cache()[gid] = {code, std::chrono::steady_clock::now() + std::chrono::seconds(kCacheTtlSec)};
+    };
 
-        Log::Info("GMRC: fetching request code for manifest %llu from %s...",
-                  (unsigned long long)gid, p.name);
+    const Provider* ov = OverrideProvider();
+    const Provider* first = ov ? ov : kProviders;
+    const Provider* last  = ov ? ov + 1 : kProviders + (sizeof kProviders / sizeof kProviders[0]);
 
-        std::string body;
-        int rc = Curl::getString(url, body, detail::kUserAgent);
-        if (rc != 0) {
-            Log::Warn("GMRC: %s transport error (curl rc=%d) for manifest %llu "
-                      "— trying next provider", p.name, rc, (unsigned long long)gid);
-            continue;
+    for (const Provider* p = first; p != last; ++p) {
+        Log::Info("GMRC: fetching request code for depot %u manifest %llu from %s...",
+                  depot, (unsigned long long)gid, p->name);
+        for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
+            std::optional<uint64_t> code;
+            Outcome o = Request(*p, depot, gid, &code);
+            if (o == Outcome::CODE) {
+                remember(*code);
+                Log::Info("GMRC: got code %llu for depot %u manifest %llu (via %s, attempt %d)",
+                          (unsigned long long)*code, depot, (unsigned long long)gid,
+                          p->name, attempt);
+                return code;
+            }
+            if (o == Outcome::DENIED) {
+                remember(0);
+                break;  // definitive for this provider: next provider, if any
+            }
+            if (o == Outcome::RATE_LIMITED || o == Outcome::TRANSIENT) {
+                if (attempt == kMaxAttempts) break;
+                int wait = (o == Outcome::RATE_LIMITED) ? kRateLimitWaitMs : kTransientWaitMs;
+                Log::Info("GMRC: waiting %d ms before attempt %d/%d", wait, attempt + 1, kMaxAttempts);
+                std::this_thread::sleep_for(std::chrono::milliseconds(wait));
+                continue;
+            }
+            break;  // TRANSPORT / NO_CODE: this provider is dead or changed shape
         }
-
-        auto code = p.parse(body);
-        if (code) {
-            std::lock_guard<std::mutex> lk(detail::Mtx());
-            detail::Cache()[gid] = *code;
-            Log::Info("GMRC: got code %llu for manifest %llu (via %s)",
-                      (unsigned long long)*code, (unsigned long long)gid, p.name);
-            return code;
-        }
-
-        Log::Warn("GMRC: %s returned no usable code for manifest %llu "
-                  "(Cloudflare challenge / 5xx / empty) — trying next provider",
-                  p.name, (unsigned long long)gid);
     }
 
-    Log::Warn("GMRC: no code for manifest %llu from any provider "
-              "(download will fall through to Steam's server path)",
-              (unsigned long long)gid);
+    Log::Warn("GMRC: no code for depot %u manifest %llu from any provider "
+              "(download falls through to Steam's own path)",
+              depot, (unsigned long long)gid);
     return std::nullopt;
 }
 
-// Liveness probe for the ShaderDepot hook (v0.16). Returns true if at least one
-// manifest-code provider is reachable RIGHT NOW.
+// Liveness probe for the ShaderDepot hook. Returns true if a provider is
+// answering RIGHT NOW — i.e. a request for a keyed game's shader-depot manifest
+// has a chance. A keyed game's shader manifest is never in the Hubcap zip, so
+// the shader pre-cache job asks GMRC for a code; if no provider can answer,
+// Valve's CDN denies the manifest and Steam shows the cosmetic "No internet
+// connection" popup and stalls 30 s. The hook calls this FIRST: provider up ->
+// let the job run; down -> skip the pre-cache this once (Steam's own clean
+// path). See RESEARCH §13.11.
 //
-// Why it exists: a KEYED game's shader/app depot manifest is never shipped in the
-// Hubcap zip, so at install time the shader pre-cache job asks GMRC for a request
-// code. If no provider answers, Valve's CDN denies the manifest and Steam shows
-// the cosmetic "No internet connection" popup. The ShaderDepot hook calls this
-// FIRST: provider up -> let the job run (shaders pre-cache normally); all down ->
-// skip the shader pre-cache this once, so Steam never issues a request it can't
-// satisfy and the popup never appears. See RESEARCH §13.11.
-//
-// "Reachable" = a provider completes an HTTP GET with a non-HTML body. We hit
-// each provider with a throwaway gid using SHORT timeouts (connect 3s / total 5s)
-// so an all-down probe returns in a few seconds instead of the GMRC default
-// 15s/30s, and short-circuit on the first good answer. A Cloudflare challenge
-// (HTML body, which would not yield a code) is rejected so it doesn't count as
-// "up". The result is cached for 15s because GetShaderCacheDepot can be called
-// more than once per install.
+// "Up" = one paced request with a throwaway (depot 1, gid 1) and SHORT
+// timeouts comes back with anything but a transport error or a backend
+// "unavailable". The throwaway is DENIED by design (nobody owns depot 1) and
+// a 429 still means alive. Cached 15 s: GetShaderCacheDepot can be called more
+// than once per install and the probe spends one request of the budget.
 inline bool ProvidersReachable() {
+    using namespace detail;
     static std::mutex probeMtx;
     static bool  cachedValid  = false;
     static bool  cachedResult = false;
@@ -172,21 +307,17 @@ inline bool ProvidersReachable() {
             return cachedResult;
     }
 
+    const Provider* ov = OverrideProvider();
+    const Provider* first = ov ? ov : kProviders;
+    const Provider* last  = ov ? ov + 1 : kProviders + (sizeof kProviders / sizeof kProviders[0]);
+
     bool reachable = false;
-    for (const auto& p : detail::kProviders) {
-        char url[256];
-        std::snprintf(url, sizeof url, p.urlTemplate, 1ULL);  // throwaway gid
-
-        std::string body;
-        int rc = Curl::getString(url, body, detail::kUserAgent,
-                                 /*connect*/ 3, /*total*/ 5);
-        if (rc != 0) continue;  // transport error -> this provider is down
-
-        const char* b = body.c_str();
-        while (*b == ' ' || *b == '\t' || *b == '\r' || *b == '\n') ++b;
-        if (*b == '<') continue;  // HTML (Cloudflare challenge) -> not serving codes
-
-        reachable = true;  // responded with a real (non-HTML) body -> usable
+    const char* which = "none";
+    for (const Provider* p = first; p != last; ++p) {
+        std::optional<uint64_t> code;
+        Outcome o = Request(*p, 1, 1, &code, /*connect*/ 3, /*total*/ 5);
+        if (o == Outcome::TRANSPORT || o == Outcome::TRANSIENT) continue;
+        reachable = true; which = p->name;
         break;
     }
 
@@ -196,8 +327,8 @@ inline bool ProvidersReachable() {
         cachedAt     = std::chrono::steady_clock::now();
         cachedValid  = true;
     }
-    Log::Info("GMRC: provider liveness probe -> %s",
-              reachable ? "reachable" : "ALL DOWN");
+    Log::Info("GMRC: provider liveness probe -> %s (%s)",
+              reachable ? "reachable" : "ALL DOWN", which);
     return reachable;
 }
 

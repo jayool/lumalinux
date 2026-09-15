@@ -41,11 +41,14 @@ namespace
 	constexpr int kCurloptUseragent      = 10018;
 	constexpr int kCurloptWritefunction  = 20011;
 	constexpr int kCurleOk               = 0;
+	//   CURLINFO_RESPONSE_CODE = CURLINFO_LONG + 2 = 0x200002
+	constexpr int kCurlinfoResponseCode  = 0x200002;
 
 	using CurlEasyInit    = void* (*)();
 	using CurlEasySetopt  = int   (*)(void*, int, ...);
 	using CurlEasyPerform = int   (*)(void*);
 	using CurlEasyCleanup = void  (*)(void*);
+	using CurlEasyGetinfo = int   (*)(void*, int, ...);
 
 	size_t writeCallback(const char* content, size_t size, size_t memberSize, std::string* data)
 	{
@@ -55,8 +58,9 @@ namespace
 }
 
 int Curl::getString(const char* url, std::string& out, const char* userAgent,
-                    long connectTimeoutSec, long totalTimeoutSec)
+                    long connectTimeoutSec, long totalTimeoutSec, long* httpStatus)
 {
+	if (httpStatus) *httpStatus = 0;
 	// RTLD_LOCAL so curl's symbols don't leak into the Steam process namespace.
 	// The handle is intentionally left open for the process lifetime: SafeMode
 	// fetches once at startup, and dlclose()ing libcurl could tear down global
@@ -72,6 +76,8 @@ int Curl::getString(const char* url, std::string& out, const char* userAgent,
 	auto easySetopt  = reinterpret_cast<CurlEasySetopt>(dlsym(lib, "curl_easy_setopt"));
 	auto easyPerform = reinterpret_cast<CurlEasyPerform>(dlsym(lib, "curl_easy_perform"));
 	auto easyCleanup = reinterpret_cast<CurlEasyCleanup>(dlsym(lib, "curl_easy_cleanup"));
+	// Optional: only needed to report the HTTP status; its absence is not fatal.
+	auto easyGetinfo = reinterpret_cast<CurlEasyGetinfo>(dlsym(lib, "curl_easy_getinfo"));
 	if (!easyInit || !easySetopt || !easyPerform || !easyCleanup)
 	{
 		Log::Error("Curl: dlsym of curl_easy_* failed — SafeMode will fall back to cache");
@@ -99,6 +105,13 @@ int Curl::getString(const char* url, std::string& out, const char* userAgent,
 		easySetopt(curl, kCurloptUseragent, userAgent);
 
 	int res = easyPerform(curl);
+
+	if (httpStatus && easyGetinfo && res == kCurleOk)
+	{
+		long code = 0;
+		if (easyGetinfo(curl, kCurlinfoResponseCode, &code) == kCurleOk)
+			*httpStatus = code;
+	}
 
 	easyCleanup(curl);
 

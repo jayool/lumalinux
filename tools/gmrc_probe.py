@@ -4,8 +4,8 @@ gmrc_probe.py — diagnose the manifest-request-code (GMRC) providers END TO END
 
 Two questions, answered separately, because they have different fixes:
 
-  1. Does each provider (opensteamtool / wudrm / steamrun) still ANSWER with a
-     number for a given manifest gid?  (transport, Cloudflare, 5xx, empty body)
+  1. Does each provider still ANSWER with a number for a given depot + manifest
+     gid?  (transport, Cloudflare 429, backend "unavailable", "Unauthorized")
   2. Is the number it returns still ACCEPTED by Valve's CDN?  A request code is
      only worth anything if `GET /depot/<depot>/manifest/<gid>/5/<code>` on a
      Steam content server returns 200.  A provider can be "up" and still hand
@@ -60,13 +60,24 @@ import urllib.request
 
 # ── the same table as src/gmrc_store.hpp ────────────────────────────────────
 PROVIDERS = [
-    # Found 2026-09-10 inside dx3906's tool (manifest.lua + opensteamtool.toml):
-    # caigamer's own code source, "measured 200, steadier than wudrm".
-    ("depotcn",       "https://depotcn.caigamer.cn/manifest/{gid}",    "plain"),
+    # 2026-09-15: the one live provider (huanyuejue/OpenSteamTool 224931d).
+    # Valve-shaped: depot AND gid. 10 requests / 10 s per IP — this script paces
+    # itself to one per second so a probe never trips it.
+    ("20770407",      "https://20770407.xyz/manifest/{depot}/{gid}",   "plain"),
+    # Dead since 2026-09-09, kept so a run still shows them as DOWN/NO_CODE:
     ("opensteamtool", "https://manifest.opensteamtool.com/{gid}",      "plain"),
     ("wudrm",         "http://gmrc.wudrm.com/manifest/{gid}",          "plain"),
     ("steamrun",      "https://manifest.steam.run/api/manifest/{gid}", "json"),
 ]
+_LAST_REQ = [0.0]
+
+
+def pace(gap=1.0):
+    now = time.monotonic()
+    wait = _LAST_REQ[0] + gap - now
+    if wait > 0:
+        time.sleep(wait)
+    _LAST_REQ[0] = time.monotonic()
 UA_OST   = "OpenSteamTool/1.0"           # what gmrc_store.hpp sends
 UA_CURL  = "curl/8.0"                    # what Cloudflare challenges (RESEARCH §7)
 UA_STEAM = "Valve/Steam HTTP Client 1.0" # what the Steam client sends to the CDN
@@ -201,8 +212,9 @@ def cdn_check(hosts, depot, gid, code):
 
 
 # ── main ────────────────────────────────────────────────────────────────────
-def probe_provider(name, tmpl, kind, gid, ua):
-    url = tmpl.format(gid=gid)
+def probe_provider(name, tmpl, kind, gid, ua, depot=0):
+    url = tmpl.format(gid=gid, depot=depot)
+    pace()
     r = http_get(url, ua)
     res = {"provider": name, "ua": ua, "url": url, "status": r["status"],
            "ms": r["ms"], "error": r["error"],
@@ -351,7 +363,7 @@ def main():
         for name, tmpl, kind in PROVIDERS:
             uas = [UA_OST] + ([UA_CURL] if name == "opensteamtool" else [])
             for ua in uas:
-                r = probe_provider(name, tmpl, kind, gid, ua)
+                r = probe_provider(name, tmpl, kind, gid, ua, depot)
                 r.update({"label": label, "app": app, "depot": depot, "gid": gid})
                 if r["code"] and hosts:
                     st, tried = cdn_check(hosts, depot, gid, r["code"])

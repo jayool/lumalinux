@@ -85,12 +85,13 @@ game you configured locally:
 - **depot keys** from a local `keys.txt` (DepotKey hook)
 - **manifest pinning** to the right version per depot (SLSsteam `config.yaml`
   `ManifestIds`; lumalinux's BuildDep hook is disabled by default)
-- a per-game **shader-cache skip** for every managed game, keyed or not, so Steam
-  never has to request a shader manifest code (ShaderDepot hook)
+- a per-game **shader-cache skip** (ShaderDepot hook): keyless games always,
+  keyed games unless the GMRC hook can fetch their shader manifest code
 - *(opt-in, `LUMA_GMRC=1`)* the **manifest request code** fetch via a provider
-  cascade — `opensteamtool` → `wudrm` → `steamrun` (GMRC hook). All three went
-  dark on 2026-09-09; since v0.20.0 installs rely on the manifests LumaDeck
-  pre-seeds into `depotcache/` and Steam never asks for a code
+  cascade (GMRC hook). The pre-09-09 providers (`opensteamtool`, `wudrm`,
+  `steamrun`) are gone; the cascade now asks `20770407.xyz` (depot + gid, one
+  request per second, bounded retries). Without it, installs rely on the
+  manifests LumaDeck pre-seeds into `depotcache/` and Steam never asks for a code
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
   Steam's per-depot licence filter so content depots aren't dropped
 
@@ -151,8 +152,10 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   since BuildDep isn't installed by default; `LUMA_NO_GMRC` only matters together
   with `LUMA_GMRC`.)
 - `LUMA_GMRC=1`: install the GMRC hook (the request-code provider cascade). Off by
-  default since v0.20.0 — the providers are gone and, with manifests pre-seeded,
-  the code is never requested. Kept in case a provider ever comes back.
+  default since v0.20.0; with manifests pre-seeded the code is never requested.
+- `LUMA_GMRC_URL=<template>`: replace the provider table with one URL for testing,
+  two `%llu` (depot id, manifest gid) — e.g. a black hole to exercise the
+  `depotcache/` fallback, or a local server answering a bogus number.
 - `LUMA_NO_SHADERSKIP`: disable the per-game shader-skip (ShaderDepot); installs are
   unaffected.
 - `LUMA_NO_PKG0_FINDER=1`: disable the package-0 finder (the sole depot injector, on

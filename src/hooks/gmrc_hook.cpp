@@ -41,15 +41,17 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     //       "No connection" in the UI.
     // Everything else still goes to Steam's normal (owned) path.
     if (out_code && (KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id))) {
-        auto code = Gmrc::GetCode(gid);
+        auto code = Gmrc::GetCode(depot_id, gid);
         if (code) {
             *out_code = *code;
             Log::Info("GMRC: INJECTED request code %llu for manifest %llu (depot %u)",
                       (unsigned long long)*code, (unsigned long long)gid, depot_id);
             return 1;  // success — Steam proceeds to download the manifest
         }
-        Log::Warn("GMRC: no code available for manifest %llu — falling through "
-                  "(download will fail with Access Denied)", (unsigned long long)gid);
+        Log::Warn("GMRC: no code available for depot %u manifest %llu — falling "
+                  "through to Steam's own path (a manifest already in depotcache/ "
+                  "needs no code; otherwise the CDN denies it)", depot_id,
+                  (unsigned long long)gid);
     }
 
     if (!g_origFn) return 0;
@@ -113,6 +115,8 @@ bool Install() {
               method, (unsigned long)target, (unsigned long)(base ? target - base : 0));
     return true;
 }
+
+bool Active() { return g_origFn != nullptr; }
 
 void Uninstall() {
     g_origFn = nullptr;

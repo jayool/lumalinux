@@ -23,6 +23,13 @@ namespace Curl
 	// the long-standing SafeMode/GMRC values; the ShaderDepot liveness probe
 	// (Gmrc::ProvidersReachable) passes short values so a wedged provider can't
 	// stall the shader pre-cache job for the full 30s.
+	//
+	// httpStatus: when non-null, receives the HTTP response code of the final
+	// response (0 if curl could not report one). The GMRC cascade uses it to
+	// tell a Cloudflare 429 (rate-limited: wait and retry) from a 401/403 (the
+	// provider has no licence for that depot: give up on it) — both come back
+	// as rc=0 with a short text body, indistinguishable from the body alone.
 	int getString(const char* url, std::string& out, const char* userAgent = nullptr,
-	              long connectTimeoutSec = 15, long totalTimeoutSec = 30);
+	              long connectTimeoutSec = 15, long totalTimeoutSec = 30,
+	              long* httpStatus = nullptr);
 }
