@@ -52,9 +52,12 @@ namespace Gmrc {
 
 namespace detail {
 
-// A non-'curl' UA: the old opensteamtool WAF challenged the default one, and
-// 20770407.xyz sits behind Cloudflare too. Same string OpenSteamTool sends.
-inline constexpr const char* kUserAgent = "OpenSteamTool/1.0";
+// Per-provider User-Agent. A non-'curl' UA is needed behind Cloudflare (the
+// old opensteamtool WAF challenged the default one; 20770407.xyz is fronted by
+// Cloudflare too), and manifestdex answers ONLY to its own string (OpenSteamTool
+// PR #200: "Sends the required User-Agent: ManifestDeX/1.0").
+inline constexpr const char* kUserAgentOst = "OpenSteamTool/1.0";
+inline constexpr const char* kUserAgentMdx = "ManifestDeX/1.0";
 
 // Self-imposed pacing. The provider allows 10 requests / 10 s per IP; Steam
 // asks one code per depot of an install (a big game has 5–10), so one per
@@ -97,14 +100,27 @@ struct Provider {
     const char* urlTemplate;
     bool needsDepot;
     std::optional<uint64_t> (*parse)(const std::string&);
+    const char* userAgent;
 };
 
-// The cascade. One live provider today; the table stays a table so the next
-// one is a line, not a rewrite. The three pre-09-09 providers are gone: they
-// answered nothing usable after that date and a dead entry costs a timeout per
-// depot before the fallback.
+// The cascade, in order. Both measured 2026-09-15 from a codespace with the
+// same (depot, gid): each returned a code that steampipe.akamaized.net accepted
+// (200, 160159 B). The three pre-09-09 providers are gone: they answered
+// nothing usable after that date and a dead entry costs a timeout per depot
+// before the fallback.
+//
+//   20770407  asks Valve per request: a gid nobody in its pool owns, or a bad
+//             gid, comes back "Unauthorized" — a clean DENIED, Steam falls
+//             through. Home-hosted, 10 req/10 s, seen degraded and down.
+//   manifestdex  the free endpoint of a commercial catalogue (manifestdex.com,
+//             OpenSteamTool PR #200, gid only). Answers a NUMBER for any gid,
+//             a made-up one included, so a "no" from it is indistinguishable
+//             from a code — if injected, the CDN 401s and Steam abandons the
+//             install ("Unknown error", the wudrm failure of 2026-09-10).
+//             Hence second, never first.
 inline const Provider kProviders[] = {
-    {"20770407", "https://20770407.xyz/manifest/%llu/%llu", true, &ParsePlainUint},
+    {"20770407",    "https://20770407.xyz/manifest/%llu/%llu",  true,  &ParsePlainUint, kUserAgentOst},
+    {"manifestdex", "https://manifest.manifestdex.com/%llu",    false, &ParsePlainUint, kUserAgentMdx},
 };
 
 // LUMA_GMRC_URL=<template> replaces the table with a single provider for
@@ -112,7 +128,7 @@ inline const Provider kProviders[] = {
 // pins fallback, or at a local server that answers a bogus number to check
 // that a wrong code cannot corrupt an install.
 inline const Provider* OverrideProvider() {
-    static Provider ov{"env-override", nullptr, true, &ParsePlainUint};
+    static Provider ov{"env-override", nullptr, true, &ParsePlainUint, kUserAgentOst};
     static const char* tmpl = std::getenv("LUMA_GMRC_URL");
     if (!tmpl || !tmpl[0]) return nullptr;
     ov.urlTemplate = tmpl;
@@ -195,7 +211,7 @@ inline Outcome Request(const Provider& p, uint32_t depot, uint64_t gid,
     Pace();
     std::string body;
     long status = 0;
-    int rc = Curl::getString(url, body, kUserAgent, connectSec, totalSec, &status);
+    int rc = Curl::getString(url, body, p.userAgent, connectSec, totalSec, &status);
     if (rc != 0) {
         Log::Warn("GMRC: %s transport error (curl rc=%d) depot %u manifest %llu",
                   p.name, rc, depot, (unsigned long long)gid);

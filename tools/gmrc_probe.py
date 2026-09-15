@@ -64,6 +64,9 @@ PROVIDERS = [
     # Valve-shaped: depot AND gid. 10 requests / 10 s per IP — this script paces
     # itself to one per second so a probe never trips it.
     ("20770407",      "https://20770407.xyz/manifest/{depot}/{gid}",   "plain"),
+    # 2026-09-15: OpenSteamTool PR #200. Needs UA "ManifestDeX/1.0". Answers a
+    # number for ANY gid, so only the CDN check says whether it is a code.
+    ("manifestdex",   "https://manifest.manifestdex.com/{gid}",        "plain"),
     # Dead since 2026-09-09, kept so a run still shows them as DOWN/NO_CODE:
     ("opensteamtool", "https://manifest.opensteamtool.com/{gid}",      "plain"),
     ("wudrm",         "http://gmrc.wudrm.com/manifest/{gid}",          "plain"),
@@ -79,6 +82,7 @@ def pace(gap=1.0):
         time.sleep(wait)
     _LAST_REQ[0] = time.monotonic()
 UA_OST   = "OpenSteamTool/1.0"           # what gmrc_store.hpp sends
+UA_MDX   = "ManifestDeX/1.0"             # the only UA manifestdex answers to
 UA_CURL  = "curl/8.0"                    # what Cloudflare challenges (RESEARCH §7)
 UA_STEAM = "Valve/Steam HTTP Client 1.0" # what the Steam client sends to the CDN
 
@@ -361,7 +365,7 @@ def main():
             st_bad, _ = cdn_check(hosts, depot, gid, 1)
             print(f"  CDN baseline: bogus code -> HTTP {st_bad}   (expect 401/403; a 200 here would mean the CDN is not checking codes at all)")
         for name, tmpl, kind in PROVIDERS:
-            uas = [UA_OST] + ([UA_CURL] if name == "opensteamtool" else [])
+            uas = [UA_MDX] if name == "manifestdex" else [UA_OST] + ([UA_CURL] if name == "opensteamtool" else [])
             for ua in uas:
                 r = probe_provider(name, tmpl, kind, gid, ua, depot)
                 r.update({"label": label, "app": app, "depot": depot, "gid": gid})
@@ -407,7 +411,7 @@ def main():
     # 6. summary
     print("=== SUMMARY (per provider, across targets)")
     for name, _, _ in PROVIDERS:
-        vs = [r["verdict"] for r in results if r["provider"] == name and r["ua"] == UA_OST]
+        vs = [r["verdict"] for r in results if r["provider"] == name and r["ua"] in (UA_OST, UA_MDX)]
         counts = {}
         for v in vs:
             counts[v] = counts.get(v, 0) + 1

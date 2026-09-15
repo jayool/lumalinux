@@ -89,9 +89,10 @@ game you configured locally:
   keyed games unless the GMRC hook can fetch their shader manifest code
 - *(opt-in, `LUMA_GMRC=1`)* the **manifest request code** fetch via a provider
   cascade (GMRC hook). The pre-09-09 providers (`opensteamtool`, `wudrm`,
-  `steamrun`) are gone; the cascade now asks `20770407.xyz` (depot + gid, one
-  request per second, bounded retries). Without it, installs rely on the
-  manifests LumaDeck pre-seeds into `depotcache/` and Steam never asks for a code
+  `steamrun`) are gone; the cascade now asks `20770407.xyz` (depot + gid) and
+  then `manifest.manifestdex.com` (gid), one request per second with bounded
+  retries. Without it, installs rely on the manifests LumaDeck pre-seeds into
+  `depotcache/` and Steam never asks for a code
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
   Steam's per-depot licence filter so content depots aren't dropped
 
