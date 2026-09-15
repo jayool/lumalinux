@@ -215,7 +215,26 @@ SLSDeck — y **contiene al autor de lumalinux**, que cumple los cuatro puntos s
 excepción. Un perfil que nos incluye a nosotros no señala a nadie en particular.
 
 **Estado: la datación queda cerrada y es sólida; la autoría queda como hipótesis
-razonable y no verificada.** Y para lo que viene detrás, la buena noticia es que
+razonable y no verificada.**
+
+> **[2026-09-15] Señal externa, y un cruce que no cierra.** En el Discord de
+> LuaTools, a la pregunta de si LuaTools Linux pasará a *"SLSsteam oficial +
+> un plugin para el sistema de descarga"* o seguirá con `slsteam-moon`, SWay
+> (swwayps, el dev de Linux) contesta: *"isso era algo q eu estava fazendo antes
+> de surgir essa questão dos manifests, você poderá escolher entre o slsteam
+> oficial + os plugins ou o slsteam-moon"*. O sea: **existe al menos un
+> esfuerzo de plugin de descarga desde el lado de LuaTools Linux, en pausa
+> desde el 09-09, y con intención de ofrecerlo como opción**. Eso encaja con el
+> perfil de §1.5 (RE previa, port a la API nueva) y añade un candidato con
+> nombre. Pero el cruce de código **no lo confirma**: los dos patrones de
+> `download.lua` (`E8 ? ? ? ? 8B 75 ? 89 D8` y `E8 ? ? ? ? 83 C4 ? 83 78 ? ?
+> 0F 84`, resolución por sitio de llamada, captura por `GetPackage`) no
+> aparecen en `slsteam-moon`, que ancla prólogos y captura el paquete 0 por
+> `LoadPackage`. Son ingenierías distintas, no un port literal. Caben dos
+> lecturas: SWay reescribió la resolución para la API de Lua, o `download.lua`
+> es de otra mano y lo de SWay es un plugin distinto que aún no circula. La
+> autoría sigue abierta; lo que ya no está abierto es que el escenario (a) de
+> §6.2 tiene un actor con distribución real detrás. Y para lo que viene detrás, la buena noticia es que
 **da casi igual**: lo que mueve las Capas 3, 4 y 5 no es quién firmó el fichero,
 sino que la capacidad está publicada, es reproducible por cualquiera con la
 release de hoy, y toca los mismos tres seams que lumalinux. La autoría cambia el
@@ -1524,6 +1543,29 @@ Concretas y comprobables, no "estar atentos":
 
 La primera y la segunda son la misma pregunta que dejó abierta la Capa 0. **No
 hace falta perseguirla**: si se oficializa, se verá.
+
+**Señal observada [2026-09-15].** Discord de LuaTools, SWay (dev de Linux): el
+plan es que el usuario elija entre *"SLSsteam oficial + los plugins"* y
+`slsteam-moon`; el trabajo de plugins estaba en marcha antes del 09-09 y quedó
+en pausa por la cuestión de los manifests. Es la fila *"circulan más plugins
+que enganchan los mismos seams"* a punto de cumplirse, con la diferencia de
+que no sería un `.lua` suelto sino **el camino de instalación de LuaTools
+Linux**. Consecuencias que cambian de prioridad:
+
+- **D y E (detección de coexistencia) pasan de contención a requisito.** Una
+  Deck con LumaDeck y LuaTools Linux a la vez tendría dos inyectores sobre
+  DepotKey, GMRC y el paquete 0, con SLSsteam oficial como base común. Hoy no
+  sabemos cuántos usuarios cruzan los dos; la señal dice que será posible.
+- **F (no escribir en el directorio de plugins, no poner `Plugins: yes`)** se
+  vuelve más importante, no menos: si LuaTools enciende `Plugins: yes` en la
+  config del usuario, cualquier `.lua` que haya en la carpeta corre, incluidos
+  los que no puso LuaTools.
+- **La pregunta de §6.3 (portar lumalinux a plugin) sigue cerrada por el mismo
+  motivo**: un segundo consumidor grande de la API presiona a upstream a darle
+  contrato, y ese es justo el disparador de la fila "aparece versionado de la
+  API". Cuando aparezca, se reabre; antes no.
+- Nada de esto es acción hoy. Es una fila de la tabla pasando de "posible" a
+  "anunciado".
 
 ### 6.5 Una precisión sobre el Accionable F
 
