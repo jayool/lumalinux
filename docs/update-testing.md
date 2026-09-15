@@ -288,3 +288,40 @@ a scan that resolves nothing and ends the finder thread, an `outcome=miss`,
 reading a value from the RVA feed instead of scanning — have never executed
 outside the synthetic tests. That is the argument for layer 2 carrying its
 weight: it is the *only* thing covering the code that runs on the worst day.
+
+# Part 3 — Validating the GMRC path (native install without local manifests)
+
+Run on 2026-09-15 in the SteamOS codespace, branch
+`claude/lumalinux-lumadeck-context-jxgz2c` (`af93594`). The GMRC hook is
+opt-in: launch Steam with `LUMA_GMRC=1`. In the codespace the variable goes on
+the Game Mode script (`LUMA_GMRC=1 ~/start-gamemode.sh`), and the old
+supervisor must be killed first (`pkill -f gamemode-supervisor`), otherwise it
+relaunches Steam with the old environment. Check with
+`tr '\0' '\n' < /proc/$(pgrep -o -x steam)/environ | grep ^LUMA`.
+
+Test game: Balatro (app 2379780, depot 2379781). "No local manifest" means:
+
+```bash
+rm -f ~/.local/share/Steam/steamapps/appmanifest_2379780.acf; rm -rf ~/.local/share/Steam/steamapps/common/Balatro
+rm -f ~/.local/share/Steam/depotcache/2379781_*.manifest; rm -rf ~/.local/share/lumadeck/manifests/2379780
+```
+
+| Test | How | Result |
+|---|---|---|
+| T1 native install | no local manifest, `LUMA_GMRC=1`, install from Steam | **pass** — `20770407 -> unavailable (HTTP 502)` ×3 with 5 s waits, then `got code … (via manifestdex)`, `CDN accepted … (HTTP 206)`, `INJECTED`; content_log `manifest request received 200`, 75 chunks, `finished update`, `StateFlags 4`; Steam wrote `2379781_<gid>.manifest` into depotcache itself |
+| T2 keyed shader depot | let the shader pre-cache run when a provider is up | **not testable here** — the codespace has no GPU (Mesa software, no Vulkan) and Steam never starts the shader job. The hook did let it through (`ShaderDepot: depot 2875150 keyed, a code provider is reachable -> letting the shader pre-cache run`). Deck |
+| T3 dead provider | 20770407 was down all day | **pass (half)** — three paced attempts, 12 s, then the next provider. The full "all providers down → pins" path is what v0.20.1 runs in production |
+| T4 bogus code | `LUMA_GMRC_URL="http://127.0.0.1:8765/manifest/%llu/%llu"` to a local server answering `123456789` | **without the CDN check**: injected, CDN 401 on every host, `update canceled … (Unspecified Error)`, `Update Paused`, removed from schedule, "Unknown error" in the UI, no retry — the wudrm failure of 09-10. **With it** (`af93594`): `CDN REJECTED code 123456789 (HTTP 401) — not handing it to Steam`, Steam goes its own path, `Failed to get manifest request code, 'Access Denied'`, "No internet connection", `Update delayed for 30 secs`, retries by itself — the benign case B |
+
+Provider facts measured the same day (see gmrc_store.hpp header):
+20770407.xyz needs depot + gid, answers `Unauthorized` for a gid it cannot
+serve, 10 requests / 10 s per IP (Cloudflare 429, body `error code: 1015`),
+backend `Service temporarily unavailable - please retry` under load, and was a
+Cloudflare 502 from ~13:40 UTC for the rest of the day. manifestdex needs
+`User-Agent: ManifestDeX/1.0`, gid only, and answers a number for ANY gid
+(a made-up one included), which is why the CDN check exists and why it is
+second in the table.
+
+Cost noted for later: with the first provider down, every depot pays the three
+attempts (~12 s) before the next provider answers. A big game pays it per
+depot. Remembering a failed provider for a minute would remove that.
