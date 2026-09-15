@@ -29,6 +29,7 @@ namespace
 	//   CURLOPT_TIMEOUT        = CURLOPTTYPE_LONG        + 13  = 13
 	//   CURLOPT_FOLLOWLOCATION = CURLOPTTYPE_LONG        + 52  = 52
 	//   CURLOPT_CONNECTTIMEOUT = CURLOPTTYPE_LONG        + 78  = 78
+	//   CURLOPT_RANGE          = CURLOPTTYPE_OBJECTPOINT + 7   = 10007
 	//   CURLOPT_WRITEDATA      = CURLOPTTYPE_OBJECTPOINT + 1   = 10001
 	//   CURLOPT_URL            = CURLOPTTYPE_OBJECTPOINT + 2   = 10002
 	//   CURLOPT_USERAGENT      = CURLOPTTYPE_OBJECTPOINT + 18  = 10018
@@ -36,6 +37,7 @@ namespace
 	constexpr int kCurloptTimeout        = 13;
 	constexpr int kCurloptFollowlocation = 52;
 	constexpr int kCurloptConnecttimeout = 78;
+	constexpr int kCurloptRange          = 10007;
 	constexpr int kCurloptWritedata      = 10001;
 	constexpr int kCurloptUrl            = 10002;
 	constexpr int kCurloptUseragent      = 10018;
@@ -58,7 +60,8 @@ namespace
 }
 
 int Curl::getString(const char* url, std::string& out, const char* userAgent,
-                    long connectTimeoutSec, long totalTimeoutSec, long* httpStatus)
+                    long connectTimeoutSec, long totalTimeoutSec, long* httpStatus,
+                    const char* byteRange)
 {
 	if (httpStatus) *httpStatus = 0;
 	// RTLD_LOCAL so curl's symbols don't leak into the Steam process namespace.
@@ -103,6 +106,8 @@ int Curl::getString(const char* url, std::string& out, const char* userAgent,
 	easySetopt(curl, kCurloptTimeout,        (long)totalTimeoutSec);
 	if (userAgent)
 		easySetopt(curl, kCurloptUseragent, userAgent);
+	if (byteRange)
+		easySetopt(curl, kCurloptRange, byteRange);
 
 	int res = easyPerform(curl);
 

@@ -47,6 +47,7 @@
 
 #include "curl.hpp"
 #include "log.hpp"
+#include "version.hpp"
 
 namespace Gmrc {
 
@@ -54,10 +55,15 @@ namespace detail {
 
 // Per-provider User-Agent. A non-'curl' UA is needed behind Cloudflare (the
 // old opensteamtool WAF challenged the default one; 20770407.xyz is fronted by
-// Cloudflare too), and manifestdex answers ONLY to its own string (OpenSteamTool
-// PR #200: "Sends the required User-Agent: ManifestDeX/1.0").
-inline constexpr const char* kUserAgentOst = "OpenSteamTool/1.0";
-inline constexpr const char* kUserAgentMdx = "ManifestDeX/1.0";
+// Cloudflare too). We identify as ourselves rather than as OpenSteamTool: the
+// 20770407 status page shows a client flooding it, its users blame "OST
+// scraping" (3a.lol, 2026-09-15), and if the operator ever filters or quotas
+// by client we want to be a small, well-behaved client with its own name, not
+// share OST's bucket. manifestdex is the exception: it answers ONLY to its own
+// string (OpenSteamTool PR #200: "Sends the required User-Agent:
+// ManifestDeX/1.0").
+inline constexpr const char* kUserAgentLuma = "lumalinux/" LUMALINUX_VERSION_STRING;
+inline constexpr const char* kUserAgentMdx  = "ManifestDeX/1.0";
 
 // Self-imposed pacing. The provider allows 10 requests / 10 s per IP; Steam
 // asks one code per depot of an install (a big game has 5–10), so one per
@@ -119,7 +125,7 @@ struct Provider {
 //             install ("Unknown error", the wudrm failure of 2026-09-10).
 //             Hence second, never first.
 inline const Provider kProviders[] = {
-    {"20770407",    "https://20770407.xyz/manifest/%llu/%llu",  true,  &ParsePlainUint, kUserAgentOst},
+    {"20770407",    "https://20770407.xyz/manifest/%llu/%llu",  true,  &ParsePlainUint, kUserAgentLuma},
     {"manifestdex", "https://manifest.manifestdex.com/%llu",    false, &ParsePlainUint, kUserAgentMdx},
 };
 
@@ -128,7 +134,7 @@ inline const Provider kProviders[] = {
 // pins fallback, or at a local server that answers a bogus number to check
 // that a wrong code cannot corrupt an install.
 inline const Provider* OverrideProvider() {
-    static Provider ov{"env-override", nullptr, true, &ParsePlainUint, kUserAgentOst};
+    static Provider ov{"env-override", nullptr, true, &ParsePlainUint, kUserAgentLuma};
     static const char* tmpl = std::getenv("LUMA_GMRC_URL");
     if (!tmpl || !tmpl[0]) return nullptr;
     ov.urlTemplate = tmpl;
@@ -228,13 +234,58 @@ inline Outcome Request(const Provider& p, uint32_t depot, uint64_t gid,
     return o;
 }
 
+// Ask Valve's CDN whether `code` really unlocks (depot, gid): the same GET
+// Steam is about to issue, but for one byte (Range: 0-0). 200/206 = Valve
+// accepts the code; anything else = it does not, or we could not tell. Only an
+// accepted code is ever handed to Steam, because a rejected one is not a soft
+// failure: the CDN 401s, Steam cancels the install ("Unspecified Error"),
+// parks it in Update Paused and removes it from the schedule — measured
+// 2026-09-15 with a bogus code (LUMA_GMRC_URL to a local server), and the
+// wudrm failure users saw on 09-10. Two CDN hosts, in case one edge is off.
+// No pacing: this is Valve's CDN, not a provider.
+inline const char* const kCdnHosts[] = {
+    "https://steampipe.akamaized.net",
+    "https://fastly.cdn.steampipe.steamcontent.com",
+};
+
+inline bool CdnAcceptsCode(uint32_t depot, uint64_t gid, uint64_t code) {
+    for (const char* host : kCdnHosts) {
+        char url[256];
+        std::snprintf(url, sizeof url, "%s/depot/%u/manifest/%llu/5/%llu",
+                      host, depot, (unsigned long long)gid, (unsigned long long)code);
+        std::string body;
+        long status = 0;
+        int rc = Curl::getString(url, body, kUserAgentLuma, kConnectTimeoutSec, kTotalTimeoutSec,
+                                 &status, "0-0");
+        if (rc != 0) {
+            Log::Warn("GMRC: CDN check transport error (curl rc=%d) at %s — trying next host", rc, host);
+            continue;
+        }
+        if (status == 200 || status == 206) {
+            Log::Info("GMRC: CDN accepted code %llu for depot %u manifest %llu (HTTP %ld, %s)",
+                      (unsigned long long)code, depot, (unsigned long long)gid, status, host);
+            return true;
+        }
+        Log::Warn("GMRC: CDN REJECTED code %llu for depot %u manifest %llu (HTTP %ld, %s) — "
+                  "not handing it to Steam", (unsigned long long)code, depot,
+                  (unsigned long long)gid, status, host);
+        return false;
+    }
+    Log::Warn("GMRC: could not reach any CDN host to check code %llu for depot %u manifest "
+              "%llu — not handing it to Steam", (unsigned long long)code, depot,
+              (unsigned long long)gid);
+    return false;
+}
+
 } // namespace detail
 
 // Returns the manifest request code for (depot, gid), fetching from the
 // provider cascade on first use and caching it briefly. Per provider: up to
 // kMaxAttempts paced attempts, waiting on RATE_LIMITED / TRANSIENT, giving up
 // at once on DENIED (that provider has no licence for the depot) and on
-// TRANSPORT / NO_CODE (dead or changed). nullopt = no provider had a code.
+// TRANSPORT / NO_CODE (dead or changed). A code is returned only after Valve's
+// CDN accepted it (CdnAcceptsCode); a rejected one counts as that provider's
+// DENIED. nullopt = no provider had a code Valve accepts.
 inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
     using namespace detail;
     const auto now = std::chrono::steady_clock::now();
@@ -268,11 +319,17 @@ inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
             std::optional<uint64_t> code;
             Outcome o = Request(*p, depot, gid, &code);
             if (o == Outcome::CODE) {
-                remember(*code);
-                Log::Info("GMRC: got code %llu for depot %u manifest %llu (via %s, attempt %d)",
+                Log::Info("GMRC: got code %llu for depot %u manifest %llu (via %s, attempt %d) — checking with the CDN",
                           (unsigned long long)*code, depot, (unsigned long long)gid,
                           p->name, attempt);
-                return code;
+                if (CdnAcceptsCode(depot, gid, *code)) {
+                    remember(*code);
+                    return code;
+                }
+                // A number Valve does not accept: for this provider it is a "no"
+                // (manifestdex answers a number for gids it cannot serve).
+                remember(0);
+                break;
             }
             if (o == Outcome::DENIED) {
                 remember(0);

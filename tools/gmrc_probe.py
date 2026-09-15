@@ -81,7 +81,7 @@ def pace(gap=1.0):
     if wait > 0:
         time.sleep(wait)
     _LAST_REQ[0] = time.monotonic()
-UA_OST   = "OpenSteamTool/1.0"           # what gmrc_store.hpp sends
+UA_OST   = "lumalinux/probe"             # gmrc_store.hpp sends lumalinux/<version>
 UA_MDX   = "ManifestDeX/1.0"             # the only UA manifestdex answers to
 UA_CURL  = "curl/8.0"                    # what Cloudflare challenges (RESEARCH §7)
 UA_STEAM = "Valve/Steam HTTP Client 1.0" # what the Steam client sends to the CDN

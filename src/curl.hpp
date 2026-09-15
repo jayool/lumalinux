@@ -29,7 +29,12 @@ namespace Curl
 	// tell a Cloudflare 429 (rate-limited: wait and retry) from a 401/403 (the
 	// provider has no licence for that depot: give up on it) — both come back
 	// as rc=0 with a short text body, indistinguishable from the body alone.
+	//
+	// byteRange: when non-null, sets CURLOPT_RANGE (e.g. "0-0") so a probe of a
+	// large object costs one byte instead of the whole body — the GMRC cascade
+	// checks a request code against Valve's CDN this way before handing it to
+	// Steam (the manifest itself is hundreds of KB).
 	int getString(const char* url, std::string& out, const char* userAgent = nullptr,
 	              long connectTimeoutSec = 15, long totalTimeoutSec = 30,
-	              long* httpStatus = nullptr);
+	              long* httpStatus = nullptr, const char* byteRange = nullptr);
 }
