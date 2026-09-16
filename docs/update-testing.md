@@ -322,29 +322,8 @@ Cloudflare 502 from ~13:40 UTC for the rest of the day. manifestdex needs
 (a made-up one included), which is why the CDN check exists and why it is
 second in the table.
 
-Provider measurements of 2026-09-16 (gmrc_probe over the codespace's whole
-keys.txt, 42 depots of 7 apps, plus targeted runs):
-
-- Coverage: 42/42 depots got a code Valve accepted from every live provider —
-  20770407, manifestdex, wudrm, steam.run. opensteamtool is dead (Cloudflare
-  403 for any User-Agent). 30+ of those depots are DLC depots.
-- wudrm and steam.run, dead since 09-09, were back on 09-16; huanyuejue's fork
-  switched its default from 20770407 to wudrm the night before (`b754d13`).
-- Old builds: codes are issued for ANY manifest of a depot the pool owns — a
-  3-day-old Balatro gid and a 2.5-year-old one (`1435140510430378530`) both
-  `CODE_VALID` on all four. Pinning to a historical build needs only the gid.
-- Two pools, not five providers: wudrm, steam.run and manifestdex hand out the
-  SAME code for the same manifest often enough (three pairwise matches in the
-  first run, dozens in the 42-depot run) that they must share a backend; each
-  front keeps its own cache for minutes (manifestdex served one code for 5+
-  min). 20770407 never matches anyone. They died together on 09-09 and came
-  back together on 09-16.
-- Code lifetime: a manifestdex code checked against the CDN every 2 min was
-  still accepted after 58 min (07:40 → 08:38). The "15 minutes" figure is
-  wrong; the 120 s cache in gmrc_store.hpp is far inside the window.
-- manifestdex: 12 requests at 1/s, 12 × 200, no rate limit at our pace.
-  wudrm serves a Cloudflare JS challenge to the `curl` User-Agent but not to
-  `lumalinux/…`.
+Provider measurements (coverage, old builds, the two pools, code lifetime,
+rate limits) live in `docs/RESEARCH.md` §20.
 
 Cost noted for later: with the first provider down, every depot pays the three
 attempts (~12 s) before the next provider answers. A big game pays it per

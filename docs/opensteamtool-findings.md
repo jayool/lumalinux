@@ -708,6 +708,49 @@ that owns no licences.
 | depotcache pre-seed inside `BuildDepotDependency` | independent confirmation of §19.3 |
 | Product Key, OnlineFix, Tokeer URI, auto-update, mirrors | not applicable |
 
+## Delta — 2026-09-16: huanyuejue's fork, PR #200 and ManifestDeXCore
+
+**The fork that carries the Chinese user base.**
+[`huanyuejue/OpenSteamTool`](https://github.com/huanyuejue/OpenSteamTool) is
+what Fluent-Steam-Lua installs. Provider commits, all read as diffs:
+
+| commit | date (CST) | change |
+|---|---|---|
+| `224931d` | 09-13 | adds provider `20770407` — `https://20770407.xyz/manifest/%llu/%llu` (depot, gid), `needsDepot=true`, made default; old three kept |
+| `a730c12` | 09-15 22:41 | adds `manifestdex` (copy of PR #200, `User-Agent: ManifestDeX/1.0`) |
+| `b754d13` | 09-15 23:26 | **default switched from 20770407 to wudrm** ("recommended for China users") — an hour after 20770407 went 502 |
+
+The last one is how we learned wudrm and steam.run were alive again; probed
+on 09-16 07:03 UTC, all four providers `CODE_VALID`. Upstream
+`OpenSteam001/OpenSteamTool` is still frozen at `2a08b0b` (07-06);
+[PR #200](https://github.com/OpenSteam001/OpenSteamTool/pull/200)
+(Berkecann, 09-13, approved "good" by Fluxerr, open) adds `manifestdex`
+with a per-provider `headers` field. Berkecann is the ManifestDeX
+organisation.
+
+**ManifestDeXCore.dll is OpenSteamTool.** Read the three DLLs of their
+Windows client with `strings`, `pefile` and the upstream tree side by side:
+PDB path `C:\Users\berke\source\repos\OpenSteamTool\…`, core built
+2026-09-13 01:20 UTC, proxies `dwmapi.dll` / `xinput1_4.dll` (09-12) that load
+`ManifestDexCore.dll` into `steam.exe`, the same `Hooks_NetPacket_Manifest`
+(intercepts `ContentServerDirectory.GetManifestRequestCode#1`, eMsg 151/147,
+and forges the response), the same protobufs, steam-monitor patterns via
+jsDelivr/raw, CEF DevTools JS injection (`/json/version`), OST's
+`stats.opensteamtool.com`, and OST's issue URL in its own error text.
+Provider table: manifestdex first, then wudrm, opensteamtool, steam.run.
+No endpoint reports codes back; no SteamID leaves the process. What is
+theirs: the "Add with ManifestDeX" button injected into store pages →
+`api.manifestdex.com/api/Manifest/generate-lua` (costs credits;
+"You have run out of credits. Please finish the ad link opened in your
+browser") → a local HTTP listener catches the ad callback → `download-lua?token=`;
+"Login with M^X Desktop" (Bearer token). The request-code endpoint is the
+free hook; the lua catalogue is the product. The SLSsteam Discord's 09-08
+take ("potential hubcap stealer", "3 manifest per week", "vibe coded") fits.
+
+**For lumalinux:** both providers are in the v0.21.0 cascade behind the CDN
+check (RESEARCH §20). The per-provider `headers` idea from PR #200 became our
+per-provider `userAgent`.
+
 ## References
 
 - OST (`OpenSteam001/OpenSteamTool` @ `main`): `src/dllmain.cpp`;

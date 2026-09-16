@@ -290,6 +290,21 @@ Valve's CDN; the file itself always comes from the CDN (or from `depotcache/` if
 pre-seeded). opensteamtool/wudrm/steamrun are **code sources, not file mirrors** —
 don't confuse "the manifest" (file) with "the manifest request code" (token).
 
+> **Current table (v0.21.0, 2026-09-16) — see §20 for how it got here.**
+> Four live providers behind two pools of licensed accounts; every code is
+> checked against Valve's CDN before Steam sees it; a dead provider is skipped
+> for a minute; the hook is on by default again.
+>
+> | Order | Provider | URL | Pool | Notes |
+> |---|---|---|---|---|
+> | 1 | 20770407 | `https://20770407.xyz/manifest/{depot}/{gid}` | A | honest `Unauthorized` for what it lacks; home-hosted; 10 req/10 s |
+> | 2 | manifestdex | `https://manifest.manifestdex.com/{gid}` | B | needs `User-Agent: ManifestDeX/1.0`; a number for ANY gid |
+> | 3 | wudrm | `http://gmrc.wudrm.com/manifest/{gid}` | B | back 09-16; JS-challenges the `curl` UA only |
+> | 4 | steamrun | `https://manifest.steam.run/api/manifest/{gid}` | B | back 09-16; JSON `{"content":…}` |
+> | — | opensteamtool | `https://manifest.opensteamtool.com/{gid}` | ? | dead: Cloudflare 403 for every UA |
+>
+> The rest of this section is the 2026-07 state, kept for the history.
+
 Since **v0.15.8** lumalinux tries a **3-provider cascade** (mirroring
 OpenSteamTool's own `kProviders` table in `ManifestClient.cpp`); first usable
 code wins:
@@ -2215,3 +2230,109 @@ the pin when the installed manifest is in no source), which needs a real Valve
 update; and the case where the archive lacks the installed manifest, which
 falls through to P-ToyStore / luastools online, and past that to the Hubcap
 single-manifest plan B in `assella-analysis.md` §8-F1 (not implemented).
+
+## 20. The providers come back (2026-09-15/16) — two pools, the CDN check, GMRC on by default
+
+Continuation of §19. Everything measured from the SteamOS codespace, with
+`tools/gmrc_probe.py` (one request per second, every code taken to the CDN)
+and the hook itself; the pass/fail table of the runtime tests is in
+`docs/update-testing.md` Part 3.
+
+### 20.1 What 09-09 was, seen from the providers' side
+
+A request code is a **bearer token**: Valve signs it for (depot, manifest) and
+the CDN serves the manifest to whoever presents it — the CDN GET is anonymous,
+and a code minted by a provider's server works from any machine (measured:
+a 20770407 code fetched `steampipe.akamaized.net/depot/2545361/manifest/…`
+from the codespace, 200, 160159 B). What changed on 09-09 is the check **at
+issue time**: Valve mints only for an account holding a licence for the app
+(BetterSteamTools' reading, `opensteamtool-findings.md` delta 09-12: the code
+became depot-bound; a gid-only request fell back to a free-to-play carrier
+account and 401'd everywhere else). The pre-09-09 providers lived off that
+missing check and died together.
+
+The cleanest confirmation is 20770407's own history: on 2026-07-21 it was
+already handed around as `20770407.xyz/manifest/<gid>` (OpenSteamTool #164);
+on 2026-09-13 huanyuejue's fork (`224931d`) switched it to
+`/manifest/<depot>/<gid>` — once Valve checked licences the provider had to
+know which app each request was for, to pick an account that owns it ("Auto
+getAppid" on its status page). It adapted in four days; the others did not.
+
+### 20.2 Two pools, not five providers
+
+| | 20770407.xyz | manifestdex / wudrm / steam.run |
+|---|---|---|
+| who | one person, Ryzen at home, public status page (~70k users, ~170k req/day, 10 req/10 s per IP, donations to UNICEF) | one backend with three fronts; manifestdex is the free endpoint of a paid catalogue (manifestdex.com, credits + ad links, OpenSteamTool PR #200) |
+| asks | depot + gid | gid only (they hold a manifest catalogue to map it) |
+| unknown / bad gid | `Unauthorized` | a **number that the CDN rejects** |
+| seen | healthy → 31 % failures for an hour → Cloudflare 502 for ~18 h (09-15) → back (09-16) | dead 09-09 → 09-16, then all three back the same morning |
+
+The shared backend is inferred from the codes themselves: Valve mints a code
+per request (20770407 and wudrm asked in the same second differ), yet wudrm,
+steam.run and manifestdex return the **same** code for the same manifest
+often enough (3 pairwise matches in the first run, dozens across a 42-depot
+run) that they must serve one cache. Each front keeps its own copy for minutes
+(manifestdex served one code for 5+ min). Codes live **≥ 58 min** (one checked
+against the CDN every 2 min from 07:40 to 08:38, still 206), so the "15
+minutes" figure was wrong.
+
+`ManifestDeXCore.dll` (their Windows client, read with `strings`/`pefile`) is
+**OpenSteamTool rebranded**: PDB path `C:\Users\berke\source\repos\OpenSteamTool`,
+built 2026-09-13, same `dwmapi.dll`/`xinput1_4.dll` proxies, same net-packet
+hook on `GetManifestRequestCode` (eMsg 151/147), same provider table with theirs
+first. It reports no codes back and sends no identity; the credits/ads gate
+only their lua catalogue. Where their backend gets its accounts is not visible
+from the client.
+
+The Chinese OST community (3a.lol) converged on exactly this pair by 09-13:
+"the domestic source" (20770407) plus ManifestDeX "complement each other";
+huanyuejue's fork made 20770407 the default and, when it went down on 09-15,
+added manifestdex and switched the default to wudrm (`a730c12`, `b754d13`) —
+which is how we learned wudrm was back.
+
+### 20.3 What the cascade does with that (v0.21.0)
+
+- Order: 20770407 (the only one whose "no" is honest) → manifestdex (fastest
+  front of pool B, no limit at 1 req/s) → wudrm → steam.run. opensteamtool out.
+- **Every code is checked against Valve's CDN** with a one-byte ranged GET of
+  the manifest before Steam sees it (`CdnAcceptsCode`). Measured on 09-15
+  with a bogus code from a local server (`LUMA_GMRC_URL`): injected, Steam
+  cancels the install with `Unspecified Error`, parks it in `Update Paused`,
+  removes it from the schedule and never retries — the wudrm failure users
+  saw on 09-10. Checked and refused: Steam's own `Access Denied` path, "No
+  internet connection", `Update delayed for 30 secs`, retries by itself.
+- One request per second, three paced attempts on 429 / 5xx / "Service
+  temporarily unavailable", a provider that fails outright skipped for 60 s
+  (with the first provider down every depot paid ~12 s before the next one
+  answered), 120 s cache, User-Agent `lumalinux/<version>` (manifestdex
+  requires its own; 20770407's users blame "OST scraping" for its outage and
+  we do not want to share OST's bucket if it ever filters by client).
+- `gmrc.json` next to `status.json`: `{"providers":"up"|"down","at":…}` after
+  every lookup; "down" only when no provider answered at all.
+- ShaderDepot is conditional again: keyed game + GMRC installed + a provider
+  answering → the shader pre-cache runs; otherwise the v0.20.0 clean skip.
+
+### 20.4 Measured coverage
+
+- The codespace catalogue, 42 depots of 7 apps including 30+ DLC depots:
+  42/42 `CODE_VALID` from all four providers.
+- Old builds: Balatro's gid of 3 days before and one of **2.5 years** before
+  (`1435140510430378530`) both granted by all four. A pin to any historical
+  build needs only the gid, no manifest file (#43 in LumaDeck).
+- Native install without any local manifest (Balatro): provider → CDN 206 →
+  injected → `manifest request received 200` → 75 chunks → `finished update`;
+  Steam wrote the manifest into `depotcache/` itself.
+- Keyed shader depot (Lethal Company 1966720, install triggers the job;
+  "verify integrity" does not): two shader manifests, both `via 20770407`,
+  CDN accepted, `shadercache/1966720/` populated, no popup.
+
+### 20.5 What this changes upstream of lumalinux
+
+With a live provider Steam can fetch any manifest it needs, so the pinned
+model of §19 (every managed game frozen to a build whose manifests we hold)
+stops being the system and becomes the fallback. LumaDeck's `pins.py` is to
+move to: no pin while `gmrc.json` says `up` (Steam installs and updates like
+an owned game), freeze every unpinned game to its installed build when it
+says `down` and release them when it says `up` again; explicit pins stay for
+Auto-update-off, LuaTools fixes and #43. Keys still only come from Hubcap
+zips; a new DLC depot still needs one. Not implemented at the time of writing.
