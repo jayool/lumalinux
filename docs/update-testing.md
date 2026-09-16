@@ -309,7 +309,7 @@ rm -f ~/.local/share/Steam/depotcache/2379781_*.manifest; rm -rf ~/.local/share/
 | Test | How | Result |
 |---|---|---|
 | T1 native install | no local manifest, `LUMA_GMRC=1`, install from Steam | **pass** — `20770407 -> unavailable (HTTP 502)` ×3 with 5 s waits, then `got code … (via manifestdex)`, `CDN accepted … (HTTP 206)`, `INJECTED`; content_log `manifest request received 200`, 75 chunks, `finished update`, `StateFlags 4`; Steam wrote `2379781_<gid>.manifest` into depotcache itself |
-| T2 keyed shader depot | let the shader pre-cache run when a provider is up | **not testable here** — the codespace has no GPU (Mesa software, no Vulkan) and Steam never starts the shader job. The hook did let it through (`ShaderDepot: depot 2875150 keyed, a code provider is reachable -> letting the shader pre-cache run`). Deck |
+| T2 keyed shader depot | let the shader pre-cache run when a provider is up. Uninstall + install Lethal Company (1966720) on 2026-09-16 — "verify integrity" does NOT start the shader job, an install does | **pass** — content depot 1966721 injected, then the shader depot 1966720 asked for two manifests (one per shader variant), both `via 20770407`, `CDN accepted (HTTP 206)`, `INJECTED`; content_log `Shader update changed : Running Update,Downloading,Staging` … `starting commit … 1 updated` … `None`; `steamapps/shadercache/1966720/` holds `fozpipelinesv6` and `transcoded_video.foz`; no popup. The precompiled shaders every managed game lost on 09-09 are back. (2875150 the day before showed the hook letting the job through but no manifest request: that app has no shader manifest to fetch.) |
 | T3 dead provider | 20770407 was down all day | **pass (half)** — three paced attempts, 12 s, then the next provider. The full "all providers down → pins" path is what v0.20.1 runs in production |
 | T4 bogus code | `LUMA_GMRC_URL="http://127.0.0.1:8765/manifest/%llu/%llu"` to a local server answering `123456789` | **without the CDN check**: injected, CDN 401 on every host, `update canceled … (Unspecified Error)`, `Update Paused`, removed from schedule, "Unknown error" in the UI, no retry — the wudrm failure of 09-10. **With it** (`af93594`): `CDN REJECTED code 123456789 (HTTP 401) — not handing it to Steam`, Steam goes its own path, `Failed to get manifest request code, 'Access Denied'`, "No internet connection", `Update delayed for 30 secs`, retries by itself — the benign case B |
 
@@ -321,6 +321,30 @@ Cloudflare 502 from ~13:40 UTC for the rest of the day. manifestdex needs
 `User-Agent: ManifestDeX/1.0`, gid only, and answers a number for ANY gid
 (a made-up one included), which is why the CDN check exists and why it is
 second in the table.
+
+Provider measurements of 2026-09-16 (gmrc_probe over the codespace's whole
+keys.txt, 42 depots of 7 apps, plus targeted runs):
+
+- Coverage: 42/42 depots got a code Valve accepted from every live provider —
+  20770407, manifestdex, wudrm, steam.run. opensteamtool is dead (Cloudflare
+  403 for any User-Agent). 30+ of those depots are DLC depots.
+- wudrm and steam.run, dead since 09-09, were back on 09-16; huanyuejue's fork
+  switched its default from 20770407 to wudrm the night before (`b754d13`).
+- Old builds: codes are issued for ANY manifest of a depot the pool owns — a
+  3-day-old Balatro gid and a 2.5-year-old one (`1435140510430378530`) both
+  `CODE_VALID` on all four. Pinning to a historical build needs only the gid.
+- Two pools, not five providers: wudrm, steam.run and manifestdex hand out the
+  SAME code for the same manifest often enough (three pairwise matches in the
+  first run, dozens in the 42-depot run) that they must share a backend; each
+  front keeps its own cache for minutes (manifestdex served one code for 5+
+  min). 20770407 never matches anyone. They died together on 09-09 and came
+  back together on 09-16.
+- Code lifetime: a manifestdex code checked against the CDN every 2 min was
+  still accepted after 58 min (07:40 → 08:38). The "15 minutes" figure is
+  wrong; the 120 s cache in gmrc_store.hpp is far inside the window.
+- manifestdex: 12 requests at 1/s, 12 × 200, no rate limit at our pace.
+  wudrm serves a Cloudflare JS challenge to the `curl` User-Agent but not to
+  `lumalinux/…`.
 
 Cost noted for later: with the first provider down, every depot pays the three
 attempts (~12 s) before the next provider answers. A big game pays it per
