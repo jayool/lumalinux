@@ -328,3 +328,29 @@ rate limits) live in `docs/RESEARCH.md` §20.
 Cost noted for later: with the first provider down, every depot pays the three
 attempts (~12 s) before the next provider answers. A big game pays it per
 depot. Remembering a failed provider for a minute would remove that.
+
+# Part 4 — Validating LumaDeck 0.9's native model (2026-09-16)
+
+SteamOS codespace, lumalinux 0.21.0 (`a632d1b`, GMRC on by default) and the
+LumaDeck branch `be91d05`. The plugin change is backend-only, so deploying is
+`cp backend/*.py /home/deck/homebrew/plugins/LumaDeck/backend/` and a Decky
+restart (`pkill -f PluginLoader; ~/start-decky.sh` in the codespace, which has
+no systemd; `sudo systemctl restart plugin_loader` on a Deck). Decky's log in
+the codespace is `/tmp/decky.log` (`grep -a`, it carries colour codes);
+lumalinux's provider state is `/run/user/1000/lumalinux/gmrc.json`.
+
+Starting point: `gmrc.json` said `up` (Steam had just asked a code),
+`ManifestIds` held Balatro (frozen by the user, `fix_id: null`) and app
+2215260 (frozen by a LuaTools version fix).
+
+| Test | How | Result |
+|---|---|---|
+| V1 release | the local pass releases pins it owns and 0.8-era leftovers, never the user's or a fix's; the toggle releases at once | **pass** — the pass left both frozen games alone (correct: theirs). Auto-update **on** for Balatro → `steamidra_lite … --unpin 2379780` immediately, `2379781` gone from `ManifestIds`, game stays on "Play" |
+| V2 native add | add Into the Breach (590380) from the UI with `up` | **pass** — steamidra invoked **without** `--pin`, `ManifestIds` unchanged, lumalinux `CDN accepted … depot 590380` (the shader depot too) and the game installed |
+| V3 outage | Steam restarted with `LUMA_GMRC_URL="https://127.0.0.1:9/manifest/%llu/%llu"`, Balatro uninstalled + installed so Steam asks for a code | **pass** — `gmrc.json` → `down` at 13:33:11; next local pass: `no provider answers — <app> frozen to its installed build …` for the seven unfrozen installed games, `reason: "providers"` in pins.json, their depots in `ManifestIds`. Balatro, frozen to `3512319404653808464` with the archived manifest healed into depotcache, **finished installing without any code** on Steam's 30 s retry — the 0.8 fallback doing its job |
+| V4 recovery | Steam restarted without the override (`gmrc.json` still `down`: nobody asked a code), Decky restarted so the 30-min pass runs at once | **pass** — `provider probe ok (20770407.xyz, depot 590381)`, then `provider up — <app> released to native updates` × 7; `ManifestIds` back to the fix's two depots only; no `reason: "providers"` left |
+
+Not exercised: a real Valve update arriving while `up` (Steam does it alone;
+nothing of ours runs) and one arriving while `down` (freeze within a minute,
+then the 0.8 update pass). Both are Steam-side behaviours already measured in
+Part 3 / RESEARCH §19.5.
