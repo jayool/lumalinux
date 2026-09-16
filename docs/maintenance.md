@@ -23,9 +23,9 @@ proves anything is **manual, on a SteamOS box with a logged-in Steam** — the
 procedure is written out at the end of §C and applies to hooks just as much as
 to the finder.
 
-The startup toast shows `X/Y hooks active` (e.g. `2/2 hooks active` on current
-defaults: DepotKey, ShaderDepot — GMRC is opt-in since v0.20.0 and BuildDep is
-not in the default set). What to grep for, and what it tells you:
+The startup toast shows `X/Y hooks active` (e.g. `3/3 hooks active` on current
+defaults: DepotKey, ShaderDepot, GMRC — GMRC was opt-in in v0.20.x and is on
+by default again since v0.21.0; BuildDep is not in the default set). What to grep for, and what it tells you:
 
 | Grep finds… | Diagnosis | Go to |
 |---|---|---|
@@ -131,10 +131,11 @@ That's it. Users get the fix on next Steam launch, zero action required.
 
 If `check_patterns.py` (or a Deck log) shows `outcome=miss` on a hook, a byte
 pattern actually moved; the **string-anchored** hooks re-derive themselves.
-(BuildDep and, since v0.20.0, GMRC are **diagnostic** — a `miss` on either does
-not block; the only blocking re-derive trigger is DepotKey. The package-0
-finder still derives its GOT from the GMRC *prologue tail*, §C, independent of
-the hook.)
+(BuildDep is **diagnostic** — a `miss` does not block. GMRC was diagnostic in
+v0.20.x and is **non-critical** since v0.21.0, like ShaderDepot and Reconcile:
+a `miss` opens an issue and auto-derives but does not block; the only blocking
+re-derive trigger is DepotKey. The package-0 finder still derives its GOT from
+the GMRC *prologue tail*, §C, independent of the hook.)
 **DepotKey is different since 2026-07-06**: the shipped hook resolves via RTTI
 first (`CConfigStore` slot 6, RESEARCH §15), so its byte pattern is only a
 fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
@@ -703,7 +704,8 @@ knowing:
 2. **`SafeMode` mismatch but `check_patterns.py` is CLEAN on that binary** →
    A.1 (hash bump in `updates.yaml`, no rebuild).
 3. **`outcome=miss` on DepotKey** → A.2 / A.3
-   (re-derive patterns, rebuild, new release). A miss on GMRC is diagnostic only.
+   (re-derive patterns, rebuild, new release). A miss on GMRC or ShaderDepot is
+   non-critical: the watch auto-derives it, installs keep working meanwhile.
 4. **`PKG0_FINDER: … NOT_FOUND` or `… AMBIGUOUS`** (grep `PKG0_FINDER`; anything
    but `UNIQUE` on both anchors means no injection) → C (re-derive finder
    anchors by hand).

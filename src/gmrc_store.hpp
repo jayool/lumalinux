@@ -47,6 +47,7 @@
 
 #include "curl.hpp"
 #include "log.hpp"
+#include "status.hpp"
 #include "version.hpp"
 
 namespace Gmrc {
@@ -75,6 +76,13 @@ inline constexpr int kMinGapMs        = 1000;
 inline constexpr int kRateLimitWaitMs = 10000;
 inline constexpr int kTransientWaitMs = 5000;
 inline constexpr int kMaxAttempts     = 3;
+// A provider that exhausted its attempts (or died at transport) is skipped for
+// this long before being asked again. Without it, with the first provider
+// down, EVERY depot of an install paid the three attempts (~12 s measured on
+// 2026-09-15) before the next provider answered — a big game pays that per
+// depot. A DENIED or a CDN-rejected code is an answer, not a failure, and does
+// not trip this.
+inline constexpr int kProviderDownSec = 60;
 // Codes rotate on Valve's side (~15–20 min measured) and the provider caches
 // them itself for a while, so a long-lived entry could hand Steam a stale code
 // (which the CDN rejects, and Steam then abandons the whole install with
@@ -99,6 +107,18 @@ inline std::optional<uint64_t> ParsePlainUint(const std::string& body) {
     return code;
 }
 
+// Parse steam.run's JSON body: {"content":"<uint64>", ...} — pull the string
+// value of "content". Mirrors OpenSteamTool's ParseSteamRunJson.
+inline std::optional<uint64_t> ParseSteamRunJson(const std::string& body) {
+    size_t key = body.find("\"content\"");
+    if (key == std::string::npos) return std::nullopt;
+    size_t q1 = body.find('"', key + 9);
+    if (q1 == std::string::npos) return std::nullopt;
+    size_t q2 = body.find('"', q1 + 1);
+    if (q2 == std::string::npos) return std::nullopt;
+    return ParsePlainUint(body.substr(q1 + 1, q2 - q1 - 1));
+}
+
 struct Provider {
     const char* name;
     // printf template. needsDepot: two %llu — depot id, then manifest gid
@@ -109,25 +129,50 @@ struct Provider {
     const char* userAgent;
 };
 
-// The cascade, in order. Both measured 2026-09-15 from a codespace with the
-// same (depot, gid): each returned a code that steampipe.akamaized.net accepted
-// (200, 160159 B). The three pre-09-09 providers are gone: they answered
-// nothing usable after that date and a dead entry costs a timeout per depot
-// before the fallback.
+// The cascade, in order. There are two POOLS of licensed accounts behind the
+// four live providers, not four providers (measured 2026-09-15/16 over 42
+// depots: wudrm, steam.run and manifestdex hand out the SAME code for the same
+// manifest often enough that they share a backend, each front with its own
+// cache of a few minutes; 20770407 never matches anyone). They died together
+// on 09-09 and came back together on 09-16. opensteamtool is gone (Cloudflare
+// 403 for any User-Agent).
 //
-//   20770407  asks Valve per request: a gid nobody in its pool owns, or a bad
-//             gid, comes back "Unauthorized" — a clean DENIED, Steam falls
-//             through. Home-hosted, 10 req/10 s, seen degraded and down.
-//   manifestdex  the free endpoint of a commercial catalogue (manifestdex.com,
-//             OpenSteamTool PR #200, gid only). Answers a NUMBER for any gid,
-//             a made-up one included, so a "no" from it is indistinguishable
-//             from a code — if injected, the CDN 401s and Steam abandons the
-//             install ("Unknown error", the wudrm failure of 2026-09-10).
-//             Hence second, never first.
+//   20770407  pool A. Asks Valve per request: a gid nobody in its pool owns,
+//             or a bad gid, comes back "Unauthorized" — a clean DENIED, the
+//             cascade moves on. The only one that says "no" honestly, hence
+//             first. Home-hosted, 10 req/10 s, seen degraded and down.
+//   manifestdex  pool B, fastest front (120–500 ms), HTTPS, no rate limit at
+//             1 req/s, needs its own User-Agent. Answers a NUMBER for any
+//             gid, a made-up one included — CdnAcceptsCode is what makes it
+//             usable. The free endpoint of a commercial catalogue
+//             (manifestdex.com, OpenSteamTool PR #200).
+//   wudrm     pool B, the pre-09-09 classic, plain HTTP, gid only. Serves a
+//             Cloudflare JS challenge to the `curl` User-Agent, not to ours.
+//   steamrun  pool B, JSON body, ~1 s.
+// The later fronts of pool B only help when manifestdex's front is down and
+// the pool is not; they cost nothing while kProviderDownSec skips the dead.
 inline const Provider kProviders[] = {
-    {"20770407",    "https://20770407.xyz/manifest/%llu/%llu",  true,  &ParsePlainUint, kUserAgentLuma},
-    {"manifestdex", "https://manifest.manifestdex.com/%llu",    false, &ParsePlainUint, kUserAgentMdx},
+    {"20770407",    "https://20770407.xyz/manifest/%llu/%llu",       true,  &ParsePlainUint,    kUserAgentLuma},
+    {"manifestdex", "https://manifest.manifestdex.com/%llu",         false, &ParsePlainUint,    kUserAgentMdx},
+    {"wudrm",       "http://gmrc.wudrm.com/manifest/%llu",           false, &ParsePlainUint,    kUserAgentLuma},
+    {"steamrun",    "https://manifest.steam.run/api/manifest/%llu",  false, &ParseSteamRunJson, kUserAgentLuma},
 };
+inline constexpr size_t kProviderCount = sizeof kProviders / sizeof kProviders[0];
+
+// Per-provider "skip until" (index into kProviders; the env override uses the
+// slot past the table). Set by GetCode when a provider fails outright, read by
+// GetCode and ProvidersReachable.
+inline std::chrono::steady_clock::time_point& DownUntil(size_t idx) {
+    static std::chrono::steady_clock::time_point t[kProviderCount + 1]{};
+    return t[idx < kProviderCount ? idx : kProviderCount];
+}
+inline bool IsDown(size_t idx) {
+    return std::chrono::steady_clock::now() < DownUntil(idx);
+}
+inline void MarkDown(size_t idx, const char* name, const char* why) {
+    DownUntil(idx) = std::chrono::steady_clock::now() + std::chrono::seconds(kProviderDownSec);
+    Log::Warn("GMRC: %s %s — skipping it for %d s", name, why, kProviderDownSec);
+}
 
 // LUMA_GMRC_URL=<template> replaces the table with a single provider for
 // testing: two %llu (depot, gid). Point it at a black hole to exercise the
@@ -310,20 +355,33 @@ inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
 
     const Provider* ov = OverrideProvider();
     const Provider* first = ov ? ov : kProviders;
-    const Provider* last  = ov ? ov + 1 : kProviders + (sizeof kProviders / sizeof kProviders[0]);
+    const Provider* last  = ov ? ov + 1 : kProviders + kProviderCount;
 
+    // "Up" = at least one provider gave an answer (a code, accepted or not,
+    // or a DENIED). Only a run where every provider was dead or skipped counts
+    // as the providers being down — a game no pool owns is not an outage.
+    bool anyAnswered = false;
     for (const Provider* p = first; p != last; ++p) {
+        const size_t idx = ov ? kProviderCount : (size_t)(p - kProviders);
+        if (IsDown(idx)) {
+            Log::Info("GMRC: %s marked down — skipping", p->name);
+            continue;
+        }
         Log::Info("GMRC: fetching request code for depot %u manifest %llu from %s...",
                   depot, (unsigned long long)gid, p->name);
+        Outcome lastOutcome = Outcome::TRANSPORT;
         for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
             std::optional<uint64_t> code;
             Outcome o = Request(*p, depot, gid, &code);
+            lastOutcome = o;
             if (o == Outcome::CODE) {
+                anyAnswered = true;
                 Log::Info("GMRC: got code %llu for depot %u manifest %llu (via %s, attempt %d) — checking with the CDN",
                           (unsigned long long)*code, depot, (unsigned long long)gid,
                           p->name, attempt);
                 if (CdnAcceptsCode(depot, gid, *code)) {
                     remember(*code);
+                    Status::RecordGmrc(true);
                     return code;
                 }
                 // A number Valve does not accept: for this provider it is a "no"
@@ -332,6 +390,7 @@ inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
                 break;
             }
             if (o == Outcome::DENIED) {
+                anyAnswered = true;
                 remember(0);
                 break;  // definitive for this provider: next provider, if any
             }
@@ -344,11 +403,16 @@ inline std::optional<uint64_t> GetCode(uint32_t depot, uint64_t gid) {
             }
             break;  // TRANSPORT / NO_CODE: this provider is dead or changed shape
         }
+        if (lastOutcome == Outcome::TRANSPORT || lastOutcome == Outcome::NO_CODE ||
+            lastOutcome == Outcome::RATE_LIMITED || lastOutcome == Outcome::TRANSIENT)
+            MarkDown(idx, p->name, OutcomeName(lastOutcome));
     }
 
-    Log::Warn("GMRC: no code for depot %u manifest %llu from any provider "
+    Status::RecordGmrc(anyAnswered);
+    Log::Warn("GMRC: no code for depot %u manifest %llu from any provider%s "
               "(download falls through to Steam's own path)",
-              depot, (unsigned long long)gid);
+              depot, (unsigned long long)gid,
+              anyAnswered ? "" : " — providers DOWN");
     return std::nullopt;
 }
 
@@ -382,11 +446,13 @@ inline bool ProvidersReachable() {
 
     const Provider* ov = OverrideProvider();
     const Provider* first = ov ? ov : kProviders;
-    const Provider* last  = ov ? ov + 1 : kProviders + (sizeof kProviders / sizeof kProviders[0]);
+    const Provider* last  = ov ? ov + 1 : kProviders + kProviderCount;
 
     bool reachable = false;
     const char* which = "none";
     for (const Provider* p = first; p != last; ++p) {
+        const size_t idx = ov ? kProviderCount : (size_t)(p - kProviders);
+        if (IsDown(idx)) continue;   // GetCode just found it dead; don't re-spend
         std::optional<uint64_t> code;
         Outcome o = Request(*p, 1, 1, &code, /*connect*/ 3, /*total*/ 5);
         if (o == Outcome::TRANSPORT || o == Outcome::TRANSIENT) continue;

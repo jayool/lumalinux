@@ -131,11 +131,14 @@ def emit_rvas_file(result, out_dir, steam_version):
 #                 A miss/ambiguity here blocks the whitelist (A.2).
 #   NONCRITICAL — a miss loses an optional feature but installs still work, so
 #                 the hash can still be whitelisted; we open an issue + auto-derive
-#                 so it gets fixed. ShaderDepot (per-game shader skip) and Reconcile
+#                 so it gets fixed. ShaderDepot (per-game shader skip), Reconcile
 #                 (NotifyLicensesUpdated, the no-restart Add Game path — a miss only
-#                 costs a Steam restart, degrades cleanly) live here. Which of these
-#                 resolved on a build is recorded per-hash in updates.yaml (`caps:`)
-#                 so LumaDeck's update gate knows what a build would lose.
+#                 costs a Steam restart, degrades cleanly) and, since v0.21.0, GMRC
+#                 (the request-code cascade: a miss costs the native manifest fetch
+#                 and the shader pre-cache; installs still come from the manifests
+#                 LumaDeck pre-seeds) live here. Which of these resolved on a build
+#                 is recorded per-hash in updates.yaml (`caps:`) so LumaDeck's
+#                 update gate knows what a build would lose.
 #   DIAGNOSTIC  — never blocks, never opens an issue; reported for information
 #                 only. LoadPackage (opt-in, multi-match EXPECTED — 3 candidates,
 #                 runtime picks index 0) and BuildDep (disabled since SLSsteam
@@ -146,6 +149,7 @@ CRITICAL = {
 NONCRITICAL = {
     "kShaderCacheDepotPattern":    "ShaderDepot",
     "kNotifyLicensesUpdatedPattern": "Reconcile",
+    "kGmrcFunctionPattern":        "GMRC",
 }
 # Short capability token per non-critical const, written into updates.yaml as a
 # `# caps: <token>=ok|moved ...` comment next to each whitelisted hash. LumaDeck
@@ -155,18 +159,15 @@ NONCRITICAL = {
 CAP_TOKEN = {
     "kShaderCacheDepotPattern":      "shader",
     "kNotifyLicensesUpdatedPattern": "reconcile",
+    "kGmrcFunctionPattern":          "gmrc",
 }
 DIAGNOSTIC = {
     "kLoadPackagePattern": "LoadPackage",
-    # GMRC is opt-in at runtime since v0.20.0 (LUMA_GMRC=1): the public
-    # request-code providers are gone and content installs from a pre-seeded
-    # depotcache/ without ever asking for a code. A pattern miss loses nothing
-    # that ships by default, so it must NOT block the whitelist. Validate for
-    # information only; re-promote to CRITICAL if a provider comes back and the
-    # hook is switched on by default again. (The package-0 finder's GOT
+    # GMRC was diagnostic in v0.20.x (hook opt-in, providers dead); since
+    # v0.21.0 the hook is on by default and the const is NONCRITICAL above.
+    # Not CRITICAL: installs never depend on it. (The package-0 finder's GOT
     # derivation scans the GMRC PROLOGUE TAIL on its own — verify_gmrc_got /
     # finder:gmrc_tail below — and stays BLOCKING; it never used this pattern.)
-    "kGmrcFunctionPattern": "GMRC",
     # BuildDep is disabled at runtime since SLSsteam 20260714 owns
     # BuildDepotDependency (it hooks the prologue in memory first). We no longer
     # install the hook, so a pattern miss must NOT block the whitelist. Validate
@@ -975,9 +976,10 @@ def main():
         pat_rvas = result["hooks"].get(GMRC_XREF["label"], {}).get("rvas", [])
         if pat_rvas:
             gx["agrees_with_pattern"] = (pat_rvas[0] == gx["rva"])
-            # Informational since v0.20.0: the GMRC hook is opt-in, so a
-            # pattern/xref disagreement can't strand a default install. It is
-            # still reported (result["gmrc_xref"]) for whoever turns the hook on.
+            # Informational: a pattern/xref disagreement can't strand an install
+            # (GMRC is NONCRITICAL — a wrong site means the hook's LmHook detour
+            # lands elsewhere, which Install() reports as FAILED and the session
+            # degrades to the pre-seeded manifests). Reported in result["gmrc_xref"].
 
     # 2) non-criticals (ShaderDepot, Reconcile) — a miss opens an issue + auto-
     # derive but still PR-able. Record per-hook capability (ok/moved) so the

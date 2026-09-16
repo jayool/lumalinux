@@ -26,4 +26,14 @@ void SetBlocked(const char* reason);
 // logs a warning and continues.
 void Write();
 
+// Live health of the manifest-request-code providers, written by the GMRC
+// cascade after every lookup to gmrc.json next to status.json:
+//   {"providers": "up" | "down", "at": "<ISO-8601 UTC>"}
+// "up" = some provider answered (a code, or an honest denial); "down" = every
+// provider was dead. LumaDeck's local pass reads it to freeze unpinned games
+// to their installed build while no provider can serve a code, and to release
+// them when one is back. Separate file so status.json keeps its one-shot,
+// startup-only meaning. Best-effort, cheap (a ~60-byte write per lookup).
+void RecordGmrc(bool providersUp);
+
 } // namespace Status

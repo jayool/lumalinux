@@ -139,8 +139,8 @@ void InstallHooks() {
     // depots"). The package-0 finder (started below, on its own thread) injects
     // the depot ids into PackageId=0 so the per-depot license check passes and
     // the depots surface; BuildDep PATCHes their gid/size; DepotKey serves the
-    // keys; GMRC (opt-in since v0.20.0) injected the manifest request code back
-    // when public providers existed. Mirrors LumaCore.
+    // keys; GMRC injects the manifest request code from the provider cascade
+    // (on by default again since v0.21.0). Mirrors LumaCore.
     //
     // The legacy LoadPackage hook is OPT-IN as a diagnostic only — set
     // LUMA_LOADPKG_DEBUG=1 to install it and log every PackageId+AppIdVec
@@ -154,25 +154,23 @@ void InstallHooks() {
     // means its byte pattern stopped matching after a Steam update — that's the
     // early-warning signal surfaced in the startup toast.
     struct HookSpec { const char* name; const char* disableEnv; bool (*install)(); };
+    // GMRC is ON by default again since v0.21.0 (off: LUMA_NO_GMRC). It was
+    // opt-in in v0.20.x because the providers it fed on died on 2026-09-09 and
+    // one of them answered *wrong* numbers, which the hook injected: the CDN
+    // 401'd and Steam abandoned installs ("Unknown error", 2026-09-10). Two
+    // things changed: the cascade now checks every code against Valve's CDN
+    // before handing it to Steam (gmrc_store.hpp, CdnAcceptsCode), and there
+    // are live providers with licensed accounts behind them (two pools, see
+    // the table there). Validated end to end in the SteamOS codespace on
+    // 2026-09-15/16: native install without local manifests, keyed shader
+    // pre-cache, dead provider, bogus code (docs/update-testing.md Part 3).
+    // With no provider alive the hook falls through and Steam behaves as in
+    // v0.20.x: installs from the manifests LumaDeck pre-seeds in depotcache/.
     std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
         {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},
+        {"GMRC",        "LUMA_NO_GMRC",     &Hooks::Gmrc::Install},
     };
-    // GMRC is OPT-IN since v0.20.0 (LUMA_GMRC=1). The providers it fed on
-    // (opensteamtool, wudrm, steam.run) stopped issuing valid codes on
-    // 2026-09-09; a provider answering a *wrong* number (wudrm did, for days)
-    // made the hook inject it, the CDN 401'd every content server and Steam
-    // abandoned the whole install ("Unknown error") — measured 2026-09-10 in
-    // the SteamOS codespace. Content never needs the code once its manifest
-    // sits in depotcache/, which is how LumaDeck installs. Since 2026-09-15 the
-    // cascade points at a live provider again (20770407.xyz, see
-    // gmrc_store.hpp) — the native path: Steam fetches manifests itself and
-    // depotcache/ pins become the fallback. It stays opt-in until that path is
-    // validated end to end.
-    const bool gmrcOptIn = std::getenv("LUMA_GMRC") != nullptr;
-    if (gmrcOptIn) {
-        specs.push_back({"GMRC", "LUMA_NO_GMRC", &Hooks::Gmrc::Install});
-    }
     // BuildDep is OFF by default since SLSsteam 20260714 hooks
     // BuildDepotDependency itself (for its ManifestIds / DepotBlacklist
     // features) and loads first (LD_AUDIT before our LD_PRELOAD), overwriting
@@ -192,23 +190,17 @@ void InstallHooks() {
     int active = 0, expected = 0;
     // Critical-hook gate (the "abort if the scan fails" that #17 promised but never
     // wrote). DepotKey is the CRITICAL set (mirrors check_patterns.py): without
-    // the keys a forced download can't decrypt. GMRC left the set in v0.20.0 —
-    // with the manifest pre-seeded in depotcache/ Steam never asks for a request
-    // code, so the hook is not load-bearing (see the opt-in note above). Track
-    // whether the critical installed, and whether its absence is a genuine FAILED
-    // (its pattern moved) vs a deliberate env-disable — only the former marks the
-    // session blocked for LumaDeck.
+    // the keys a forced download can't decrypt. GMRC left the set in v0.20.0 and
+    // stays out: with the manifest pre-seeded in depotcache/ Steam never asks for
+    // a request code, so a missing GMRC hook degrades (no native fetch, no shader
+    // pre-cache) but never strands an install. Track whether the critical
+    // installed, and whether its absence is a genuine FAILED (its pattern moved)
+    // vs a deliberate env-disable — only the former marks the session blocked
+    // for LumaDeck.
     bool depotKeyOk = false, criticalFailed = false;
     std::string failed;
     std::string installed;   // names of the pieces actually installed, derived
                              // from the loop so the summary never goes stale
-    if (!gmrcOptIn) {
-        // Record the intentional off-state so status.json is self-documenting:
-        // DISABLED, not FAILED (LumaDeck only trips "not supported" on a FAILED
-        // critical, and GMRC is no longer critical anyway).
-        Log::Info("Install: GMRC hook off by default (opt in with LUMA_GMRC=1)");
-        Status::RecordHook("GMRC", Status::DISABLED);
-    }
     for (const auto& s : specs) {
         if (std::getenv(s.disableEnv)) {
             Log::Warn("Install: %s hook DISABLED via %s", s.name, s.disableEnv);
@@ -269,6 +261,8 @@ void InstallHooks() {
     // manifests pre-seeded in depotcache/ Steam never requests a code, so a
     // missing GMRC hook must not switch the finder off (it did until v0.19 and
     // produced "installed" games with an empty directory — 0 target depots).
+    // Still true with GMRC on by default (v0.21.0): its absence costs the
+    // native fetch and the shader pre-cache, not the install.
     const bool criticalsActive = depotKeyOk;
     if (!criticalsActive) {
         Status::RecordHook("PackageZeroFinder", Status::DISABLED);

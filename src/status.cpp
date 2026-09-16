@@ -51,6 +51,12 @@ std::string ResolvePath() {
     return dir + "/status.json";
 }
 
+std::string SiblingPath(const char* name) {
+    std::string p = ResolvePath();
+    size_t slash = p.rfind('/');
+    return p.substr(0, slash + 1) + name;
+}
+
 std::string IsoUtcNow() {
     std::time_t now = std::time(nullptr);
     std::tm tm_utc;
@@ -76,6 +82,17 @@ void RecordHook(const char* name, Outcome outcome) {
 void SetBlocked(const char* reason) {
     std::lock_guard<std::mutex> lock(g_mtx);
     g_blocked = reason ? reason : "";
+}
+
+void RecordGmrc(bool providersUp) {
+    static std::mutex m;
+    std::lock_guard<std::mutex> lock(m);
+    std::string path = SiblingPath("gmrc.json");
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, "{\"providers\": \"%s\", \"at\": \"%s\"}\n",
+                 providersUp ? "up" : "down", IsoUtcNow().c_str());
+    std::fclose(f);
 }
 
 void Write() {

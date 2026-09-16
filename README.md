@@ -87,14 +87,15 @@ game you configured locally:
   `ManifestIds`; lumalinux's BuildDep hook is disabled by default)
 - a per-game **shader-cache skip** (ShaderDepot hook): keyless games always,
   keyed games unless the GMRC hook can fetch their shader manifest code
-- *(opt-in, `LUMA_GMRC=1`)* the **manifest request code** fetch via a provider
-  cascade (GMRC hook). The pre-09-09 providers (`opensteamtool`, `wudrm`,
-  `steamrun`) are gone; the cascade now asks `20770407.xyz` (depot + gid) and
-  then `manifest.manifestdex.com` (gid), one request per second with bounded
-  retries; a code reaches Steam only after Valve's CDN has accepted it (a
-  one-byte fetch of the manifest), so a bogus code can never cancel an install.
-  Without it, installs rely on the manifests LumaDeck pre-seeds into
-  `depotcache/` and Steam never asks for a code
+- the **manifest request code** fetch via a provider cascade (GMRC hook, on by
+  default again since v0.21.0): `20770407.xyz` (depot + gid), then
+  `manifest.manifestdex.com`, `gmrc.wudrm.com` and `manifest.steam.run` (gid),
+  one request per second, bounded retries, a dead provider skipped for a
+  minute. A code reaches Steam only after Valve's CDN has accepted it (a
+  one-byte fetch of the manifest), so a bogus code can never cancel an
+  install. Without a live provider the hook falls through and installs rely
+  on the manifests LumaDeck pre-seeds into `depotcache/`; provider health is
+  written to `gmrc.json` next to `status.json` for LumaDeck
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
   Steam's per-depot licence filter so content depots aren't dropped
 
@@ -152,10 +153,7 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   `info`. Set `debug` for the per-call hook traces.
 - `LUMA_NO_DEPOTKEY` / `LUMA_NO_BUILDDEP` / `LUMA_NO_GMRC`: disable one install-path
   hook. (`LUMA_NO_BUILDDEP` is a no-op unless `LUMA_FORCE_BUILDDEP` is also set,
-  since BuildDep isn't installed by default; `LUMA_NO_GMRC` only matters together
-  with `LUMA_GMRC`.)
-- `LUMA_GMRC=1`: install the GMRC hook (the request-code provider cascade). Off by
-  default since v0.20.0; with manifests pre-seeded the code is never requested.
+  since BuildDep isn't installed by default.)
 - `LUMA_GMRC_URL=<template>`: replace the provider table with one URL for testing,
   two `%llu` (depot id, manifest gid) — e.g. a black hole to exercise the
   `depotcache/` fallback, or a local server answering a bogus number.
