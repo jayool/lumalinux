@@ -1508,14 +1508,25 @@ que cubren tres cosas que a un fork de SLSsteam le tendrían que doler:
    manifestdex (`gmrc_store.hpp` 0.21.0) y no hay rastro de que validen el
    código contra el CDN antes de inyectarlo. Los keyless providers que SLSDeck
    metió el 11-sep (`slsdeck-analysis.md` §16.1) son del plugin, no del motor.
-2. **El beta de Steam de septiembre** (`slsdeck-analysis.md` §17.1). El
-   tracker externo `swwayps/steam-monitor` sí se mueve, pero es un cron que
-   reescribe una tabla del README: Beta `1789086785` (11-sep) → `1789606022`
-   (17-sep); Stable sin cambio desde `1788291500` (2-sep, el mismo que nuestro
-   `watch-steam.yml` whitelisteó ese día). La última publicación real de
-   patrones (`chore(patterns): publish Steam locator metadata`) es del 3-sep.
-   Es decir: el canal de auto-reparación de M1 no ha tenido que actuar porque
-   stable no ha cambiado, y nadie ha publicado nada para el beta.
+2. **Un cliente stable de escritorio sin patrones desde hace 12 días.** El
+   tracker externo `swwayps/steam-monitor` sigue vivo, pero es un cron que
+   reescribe una tabla del README y publica TOMLs firmados de locators por
+   sha de `steamclient.so` (`linux32/steamclient/<sha>.toml` + `.sig`; el
+   canal firmado de M1). Mide el manifest de escritorio
+   (`steam_client_ubuntu12`), no el de la Deck. Lo que dice: Stable
+   `1788652215` desde el **5-sep**; Beta `1789086785` (11-sep) →
+   `1789606022` (17-sep). Lo que ha publicado: el último TOML es
+   `237495b4…` para `1788400362` (3-sep, revisión 2, 53 locators). **Para el
+   stable de escritorio del 5-sep no hay TOML**, ni para ningún beta. En la
+   Deck no se nota: `steam_client_steamdeck_stable_ubuntu12` sigue en
+   `1788291500` desde el 2-sep (nuestro `watch-steam.yml` lo whitelisteó ese
+   día, `bc54101b…`, el mismo sha que el TOML de moon del 1-sep; los 14 runs
+   diarios posteriores hasta el 16-sep salieron en cache-hit sin nada nuevo).
+   Los dos canales han divergido: escritorio ha recibido dos clientes
+   (3-sep y 5-sep) que la Deck no tiene. Un usuario de moon en Linux de
+   escritorio con el cliente del 5-sep depende desde entonces de que el
+   locator estructural resuelva solo, y nadie ha mirado si lo hace.
+
 3. **El anuncio de LuaTools del 13-sep** (BetterSteamTools + archivo
    `luastools`, `opensteamtool-findings.md`) prometiendo "una actualización de
    los desarrolladores de Linux con el nuevo sistema". Cuatro días después no
@@ -1538,8 +1549,8 @@ tag no se ha movido pero el zip sí (mismo patrón que criticamos en
 
 **Lo que esto significa para SLSDeck** (que carga moon y sólo moon, §16.2 de
 `slsdeck-analysis.md`): su motor lleva dos semanas sin mantenimiento en el
-periodo de más cambio del año. Mientras stable no se mueva, no se nota. El día
-que stable coja el cliente del beta (identificadores minificados
+periodo de más cambio del año. Mientras el stable de la Deck no se mueva, no se
+nota. El día que ese canal coja el cliente del beta (identificadores minificados
 multi-carácter, `router-backstack` como objeto), moon dependerá de que su
 locator estructural (M1) resuelva solo o de que alguien publique patrones
 firmados; si no, SLSDeck cae a Headcrab, que **baja un cliente de Steam
@@ -1553,7 +1564,7 @@ whitelist; el último ciclo (2-sep) fue limpio.
 |---|---|---|---|
 | 1 | Código de moon | — | Sin cambios desde `cae57d2`; nada que leer |
 | 2 | Providers de códigos de moon | — | Pool B (wudrm + steam.run), subconjunto del nuestro; sin validación CDN conocida |
-| 3 | Patrones para el beta de septiembre | — | Nada publicado; stable no ha cambiado, así que aún no se ha probado |
+| 3 | Patrones firmados (steam-monitor) | — | Último TOML 3-sep (`1788400362`); nada para el stable de escritorio del 5-sep ni para los betas; Deck stable sin cambio desde el 2-sep |
 | 4 | Promesa de LuaTools (13-sep) | — | Incumplida a 17-sep; re-barrer |
 
 **Ninguno produce trabajo.** El próximo barrido arranca en `cae57d2`
