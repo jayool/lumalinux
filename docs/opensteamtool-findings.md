@@ -752,22 +752,20 @@ check (RESEARCH §20). The per-provider `headers` idea from PR #200 became our
 per-provider `userAgent`.
 
 
-## Delta — 2026-09-17: BetterSteamTools squashes its history; huanyuejue quiet
+## Delta — 2026-09-17: one BetterSteamTools commit; huanyuejue quiet
 
 **Frozen references.** `madoiscool/BetterSteamTools` `main` @ `dec29b7`
-(2026-09-17 08:05 UTC, author mendy-tools, subject "pee and poo"); `updates`
-branch unchanged at `e4e1152` (v1.0.3, 09-13, still `latest.toml`); no release
-after v1.0.3. `huanyuejue/OpenSteamTool` unchanged at `b754d13` (09-15): nothing
-after the default-provider switch to wudrm. `OpenSteam001/OpenSteamTool` stale
-since July, as before.
+(2026-09-17 08:05 UTC, author mendy-tools, subject "pee and poo"), one commit on
+top of `7243c60`; `updates` branch unchanged at `e4e1152` (v1.0.3, 09-13, still
+`latest.toml`); no release after v1.0.3. `huanyuejue/OpenSteamTool` unchanged at
+`b754d13` (09-15): nothing after the default-provider switch to wudrm.
+`OpenSteam001/OpenSteamTool` stale since July, as before.
 
-**[read] The history is gone.** `main` now has exactly **one commit**. Every
-hash cited in the two deltas above (`2c7af78` … `f7b7caf`, `4a97d9d`, `7243c60`)
-is unreachable from `main`; they survive only in clones taken before 09-17 and
-in the sandbox clone used here, which let `git diff 7243c60 dec29b7` recover
-what the squash actually changed. From now on this document's BST references
-must be read as "tree at commit X on date Y", not as links that resolve on
-GitHub.
+*Method note.* A first pass of this sweep concluded that BST had squashed its
+history to a single commit. That was a shallow-clone artefact (the sandbox
+proxy served `main` at depth 1 and a later deepen fixed it); the branch has
+its full history and every hash cited above resolves. Recorded so the mistake
+is not repeated: check `.git/shallow` before claiming a rewrite.
 
 **[read] What changed between `7243c60` (09-12) and `dec29b7`: two files.**
 
