@@ -1486,3 +1486,76 @@ un caso Debian de escritorio que no se da en SteamOS ni en el port CachyOS. Nada
 > desarrolladores de Linux publicarán una actualización con el nuevo sistema".
 > A 2026-09-13 `swwayps/slsteam-moon`, `luatools-moon` y `cloudredirect-moon`
 > no tienen commits posteriores al 2026-09-02. Re-barrer cuando llegue.
+
+## Delta — 2026-09-17 (desde el delta del 2026-09-12)
+
+*Barrido el 2026-09-17 sobre clones frescos de `swwayps/slsteam-moon` (las tres
+ramas), `luatools-moon`, `cloudredirect-moon`, `jsdelivr` y `steam-monitor`, más
+las páginas de issues y releases de `slsteam-moon`. Nada compilado.*
+
+**Resultado: cero commits nuevos en el código.** `slsteam-moon` sigue en
+`cae57d2` (2-sep), `beta` en `62767b3` (4-sep), `millennium` en `499b50e`
+(22-jul). `luatools-moon` en `3c5e8e4` (2-sep, el espejo jsDelivr, D18).
+`cloudredirect-moon` en `67d2c81` (18-ago). Sin tag nuevo: v2.8 (21-jul) sigue
+siendo la última release. Todo lo que había en el delta anterior sigue siendo
+lo último. Contando desde el último commit de código son **15 días de silencio**
+que cubren tres cosas que a un fork de SLSsteam le tendrían que doler:
+
+1. **La caída de los providers del 9-sep** y su vuelta parcial el 15-16-sep
+   (`RESEARCH.md` §20). `manifestcode` de moon pide a `gmrc.wudrm.com` y
+   `manifest.steam.run`, los dos del pool B; con ellos de vuelta, sus códigos
+   vuelven solos, sin que moon haya tocado nada. No tienen 20770407 ni
+   manifestdex (`gmrc_store.hpp` 0.21.0) y no hay rastro de que validen el
+   código contra el CDN antes de inyectarlo. Los keyless providers que SLSDeck
+   metió el 11-sep (`slsdeck-analysis.md` §16.1) son del plugin, no del motor.
+2. **El beta de Steam de septiembre** (`slsdeck-analysis.md` §17.1). El
+   tracker externo `swwayps/steam-monitor` sí se mueve, pero es un cron que
+   reescribe una tabla del README: Beta `1789086785` (11-sep) → `1789606022`
+   (17-sep); Stable sin cambio desde `1788291500` (2-sep, el mismo que nuestro
+   `watch-steam.yml` whitelisteó ese día). La última publicación real de
+   patrones (`chore(patterns): publish Steam locator metadata`) es del 3-sep.
+   Es decir: el canal de auto-reparación de M1 no ha tenido que actuar porque
+   stable no ha cambiado, y nadie ha publicado nada para el beta.
+3. **El anuncio de LuaTools del 13-sep** (BetterSteamTools + archivo
+   `luastools`, `opensteamtool-findings.md`) prometiendo "una actualización de
+   los desarrolladores de Linux con el nuevo sistema". Cuatro días después no
+   hay ni rama ni commit ni issue que lo mencione en ningún repo de swwayps.
+
+**La única señal de vida del autor:** cerrar la issue #6 (*"Upstreaming the moon
+branches — would you consider sending the fixes back?"*, ItszFinn, abierta el
+17-ago) el 7-sep, sin comentario visible. La #7 (*"User controllable
+coverage"*, yofukashino, 24-ago) sigue abierta sin respuesta. Ninguna issue
+sobre providers, "No internet connection" ni el 9-sep: o los usuarios de moon
+no reportan ahí, o reportan en SLSDeck / Discord.
+
+**Espejo jsDelivr (`swwayps/jsdelivr`, D18).** `manifest.json` fija tres
+componentes: `slsteam-moon-linux-2.8-lumen.zip` (asset resubido el 3-sep sobre
+el tag v2.8, sha `2bb3fc08…`), `luatools-linux.zip` v2.8 (10-ago) y
+`lumen-linux.zip` v2.8 (10-ago). Último commit el 3-sep. Los binarios que bajan
+los usuarios de SLSDeck son, por tanto, un build del 3-sep etiquetado v2.8: el
+tag no se ha movido pero el zip sí (mismo patrón que criticamos en
+`slsdeck-analysis.md` §1 con `Latest` apuntando al primer commit).
+
+**Lo que esto significa para SLSDeck** (que carga moon y sólo moon, §16.2 de
+`slsdeck-analysis.md`): su motor lleva dos semanas sin mantenimiento en el
+periodo de más cambio del año. Mientras stable no se mueva, no se nota. El día
+que stable coja el cliente del beta (identificadores minificados
+multi-carácter, `router-backstack` como objeto), moon dependerá de que su
+locator estructural (M1) resuelva solo o de que alguien publique patrones
+firmados; si no, SLSDeck cae a Headcrab, que **baja un cliente de Steam
+antiguo** y bloquea las actualizaciones. Nosotros: `watch-steam.yml` prueba
+cada cliente nuevo contra nuestros patrones el mismo día y abre el PR de
+whitelist; el último ciclo (2-sep) fue limpio.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | Código de moon | — | Sin cambios desde `cae57d2`; nada que leer |
+| 2 | Providers de códigos de moon | — | Pool B (wudrm + steam.run), subconjunto del nuestro; sin validación CDN conocida |
+| 3 | Patrones para el beta de septiembre | — | Nada publicado; stable no ha cambiado, así que aún no se ha probado |
+| 4 | Promesa de LuaTools (13-sep) | — | Incumplida a 17-sep; re-barrer |
+
+**Ninguno produce trabajo.** El próximo barrido arranca en `cae57d2`
+(`slsteam-moon`), `62767b3` (`beta`), `3c5e8e4` (`luatools-moon`), `3aae50f`
+(`jsdelivr`) y `399cc9b` (`steam-monitor`, último commit de patrones).
