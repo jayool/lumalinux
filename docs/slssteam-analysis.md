@@ -4112,3 +4112,41 @@ inaccesible) no se han publicado y no tocan nada nuestro; se anotan para que el
 próximo barrido arranque en `bbe1e3f`.
 
 **Accionable: ninguno.** La coexistencia (§5) no cambia en esta ventana.
+
+### 7.11 Ventana 2026-09-12 → 2026-09-17 — `dev` sigue solo, y el búfer de paquetes vuelve
+
+*Barrido el 2026-09-17 sobre clon fresco de `AceSLS/SLSsteam` (ramas `main` y
+`dev`, tags), más las páginas de issues y releases. `main` sigue en `71021ad`
+(release `20260903114323`, 3-sep): sin commit, tag ni release nuevos. `dev`: 4
+commits después de `bbe1e3f` (donde acabó §7.10), del 12 al 16 de septiembre,
+todos de Ace, ninguno publicado. Leídos como diff completo.*
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `6956e2b` (12-sep) | `CFileWatcher::start`: `running = true` **antes** de crear el hilo, y vuelve a `false` si el constructor lanza. Antes el hilo podía arrancar y leer `running == false` en su primera vuelta. | No. |
+| `e6082d0` (12-sep) | `watchLoop`: `read()` que devuelve `-1` con `errno == EINTR` hace `continue` en vez de `break`. Responde a la issue **#158** (Zyggarg, 11-sep): *"System signals (like OS performance profile changes or thread teardowns) trigger errno == EINTR … break treats it like one and dies"*, y la señal mataba el watcher de `config.yaml` hasta reiniciar Steam. Ace: *"pretty ghetto and shouldn't happen in the first place. But I got 2 reports of it randomly happening"*. | **Verificado en el nuestro, no aplica.** `src/key_store.cpp:194-199`, el watcher inotify de `keys.txt` (Add Game sin reinicio), ya hace `if (n < 0 && errno == EINTR) continue;` antes de romper el bucle. Escrito así desde el principio. |
+| `cf79c27` (14-sep) | `Utils::tryConvertToNumber` gana `int64_t`/`uint64_t` (`stoll`/`stoull`) y el `isNumber` sube fuera del `if constexpr`. | No. Utilidad de parseo. |
+| `003f8f0` (16-sep) | **`CNetPacket` vuelve al búfer estático.** Mensaje: *"Went back to the old method using a buffer + overwriting the body only. Freeing/replacing the originalBody caused issues"*. Vuelven `g_packetsArray[1 MB × 8]`, `g_packetsArrayOffset` y un `g_packetSerializeMutex`; `serialize` escribe en el búfer (rechaza mensajes ≥ 1 MB, "biggest message I have observed was around 600kb", y reinicia el offset cuando no cabe); `free()` sólo libera `originalBody` si existe. Comentario clave: *"If I understand correctly Steam cleans up for us, that's why we crash when we free the oldBody ourself. However the body we allocate doesn't get freed, so we just reuse a buffer for it"*. | No tocamos la capa CM (§5). Lo relevante es para **moon**: en `2668620` (2-sep, D14 de `slsteam-moon-findings.md`) moon **borró** ese mismo `PACKETS_ARRAY` y `serializeBody` de su árbol por considerarlos herencia inútil; upstream acaba de demostrar que su sustituto (liberar `originalBody`) se cae y ha vuelto al búfer. moon ya no puede reescribir un paquete CM in situ y ahora tampoco puede coger el arreglo de upstream sin recuperar lo que quitó. Divergen más. |
+
+**Hashes de SafeMode.** Último añadido el 3-sep: `237495b4…` (`ubuntu12_32`
+solo, versión `1788400362`). Según el tracker de moon (`swwayps/steam-monitor`,
+canal de escritorio) hay un stable de escritorio más nuevo, `1788652215` del
+5-sep, sin hash en el feed de SLSsteam ni TOML en el de moon. No se ha podido
+comprobar desde aquí si su `steamclient.so` cambia de sha (el CDN está
+bloqueado en el sandbox); la ausencia de una issue "missing hash" desde la #155
+(cliente del 1-sep, cerrada el 4-sep) sugiere que no cambió, pero es inferencia.
+La Deck sigue en `1788291500` (2-sep), con hash en los tres sitios.
+
+**Issues.** #157 (HANDZCZ, crash de Steam al lanzar SamRewritten, bisecado a
+`d056fda`, el `Process_t` de `/proc` del 21-ago) cerrada el 8-sep: es lo que
+arregla `bbe1e3f` de §7.10. #136 y #124 cerradas el mismo día. #158 abierta con
+el fix ya en `dev`. Ninguna issue menciona request codes ni el 9 de septiembre.
+
+**Corrección a §7.10.** Allí se dio por muerto el plugin `download.lua`
+(`slssteam-plugins-analysis.md` §3.3) porque pedía el código sólo a
+`gmrc.wudrm.com`. Ese endpoint volvió el 16-sep (RESEARCH §20), así que el
+plugin vuelve a funcionar tal cual, por HTTP en claro y sin alternativa. El
+solape DepotKey/GMRC que marcaba ese análisis vuelve a estar en vigor.
+
+**Accionable: ninguno.** La coexistencia (§5) no cambia. El próximo barrido
+arranca en `dev@003f8f0` y `main@71021ad`.
