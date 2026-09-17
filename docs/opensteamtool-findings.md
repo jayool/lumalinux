@@ -751,6 +751,73 @@ take ("potential hubcap stealer", "3 manifest per week", "vibe coded") fits.
 check (RESEARCH §20). The per-provider `headers` idea from PR #200 became our
 per-provider `userAgent`.
 
+
+## Delta — 2026-09-17: BetterSteamTools squashes its history; huanyuejue quiet
+
+**Frozen references.** `madoiscool/BetterSteamTools` `main` @ `dec29b7`
+(2026-09-17 08:05 UTC, author mendy-tools, subject "pee and poo"); `updates`
+branch unchanged at `e4e1152` (v1.0.3, 09-13, still `latest.toml`); no release
+after v1.0.3. `huanyuejue/OpenSteamTool` unchanged at `b754d13` (09-15): nothing
+after the default-provider switch to wudrm. `OpenSteam001/OpenSteamTool` stale
+since July, as before.
+
+**[read] The history is gone.** `main` now has exactly **one commit**. Every
+hash cited in the two deltas above (`2c7af78` … `f7b7caf`, `4a97d9d`, `7243c60`)
+is unreachable from `main`; they survive only in clones taken before 09-17 and
+in the sandbox clone used here, which let `git diff 7243c60 dec29b7` recover
+what the squash actually changed. From now on this document's BST references
+must be read as "tree at commit X on date Y", not as links that resolve on
+GitHub.
+
+**[read] What changed between `7243c60` (09-12) and `dec29b7`: two files.**
+
+1. `README.md` (+11): the `[donate]` section documented
+   (`enabled = true` by default, `interval_secs = 30`, `wanted_refresh_secs =
+   300`, `max_mints_per_cycle = 25`, `min_mint_interval_ms = 2000`,
+   `max_mints_per_session = 0`). Same values as the example toml of `7243c60`;
+   now stated for users. Wording: *"Contribute manifest request codes for depots
+   THIS account owns, so other users can download those games. Only depots the
+   archive asks for and this account owns are ever mentioned."*
+2. `src/Hook/Hooks_Manifest.cpp` (+57/−19), described in the commit body:
+   - **Synchronous pre-seed narrowed to lua-pinned depots.** `PreseedDepots`
+     in the `BuildDepotDependency` hook dropped the "lua-unlocked but not
+     owned" branch. Reason, verbatim: for an unpinned depot *"e.ManifestGid is
+     only whatever Steam had cached from appinfo, which is not the gid Steam
+     will end up requesting … fetching on it is a guess: it either 404s or lands
+     a manifest Steam never reads."* Those depots are left to the `HandleSend`
+     path (eMsg 151/147), which sees the gid Steam states.
+   - **New hook `YldLoadDepotManifest`** (steamclient `sub_1384B97C0`, the
+     per-manifest acquire in `CDepotDownloadMgr`: builds
+     `depotcache\<depot>_<gid>.manifest`, checks disk, and only on a miss falls
+     to `BYldRequestDepotManifest`, the request-code path). BST pre-seeds the
+     file from the archive *before* the original's disk check, bounded by
+     `kPreseedFetchTimeoutMs`, for any depot a lua unlocks (`LuaConfig::HasDepot`).
+     Stated purpose: *"makes that check succeed, so the download starts on the
+     FIRST attempt with no request code"*, and it *"fires for every manifest
+     acquisition, including workshop items (depot == appid), which never pass
+     through BuildDepotDependency."*
+
+**[inferred] Relevance to us.** The mechanism BST is exploiting from inside
+the process is the one our 0.8 model exploits from outside: Steam does not ask
+for a request code when the manifest file is already in `depotcache/`, so
+LumaDeck's pre-seeding of `<depot>_<gid>.manifest` (RESEARCH §19, `pins.py`
+fallback state) achieves the same first-attempt install without a hook. Two
+differences. (a) BST resolves the gid at the moment Steam asks for it, so it
+covers gids we would not know in advance (workshop items; a build we have no
+manifest for); we cover those with GMRC-native instead (`gmrc_hook`, 0.21.0),
+which serves the code rather than the file. (b) BST's file source is the
+luastools archive, whose coverage the 09-12 probe measured as donor-dependent;
+ours is the providers' codes, measured 42/42 on 09-16. Nothing to port: the
+disk-check behaviour is already ours, and a `YldLoadDepotManifest` hook would
+add a Linux pattern for a function we do not need to touch.
+
+**[read] huanyuejue.** No commit after `b754d13`. The Chinese fork therefore
+still ships 20770407 + manifestdex + wudrm + steam.run with wudrm as default,
+and has not reacted to 20770407 coming back on 09-16.
+
+**Actionable: nothing.** Next sweep starts at `dec29b7` (tree, not history),
+`updates@e4e1152`, `huanyuejue@b754d13`.
+
 ## References
 
 - OST (`OpenSteam001/OpenSteamTool` @ `main`): `src/dllmain.cpp`;
