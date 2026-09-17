@@ -407,3 +407,59 @@ Cuatro. **Ninguno es código hoy.**
   queremos: Steam nativo sin tocar nada. Anotado para no volver a mirarlo.
 
 Pendiente de barrido: `niwia/ASSella` desde `accb40c`.
+
+---
+
+## §9 Delta — 2026-09-17 (`accb40c` → `b099de7`, rama `beta`)
+
+*Barrido el 2026-09-17 sobre clon fresco (deepen a 60; comprobado `.git/shallow`
+antes de contar). `beta`: **33 commits** después de `accb40c`, del 14 al 17 de
+septiembre, autor niwia salvo el PR #16 de KingCatto. `main` en `f582f4f`
+(13-sep, README). Versión `src/res/version` = `2.6.5`, sin tag: la última release
+sigue siendo v2.6.4 (9-sep). Leídos como diff `d3cbdbc`, `d9cf09b`, `fd651e9`,
+`57bcb60`, `9c68932`, `edc8fa8`; el resto por mensaje y stat. Volumen: 73
+ficheros, +18.652/−12.897, de los cuales ~10.000 son la modularización de
+`gamelibrary.py`, `gamelibrary_v2.py` y `settings.py` en subpaquetes.*
+
+**Lo primero.** Siguen sin ningún provider de request codes (grep de
+`20770407|manifestdex|wudrm|steam.run|gmrc` en `src/`: cero). Hubcap sigue siendo
+su único generador, y todo lo sustantivo de estos cuatro días es gastar menos
+cuota en él o sacarle más:
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `fd651e9` (15-sep, KingCatto) | **Hecho verificado por ellos contra el fuente del servidor de Hubcap (`SolusManifestManager`):** `GET /api/v1/manifest/{app}` sólo sirve `{app}/public/{app}.zip`, ignora `?branch=`; `/contents` también es sólo public; `/generate/appmanifest?branch=` existe pero está desactivado (503); **el único camino a un manifest no-public es `/generate/manifest?depot_id=&manifest_id=` por gid.** Desde `d9cf09b` ASSella creía bajar betas y guardaba el bundle public con etiqueta beta. Ahora `branch_bundle.py` (206 L) monta la beta en cliente: claves y lua del bundle public, gids de la rama por PICS, cada manifest distinto por `/generate/manifest`, `setManifestid` reescritos. | **Dato útil para nuestra cascada**: el zip de Hubcap en `api.json` es public y sólo public. Nada que cambiar (no ofrecemos ramas), pero cierra la duda de si `?branch=` haría algo. |
+| `57bcb60` (15-sep, KingCatto) | Verify / Smart Update / "Queue selected" / Web UI / CLI perdían la rama y caían a public, algunos persistiendo `selected_branch=public`. Un juego en beta se "actualizaba" al último public. | No. No gestionamos ramas. |
+| `d9cf09b` (15-sep) | `download_manifest` pide siempre `?force_update=true` (refresco en servidor antes de servir) y cae a la llamada normal si falla; `generate_bundle_manifest` marcado deprecated ("the upstream bundle endpoint has been decommissioned"); comprobación de build en vivo por PICS antes de decidir si hay update. | Cosmético para nosotros; `force_update` es una forma de que Hubcap regenere el zip antes de servirlo. No medido si cuenta contra la cuota de §5.3. |
+| `9c68932` (17-sep) | Frescura de caché: un zip cacheado de 0 bytes o sin manifests se tira y se rebaja; comparación con el buildid vivo de PICS; **actualización dirigida por manifest único** (`/generate/manifest` por gid) en vez de bajar el zip entero, reescribiendo el zip cacheado; `/contents` una vez para saber qué depots faltantes son recuperables antes de gastar `generate`. | No. Es la continuación de `accb40c` (§3.8). |
+| `d3cbdbc` (14-sep) | **Detecta el watcher muerto de SLSsteam**: lee los últimos 64 KB de `~/.SLSsteam.log` buscando `Failed to read from FileWatcher` (el log se trunca en cada arranque, así que una aparición = muerto en esta sesión); visor amarillo "Steam: Restart", aviso persistente, y si está muerto ASSella escribe ella misma el ACF de fallback en vez de esperar a que SLSsteam lo genere. | **Ver abajo.** Es la issue #158 de SLSsteam (EINTR), arreglada en `dev` el 12-sep y **sin publicar** (`slssteam-analysis.md` §7.11). |
+| `2f9ff1d` (16-sep) | "SHSAH Reborn": gestor de logros que lee y escribe los `UserGameStats` binarios de Steam (nativo y Flatpak), con esquema e iconos del CDN. Desbloqueo local de logros. | No. Nuestro camino de logros es otro (parche de lumalinux + SLSsteam); esto es un editor de ficheros. |
+| `b76adeb` (17-sep) | Robustez del cliente CM en Python: `select`+`MSG_PEEK` antes de cada query, abort en `disconnected`, timeout 25 → 12 s, `auto_access_tokens=False`, fallback a la REST de SteamCMD. | No. No hablamos con CM. |
+| `edc8fa8` (15-sep) | Uninstall avanzado: DLC ids de `DlcData` y del `.depot`, limpieza de config SLS, restaurar binarios EOS y backups de Goldberg, borrar `.DepotDownloader`/`.ACCELA`, `.depot`, claves QSettings. | Convergido en lo que nos aplica (`uninstall_game_full`: lua, keys, AdditionalApps, depotcache, compatdata opcional). |
+| `58aefd7` (14-sep) | "Fix installation" repara manifests que faltan en vez de abortar; ACF de fallback offline; **`yaml_config_manager.py` reescrito (918 líneas cambiadas)**: límites de sección y borrado de claves acotado. | La escritura de YAML que §6.5 criticaba ha cambiado de arriba abajo; **no re-auditada**. Pendiente si volvemos a §6.5. |
+| `e3c4847`, `663cc3a`, `af81e9b`, `8d02cc1` | Update check al despinear un build; toggle de depots ocultos; modal de aviso de DLC con 3 s de bloqueo; navegador de historial de builds. | No. |
+| resto (~20) | Modularización (library/, settings_tabs/, game_details/), spinners, visor de SteamDB, pestaña Workshop condicional, botón de Discord de Hubcap. | No. |
+
+**El watcher de SLSsteam (`d3cbdbc`), mirado desde nuestro lado.** El bug es
+real y está en la release que instalamos (`20260903114323`): una señal
+interrumpe el `read()` del `CFileWatcher` de `config.yaml` y el hilo muere hasta
+reiniciar Steam; Ace tiene "2 reports". Con el watcher muerto, un Add Game de
+LumaDeck escribe `AdditionalApps` y SLSsteam no lo relee: el juego no aparece
+como propio hasta reiniciar. Nuestro watcher de `keys.txt` (`key_store.cpp`) no
+tiene el bug, pero la mitad de SLSsteam sí. ASSella lo detecta por el log y
+avisa. **Decisión pendiente, no tomada aquí:** LumaDeck podría hacer la misma
+comprobación barata (tail de `~/.SLSsteam.log` buscando esa cadena) y mostrar
+"reinicia Steam" en lugar de un Add Game que parece no hacer nada. Es un
+diagnóstico, no un arreglo; el arreglo llegará con la siguiente release de
+SLSsteam.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | Hubcap `/manifest` es sólo public (`fd651e9`) | — | Dato registrado; nuestra cascada no pide ramas |
+| 2 | Detección del watcher muerto de SLSsteam (`d3cbdbc`) | Baja | Candidata a diagnóstico en LumaDeck; sin OK |
+| 3 | `yaml_config_manager.py` reescrito | — | §6.5 desactualizado; re-auditar si se vuelve a esa sección |
+| 4 | Todo lo demás | — | Nada |
+
+El siguiente barrido arranca en `beta@b099de7`.
