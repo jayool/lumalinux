@@ -399,3 +399,73 @@ Cuatro. **Ninguno es código.**
 Pendiente de barrido: `drappula/SFF` desde `92d6813`. **A vigilar:** "OpenValve",
 la alternativa open source anunciada en el hilo de FMHY (§3.3) para finales de
 septiembre, sin UI, por fichero de config; sin repo conocido a 2026-09-14.
+
+---
+
+## §10 Delta — 2026-09-17 (`92d6813` → `3f72cdf`, release v6.8.0)
+
+*Barrido el 2026-09-17 sobre clones frescos. `Midrags/SFF` sigue en `fa44fc9`
+(21-ago) y `KoriaPolis/LumaCore` en `8a32798` (18-may): parados. `drappula/SFF`:
+7 commits después de `92d6813`, todos de mallusrgreat entre el 14 y el 15 de
+septiembre, cerrados con el tag **v6.8.0** (15-sep; el fork salta de 6.6.7d a
+6.8.0). Leídos como diff completo `3befc59`, `7e34444`, `f98c8e0`; el resto al
+nivel de stat y changelog. Issues: el repo tiene la creación de issues
+restringida y no muestra ninguna.*
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `7e34444` (14-sep) | Los providers devuelven un sentinel `NOT_FOUND` distinto de `None`; un único despachador en `choices.py` decide: catálogo sin el juego → ofrecer Free Providers; si tampoco → diálogo "pídelo en el Discord del provider". Antes un 404 de Ryuu entraba en bucle de "enter a new API key". | No. Nuestro `resolve_all` ya distingue miss de fallo por fuente. |
+| `3befc59` (14-sep) | Borrar un juego con `mode=full` también elimina `<depot>_*.manifest` de `depotcache/`, `config/depotcache/` y su carpeta de staging (staging primero, porque su watcher restaura desde ahí). Motivo: una reinstalación releía el manifest del gid viejo y "Steam never offered the next update". | **Convergido.** `uninstall_game_full` (LumaDeck `slssteam_ops.py:869`) ya purga los manifests de depotcache. Y en el modelo nativo 0.9 el manifest viejo en disco no bloquea nada: Steam pide el gid que dicta appinfo y el código lo da GMRC. |
+| `f98c8e0` (15-sep) | Perfilaron un add "Free Providers" a 17 s con 2,8 s de red: parseaban dos veces por descarga la base local de claves (67 MB, 370k entradas, 13,8 s) y escribían la contribución en línea (7,1 s). Ahora memoizan por proceso, escriben en un worker, prewarm de la base y del dump de trionine a los 12 s de arrancar, y los tres espejos de manifests se piden en paralelo. | No. Es la base `fallback_depotkeys.json` que medimos en `lumacore-findings.md` ("candidata, no acción"); esto no cambia su contenido. |
+| `13569b3`, `b4e77f7`, `46bbdde` | Fondos de la WebUI; retiran el nombre "oureveryday/midraeveryday" (queda "Free Providers"); silencian el aviso de registro de URI en Linux. | No. |
+| `3f72cdf` | Tag v6.8.0 y changelog. | — |
+
+**Lo que dice el changelog de v6.8.0 y no está en estos siete commits** (viene
+de los del 12-13-sep ya cubiertos en §4-§5 y en `92d6813`), releído hoy con lo
+que sabemos desde el 16-sep:
+
+- *"Manifest sources prefer free mirrors — the public GMRC mirrors (steam.run,
+  wudrm, opensteamtool) are gone; they now answer 403/404 everywhere."* Es
+  `9033611` (12-sep): **borraron toda la familia de request codes externos**
+  (`_REQUEST_CODE_FALLBACKS`, `_fetch_manifest_code_external`, 350 líneas). El
+  16-sep `gmrc.wudrm.com` y `manifest.steam.run` volvieron (RESEARCH §20). El
+  fork no lo va a notar: ya no tiene código que los llame, y nunca tuvo
+  20770407 ni manifestdex (grep en `sff/`: cero referencias). Su única vía para
+  un manifest que no esté en un espejo de GitHub es el request code de la
+  sesión de Steam del usuario (que sólo funciona con licencia) o Hubcap con
+  key. Es la decisión opuesta a la nuestra, tomada tres días antes de que los
+  providers volvieran.
+- *"Dead provider keys"*: comprueban las keys de Hubcap, Ryuu y DepotBox al
+  arrancar y en cada descarga; una key rechazada abre un diálogo con el sitio
+  del provider y ese provider deja de autoseleccionarse. Nosotros:
+  `_HUBCAP_ATTEMPTS` en `manifests.py` registra los intentos y la cascada
+  sigue; no hay diálogo. La key del usuario caduca el 21-sep.
+- *"SLSsteam installs via Headcrab"* (`92d6813`, ya en §6 G1): el fork instala
+  SLSsteam en Linux con el script h3adcr-b, es decir, **rebajando el cliente
+  de Steam** a la versión que Headcrab fija. Con el cliente de la Deck parado
+  en `1788291500` desde el 2-sep no se nota; el día que se mueva, sus usuarios
+  Linux se quedan en un cliente antiguo con las actualizaciones bloqueadas.
+- *"Games no longer auto-update by default — on Windows"*: el helper de pin
+  de manifests se instala al arrancar. En Linux siguen con `DisableUpdates:
+  yes` (§6 G7/G8).
+
+**§5 revisitado.** La cadena gratis sigue siendo la del 14-sep: keys de
+`fylsdy/ManifestHub` (404), manifests de `qwe213312/…`, `steamtoolsapp/
+ManifestHub` y `steamtools-games/ManifestHub3` (snapshot de julio 2025),
+`revobd` (inverificable). Ninguna ha cambiado de URL. Con los providers de
+códigos de vuelta, la diferencia práctica es ésta: para un juego actualizado
+después de agosto, nosotros instalamos el build actual sin manifest local
+(GMRC nativo, T1-T4 de `update-testing.md`); el fork instala el gid de julio
+de 2025 si está en el espejo, o pide una key.
+
+### Balance del delta
+
+| # | Qué | Estado |
+|---|---|---|
+| 1 | Purga de manifests al borrar (`3befc59`) | Convergido; ya lo hacía `uninstall_game_full` |
+| 2 | Request codes externos borrados (`9033611`) | Decisión opuesta a la nuestra; sin vuelta atrás en v6.8.0 |
+| 3 | Prewarm de la base de claves (`f98c8e0`) | No cambia la base medida; sigue "candidata, no acción" |
+| 4 | Headcrab para SLSsteam en Linux | Riesgo suyo cuando el cliente de la Deck cambie |
+
+**Ninguno produce trabajo.** El próximo barrido arranca en `drappula/SFF`
+`3f72cdf` (v6.8.0); `Midrags/SFF` y `KoriaPolis/LumaCore` siguen parados.
