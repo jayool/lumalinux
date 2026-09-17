@@ -2695,3 +2695,191 @@ animation, centring, audio, artwork. This is what triggered `18da82e`
 **[inferred]** The only substantive reaction to 2026-09-09 is `6e36758`, and it
 does not restore installs of current builds for SLSDeck. Nothing in this window
 changes the §7 verdicts.
+
+---
+
+## §17 Delta — 2026-09-17 (commits after `9708316`)
+
+**Frozen references for this section.** `main` @ `e4a7bfb` (2026-09-16). The
+work branches of §16 (`manifest-sources` etc.) are now merged: `6e36758` and
+`eb2a93e` sit on `main`, so the keyless-provider tier of §16.1 has shipped
+unchanged and its verdict there stands. Method as in §0: every commit after
+`9708316` was listed (88 on `main`, 2026-09-10 → 2026-09-16, all by "Vibe-coder
+Jimmy"); the ones touching Decky compatibility, Workshop, purge, CloudRedirect
+and lua.tools were read as full diffs; Store Roulette was read at subject level.
+By subject: 40 Store Roulette, 18 Workshop RPC restore / OpenSave removal, 15
+purge, 4 Decky 3.2.9 compatibility, 3 CloudRedirect, 2 releases, 1 lua.tools
+sign-in, 5 other.
+
+### §17.1 Decky 3.2.9 and the September 2026 Steam beta — the one item that touches us
+
+**[read] Upstream facts, checked directly (not via SLSDeck).**
+
+- decky-loader issue #964 (2026-09-10): on the Steam beta client shipped with
+  SteamOS 3.8.26 beta, Decky 3.2.8 shows blank Settings / Store pages and
+  plugin panels without their controls.
+- decky-loader PR #962 (client build `1788989629`): the beta's bundles use
+  multi-character minified identifiers (`routePath:ve.match?.path`, not
+  `routePath:x.match?.path`); Decky's route hook and error-reporting regexes
+  matched one character and silently resolved to nothing. Fixed by widening the
+  regexes.
+- decky-loader PR #967 "fixes for beta september 2026": `@decky/ui` bumped
+  `^4.11.6` → `^4.12.1`; `router-hook.tsx` filter changed from `e ==
+  'router-backstack'` to `typeof e == 'string' && e == 'router-backstack'`
+  (on the beta some exports are objects whose coercion throws); Python bound
+  widened to `<3.15`. Released as **Decky Loader v3.2.9 on 2026-09-15**.
+- `@decky/ui` **4.12.1** (2026-09-14, commit `aad5a9a`, "fix filters for
+  latest beta's minifier changes"): every `e.toString()` in the component
+  filters became `e.toString?.()` (ControlsList, Field, Focusable, Marquee,
+  Menu, Modal, PanelSection, ProgressBar, SidebarNavigation, `webpack.ts`), and
+  the Spinner regex gained a variant for the automatic JSX runtime
+  (`(0,\w+.jsx)("path",{d:"M18` next to the old `createElement("path"`).
+  Nothing else changed between 4.11.1 and 4.12.1 except a `ReorderableList`
+  prop (4.12.0).
+
+**[read] SLSDeck's reaction (`bd86c6c`, `fdd2bc6`, `e4a7bfb`, 2026-09-15/16).**
+`@decky/ui` bumped to `^4.12.1`; a new `SlsDeckErrorBoundary` (plain React,
+deliberately no `@decky/ui` import "since those exports may be the component
+that failed to resolve") wrapped around the Quick Access title and panel, the
+Advanced route and the two library-page injections, with the fallback text
+"Restart Steam after updating Decky Loader". A new `decky-compat` branch with
+its own rolling prerelease. On the backend, `luatools.py` imported
+`http.server` at module load for the lua.tools OAuth callback listener; that
+import was first made lazy with the comment "Decky 3.2.9 may run plugins with a
+reduced Python standard library that omits http.server", then (`e4a7bfb`)
+replaced by an `asyncio.start_server` listener on its own event-loop thread,
+with a unit test. **[inferred]** The `http.server` part is not a 3.2.9
+regression: Decky's backend is a PyInstaller bundle (`backend/pyinstaller.spec`,
+`hiddenimports=['logging.handlers', 'sqlite3', 'decky_plugin', 'decky']`), so
+any stdlib module the loader itself never imports has always been absent for
+plugins. Their earlier comment hedges ("may") and no version is named in which
+it worked.
+
+**What it means for LumaDeck.** **[read]** v0.9.0's `pnpm-lock.yaml` resolves
+`@decky/ui` **4.11.1** (built with `--frozen-lockfile`, so the release carries
+exactly that). We import `PanelSection`, `PanelSectionRow`, `ButtonItem`,
+`Field`, `ToggleField`, `TextField`, `DropdownItem`, `Focusable`,
+`DialogButton`, `Navigation`, `SidebarNavigation`, `ProgressBarWithInfo`,
+`staticClasses`, `appDetailsClasses`, `afterPatch`, `findInReactTree`,
+`createReactTreePatcher` — five of them (Field, Focusable, PanelSection,
+ProgressBar, SidebarNavigation) are on the 4.12.1 list. **[read]** All five are
+resolved through `findModuleExport` → `findModuleDetailsByExport`, whose loop
+wraps each filter call in `try/catch` and continues on exception
+(`webpack.ts:80-89`, unchanged between the two versions). Statically, a beta
+export whose `toString` throws is skipped with a "Webpack filter threw
+exception" warning, and the real component is still found. **[inferred]** So
+4.11.1 is not proven broken on the beta by reading; what breaks on the beta
+with certainty is Decky 3.2.8 itself (#964), which no plugin can work around.
+Not tested on a device with the beta client. The backend imports no module
+outside the bundle: `sqlite3` (`ryuu_cookie.py`) is an explicit hidden import;
+`ssl`, `socket`, `zipfile`, `zlib`, `urllib.*` are imported by the loader
+itself. **Open decision, not taken here:** bumping `@decky/ui` to 4.12.1 is a
+one-line lockfile change that only adds the `?.()` guards; the error-boundary
+pattern is more code for a failure we have not observed. Users on the beta
+need Decky 3.2.9 first either way.
+
+### §17.2 Hubcap Workshop fallback (`caed854`, 2026-09-15)
+
+**[read]** New `hubcap_workshop.py` (339 L). Hubcap has a per-item endpoint,
+`hubcapmanifest.com/api/v1/generate/workshopmanifest/<workshop_item_id>`
+(Bearer key), that returns the raw Steam manifest binary (magic `d0 17 f6 71`)
+with a `Content-Disposition` filename in `<appid>_<gid>.manifest` form — the
+Workshop depot id is the appid. A watcher thread (inotify on every
+`steamapps/workshop/`, 2 s poll fallback) parses `appworkshop_<appid>.acf` for
+games in `AdditionalApps` only, and for every item whose `latest_manifest` /
+`manifest` gid is missing from moon's ManifestStore and Steam's `depotcache`,
+fetches it (≤3 concurrent, 15 min retry per item) and publishes it atomically
+to both directories, validating that Hubcap's filename matches the acf's
+depot and gid. The old per-app RPC (`workshopmanifest/<appid>`, written to
+`manifests/workshop_<appid>.manifest`) was wrong — the endpoint takes an item
+id — and is now a compatibility shim.
+
+**[inferred]** Workshop for added games is not a LumaDeck feature and the
+request-code side of it is the same as any depot (the Workshop depot needs a
+request code per item manifest; with GMRC-native, `20770407`/manifestdex
+answer by gid for any depot, so the code is not the blocker). The blocker on
+our side would be the Workshop depot key, which no `api.json` zip carries.
+Recorded as the first sighting of the Hubcap item endpoint; **not adopted**.
+
+### §17.3 Workshop RPCs restored, OpenSave retired (18 commits, 2026-09-13)
+
+**[read]** The `opensave` module (Liquid-co/OpenSave, the second cloud-save
+engine of §2, 749 L + `OpenSave.tsx` 337 L + daemon boot at plugin start) is
+deleted; `depVer:opensave` is dropped from settings on the next update
+recheck. The `ws_*` / `workshop_*` RPC pairs of §2 (`main.py`) are back,
+still both routed to the same `workshop.start_download`. Cloud saves are now
+CloudRedirect only (§16.4). §2's inventory line "two cloud-save engines that
+never reference each other" is resolved by removal. Nothing to do.
+
+### §17.4 Purge and removal (15 commits, 2026-09-13)
+
+- **[read] `3a2d821` `remove_app`.** Previously removed the `- <appid>` line
+  from the one detected `config.yaml`. Now: strips the id from `AdditionalApps`
+  (inline `[…]` or block form, never from another list) in every candidate
+  `config.yaml` *and* `luaappids.yaml` next to each, and deletes
+  `<appid>.lua` / `<appid>.lua.disabled` in every `stplug-in` root (native,
+  `~/.local/share/Steam`, Flatpak). Returns `failedPaths` and reads back
+  `AdditionalApps` to decide `success`.
+- **[read] `8979d57` `purge_all_added`.** Reports `remaining` after a final
+  authoritative read instead of unconditional success. The `everAdded`
+  history is now **kept** on purge, verbatim: "so a stale Steam capsule can
+  never be mislabelled as a legitimate owned game".
+- **[read] `a03b6e3` → `e2b2786` (same day).** Automatic Steam restart after a
+  complete purge added, then reverted; replaced by an opt-in "reload on purge"
+  (`137a547`). **[read] `5ae98c8`** keeps backups through a purge; **[read]
+  `44bde3b`** makes the hot removal of one card atomic in the UI.
+
+**[inferred]** The `everAdded` reasoning is the interesting line: after a
+purge, Steam keeps showing the capsule of a game whose licence is gone, and a
+plugin that forgot the game would treat that capsule as owned. Our
+`AdditionalApps`-based ownership test in lumalinux (achievements) and
+LumaDeck's `get_pin_status` both read live state, not history, so the stale
+capsule is simply "not ours". Nothing to do.
+
+### §17.5 CloudRedirect (`7efcfde`, `4c96032`, 2026-09-11)
+
+**[read]** The save list now discovers games that exist only in the cloud by
+listing the provider's folders with a live token (`googleapis.com/drive/v3/
+files`, OneDrive equivalent), refreshing the token in place through the
+scraped `client_secret` of §16.4 (`_oauth_client_secret`) and writing the
+refreshed token back to CloudRedirect's file; names resolved via Store
+`appdetails` with a 60 s cache. Same credential arrangement as §16.4;
+**stance unchanged, not adopted**.
+
+### §17.6 Tokeer runtime moved to `git.lua.tools` (`fdd2bc6`)
+
+**[read]** `RUNTIME_ZIP`, `INSTALL_SCRIPT` and `RELEASE_API` for the Tokeer
+Linux runtime now point at a Forgejo instance, `git.lua.tools/luatools-
+dedivision/TokeerDRM-App` (release `v1.0.28` as the pinned fallback), instead
+of `github.com/Tesla697/TokeerDRM-App`. **[inferred]** lua.tools now
+self-hosts code. LumaDeck's lua.tools dependencies are the API (`lua.tools/
+api/…`, `db.lua.tools` auth) and `files.luatools.work`; none is a GitHub URL,
+so nothing moves for us. Worth remembering if a lua.tools GitHub repository we
+cite (e.g. for fixes) goes dark.
+
+### §17.7 lua.tools browser sign-in (`e4a7bfb`)
+
+**[read]** Discord OAuth PKCE for lua.tools with a localhost callback
+listener, rewritten on `asyncio` (see §17.1), cancelled on plugin unload,
+with `tests/test_luatools_oauth_listener.py` (100 L) — the first unit test in
+the repository. Ours signs in through Steam's Game-Mode browser
+(`browserLogin.ts`, `Navigation.NavigateToExternalWeb` + one `NavigateBack` on
+the main window instance) with no local listener. Nothing to do.
+
+### §17.8 Summary
+
+| Item | Verdict |
+|---|---|
+| Keyless providers (§16.1) merged to `main` | shipped unchanged; §16 verdict stands |
+| Decky 3.2.9 / Steam beta (`bd86c6c`, `fdd2bc6`) | Decky 3.2.8 breaks on the beta regardless of plugin; `@decky/ui` 4.12.1 adds `toString?.()` guards; our 4.11.1 filters are exception-safe by construction; **bump is an open decision**, untested on device |
+| Hubcap Workshop item endpoint (`caed854`) | first sighting; Workshop not our feature; **not adopted** |
+| OpenSave retired, Workshop RPCs restored | inventory change only |
+| Purge / remove across all config roots | our removal reads live state; nothing to do |
+| CloudRedirect cloud-only discovery | scraped-secret token refresh; **not adopted** |
+| Tokeer on `git.lua.tools` Forgejo | no GitHub dependency on lua.tools in our code |
+| Store Roulette (40 commits) | not applicable |
+
+**[inferred]** Nothing in this window changes the §7 verdicts. The one thing
+to watch is not SLSDeck's: the September 2026 Steam beta reaching stable,
+which will require Decky ≥ 3.2.9 on every Deck and is where a `@decky/ui`
+bump would be tested for real.
