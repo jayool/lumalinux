@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(lumalinux LANGUAGES C CXX VERSION 0.21.0)
+project(lumalinux LANGUAGES C CXX VERSION 0.22.0)
 
 # Release builds override the version from the git tag so the binary's
 # self-reported version (status.json -> LUMALINUX_VERSION_STRING) always equals
@@ -85,6 +85,7 @@ set(LUMA_SOURCES
     src/vaddr_xlate.cpp
     src/rva_feed.cpp
     src/sls_achievement_unblock.cpp
+    src/cr_stats_fix.cpp
     src/lmhook.cpp
     src/hooks/depot_key_hook.cpp
     src/hooks/depot_dependency_hook.cpp

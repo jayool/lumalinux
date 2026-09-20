@@ -38,6 +38,7 @@ by default again since v0.21.0; BuildDep is not in the default set). What to gre
 | `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT NOT_FOUND` | The package-0 finder can't locate its anchors; it now says so once and ends (it no longer retries — the bytes are final) | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
+| `CR-stats: FAILED — …` (CloudRedirect loaded, fix not armed; `status.json` → `CrStatsFix: failed`) | A CloudRedirect release changed `HandleGetUserStats` (symbol gone → `not loaded`; no `ret $4` → return convention changed) or `cloud_redirect.so` now precedes lumalinux in `LD_PRELOAD`. Nothing is patched in that state — games CloudRedirect has never seen are back to zero achievements. Read the line: it names which of the three self-checks failed | `docs/cloudredirect.md` §Stats sync |
 
 If install is broken but you can't tell which row from a single line, do this
 in order: B → A.1 → A.2/A.3 → C. They're listed by frequency: B and A.1 are

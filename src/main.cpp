@@ -32,6 +32,7 @@
 #include "hooks/gmrc_hook.hpp"
 #include "hooks/shader_depot_hook.hpp"
 #include "sls_achievement_unblock.hpp"
+#include "cr_stats_fix.hpp"
 #include "patterns.hpp"
 #include "globals.hpp"
 #include "status.hpp"
@@ -313,6 +314,29 @@ void InstallHooks() {
         installed += "SLS-ach";
     } else {
         Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
+    }
+
+    // Coexistence fix for CloudRedirect's stats sync (src/cr_stats_fix.cpp):
+    // interpose StatsHandlers::HandleGetUserStats so an EMPTY-store "up to date"
+    // answer (2-byte crc-0 body) is cleared and CloudRedirect takes its own
+    // passthrough branch — otherwise a game CloudRedirect has never seen never
+    // receives its achievement schema (SLSsteam's borrow never runs) and stays
+    // at zero achievements forever. Pure LD_PRELOAD symbol interposition, no
+    // bytes of CloudRedirect patched; self-checks instead of a version list.
+    // Fail-safe: no CloudRedirect / a failed check → the stub forwards untouched.
+    // See docs/cloudredirect.md.
+    switch (CrStatsFix::Init()) {
+        case CrStatsFix::Result::Applied:
+            Status::RecordHook("CrStatsFix", Status::INSTALLED);
+            if (!installed.empty()) installed += ", ";
+            installed += "CR-stats";
+            break;
+        case CrStatsFix::Result::Failed:
+            Status::RecordHook("CrStatsFix", Status::FAILED);
+            break;
+        case CrStatsFix::Result::Disabled:
+            Status::RecordHook("CrStatsFix", Status::DISABLED);
+            break;
     }
 
     // No-restart license reconcile (src/license_reconcile.cpp): resolve its

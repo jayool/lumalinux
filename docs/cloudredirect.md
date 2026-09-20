@@ -182,6 +182,127 @@ curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | ba
 (If *neither* loads — no banner at all — that's the wrapper not being reached, not a
 missing `.so`; see `maintenance.md` case B.)
 
+## Stats sync: el arranque en frío deja los juegos a cero logros (fix en lumalinux v0.22.0, 2026-09-20)
+
+### Qué hace CloudRedirect con `stats_sync_enabled`
+
+Para cada juego añadido por lua, CR mantiene una **base propia** de stats y logros
+(`~/.config/CloudRedirect/storage/stats/<cuenta>/<app>.json` en disco, y un único
+blob por cuenta en Drive). No inventa nada: la llena copiando lo que Steam guarda
+en `appcache/stats/` (`UserGameStatsSchema_<app>.bin` = lista de logros,
+`UserGameStats_<cuenta>_<app>.bin` = progreso), ficheros que Steam escribe
+**después** de recibir el schema del servidor. En Linux, con SLSsteam, ese schema
+llega por el truco de SLSsteam: reenvía `Player.GetUserStats#1` con el SteamID de
+un reseñador real del juego, Valve devuelve su schema, SLSsteam tira su progreso
+y se queda con la lista (`src/feats/achievements.cpp`, `sendAndRecvGetPlayerStats`).
+
+CR engancha esa misma llamada (`platform/linux/cloud_hooks.cpp:596`) y para los
+juegos lua **contesta él** desde su base (`StatsHooks::TryHandleGetUserStats` →
+`StatsHandlers::HandleGetUserStats`), sin dejar que la petición salga. Compara el
+crc que manda el cliente (huella de sus stats locales) con el de su base:
+distintos → manda schema + stats; iguales → "al día", sólo el crc, 2 bytes.
+
+### El bug [leído en `common/stats_handlers.cpp:34-60`, probado en Deck]
+
+Un juego que CR nunca ha visto tiene base vacía → crc 0 (`ComputeCrcLocked` sólo
+mezcla stats y logros desbloqueados). Un cliente sin stats locales manda crc 0.
+0 == 0 → "al día" → 2 bytes (`10 00`: campo 2 varint 0) → **el juego nunca
+recibe su schema, la petición nunca llega a SLSsteam ni a Valve**, y sin schema no
+puede desbloquear nada. Y la base no se llena porque se llena del blob nativo
+que Steam escribe al recibir el schema. Bucle cerrado.
+
+La rama correcta existe: `TryHandleGetUserStats` devuelve `false` (passthrough,
+log `store returned empty -> passthrough`) si el cuerpo tiene **0 bytes**. Pero
+"al día" siempre tiene 2. Descuido, no decisión: en un juego jugado antes de
+instalar CR el blob nativo ya existe, CR lo importa al arrancar, el crc no es 0 y
+todo funciona — que es como el autor lo habrá probado.
+
+Datos de una Deck (CR 2.6.5, SLSsteam 2026-09-03, lumalinux 0.21.0), log de CR:
+
+```
+[Stats] GetUserStats app=2545360 clientCrc=0
+[Stats]   app=2545360 up-to-date (crc=0); sending crc-only no-op
+[Stats] GetUserStats app=2545360 handled locally (2 bytes)
+```
+
+- Cinco arranques del mismo juego, incluida una sesión de 45 min: siempre eso,
+  cero logros. Con `stats_sync_enabled: false` (o CR fuera) los logros saltan.
+- Cuatro de cinco juegos gestionados en ese estado (2545360, 2524850, 1942280,
+  1875580). 2524850 tenía el **schema en disco** desde dos días antes y CR
+  siguió contestando 2 bytes: la condición no es "haberlo jugado", es **tener al
+  menos un logro o stat con valor** en local cuando CR arranca.
+- El quinto (711540) se jugó con el sync apagado, desbloqueó algo, y al
+  encenderlo CR importó el blob: `up-to-date (crc=2292680116)`, y en los siete
+  arranques siguientes `Sending schema (97923 bytes)` + `Returning 2..3 stats`
+  con crc cambiante. **La ruta "base llena" funciona**; sólo falla la vacía.
+- Consecuencia práctica antes del fix: sincronizar logros Deck↔Windows sólo
+  funcionaba tras jugar cada juego primero con `sync_achievements: false`.
+
+Un detalle sin cerrar: 2524850 obtuvo su schema con el sync **encendido**. En
+Linux CR sólo engancha la llamada unificada; el mensaje antiguo
+`ClientGetUserStats` (EMsg 818) lo engancha SLSsteam y CR no
+(`HandleLegacyGetUserStats` sólo se usa desde `platform/win/`). Candidato
+[inferido], no probado.
+
+### El fix: interposición de símbolo, sin tocar un byte de CR (`src/cr_stats_fix.cpp`)
+
+`cloud_redirect.so` se enlaza con `-s` (sin `.symtab`) pero **sin**
+`-fvisibility=hidden`, así que `.dynsym` conserva todas las funciones, y sus
+llamadas internas van por la PLT (visto en el desensamblado de la 2.5.2 de
+moon; en la 2.6.5 de la Deck, `eu-readelf -r … | grep -c HandleGetUserStats` →
+2). Como el wrapper pone `liblumalinux.so` **antes** que `cloud_redirect.so` en
+`LD_PRELOAD` (`setup.sh:885`), basta con que lumalinux defina
+`_ZN13StatsHandlers18HandleGetUserStatsEjRKSt6vectorIN2PB5FieldESaIS2_EE`: el
+enlazador dinámico ata la llamada de CR a la nuestra.
+
+La nuestra es un stub en ensamblador i386 que reenvía los tres slots de pila
+(puntero oculto del resultado, `appId`, `fields&`) a la función real (resuelta con
+`dlsym(RTLD_NEXT)`), y al volver mira el resultado: si sus primeros 12 bytes son
+un `std::vector<uint8_t>` vivo de **exactamente** `10 00`, lo vacía
+(`end = begin`, sin realocar). CR ve `Size()==0` y toma **su propia** rama de
+passthrough. Cualquier otro cuerpo — "al día" con crc ≠ 0, o schema + stats
+sembrados desde Drive en una segunda máquina — se devuelve intacto.
+
+Auto-comprobaciones en vez de lista de versiones (todas en `CrStatsFix::Init`):
+
+1. El símbolo exacto resuelve en `cloud_redirect.so` (el nombre codifica los
+   parámetros; si cambian, no se encuentra → `Disabled`).
+2. La función real termina en `ret $4` dentro de su tamaño de `.dynsym`
+   (`dladdr1` + `RTLD_DL_SYMENT`): sigue devolviendo la estructura por puntero
+   oculto que el callee saca de la pila, que es lo que el stub reenvía.
+3. `dlsym(RTLD_DEFAULT)` devuelve **nuestro** stub (dirección tomada por un alias
+   oculto, no por el nombre interponible, que en PIC resolvería por la GOT a lo que
+   el proceso haya atado). Si no, `LD_PRELOAD` está reordenado y se anota `Failed`.
+
+Y por llamada: `process_vm_readv` sobre el propio pid prueba que los 12 bytes y
+los 2 del cuerpo son legibles antes de tocarlos (falla con `EFAULT` en vez de
+segfault). Kill switch `LUMA_NO_CR_STATS_FIX=1`. Como el símbolo lo define
+lumalinux siempre, "apagado" es "reenviar sin mirar", no "no existir".
+`status.json` → `CrStatsFix: installed | disabled | failed`.
+
+Self-test de 32 bits con un CR falso de firma idéntica:
+`tools/cr_stats_fix_selftest/run.sh` (seis escenarios: sin interposer, armado,
+segunda ronda, kill switch, CR delante en `LD_PRELOAD`, log una vez por app).
+
+### Verificar en la Deck
+
+1. `"sync_achievements": true` en `~/.config/CloudRedirect/config.json`, reiniciar Steam.
+2. Log de lumalinux: `CR-stats: armed — CloudRedirect 2.6.5, …`. Si sale
+   `CR-stats: FAILED — …`, la línea dice qué comprobación falló.
+3. Lanzar un juego a cero (schema o no). Log de CR:
+   `[Stats] GetUserStats app=N: store returned empty -> passthrough` en vez de
+   `crc-only no-op`; log de lumalinux: `CR-stats: app=N — … cleared …` (una vez).
+   Desbloquear un logro: tiene que saltar.
+4. Lanzar un juego con base llena: sigue `Sending schema … Returning N stats`.
+
+### Parche upstream (propuesto a Selectively11)
+
+`common/stats_handlers.cpp`, `HandleGetUserStats`, antes de construir la
+respuesta: si la base del juego no tiene ni stats ni logros
+(`stats.crcStats == 0`), devolver `RpcResult()` (cuerpo vacío). `TryHandle…`
+ya convierte eso en passthrough. Cuando lo incorpore, el interposer de lumalinux
+ve 0 bytes y no hace nada.
+
 ## Re-barrido 2026-08-18 — v2.6.2 → HEAD (`bc5e38a`)
 
 *26 commits, del 2026-07-22 a hoy: releases v2.6.3, v2.6.4 y v2.6.5. La tabla de

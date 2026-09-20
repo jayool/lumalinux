@@ -114,6 +114,16 @@ ones (opt-out via env var):
 |---|---|---|
 | **native achievements** (`sls_achievement_unblock`) | Scopes SLSsteam's native-achievement schema borrow to `isSubscribed && !isAddedAppId`, so LumaDeck games earn native Steam achievements while genuinely-owned games stay untouched ([RESEARCH §17](docs/RESEARCH.md)). | `LUMA_NO_SLS_ACH_UNBLOCK=1` |
 
+### Alongside CloudRedirect
+
+CloudRedirect owns cloud saves, playtime and achievement sync for lua-added games.
+Since v0.22.0 lumalinux also fixes one CloudRedirect bug from the outside, without
+patching a byte of it (plain `LD_PRELOAD` symbol interposition; opt-out via env var):
+
+| Fix | What it does | Off with |
+|---|---|---|
+| **stats-sync cold start** (`cr_stats_fix`) | CloudRedirect ≤ 2.6.5 answers a game's `GetUserStats` from its own store even when that store is **empty**, so a game it has never seen never receives its achievement schema and stays at zero achievements forever. lumalinux interposes `StatsHandlers::HandleGetUserStats`, clears the 2-byte "empty store" answer, and CloudRedirect takes its own passthrough branch — SLSsteam's schema borrow runs, achievements unlock, CloudRedirect captures and syncs them from then on ([docs/cloudredirect.md](docs/cloudredirect.md)). | `LUMA_NO_CR_STATS_FIX=1` |
+
 > The old **update-unblock** (`sls_update_unblock`) patch was **removed in v0.16.18**:
 > SLSsteam reverted its update-block mechanism on `20260714131044`, so the
 > instruction it anchored on no longer exists. The countermeasure now lives in
@@ -164,6 +174,9 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
 - `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam native-achievement patch.
   `LUMA_SLS_ACH_TRACE=1` traces the achievement guard. (The former
   `LUMA_NO_SLS_UNBLOCK` was removed with the update-unblock patch in v0.16.18.)
+- `LUMA_NO_CR_STATS_FIX=1`: disable the CloudRedirect stats-sync cold-start fix
+  (the interposed `HandleGetUserStats` then forwards untouched). See
+  `docs/cloudredirect.md`.
 - `LUMA_LOADPKG_DEBUG=1`: install the diagnostic LoadPackage hook (off by default;
   logs `PackageId + AppIdVec`). `LUMA_LOADPKG_IDX=N` picks a candidate.
 
