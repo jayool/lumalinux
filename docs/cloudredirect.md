@@ -303,6 +303,95 @@ respuesta: si la base del juego no tiene ni stats ni logros
 ya convierte eso en passthrough. Cuando lo incorpore, el interposer de lumalinux
 ve 0 bytes y no hace nada.
 
+## Cloud sync: Steam se congela al subir un lote grande (CR 2.6.5 Linux, incidente 2026-09-16/18)
+
+Incidente real en una Deck (SteamOS 3.8.16, CR 2.6.5, SLSsteam 2026-09-03,
+lumalinux 0.21.0, Google Drive). Todo lo de abajo está respaldado por logs de esa
+Deck salvo donde se marca [inferido]. Dos días de diagnóstico; no repetirlos.
+
+### Síntomas
+
+Al salir de un juego con muchos ficheros de guardado (Lonely Mountains: Snow
+Riders, 2545360, ~100 replays por sesión bajo `Ghosts/`), Steam se queda en
+"Sincronizando con la nube": la interfaz se congela, los botones dejan de
+responder, la tasa de descarga marca 0 B/s, el apagado desde Game Mode no
+responde, y hay que reiniciar a mano. Tras el reinicio, "verificando
+instalación". Los demás juegos añadidos tardan más de lo normal en salir (unos
+13 s), pero no se cuelgan.
+
+### Causa (leída en el código de CR 2.6.5 y confirmada con los tiempos del log)
+
+CR intercepta el RPC `CompleteAppUploadBatchBlocking` de Steam
+(`common/rpc_handlers.cpp:1948-1966`): lanza la promoción del lote en un hilo y
+**espera en el hilo de Steam** con `CoopYield::PumpUntil`. Ese `PumpUntil`
+(`common/coop_yield.cpp:38-49`) sólo cede el turno al bucle principal de Steam si
+hay un "yield hook" registrado; si no, es un bucle de `sleep 2 ms` hasta que el
+hilo termina. El propio comentario del autor: *"Degrades to a plain spin off
+Steam"*. Y el hook (`SetYieldHook(&CooperativeYieldCurrentJob)`, que resuelve
+`CJob::BYieldIfTimeSlice` por RVA) **sólo existe en `platform/win/cloud_intercept.cpp:1001`**.
+En Linux no hay equivalente, así que `PumpUntil` y `LockCooperatively` son spins
+puros en el hilo de Steam.
+
+Steam tiene un vigilante: si `BMainLoop` no avanza en 15 s, aserta
+(`BMainLoop stalled > 15 s` en `journalctl -b -N`, visto en el arranque del
+16-09). A partir de ahí la interfaz está muerta aunque el proceso siga vivo.
+
+La promoción del lote son llamadas a Drive **por fichero**: comprobación de
+existencia (~7 ficheros/s) y subida (~1.1 ficheros/s), en lotes de 100, que es
+el máximo de Steam. Tiempos del log de CR de esa Deck:
+
+| Fase | Lote de 100 replays | Umbral |
+|---|---|---|
+| Comprobación (CAS) | 13.5 – 15.8 s | 15 s → ya roza el vigilante |
+| Subida | 85 – 90 s | 15 s → cuelgue seguro |
+| Cadena de salida de sesión (cualquier juego) | ~12 llamadas a Drive en serie, ~13 s | por debajo, pero se nota |
+
+El mismo bloqueo de 90 s aparece en el historial de `UploadBatch` del 16 de
+agosto, con versiones anteriores de todo el stack: **no es nada nuevo de
+lumalinux 0.21.0 ni de las releases de septiembre.**
+
+Efecto secundario que convierte el cuelgue en bucle: CR difiere la publicación
+del lote a la liberación de sesión ("barrier at session release"). Si Steam
+muere a mitad, esa publicación no llega. Tras el cuelgue del 16-09 a las 21:53 la
+nube se quedó en changelist 8 y el local siguió subiendo hasta 15, con conflicto
+en `BestTimes.json` en cada arranque, y cada arranque volvía a intentar el lote
+de 100. Las 13 líneas de "another session active" son las propias sesiones
+muertas de la Deck (un clientId por arranque de Steam), no otra máquina.
+
+### Lo que se descartó, con la prueba
+
+- **GMRC / lumalinux**: el log de lumalinux no muestra actividad de GMRC en la
+  ventana del cuelgue, y con `LUMA_NO_GMRC=1` se cuelga igual.
+- **El pin de libcurl** (`src/libcurl_pin.cpp`): con `LUMA_NO_LIBCURL_FIX=1` CR
+  da `curl failed: 60` (certificado) con la libcurl del runtime de Steam y va
+  peor. El pin es necesario, no culpable.
+- **Que fuera nuevo**: el bloqueo de 90 s ya estaba el 16 de agosto.
+- **Que el checkbox de Steam Cloud del juego no sirviera**: CR devuelve `true`
+  en `IsCloudEnabledForApp` para los juegos lua, pero la casilla por juego de
+  Steam la respeta igual: `cloud_log.txt` dice
+  `Starting sync (AC Exit,Sync Disabled,)` y no sube nada.
+
+### Qué hacer hoy
+
+- **Por juego**: desmarcar "Mantener los archivos guardados en Steam Cloud" en
+  las propiedades del juego. Probado: la sincronización se salta y el juego
+  arranca y cierra normal. CR no tiene exclusión por app en su `config.json`.
+- **Global**: el fichero `~/.config/CloudRedirect/disable` apaga CR entero.
+- Las mitigaciones desde nuestro lado (aviso en LumaDeck, toggle de cloud por
+  juego, tocar `config.json`) se consideraron y se descartaron como parches
+  sobre un bug ajeno. El arreglo es de CR.
+
+### Lo que hay que pedirle a Selectively11
+
+1. Un yield hook en Linux equivalente al de Windows (localizar
+   `CJob::BYieldIfTimeSlice` en `steamclient.so`, por RTTI o patrón, como hace
+   en Windows por RVA), o, si no, hacer la promoción **fuera** del RPC bloqueante
+   y contestar a Steam antes de los 15 s.
+2. Que la publicación diferida sobreviva a una sesión muerta (hoy queda en
+   changelist vieja y cada arranque reintenta el lote entero).
+3. Exclusión por app en `config.json`.
+4. Y el bug de stats sync de la sección anterior, con su parche de una línea.
+
 ## Re-barrido 2026-08-18 — v2.6.2 → HEAD (`bc5e38a`)
 
 *26 commits, del 2026-07-22 a hoy: releases v2.6.3, v2.6.4 y v2.6.5. La tabla de
