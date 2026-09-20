@@ -117,7 +117,7 @@ ones (opt-out via env var):
 ### Alongside CloudRedirect
 
 CloudRedirect owns cloud saves, playtime and achievement sync for lua-added games.
-Since v0.22.0 lumalinux also fixes one CloudRedirect bug from the outside, without
+Since v0.21.1 lumalinux also fixes one CloudRedirect bug from the outside, without
 patching a byte of it (plain `LD_PRELOAD` symbol interposition; opt-out via env var):
 
 | Fix | What it does | Off with |

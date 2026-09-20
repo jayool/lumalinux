@@ -182,7 +182,7 @@ curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | ba
 (If *neither* loads — no banner at all — that's the wrapper not being reached, not a
 missing `.so`; see `maintenance.md` case B.)
 
-## Stats sync: el arranque en frío deja los juegos a cero logros (fix en lumalinux v0.22.0, 2026-09-20)
+## Stats sync: el arranque en frío deja los juegos a cero logros (fix en lumalinux v0.21.1, 2026-09-20)
 
 ### Qué hace CloudRedirect con `stats_sync_enabled`
 
