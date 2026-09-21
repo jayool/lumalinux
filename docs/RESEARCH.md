@@ -2128,6 +2128,31 @@ their shader manifest anonymously and non-Workshop games (Lethal Company,
 Silksong, Vampire Survivors) don't. Content depots are always denied. A gid
 Valve has never seen (e.g. 1) is granted, which makes it useless as a probe.
 
+### 19.2b Two doors that do not lead anywhere (2026-09-09, branch `claude/lumadeck-lumalinux-context-chlkmw`, deleted)
+
+Two more attempts at minting codes without a provider, both measured and
+both dead, so nobody repeats them:
+
+- **Anonymous login.** `node-steam-user` anonymous session,
+  `getManifestRequestCode` for unowned paid depots (Brotato, Lonely
+  Mountains): **AccessDenied**, same as a logged-in account that does not
+  own the game. The free control (Dota) gets a code and a 200 from the CDN.
+  Whatever the providers ran, it was not an anonymous session.
+- **`GetCDNAuthToken`** (steamclient RPC, signature from Ghidra on build
+  1788652215: `bool GetCDNAuthToken(this, app_id, depot_id, char* host,
+  CUtlString* out)`). Hooked in-process: Valve emits it (rc=1) for an
+  unowned paid depot too — it is **not** ownership-gated. Irrelevant
+  though: that token is the legacy authentication for CDN hosts that still
+  ask for one (almost none, `steam-user` notes it "usually is an empty
+  string"); what the CDN demands for a manifest today is the **request
+  code** in the URL, which this token does not replace. Phase 2 (token
+  against the CDN) was never worth running.
+
+The branch also carried a GMRC passthrough probe (let Steam ask for the
+code itself and log what Valve answers: denied for content depots, see
+19.2) and a Ghidra script to locate the content RPCs' signatures. All
+build-pinned probes, off by default; nothing of it is in main.
+
 ### 19.3 What Steam needs on disk, and what it does with it
 
 - A content install needs only `depotcache/<depot>_<gid>.manifest`, the depot
