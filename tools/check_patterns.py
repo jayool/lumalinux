@@ -112,6 +112,12 @@ def emit_rvas_file(result, out_dir, steam_version):
     finder_lines = []
     if ci.get("status") == "UNIQUE" and ci.get("distinct_disp32"):
         finder_lines.append('  cache_global_disp: "%s"' % ci["distinct_disp32"][0])
+        # The layout the idiom resolved under, so the runtime knows which
+        # struct offsets to walk WITHOUT re-scanning (RvaFeed::CacheLayout).
+        # Only meaningful next to a UNIQUE disp: same gate, same row.
+        if ci.get("root_off") and ci.get("nodes_off"):
+            finder_lines.append('  cache_root_off: "%s"' % ci["root_off"])
+            finder_lines.append('  cache_nodes_off: "%s"' % ci["nodes_off"])
     if gt.get("status") == "UNIQUE" and gt.get("distinct_got"):
         finder_lines.append('  got_rva: "%s"' % gt["distinct_got"][0])
     if finder_lines:
@@ -222,14 +228,23 @@ GMRC_XREF = {"string": "ContentServerDirectory.GetManifestRequestCode#1",
 
 # ── finder anchors (§13.5) — mirrored from package_zero_finder.cpp ────────────
 # (a) cache-access idiom, anchored on the 0xc58 tree-root offset of
-#     CPackageInfoCache:  lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+0xc58].
-#     The 0xc58 disp32 little-endian (58 0C 00 00) is the unambiguous needle;
-#     we validate the lea/mov/mov shape backwards from each hit.
+#     CPackageInfoCache:  lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+root].
+#     The root offset as a little-endian disp32 (58 0C 00 00 for 0xc58) is the
+#     unambiguous needle; we validate the lea/mov/mov shape backwards from each
+#     hit. ONE ROW PER KNOWN LAYOUT, mirrored from kCacheLayouts in
+#     src/hooks/package_zero_finder.cpp (name, root-index offset, node-array
+#     offset). The runtime scans every row and accepts only when exactly one
+#     row has sites (see classify_cache_layouts); so does this. Rows are never
+#     removed. 2026-09-22: the 9cf4720f beta moved every field by 0x338.
 # (b) GMRC prologue tail that survives the hook detour — the bytes DeriveGotBase
-#     scans for.
-CACHE_ROOT_OFFSET = 0xC58
-CACHE_IDIOM_NEEDLE = "58 0C 00 00"
+#     scans for. Bytes 8-9 (the frame size, `sub esp,imm32`) are WILDCARDED and
+#     bytes 10-11 must stay 00 00: 0x110 up to bc54101b, 0x120 on the beta.
+CACHE_LAYOUTS = [
+    ("stable-0xc58", 0xC58, 0xC6C),
+    ("beta-0xf90",   0xF90, 0xFA4),
+]
 GMRC_PROLOGUE_TAIL = "55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"
+GMRC_TAIL_WILDCARD = (8, 9)          # frame-size bytes, any value
 
 
 # ── patterns.hpp parsing ─────────────────────────────────────────────────────
@@ -310,13 +325,15 @@ def scan_rvas(segments, patstr):
     return hits
 
 
-def verify_cache_idiom(segments):
-    """Every valid cache-access idiom, as [(rva, lea_disp32), ...].
+def verify_cache_idiom(segments, root_off):
+    """Every valid cache-access idiom anchored on `root_off`, as
+    [(rva, lea_disp32), ...]. One layout row per call; verify_cache_layouts
+    runs every row.
 
-    For each `58 0C 00 00` needle the layout backwards is:
+    For each `<root_off as LE disp32>` needle the layout backwards is:
         base+0 = 8D  MODRM(mod=10, rm!=SIB)  base+2..5 = disp32   lea r1,[GOT+X]
         base+6 = 8B  MODRM(mod=00, rm!=SIB/disp32)                mov r2,[r1]
-        base+8 = 8B  MODRM(mod=10, rm!=SIB)  base+10 = the needle  mov r3,[r2+0xc58]
+        base+8 = 8B  MODRM(mod=10, rm!=SIB)  base+10 = the needle  mov r3,[r2+root]
     so base = needle_off - 10.
 
     These predicates are IDENTICAL to
@@ -332,7 +349,7 @@ def verify_cache_idiom(segments):
     the three instructions one expression instead of three neighbours. Note what
     is deliberately NOT required: a fixed base register for the lea — measured on
     bc54101b29 the two real sites use different ones (esi and eax)."""
-    needle = bytes(int(t, 16) for t in CACHE_IDIOM_NEEDLE.split())
+    needle = struct.pack("<I", root_off)
     out = []
     for vaddr, buf in segments:
         start = 0
@@ -368,23 +385,77 @@ def verify_cache_idiom(segments):
     return out
 
 
+def verify_cache_layouts(segments):
+    """{layout_name: verify_cache_idiom(...)} for every row of CACHE_LAYOUTS,
+    in table order."""
+    return {name: verify_cache_idiom(segments, root) for name, root, _nodes in CACHE_LAYOUTS}
+
+
+def classify_cache_layouts(per_layout):
+    """(status, sorted distinct disp32, layout_name_or_None) across the rows —
+    the runtime's two-level UNIQUE-or-nothing (FindCacheGlobalDisp):
+
+      * NOT_FOUND         no row has a site
+      * AMBIGUOUS_LAYOUT  two or more rows have sites (Steam reads two of our
+                          anchors with the idiom's shape; nothing says which
+                          is the tree root, so the finder refuses)
+      * else the single row with sites is classified as before over its
+        DISTINCT disp32 values: UNIQUE / AMBIGUOUS."""
+    hit = [(name, sites) for name, sites in per_layout.items() if sites]
+    if not hit:
+        return "NOT_FOUND", [], None
+    if len(hit) > 1:
+        disps = sorted({d for _, sites in hit for _, d in sites})
+        return "AMBIGUOUS_LAYOUT", disps, None
+    name, sites = hit[0]
+    status, disps = classify_cache_idiom(sites)
+    return status, disps, name
+
+
+def cache_layout_row(name):
+    """(root_off, nodes_off) of a CACHE_LAYOUTS row by name."""
+    for n, root, nodes in CACHE_LAYOUTS:
+        if n == name:
+            return root, nodes
+    raise KeyError(name)
+
+
 # ── status helpers ───────────────────────────────────────────────────────────
+
+def gmrc_tail_matches(buf, o):
+    """The 18-byte tail at buf[o:], with GMRC_TAIL_WILDCARD bytes free. Same
+    comparison as DeriveGotBase's tailMatches()."""
+    tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    if o + len(tail) > len(buf):
+        return False
+    for k in range(len(tail)):
+        if k in GMRC_TAIL_WILDCARD:
+            continue
+        if buf[o + k] != tail[k]:
+            return False
+    return True
+
 
 def verify_gmrc_got(segments):
     """[(rva_of_the_0x05_byte, derived_got_rva)] for every GMRC prologue tail.
 
     Mirrors Hooks::PackageZeroFinder::DeriveGotBase exactly: the tail is
     preceded by `05 imm32` (add eax,imm32), and GOT = rva(0x05) + imm32 —
-    the arithmetic the CPU performs after get_pc_thunk leaves GMRC+5 in eax."""
+    the arithmetic the CPU performs after get_pc_thunk leaves GMRC+5 in eax.
+    The frame-size bytes of the tail are wildcarded (gmrc_tail_matches), so the
+    search anchors on the fixed head and checks the rest per hit."""
     tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    head = tail[:min(GMRC_TAIL_WILDCARD)]
     out = []
     for vaddr, buf in segments:
         start = 0
         while True:
-            o = buf.find(tail, start)
+            o = buf.find(head, start)
             if o < 0:
                 break
             start = o + 1
+            if not gmrc_tail_matches(buf, o):
+                continue
             i = o - 5
             if i < 0 or buf[i] != 0x05:
                 continue
@@ -1000,27 +1071,39 @@ def main():
     for const, label in DIAGNOSTIC.items():
         record(const, label, "diagnostic")
 
-    # 4a) finder cache-access idiom (0xc58)
+    # 4a) finder cache-access idiom, one scan per known layout (CACHE_LAYOUTS)
     # The finder needs ONE answer, not a list: X is what builds cache_global,
     # which it dereferences and ultimately writes depots through. Since
-    # FindCacheGlobalDisp refuses to guess between disagreeing sites, a build
-    # whose sites disagree is a build where the finder does not work — so
-    # anything but UNIQUE blocks here too, exactly as gmrc_tail's NOT_FOUND
-    # does. Note the classification is over DISTINCT disp32 values, not over
-    # site count: many sites all naming the same X is the healthy shape (2 on
-    # bc54101b29, 2 on the v0.10.11 build in RESEARCH §13.5).
-    idiom = verify_cache_idiom(segments)
-    idiom_status, idiom_disps = classify_cache_idiom(idiom)
+    # FindCacheGlobalDisp refuses to guess between disagreeing sites — or
+    # between disagreeing LAYOUTS — a build where either disagrees is a build
+    # where the finder does not work, so anything but UNIQUE blocks here too,
+    # exactly as gmrc_tail's NOT_FOUND does. Note the classification is over
+    # DISTINCT disp32 values, not over site count: many sites all naming the
+    # same X is the healthy shape (2 on bc54101b29, 2 on the v0.10.11 build in
+    # RESEARCH §13.5, 2 on the 9cf4720f beta at 0xf90).
+    per_layout = verify_cache_layouts(segments)
+    idiom_status, idiom_disps, idiom_layout = classify_cache_layouts(per_layout)
+    idiom = per_layout[idiom_layout] if idiom_layout else \
+        [s for sites in per_layout.values() for s in sites]
+    root_off, nodes_off = cache_layout_row(idiom_layout) if idiom_layout else (None, None)
     result["finder"]["cache_idiom"] = {
         "status": idiom_status,
+        "layout": idiom_layout,
+        "root_off": ("0x%x" % root_off) if root_off else None,
+        "nodes_off": ("0x%x" % nodes_off) if nodes_off else None,
         "sites_total": len(idiom),
         "distinct_disp32": ["0x%x" % (d & 0xFFFFFFFF) for d in idiom_disps],
         "sites": [{"rva": "0x%x" % r, "disp32": "0x%x" % (d & 0xFFFFFFFF)}
                   for r, d in idiom[:8]],
+        "per_layout": {name: {"root_off": "0x%x" % root, "sites": len(per_layout[name]),
+                              "distinct_disp32": ["0x%x" % (d & 0xFFFFFFFF)
+                                                  for d in sorted({d for _, d in per_layout[name]})]}
+                       for name, root, _n in CACHE_LAYOUTS},
     }
     if idiom_status != "UNIQUE":
-        result["blocking"].append("finder:cache_idiom(0x%x):%s"
-                                  % (CACHE_ROOT_OFFSET, idiom_status))
+        result["blocking"].append("finder:cache_idiom(%s):%s"
+                                  % (idiom_layout or ",".join(n for n, _r, _n in CACHE_LAYOUTS),
+                                     idiom_status))
 
     # 4b) GMRC prologue tail -> the GOT base DeriveGotBase will derive from it.
     # This used to classify on the MATCH COUNT and let AMBIGUOUS pass with the
@@ -1063,10 +1146,15 @@ def main():
             extra = "  (non-critical)"
         print("  %-12s %-13s%s%s" % (label, info["status"], rva, extra))
     ci = result["finder"]["cache_idiom"]
-    print("  %-12s %s (%d site(s), disp%s %s)"
-          % ("cache_idiom", ci["status"], ci["sites_total"],
+    print("  %-12s %s (layout %s, %d site(s), disp%s %s)"
+          % ("cache_idiom", ci["status"], ci["layout"] or "-", ci["sites_total"],
              "" if len(ci["distinct_disp32"]) == 1 else "s",
              " ".join(ci["distinct_disp32"]) or "-"))
+    if ci["status"] != "UNIQUE":
+        for name, info in ci["per_layout"].items():
+            print("  %-12s   %-14s root %s: %d site(s) %s"
+                  % ("", name, info["root_off"], info["sites"],
+                     " ".join(info["distinct_disp32"]) or "-"))
     gt = result["finder"]["gmrc_tail"]
     print("  %-12s %s (%d site(s), got %s)"
           % ("gmrc_tail", gt["status"], gt["count"],

@@ -27,10 +27,17 @@
 # The idiom, 14 bytes:
 #   8D /r mod=10 disp32        lea  r1,[GOT + X]      <- X is what we want
 #   8B /r mod=00               mov  r2,[r1]
-#   8B /r mod=10 58 0C 00 00   mov  r3,[r2 + 0xc58]   <- 0xc58 is the anchor
+#   8B /r mod=10 <root LE>     mov  r3,[r2 + root]    <- root is the anchor
 # plus CHAINED registers: reg(lea)==rm(mov1) and reg(mov1)==rm(mov2).
 # Deliberately NOT required: a fixed base register for the lea — the two real
 # sites on bc54101b29 use different ones (esi and eax).
+#
+# Since 2026-09-22 `root` is not one number but a TABLE of known layouts
+# (0xc58 stable, 0xf90 on the 9cf4720f beta) and all four copies scan every
+# row with a two-level rule: exactly ONE row may have sites, and that row must
+# name exactly ONE disp32. This test pins the table (the four must list the
+# same rows), the rule (one row / no row / two rows), and the GMRC tail's
+# wildcarded frame-size bytes (0x110 and 0x120 both derive the GOT).
 import os
 import struct
 import subprocess
@@ -39,9 +46,15 @@ import tempfile
 import textwrap
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from check_patterns import (GMRC_PROLOGUE_TAIL, classify_cache_idiom,  # noqa: E402
-                            classify_gmrc_got, emit_rvas_file,
-                            verify_cache_idiom, verify_gmrc_got)
+from check_patterns import (CACHE_LAYOUTS, GMRC_PROLOGUE_TAIL,  # noqa: E402
+                            GMRC_TAIL_WILDCARD, classify_cache_idiom,
+                            classify_cache_layouts, classify_gmrc_got,
+                            emit_rvas_file, verify_cache_idiom,
+                            verify_cache_layouts, verify_gmrc_got)
+import experiment_cache_idiom as probe  # noqa: E402
+
+ROOT_STABLE = 0xC58
+ROOT_BETA = 0xF90
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VADDR = 0x1000
@@ -57,14 +70,15 @@ def check(cond, msg):
 
 # ── byte builders ────────────────────────────────────────────────────────────
 
-def chained(disp, lea_base=3):
+def chained(disp, lea_base=3, root=ROOT_STABLE):
     """A real idiom. lea_base picks the GOT register (3=ebx, 0=eax, 6=esi) —
-    varying it must NOT change the outcome."""
+    varying it must NOT change the outcome. `root` picks the layout row the
+    site belongs to (the anchor bytes)."""
     m1 = 0x80 | (1 << 3) | lea_base   # mod=10 reg=ecx rm=<base>  lea ecx,[base+d]
     m2 = 0x00 | (2 << 3) | 1          # mod=00 reg=edx rm=ecx     mov edx,[ecx]
-    m3 = 0x80 | (0 << 3) | 2          # mod=10 reg=eax rm=edx     mov eax,[edx+0xc58]
+    m3 = 0x80 | (0 << 3) | 2          # mod=10 reg=eax rm=edx     mov eax,[edx+root]
     return (bytes([0x8D, m1]) + struct.pack("<i", disp) +
-            bytes([0x8B, m2, 0x8B, m3, 0x58, 0x0C, 0x00, 0x00]))
+            bytes([0x8B, m2, 0x8B, m3]) + struct.pack("<I", root))
 
 
 def unchained(disp):
@@ -88,14 +102,18 @@ def naked_needle():
     return b"\x90" * 10 + bytes([0x58, 0x0C, 0x00, 0x00])
 
 
-def gmrc(got_rva, at):
+def gmrc(got_rva, at, frame=None):
     """A GMRC prologue whose `add eax,imm32` derives `got_rva` when the 0x05
     byte lands at RVA `at`: imm = got - rva(0x05). The leading `E8 rel32` is
     included for realism but is NOT what the scan anchors on — our own detour
-    overwrites exactly those 5 bytes at runtime."""
-    tail = bytes(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    overwrites exactly those 5 bytes at runtime. `frame` overrides the
+    `sub esp,imm32` size in the tail (0x110 as shipped; 0x120 on the beta)."""
+    tail = bytearray(int(t, 16) for t in GMRC_PROLOGUE_TAIL.split())
+    if frame is not None:
+        lo, hi = GMRC_TAIL_WILDCARD
+        tail[lo:hi + 3] = struct.pack("<I", frame)      # the whole sub esp,imm32
     return (bytes([0xE8, 0, 0, 0, 0]) +
-            bytes([0x05]) + struct.pack("<i", got_rva - at) + tail)
+            bytes([0x05]) + struct.pack("<i", got_rva - at) + bytes(tail))
 
 
 def tail_without_add():
@@ -118,17 +136,28 @@ def seg(*chunks):
 # We lift its predicate block verbatim and drive it with a byte buffer: if
 # someone edits the predicates there and not here, this stops matching.
 
-def ghidra_scan(segments):
+def ghidra_layouts():
+    """derive_patterns.CACHE_LAYOUTS, read without importing the Jython script."""
+    src = open(os.path.join(REPO, "tools", "derive_patterns.py")).read()
+    i = src.index("CACHE_LAYOUTS = [")
+    j = src.index("]", i) + 1
+    ns = {}
+    exec(src[i:j], ns)
+    return ns["CACHE_LAYOUTS"]
+
+
+def ghidra_scan(segments, root=ROOT_STABLE):
     src = open(os.path.join(REPO, "tools", "derive_patterns.py")).read()
     i = src.index("            # Same predicates as Hooks::PackageZeroFinder")
     j = src.index("            matches.append((base, disp))") + \
         len("            matches.append((base, disp))")
     block = textwrap.dedent(src[i:j])
-    ns = {}
+    ns = {"ROOT": root}
     exec("def _scan(buf, vaddr):\n"
+         "    import struct\n"
          "    def b(a, o): return buf[a + o]\n"
          "    matches = []\n"
-         "    needle = bytes([0x58, 0x0C, 0x00, 0x00]); start = 0\n"
+         "    needle = struct.pack('<I', ROOT); start = 0\n"
          "    while True:\n"
          "        h = buf.find(needle, start)\n"
          "        if h < 0: break\n"
@@ -172,7 +201,8 @@ def ghidra_gmrc_got(segments):
             out.append(Addr(vaddr + o))
 
     ns = {"mem": Mem(), "pattern_matches": pattern_matches,
-          "GMRC_PROLOGUE_TAIL": GMRC_PROLOGUE_TAIL, "Exception": Exception}
+          "GMRC_PROLOGUE_TAIL": GMRC_PROLOGUE_TAIL,
+          "GMRC_TAIL_WILDCARD": GMRC_TAIL_WILDCARD, "Exception": Exception}
     exec(src[i:j], ns)
     return [(int(a), g) for a, g in ns["verify_gmrc_prologue_tail"]()]
 
@@ -202,6 +232,9 @@ int main(int argc, char** argv) {
     if (argc > 2 && std::strcmp(argv[2], "got") == 0) {
         uintptr_t g = DeriveGotBase(rx);
         printf("%%lld\n", g ? (long long)(g - rx.base) : -1LL);
+    } else if (argc > 2 && std::strcmp(argv[2], "layout") == 0) {
+        int L = -1; FindCacheGlobalDisp(rx, &L);
+        printf("%%s\n", L >= 0 ? kCacheLayouts[L].name : "-");
     } else {
         printf("%%d\n", (int)FindCacheGlobalDisp(rx));
     }
@@ -256,6 +289,14 @@ def cxx_disp(exe, segments):
     return int(out) & 0xFFFFFFFF
 
 
+def cxx_layout(exe, segments):
+    """The kCacheLayouts row name the C++ scan resolved, or "-"."""
+    tmp = tempfile.mktemp()
+    with open(tmp, "wb") as f:
+        f.write(segments[0][1])
+    return subprocess.run([exe, tmp, "layout"], capture_output=True, text=True).stdout.strip()
+
+
 # ── cases ────────────────────────────────────────────────────────────────────
 
 X, Y = 0x3b7d4, 0x18240
@@ -278,8 +319,24 @@ def main():
     if exe is None:
         print("note: no g++ — the C++ leg is skipped (python legs still run)")
 
+    # ── the layout TABLE: the four copies must list the same rows ──────────
+    cxx_src = open(os.path.join(REPO, "src", "hooks", "package_zero_finder.cpp")).read()
+    a = cxx_src.index("constexpr CacheLayout kCacheLayouts[] = {")
+    b = cxx_src.index("};", a)
+    cxx_rows = [(m.group(1), int(m.group(2), 16), int(m.group(3), 16)) for m in
+                __import__("re").finditer(r'\{"([^"]+)",\s*(0x[0-9a-fA-F]+),\s*(0x[0-9a-fA-F]+)\}',
+                                          cxx_src[a:b])]
+    rows = [tuple(r) for r in CACHE_LAYOUTS]
+    check(cxx_rows == rows, "layout table: package_zero_finder.cpp == check_patterns %s"
+          % [(n, hex(r), hex(x)) for n, r, x in rows])
+    check([tuple(r) for r in ghidra_layouts()] == rows, "layout table: derive_patterns agrees")
+    check([tuple(r) for r in probe.CACHE_LAYOUTS] == rows, "layout table: experiment_cache_idiom agrees")
+    check(all(nodes == root + 0x14 for _n, root, nodes in rows), "every row: nodes == root + 0x14")
+    check(all(r in (ROOT_STABLE, ROOT_BETA) for _n, r, _x in rows) and len(rows) == 2,
+          "table rows are exactly 0xc58 (stable) and 0xf90 (beta) — update this test when adding one")
+
     for name, segs, want_status, want_disps in CASES:
-        idiom = verify_cache_idiom(segs)
+        idiom = verify_cache_idiom(segs, ROOT_STABLE)
         status, disps = classify_cache_idiom(idiom)
         check(status == want_status,
               "%-34s check_patterns -> %s" % (name, status))
@@ -288,10 +345,44 @@ def main():
               "%-34s disps %s" % (name, [hex(d & 0xFFFFFFFF) for d in disps]))
         check(sorted(idiom) == ghidra_scan(segs),
               "%-34s derive_patterns agrees" % name)
+        check(sorted((s.rva, s.disp) for s in probe.scan_idiom(segs, ROOT_STABLE) if s.chained)
+              == sorted(idiom), "%-34s experiment_cache_idiom agrees" % name)
         if exe is not None:
             want = disps[0] & 0xFFFFFFFF if status == "UNIQUE" else 0
             check(cxx_disp(exe, segs) == want,
                   "%-34s C++ returns 0x%x" % (name, want))
+
+    # ── the two-level rule across layouts ───────────────────────────────────
+    # Exactly one row may have sites (else AMBIGUOUS_LAYOUT), and that row must
+    # name exactly one disp32. Measured 2026-09-22: stable has 0 sites at 0xf90,
+    # the beta 0 at 0xc58 — so on every real build seen, one row answers.
+    LAYOUT_CASES = [
+        ("stable row only", seg(chained(X), chained(X, lea_base=0)),
+         "UNIQUE", [X], "stable-0xc58"),
+        ("beta row only", seg(chained(X, root=ROOT_BETA), chained(X, lea_base=6, root=ROOT_BETA)),
+         "UNIQUE", [X], "beta-0xf90"),
+        ("beta row, disagreeing disps", seg(chained(X, root=ROOT_BETA), chained(Y, root=ROOT_BETA)),
+         "AMBIGUOUS", [Y, X], "beta-0xf90"),
+        ("both rows have sites", seg(chained(X), chained(X, root=ROOT_BETA)),
+         "AMBIGUOUS_LAYOUT", [X], None),
+        ("neither row", seg(chained(X, root=0xD00)), "NOT_FOUND", [], None),
+    ]
+    for name, segs, want_status, want_disps, want_layout in LAYOUT_CASES:
+        per = verify_cache_layouts(segs)
+        status, disps, layout = classify_cache_layouts(per)
+        check(status == want_status and layout == want_layout,
+              "%-34s check_patterns -> %s / %s" % (name, status, layout))
+        check(sorted(d & 0xFFFFFFFF for d in disps) == sorted(d & 0xFFFFFFFF for d in want_disps),
+              "%-34s disps %s" % (name, [hex(d & 0xFFFFFFFF) for d in disps]))
+        for lname, lroot, _n in CACHE_LAYOUTS:
+            check(sorted(per[lname]) == ghidra_scan(segs, lroot),
+                  "%-34s derive_patterns agrees on %s" % (name, lname))
+        if exe is not None:
+            want = disps[0] & 0xFFFFFFFF if status == "UNIQUE" else 0
+            check(cxx_disp(exe, segs) == want,
+                  "%-34s C++ returns 0x%x" % (name, want))
+            check(cxx_layout(exe, segs) == (want_layout if status == "UNIQUE" else "-"),
+                  "%-34s C++ names layout %s" % (name, want_layout if status == "UNIQUE" else "-"))
 
     # ── the GOT leg (DeriveGotBase) ──────────────────────────────────────────
     # Classified over the DERIVED GOT, not the match count: a second PIC
@@ -310,6 +401,15 @@ def main():
          seg(tail_without_add()), "NOT_FOUND", []),
         ("nothing",
          seg(b"\x90" * 64), "NOT_FOUND", []),
+        # The frame-size bytes are free: 0x120 (the 9cf4720f beta) derives the
+        # GOT exactly like 0x110, and a frame >= 64 KB (high bytes != 00 00)
+        # does not match at all.
+        ("beta frame 0x120",
+         seg(gmrc(G1, VADDR + 5, frame=0x120)), "UNIQUE", [G1]),
+        ("frame 0x110 and 0x120, same GOT",
+         seg(gmrc(G1, VADDR + 5), gmrc(G1, VADDR + P + 8 + 5, frame=0x120)), "UNIQUE", [G1]),
+        ("frame 0x10120 (high bytes set)",
+         seg(gmrc(G1, VADDR + 5, frame=0x10120)), "NOT_FOUND", []),
     ]
     for name, segs, want_status, want_gots in GOT_CASES:
         sites = verify_gmrc_got(segs)
@@ -327,7 +427,7 @@ def main():
     # The lea's base register must not matter: pinning it would have discarded a
     # real site on bc54101b29 (esi at 0xfdd2dd, eax at 0x18964e5).
     for base, reg in ((3, "ebx"), (0, "eax"), (6, "esi")):
-        st, dd = classify_cache_idiom(verify_cache_idiom(seg(chained(X, base))))
+        st, dd = classify_cache_idiom(verify_cache_idiom(seg(chained(X, base)), ROOT_STABLE))
         check(st == "UNIQUE" and (dd[0] & 0xFFFFFFFF) == X,
               "GOT register %-4s is accepted" % reg)
 

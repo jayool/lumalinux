@@ -163,8 +163,17 @@ NOTIFY_LABEL   = "kNotifyLicensesUpdatedPattern"
 NOTIFY_ANCHOR  = "17LicensesUpdated_t"
 
 # Package-0 finder anchors (§13.5)
-CACHE_ROOT_OFFSET = 0xc58
+# One row per KNOWN CPackageInfoCache layout: (name, root-index offset,
+# node-array offset). Mirrors kCacheLayouts in src/hooks/package_zero_finder.cpp
+# and CACHE_LAYOUTS in tools/check_patterns.py — the four copies change
+# together (tools/test_cache_idiom.py pins them). 2026-09-22: the 9cf4720f
+# beta moved every field of the object by 0x338.
+CACHE_LAYOUTS = [
+    ("stable-0xc58", 0xc58, 0xc6c),
+    ("beta-0xf90",   0xf90, 0xfa4),
+]
 GMRC_PROLOGUE_TAIL = "55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20"
+GMRC_TAIL_WILDCARD = (8, 9)   # the frame-size bytes (`sub esp,imm32`): any value
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -370,21 +379,23 @@ def try_derive_notifylicenses():
                   "— pick manually" % (len(fns), len(uniq)))
 
 
-def verify_finder_cache_idiom():
-    """The cache-access idiom anchored on 0xc58:
+def verify_finder_cache_idiom(root_off):
+    """The cache-access idiom anchored on one layout's root offset:
         lea r1, [GOT+X]   = 8D /MODRM(mod=10) disp32      (6 bytes)
         mov r2, [r1]      = 8B /MODRM(mod=00)             (2 bytes)
-        mov r3, [r2+0xc58]= 8B /MODRM(mod=10) 58 0C 00 00 (6 bytes)
+        mov r3, [r2+root] = 8B /MODRM(mod=10) <root LE>   (6 bytes)
 
-    We anchor on the trailing literal `58 0C 00 00` (the 0xc58 disp32,
-    little-endian — easy unambiguous needle for findBytes). For each hit we
+    We anchor on the trailing literal (the root offset as a little-endian
+    disp32, e.g. `58 0C 00 00` for 0xc58 — an unambiguous needle for
+    findBytes). Called once per CACHE_LAYOUTS row. For each hit we
     walk backwards and verify the rest of the idiom byte-by-byte: 8B at h-2
     and h-4 (the two `mov`s), 8D at h-10 (the lea), then extract the lea's
     disp32 from h-8..h-5 (= X). Doing it this way (instead of asking
     findBytes for a wildcarded 8B?? prefix) sidesteps a Jython quirk where
     short patterns with full-byte wildcards in the middle yield zero hits
     even when the bytes exist."""
-    needle = "58 0C 00 00"
+    needle = "%02X %02X %02X %02X" % (root_off & 0xFF, (root_off >> 8) & 0xFF,
+                                      (root_off >> 16) & 0xFF, (root_off >> 24) & 0xFF)
     hits = pattern_matches(needle)
     matches = []
     def b(addr, off):
@@ -440,9 +451,25 @@ def verify_gmrc_prologue_tail():
     and its own `add eax,imm32` derives THE SAME GOT. Several sites agreeing is
     harmless; only sites that DISAGREE break DeriveGotBase, which now fails
     closed on them."""
+    tail = [int(t, 16) for t in GMRC_PROLOGUE_TAIL.split()]
+    head = " ".join("%02X" % b for b in tail[:min(GMRC_TAIL_WILDCARD)])
     out = []
-    for h in pattern_matches(GMRC_PROLOGUE_TAIL):
+    for h in pattern_matches(head):
         try:
+            # The rest of the tail, byte by byte, with the frame-size bytes
+            # free — the same comparison as DeriveGotBase's tailMatches() and
+            # check_patterns.gmrc_tail_matches. (Anchoring on the fixed head
+            # and checking by hand sidesteps the Jython findBytes wildcard
+            # quirk noted in verify_finder_cache_idiom.)
+            ok = True
+            for k in range(len(tail)):
+                if k in GMRC_TAIL_WILDCARD:
+                    continue
+                if (mem.getByte(h.add(k)) & 0xFF) != tail[k]:
+                    ok = False
+                    break
+            if not ok:
+                continue
             if h.getOffset() < 5:
                 continue
             base = h.subtract(5)                       # the 0x05 of add eax,imm32
@@ -582,15 +609,30 @@ print("  The finder derives GOT and cache_global at RUNTIME — it doesn't use")
 print("  patterns.hpp. We verify the two anchors it depends on are still")
 print("  present in this binary.")
 
-# 4a) Cache-access idiom (0xc58)
-print("\n  [a] cache-access idiom (anchored on tree-root offset 0x%x):" % CACHE_ROOT_OFFSET)
-idiom = verify_finder_cache_idiom()
-if not idiom:
-    print("      NOT FOUND — the 0x%x root offset of CPackageInfoCache likely moved." % CACHE_ROOT_OFFSET)
-    print("      ACTION: update kCacheRootIdxOff / kCacheNodesOff in")
-    print("              src/hooks/package_zero_finder.cpp (and the 0x%x literal" % CACHE_ROOT_OFFSET)
-    print("              in FindCacheGlobalDisp) to the new offset.")
+# 4a) Cache-access idiom, one scan per known layout (CACHE_LAYOUTS). Same
+#     two-level rule as FindCacheGlobalDisp: exactly one row may have sites,
+#     and that row must name exactly one disp32.
+print("\n  [a] cache-access idiom (one scan per known layout):")
+_per_layout = [(name, root, verify_finder_cache_idiom(root)) for name, root, _n in CACHE_LAYOUTS]
+for name, root, sites in _per_layout:
+    print("      layout %-14s root 0x%x: %d site(s)" % (name, root, len(sites)))
+_hit = [(name, sites) for name, _r, sites in _per_layout if sites]
+idiom = _hit[0][1] if len(_hit) == 1 else []
+if not _hit:
+    print("      NOT FOUND — no known layout's root offset is read with the idiom;")
+    print("      CPackageInfoCache changed again.")
+    print("      ACTION: run tools/experiment_cache_idiom_free.py on this binary to")
+    print("              find the new root (docs/maintenance.md §C), then ADD a row")
+    print("              to kCacheLayouts in src/hooks/package_zero_finder.cpp and")
+    print("              its three mirrors (check_patterns, derive_patterns,")
+    print("              experiment_cache_idiom). Never replace the old row.")
+elif len(_hit) > 1:
+    print("      AMBIGUOUS-LAYOUT — %d layouts have sites: %s"
+          % (len(_hit), ", ".join(n for n, _ in _hit)))
+    print("      NOT OK — FindCacheGlobalDisp refuses when more than one row")
+    print("      resolves; the finder will not inject on this binary.")
 else:
+    print("      layout %s resolved:" % _hit[0][0])
     for base, disp in idiom:
         print("      PRESENT @ %s   disp32=0x%x  (cache_global = GOT + disp32)" %
               (base, disp & 0xFFFFFFFF))
@@ -607,16 +649,20 @@ else:
               % (len(idiom), len(_disps), " ".join("0x%x" % d for d in _disps)))
         print("      NOT OK — FindCacheGlobalDisp fails closed on disagreement,")
         print("      so the finder will not resolve or inject on this binary.")
-        print("      ACTION: the idiom needs a more specific anchor than 0x%x," % CACHE_ROOT_OFFSET)
-        print("              which is shared with whatever class matched too.")
+        print("      ACTION: the idiom needs a more specific anchor than this row's")
+        print("              root offset, which is shared with whatever class matched too.")
 
 # 4b) GMRC prologue tail
 print("\n  [b] GMRC prologue tail (survives the hook detour):")
 tail = verify_gmrc_prologue_tail()
 if not tail:
-    print("      NOT FOUND — Steam may have reorganised GMRC's prologue.")
+    print("      NOT FOUND — Steam may have reorganised GMRC's prologue (the")
+    print("      frame-size bytes are already wildcarded, so this is more than")
+    print("      a locals-only change).")
     print("      ACTION: update the `tail` byte array in DeriveGotBase() in")
-    print("              src/hooks/package_zero_finder.cpp to the new sequence.")
+    print("              src/hooks/package_zero_finder.cpp to the new sequence,")
+    print("              and its mirrors (check_patterns, derive_patterns,")
+    print("              experiment_cache_idiom).")
 else:
     _gots = sorted(set(g for _, g in tail))
     for base, got in tail:

@@ -46,8 +46,7 @@ HARNESS = r'''
 #include <cstdlib>
 #include <cstddef>
 
-constexpr std::size_t kCacheRootIdxOff = 0xc58;
-constexpr std::size_t kCacheNodesOff   = 0xc6c;
+@@LAYOUTS@@
 constexpr std::size_t kNodeLeftOff     = 0x00;
 constexpr std::size_t kNodeRightOff    = 0x04;
 constexpr std::size_t kNodePkgIdOff    = 0x10;
@@ -87,15 +86,20 @@ int main(int argc, char** argv) {
     *reinterpret_cast<uint32_t*>(node + kNodePkgIdOff) = key;
     *reinterpret_cast<void**>(node + kNodePkgInfoOff)  = pkg;
 
-    *reinterpret_cast<int32_t*>(cache + kCacheRootIdxOff) = rootIdx;
-    *reinterpret_cast<uint8_t**>(cache + kCacheNodesOff)  = node;
+    // Walk with the layout the caller names — once per known row, so a row
+    // whose offsets drifted from its own root/nodes pair fails HERE, not on a
+    // Deck. The row is picked by argv[4] (defaults to the first).
+    const int L = argc > 4 ? (int)strtol(argv[4], nullptr, 0) : 0;
+    const CacheLayout& lay = kCacheLayouts[L];
+    *reinterpret_cast<int32_t*>(cache + lay.rootIdxOff) = rootIdx;
+    *reinterpret_cast<uint8_t**>(cache + lay.nodesOff)  = node;
 
     uint8_t* slot_holder = nullptr;
     static uint8_t* slot;
     slot = cache;
     (void)slot_holder;
 
-    void* got = FindPackage0((uintptr_t)&slot);
+    void* got = FindPackage0((uintptr_t)&slot, lay);
     std::printf("%s\n", got == (void*)pkg ? "pkg" : (got == nullptr ? "null" : "other"));
     return 0;
 }
@@ -108,13 +112,18 @@ def build():
     except Exception:
         return None
     src = open(os.path.join(REPO, "src", "hooks", "package_zero_finder.cpp")).read()
-    i = src.index("void* FindPackage0(uintptr_t cacheGlobal) {")
+    i = src.index("void* FindPackage0(uintptr_t cacheGlobal, const CacheLayout& lay) {")
     j = src.index("// ============================================================"
                   "=================\n// Worker", i)
     tmp = tempfile.mkdtemp()
     cpp, exe = os.path.join(tmp, "w.cpp"), os.path.join(tmp, "w")
+    # The layout table is lifted from the .cpp too, so the walk is exercised
+    # with the exact rows the Deck carries.
+    a = src.index("struct CacheLayout {")
+    b = src.index("\n", src.index("constexpr int kNumCacheLayouts"))
     with open(cpp, "w") as f:
-        f.write(HARNESS.replace("@@FINDPACKAGE0@@", src[i:j]))
+        f.write(HARNESS.replace("@@FINDPACKAGE0@@", src[i:j])
+                       .replace("@@LAYOUTS@@", src[a:b]))
     r = subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-o", exe, cpp],
                        capture_output=True, text=True)
     if r.returncode != 0:
@@ -123,10 +132,17 @@ def build():
     return exe
 
 
-def run(exe, root, key, self_id):
-    r = subprocess.run([exe, str(root), str(key), str(self_id)],
+def run(exe, root, key, self_id, layout=0):
+    r = subprocess.run([exe, str(root), str(key), str(self_id), str(layout)],
                        capture_output=True, text=True)
     return r.stdout.strip()
+
+
+def num_layouts():
+    src = open(os.path.join(REPO, "src", "hooks", "package_zero_finder.cpp")).read()
+    a = src.index("constexpr CacheLayout kCacheLayouts[] = {")
+    b = src.index("};", a)
+    return src[a:b].count("{\"")
 
 
 def main():
@@ -151,6 +167,17 @@ def main():
           "empty tree (rootIdx -1)              -> refuses")
     check(run(exe, 0, 5, 0) == "null",
           "single node, key 5 (no package 0)    -> refuses")
+
+    # Every known layout row walks the same way: the object is built at THAT
+    # row's root/nodes offsets and the walk must reach it. A row added to
+    # kCacheLayouts with mismatched offsets fails here.
+    n = num_layouts()
+    check(n >= 2, "kCacheLayouts has %d row(s)" % n)
+    for L in range(n):
+        check(run(exe, 0, 0, 0, L) == "pkg",
+              "layout row %d: key 0 + id 0            -> returns the object" % L)
+        check(run(exe, 0, 0, 7, L) == "null",
+              "layout row %d: key 0 + id 7            -> refuses" % L)
 
     print("\n%s" % ("FAILURES: %d" % fails if fails else "all ok"))
     return 1 if fails else 0

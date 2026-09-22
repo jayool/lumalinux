@@ -54,10 +54,20 @@
 import struct
 import sys
 
-CACHE_ROOT_OFFSET  = 0xC58
-CACHE_IDIOM_NEEDLE = bytes([0x58, 0x0C, 0x00, 0x00])
+# Una fila por layout CONOCIDO de CPackageInfoCache: (nombre, offset de la raíz,
+# offset del array de nodos). Espejo de kCacheLayouts en
+# src/hooks/package_zero_finder.cpp y de CACHE_LAYOUTS en check_patterns.py /
+# derive_patterns.py; las cuatro copias cambian juntas (test_cache_idiom.py).
+# 2026-09-22: la beta 9cf4720f desplazó todos los campos del objeto 0x338.
+# Cuando NINGUNA fila resuelve, el paso siguiente es experiment_cache_idiom_free.py
+# (busca la raíz con el offset libre y casa los campos entre builds).
+CACHE_LAYOUTS = [
+    ("stable-0xc58", 0xC58, 0xC6C),
+    ("beta-0xf90",   0xF90, 0xFA4),
+]
 GMRC_PROLOGUE_TAIL = bytes.fromhex(
     "55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20".replace(" ", ""))
+GMRC_TAIL_WILDCARD = (8, 9)     # los dos bytes del tamaño de frame: cualquier valor
 REG32 = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
 
 
@@ -123,8 +133,8 @@ def section_of(secs, rva):
 # ── el idiom ─────────────────────────────────────────────────────────────────
 
 class Site:
-    def __init__(self, rva, disp, m1, m2, m3):
-        self.rva, self.disp = rva, disp
+    def __init__(self, rva, disp, m1, m2, m3, root=0xC58):
+        self.rva, self.disp, self.root = rva, disp, root
         self.lea_dst,  self.lea_base  = (m1 >> 3) & 7, m1 & 7
         self.mov1_dst, self.mov1_base = (m2 >> 3) & 7, m2 & 7
         self.mov2_dst, self.mov2_base = (m3 >> 3) & 7, m3 & 7
@@ -137,21 +147,22 @@ class Site:
                 self.mov1_dst == self.mov2_base)
 
     def asm(self):
-        return ("lea %s,[%s+0x%x] ; mov %s,[%s] ; mov %s,[%s+0xc58]" % (
+        return ("lea %s,[%s+0x%x] ; mov %s,[%s] ; mov %s,[%s+0x%x]" % (
             REG32[self.lea_dst], REG32[self.lea_base], self.disp & 0xFFFFFFFF,
             REG32[self.mov1_dst], REG32[self.mov1_base],
-            REG32[self.mov2_dst], REG32[self.mov2_base]))
+            REG32[self.mov2_dst], REG32[self.mov2_base], self.root))
 
 
-def scan_idiom(segs):
-    """Predicados IDÉNTICOS a FindCacheGlobalDisp. Se ancla en el needle 0xc58
-    (equivalente y mucho más rápido que recorrer byte a byte: el needle sólo
-    puede estar en i+10)."""
+def scan_idiom(segs, root_off=0xC58):
+    """Predicados IDÉNTICOS a FindCacheGlobalDisp para UNA fila de la tabla. Se
+    ancla en el needle (la raíz como disp32 little-endian; equivalente y mucho
+    más rápido que recorrer byte a byte: el needle sólo puede estar en i+10)."""
+    needle = struct.pack("<I", root_off)
     out = []
     for vaddr, buf in segs:
         start = 0
         while True:
-            o = buf.find(CACHE_IDIOM_NEEDLE, start)
+            o = buf.find(needle, start)
             if o < 0:
                 break
             start = o + 1
@@ -174,8 +185,13 @@ def scan_idiom(segs):
             if (m3 & 0xC0) != 0x80 or (m3 & 0x07) == 0x04:
                 continue
             disp = struct.unpack_from("<i", buf, i + 2)[0]
-            out.append(Site(vaddr + i, disp, m1, m2, m3))
+            out.append(Site(vaddr + i, disp, m1, m2, m3, root_off))
     return out
+
+
+def scan_layouts(segs):
+    """{nombre: scan_idiom(...)} para cada fila de CACHE_LAYOUTS."""
+    return {name: scan_idiom(segs, root) for name, root, _n in CACHE_LAYOUTS}
 
 
 # ── GOT, igual que DeriveGotBase ─────────────────────────────────────────────
@@ -183,14 +199,20 @@ def scan_idiom(segs):
 def derive_got(segs):
     """GOT = (RVA del byte 0x05) + imm32, con la cola del prólogo de GMRC detrás.
     Es la misma cuenta que hace la CPU al ejecutar `call thunk; add eax,imm32`."""
+    head = GMRC_PROLOGUE_TAIL[:min(GMRC_TAIL_WILDCARD)]
     hits = []
     for vaddr, buf in segs:
         start = 0
         while True:
-            o = buf.find(GMRC_PROLOGUE_TAIL, start)
+            o = buf.find(head, start)
             if o < 0:
                 break
             start = o + 1
+            # el resto de la cola, con los bytes del frame libres (como tailMatches)
+            if o + len(GMRC_PROLOGUE_TAIL) > len(buf) or any(
+                    buf[o + k] != GMRC_PROLOGUE_TAIL[k]
+                    for k in range(len(GMRC_PROLOGUE_TAIL)) if k not in GMRC_TAIL_WILDCARD):
+                continue
             i = o - 5                       # el byte 0x05 del `add eax,imm32`
             if i < 0 or buf[i] != 0x05:
                 continue
@@ -233,12 +255,20 @@ def main():
     segs = exec_segments(data)
     secs = sections(data)
 
-    sites = scan_idiom(segs)
+    per_layout = scan_layouts(segs)
+    hit = [(name, ss) for name, ss in per_layout.items() if ss]
+    print("=" * 74)
+    for name, root, _n in CACHE_LAYOUTS:
+        print("layout %-14s raíz 0x%x : %d sitio(s)" % (name, root, len(per_layout[name])))
+    if len(hit) > 1:
+        print("AMBIGUOUS-LAYOUT: %d filas con sitios -> el finder rehúsa (no inyecta)" % len(hit))
+    elif not hit:
+        print("NOT_FOUND en todas las filas -> siguiente paso: experiment_cache_idiom_free.py")
+    sites = hit[0][1] if len(hit) == 1 else [s for _, ss in hit for s in ss]
     disps = sorted({s.disp for s in sites})
     chained = [s for s in sites if s.chained]
     cdisps = sorted({s.disp for s in chained})
 
-    print("=" * 74)
     print("sitios que casan con los predicados del runtime : %d" % len(sites))
     print("disp32 distintos entre ellos                    : %d" % len(disps))
     print("de esos sitios, con registros ENCADENADOS       : %d" % len(chained))
