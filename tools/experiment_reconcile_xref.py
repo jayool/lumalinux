@@ -156,3 +156,49 @@ def _extra(so):
 for so in sys.argv[1:]:
     print("=" * 70); print(so, "(pasadas 5 y 6)")
     _extra(so)
+
+
+# ── 7) criterios SIN números de layout: qué combinación deja exactamente una función
+#   c1  publica el callback 125 (todas las candidatas lo cumplen por construcción)
+#   c2  lee un campo de `this` nada más empezar: 8B 45 08 8B modrm(mod=10, rm=eax) disp32 (disp LIBRE)
+#   c3  compara ese valor y salta si <= 0: 85 ?? seguido de 0F 8E (jle rel32) en los 16 bytes siguientes
+#   c4  prólogo 55 89 E5 57 56 53 E8 (forma; depende del compilador)
+def _criteria(so):
+    data, secs = cp._load_sections(so)
+    starts, _i, _n = cp.eh_frame_starts(so)
+    read_va = cp._read_va(data, secs)
+    tx_a, tx_o, tx_s = secs[".text"]; tx = data[tx_o:tx_o + tx_s]
+    hits, i = [], 0
+    while True:
+        j = tx.find(b"\x6A\x7D\x50\xE8", i)
+        if j < 0: break
+        i = j + 1
+        hits.append(tx_a + j)
+    fns = sorted({fn_of(starts, h) for h in hits if fn_of(starts, h)})
+    print("  [7] criterios sin layout sobre las %d funciones que publican el 125:" % len(fns))
+    rows = []
+    for f in fns:
+        b = read_va(f, 96)
+        c2 = c3 = False; c2_off = None
+        for k in range(0, 88):
+            if b[k:k+3] == b"\x8B\x45\x08" and b[k+3] == 0x8B and (b[k+4] & 0xC0) == 0x80 and (b[k+4] & 7) == 0:
+                c2 = True; c2_off = k
+                disp = struct.unpack_from("<I", b, k + 5)[0]
+                tail = b[k+9:k+9+16]
+                for m in range(len(tail) - 3):
+                    if tail[m] == 0x85 and tail[m+2:m+4] == b"\x0F\x8E":
+                        c3 = True
+                break
+        c4 = b[:6] == bytes.fromhex("5589E5575653") and b[6] == 0xE8
+        rows.append((f, c2, c3, c4, disp if c2 else None))
+    for f, c2, c3, c4, disp in rows:
+        print("     fn 0x%08x  c2=%-5s c3=%-5s c4=%-5s %s" % (
+            f, c2, c3, c4, ("(campo this+0x%x)" % disp) if c2 else ""))
+    for name, sel in (("c2", lambda r: r[1]), ("c2+c3", lambda r: r[1] and r[2]),
+                      ("c4", lambda r: r[3]), ("c2+c3+c4", lambda r: r[1] and r[2] and r[3])):
+        n = [r[0] for r in rows if sel(r)]
+        print("     combinación %-9s -> %d función(es) %s" % (name, len(n), " ".join("0x%x" % x for x in n)))
+
+for so in sys.argv[1:]:
+    print("=" * 70); print(so, "(pasada 7)")
+    _criteria(so)
