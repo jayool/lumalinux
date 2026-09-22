@@ -831,3 +831,111 @@ and has not reacted to 20770407 coming back on 09-16.
   `docs/slsteam-moon-findings.md`.
 - LumaDeck: `backend/achievements.py` (SLScheevo), Workshop page, CloudRedirect
   component, `FIXES_MAP.md` (Online Fix), `docs/cloud-saves.md`.
+
+## Delta — 2026-09-22: BST v1.0.4 catches the beta layout; huanyuejue 1.5.1.2; the two pattern feeds diverge
+
+**Frozen references.** `madoiscool/BetterSteamTools` `main` @ `4747385`
+(2026-09-21, three commits after `dec29b7`, all mendy-tools; tag `v1.0.4`
+09-21; `beta-client-support` is the same tip); `updates` @ `bfa812e`
+(`opensteamtool/latest.toml` → `v1.0.4/OpenSteamTool.dll`, sha256
+`fe849c7e…`). `huanyuejue/OpenSteamTool` `main` @ `7109796` (2026-09-18, five
+commits after `b754d13`, tags `1.5.1.1` 09-15 and `1.5.1.2` 09-18).
+`OpenSteam001/OpenSteamTool` stale since July, as before. Pattern feeds:
+`madoiscool/steam-monitor` `pattern` @ `7bea3a6` (09-22),
+`OpenSteam001/steam-monitor` `pattern` @ `134c9b1` (**09-06**), `ipc` @
+`c61b5fd` (09-22). *Correction:* the `92d027b` cited for steam-monitor in
+`slsteam-moon-findings.md` resolves in neither repository; the anchors above
+replace it.
+
+### BetterSteamTools (`0b776c5`, `1d15f39`, `4747385`)
+
+**[read] `0b776c5` (09-20) "Prevent empty depot writes; update CNetPacket
+layout".** Three things. (1) `BuildDepotDependency` now fails when an app that
+a lua declares depots for comes back with an empty `pDepotInfo` during an
+appinfo refresh, instead of storing the transient empty depot config *"that
+caused instant-complete installs"*. (2) The synchronous pre-seed sweep of
+09-17 (and its time budget) is gone: on-demand `YldLoadDepotManifest` is the
+only fetch path now. (3) `CNetPacket` gains two `uint32` "per-packet version
+stamps" after `m_hConnection`: *"Steam client beta (steamclient64 d2d085e7+)
+inserted two per-packet version stamps here, shifting m_pubData/m_cubData +8
+bytes."* — the same +8 moon found on Linux two days earlier (`3bd8bc7`, D23).
+
+**[read] `1d15f39` (09-20).** `CNetPacket` becomes opaque; `NetPacket.h`
+carries a layout table `{ "stable", 0x08 }, { "beta", 0x10 }` for the data
+pointer, detected at runtime from a live packet (`ProbeLayout` /
+`TryResolveLayout`), published as one atomic word so no thread can see a
+half-resolved state, with `IsReadable` (VirtualQuery) before any field access
+and a disable latch; `UnpackRaw` header-length bounds tightened. Comment:
+*"Valve will shift this again, and a new row should be the whole change."*
+
+**[read] `4747385` (09-21, = v1.0.4).** `OST_ENABLE_UPDATER` CMake option (ON
+by default) compiles the self-updater out, *"so private/pinned builds cannot
+be replaced at runtime"*.
+
+**[inferred] Relevance to us.** (1) The empty-depot guard addresses the same
+user-visible symptom as our RESEARCH §18 "0 target depots / Fully Installed,
+files missing": theirs arises during an appinfo refresh and is fixed by
+refusing to persist an empty config; ours arose on add-before-restart and is
+fixed by the license reconcile. Same symptom, different cause, nothing to
+port. (2) The CNetPacket table is the Windows twin of moon's Linux fix and
+has the shape of our finder's `kCacheLayouts` (a row per known layout, exact
+match or refuse). Not our layer: lumalinux never touches `CNetPacket`. (3)
+The pre-seed removal confirms the 09-17 reading: BST relies on Steam's own
+`depotcache` disk check, fed at the moment of the request. (4) The updater
+flag is a build-time kill switch for self-replacement; our `LUMA_NO_UPDATE` is
+a different thing (the SafeMode hash gate), and lumalinux never replaces
+itself.
+
+### huanyuejue (`47cc7ad`, `02d7955`, `3a9a3e2`, `dc61ad8`, `7109796`, all 09-18)
+
+**[read]** `47cc7ad`: remote pattern source defaults to jsDelivr first,
+GitHub raw second, with a `[remote] order` switch. `02d7955`: cache hit
+returns immediately and only a miss goes remote, a remote timeout no longer
+blocks hook installation, cache written via temp file + rename. `3a9a3e2`:
+*"Grow only expands capacity and does not change the length; write back
+`m_Size` after injecting AppIds so the injected content is visible to
+length-based traversal"* — their package-0 `AppIdVec` injection had been
+growing the buffer without bumping the count. `dc61ad8`: family-sharing lock
+bypass (erase the lender's `owner_id` from outbound `GamesPlayed`, sanitise
+`NotifyRunningApps` replies, drop the `9405` lock notification, clear the
+shared-borrow flag in `CheckAppOwnership`). `7109796`: atomic provider
+pointer, per-depot request-code HTTP fetches run concurrently, the lua
+resolver keeps a small lock.
+
+**[inferred] Relevance to us.** `3a9a3e2` is the bug our `AppendIdsToVec`
+never had: it sets `vec->m_Size = total` after the copy (`load_package_hook.cpp`),
+and the HIT line in every log shows the grown size. Recorded as a check
+passed, not a change. The family-sharing work is SLSsteam's layer (moon has
+its own `familyshare`), not ours. The jsDelivr-first feed is worth one line
+in the parked list: `res/rvas/` and `updates.yaml` are fetched from
+`raw.githubusercontent.com` only, which is unreachable from mainland China;
+jsDelivr mirrors any GitHub repo without setup
+(`cdn.jsdelivr.net/gh/jayool/lumalinux@main/…`). Cache-first we already do
+(`~/.cache/lumalinux/`). **Candidate, not adopted.**
+
+### The two pattern feeds have diverged
+
+**[read]** Both feeds carry the same components (`steamclient` =
+`steamclient64.dll`, `steamui`; Windows only, none of our Linux hashes appear
+in either). `madoiscool/steam-monitor` `pattern` has kept up: beta
+`1789606022` (09-17), `1789781627` (09-19, incl. `d2d085e7…`, the recompiled
+client BST's layout comment names), `1790036264` (09-22), stable
+`1788652215`. `OpenSteam001/steam-monitor` `pattern` has **not published a
+TOML since 09-06** (five betas missing: 09-10, 09-11, 09-17, 09-19, 09-22),
+while its `ipc` and `protobuf` branches did update on each of those days —
+so the upstream bot runs and only its pattern step is silent. huanyuejue's
+fork reads `OpenSteam001/steam-monitor` (`RemoteToml.cpp`), BST reads
+`madoiscool/steam-monitor`.
+
+**[inferred]** For the Chinese fork this means no remote patterns for any
+client after 1788652215 until upstream's pattern step is repaired; the day
+the recompiled beta reaches stable, its users depend on whatever is bundled.
+The OST ecosystem's live pattern supply is now madoiscool's alone. For us it
+is a data point on the model we compared in `update-resilience-comparison.md`:
+a feed maintained by one bot has one failure mode, and it just happened
+upstream without anyone noticing for 16 days. Our monitor fails loudly
+(issue on BLOCKING, and since 09-22 a loud failure on a fetch error too).
+
+**Actionable: nothing** (jsDelivr mirror parked). Next sweep starts at
+`4747385` (BST `main`), `bfa812e` (`updates`), `7109796` (huanyuejue),
+`7bea3a6` / `134c9b1` (the two `pattern` branches).
