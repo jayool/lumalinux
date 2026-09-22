@@ -2351,6 +2351,32 @@ which is how we learned wudrm was back.
   "verify integrity" does not): two shader manifests, both `via 20770407`,
   CDN accepted, `shadercache/1966720/` populated, no popup.
 
+### 20.6 Where the archives' codes come from: owners donate them (seen 2026-09-22)
+
+`slsteam-moon` 2.9 (`f40d35b`, a port of `madoiscool/BetterSteamTools@4a97d9d`,
+i.e. LuaTools for Windows) shows the supply side of §20.2. The archive
+`manifest.luastools.xyz` — the same one LumaDeck reads manifests from —
+publishes a wanted list (`GET /manifestwanted`, `depot:gid[:appid]` lines).
+Every client with `Donate.Enabled: yes` (the default) runs a thread that,
+every 30 s, takes the wanted entries whose depot sits in a package **its own
+account really owns**, asks Valve for the manifest request code with its own
+session (the ordinary `GetManifestRequestCode`, granted because the account
+owns the game) and posts `depot:gid:code` to `POST /manifestcode/submit`;
+codes its Steam obtains on its own for owned depots are captured passively
+too. The archive spends the short-lived code on the CDN, stores the manifest
+and serves it to anyone from then on. Limits: 25 mints per cycle, 2 s apart,
+list refreshed every 5 min.
+
+So the providers of §20.2 are not a protocol trick — §19.2b measured that
+there is none — but crowdsourced ownership: the codes come from people who
+bought the game. Moon itself stopped injecting codes the same week
+(`c1b5e15`): it stages the archived manifest into `depotcache/` before Steam
+asks, exactly the §19 pinned model, and only tells the user to wait when the
+archive has not got the gid yet. LumaDeck is a reader of that archive and
+not a donor; whether it should donate (the user's Steam minting codes every
+30 s for manifests it is not installing) is a decision to put to the user,
+not a default. Details in `slsteam-moon-findings.md`, delta 2026-09-22, D20.
+
 ### 20.5 What this changes upstream of lumalinux
 
 With a live provider Steam can fetch any manifest it needs, so the pinned

@@ -1570,3 +1570,222 @@ whitelist; el último ciclo (2-sep) fue limpio.
 **Ninguno produce trabajo.** El próximo barrido arranca en `cae57d2`
 (`slsteam-moon`), `62767b3` (`beta`), `3c5e8e4` (`luatools-moon`), `3aae50f`
 (`jsdelivr`) y `399cc9b` (`steam-monitor`, último commit de patrones).
+
+## Delta — 2026-09-22 (desde el delta del 2026-09-17)
+
+*Barrido el 2026-09-22 sobre clones refrescados de `swwayps/slsteam-moon` (las
+tres ramas, tags), `luatools-moon`, `lumen`, `cloudredirect-moon`, `jsdelivr` y
+`steam-monitor`. **Las páginas de issues y releases no se han podido leer**: la
+API de GitHub para repos ajenos está cerrada desde este sandbox. Nada compilado,
+nada probado en dispositivo.*
+
+**Se acabó el silencio.** Lo que el delta anterior contaba como 15 días sin
+código era en realidad trabajo sin publicar: el 17-sep o después swwayps empujó
+de golpe **106 commits** sobre `cae57d2`, y siguió hasta el 22. De esos, **64
+son cherry-picks de upstream** (commits de Ace de julio y agosto: el stack de
+tickets con SteamID de 64 bits, `SmartTickets`, el analizador PE/ELF de
+`process.cpp`, `CServerPipe` extendido, `ProcessIPCFrame` en vez de
+`RunInterface`, `CUtl*`), aplicados entre el 5 y el 11 de septiembre según sus
+fechas de commit, y **42 son de moon**, del 7 al 22. Tag **v2.9** el 19-sep en
+`668a646`. `beta` sigue en `62767b3` y `millennium` en `499b50e`: la rama
+`slsteam-moon` es la única viva.
+
+### D20 — `f40d35b`: "mrc donations system" — de dónde salen los códigos del archivo de LuaTools
+
+El commit más importante de la ventana, y el que responde a la pregunta que
+`RESEARCH.md` §20 dejó abierta (cómo consiguen los proveedores códigos de
+manifest de juegos que nadie de su lado posee). Es un port de
+`madoiscool/BetterSteamTools@4a97d9d` ("thanks melly!"), es decir, del propio
+LuaTools de Windows. Mecanismo, leído en `feats/manifestdonor.cpp` y
+`utils/ManifestFetch.cpp`:
+
+1. **El archivo es `https://manifest.luastools.xyz`**, el mismo que LumaDeck
+   ya usa como fuente de manifests (`manifests.py`, `/m/<depot>/<gid>`).
+   Publica una **lista de deseos**: `GET /manifestwanted`, líneas
+   `depot:gid[:appid]` de manifests que aún no tiene.
+2. Cada cliente con moon y `Donate.Enabled: yes` (**por defecto, sí**) corre un
+   hilo donante: cada 30 s baja la lista, la baraja, y para cada entrada cuyo
+   depot está en un paquete que **su cuenta posee de verdad** (licencias →
+   paquetes → depots, `deriveLicensedPackages`) comprueba con `HEAD
+   /m/<depot>/<gid>` si ya está archivado y, si no, **pide a Valve el código
+   de petición con su propia sesión** (`ManifestCode::requestCode`, el
+   `GetManifestRequestCode` normal, que Valve concede porque la cuenta tiene
+   el juego) y lo sube: `POST /manifestcode/submit` con líneas
+   `depot:gid:code`. Límites: 25 por ciclo, 2 s entre peticiones, tope de
+   sesión opcional, lista refrescada cada 5 min.
+3. **Captura pasiva** además: cualquier código que el Steam del usuario
+   obtenga por su cuenta para un depot poseído (`resolveDonorResponse` en
+   `manifestcode.cpp`) se retiene hasta 4 minutos y se envía si está en la
+   lista de deseos.
+4. El archivo, con un código fresco, baja el manifest del CDN de Valve y lo
+   guarda. Desde ese momento lo sirve a cualquiera, sin código.
+
+**Consecuencia inmediata en el propio moon (`c1b5e15`, 21-sep):** moon **deja
+de inyectar códigos de petición**. Se va `handleRecv_GetManifestRequestCode`,
+la reescritura in situ del `BRouteMsgToJob` y la cascada `gmrc.wudrm.com` /
+`manifest.steam.run` que el delta del 17-sep describía (*"superseded by the
+archive and no longer reachable"*). Lo que hace ahora es lo que nosotros
+hacemos en el modelo pineado de `RESEARCH.md` §19: **poner el manifest en
+`depotcache/` antes de que Steam lo pida**, bajado del archivo
+(`submitManifestBlob` → `fetchArchive`), de modo que Steam ni entra en el
+handshake del código. Si el archivo no lo tiene (404): aviso nuevo al usuario
+`ManifestNotReady` (*"One or more manifests for this version aren't in the
+shared archive yet. Please wait a little and try installing again"*) y
+`rememberArchiveMiss`. La señal "providers offline" pasa a ser la
+alcanzabilidad del archivo. Cadena de proveedores por defecto en el header:
+`manifest.opensteamtool.com/{appid}/{depotid}/{gid}` (plantilla, un solo
+elemento), y el código real usa `luastools.xyz` como *"the only source"*.
+
+**Lo que esto significa para lumalinux.** Tres cosas, ninguna urgente:
+
+- La economía de los códigos ya no es un misterio: **los códigos los ponen
+  los dueños**, distribuidos, a razón de una lista de deseos. Los "providers"
+  de `RESEARCH.md` §20 (wudrm, steam.run, opensteamtool, 20770407) son la
+  cara HTTP de archivos que se alimentan así, o de cuentas que compran. La
+  rama `chlkmw` (§19.2b) buscaba una puerta que no existe: no hay truco de
+  protocolo, hay voluntarios.
+- **moon ya no compite en el gate GMRC**: nuestro hook de códigos y su
+  antiguo `manifestcode` eran el único solape de coexistencia que quedaba
+  (`slssteam-analysis.md` §5 y el `download.lua` del doc de plugins). Con
+  moon en modo "manifest en depotcache", si algún día coexistieran, no
+  habría dos manos en la misma respuesta CM.
+- **LumaDeck es cliente de ese archivo y no donante.** Sin `Donate` no
+  aportamos códigos de los juegos que el usuario sí tiene. Es una decisión, no
+  un hueco: donar significa que el Steam del usuario pida códigos a Valve cada
+  30 s para manifests que él no está instalando, con su sesión. Se anota para
+  decidirlo con el usuario, no se propone implementarlo.
+
+Empaquetado en el mismo commit, sin relación: `AchievementOwnerId:
+76561198028121353` como **cuenta fija por defecto** de la que leer el esquema
+de logros de un juego no poseído (`Achievements: yes`, con `AchievementOwners`
+por juego). Upstream lo hace con reseñadores de `appreviews`
+(`slssteam-analysis.md` §7.3); moon pone un SteamID64 concreto en el YAML.
+
+### D21 — `d3a424e` + `2f66eaf`: Steamless pasa a ser opt-in por opción de lanzamiento
+
+Moon lleva desde junio un "exewrapper" que pasaba Steamless a los exe con
+SteamStub antes de lanzar bajo Proton (§"Context", "steamstub (auto-Steamless
+before Proton launch)"). Ahora **por defecto no toca el exe** y, si lo había
+tocado antes, **restaura** el `<exe>.original.exe` al lanzar (`restoreOriginals`,
+con comprobación de cabecera `MZ` para no pisar el vivo con un backup roto).
+Steamless sólo corre si las opciones de lanzamiento del juego en
+`localconfig.vdf` llevan `--steamless` o `-steamless`
+(`steamstub_launchopt.hpp`, parser del bloque `apps` con tests). Razón en el
+propio commit: *"An unmodified on-disk exe is what SteamStub-verifying titles
+hash, and the stub itself runs under Proton once ownership is satisfied"*. El
+prewarm de Wine al arrancar Steam desaparece; se calienta bajo demanda.
+`2f66eaf`: Steam mantiene `SIGCHLD` en `SIG_IGN`, así que el helper se
+auto-recolecta y `waitpid` da `ECHILD`; se leía como fallo y avisaba al usuario.
+
+Para nosotros: la misma tensión que LumaDeck tiene con su botón *Remove DRM*
+(caso Anatharias, error 6). Moon ha elegido "el stub corre solo si la
+propiedad está satisfecha", que es exactamente lo que el plugin
+`spliced-tickets.lua` de Ace da por hecho (`slssteam-plugins-analysis.md`,
+nota del 22-sep). Nosotros seguimos con Steamless explícito por botón; no hay
+cambio, pero el argumento de moon (hash del exe, mods, verificación de
+ficheros) es el mismo que dio Ace.
+
+### D22 — `668a646`: interruptor global `AutoUpdateApps`
+
+`AutoUpdateApps: yes` en el YAML; con `no`, todo juego gestionado
+completamente instalado se queda en su build (*"mirrors LuaTools' toggle"*),
+y los pins por juego siguen mandando. Lumen lo expone en su menú
+(`f087882`, 19-sep). Es el equivalente global de nuestro Auto-update por juego;
+nada que tomar.
+
+### D23 — La beta de Steam mueve el suelo, y moon lo cubre antes que el stable
+
+Cinco commits (`016a536`, `3bd8bc7`, `22eee28`, `b0bb093`, `edfc7ea`, 18–21
+sep) reaccionan a **una beta de escritorio** que recompila `steamclient.so`:
+
+- `CNetPacket` gana **8 bytes al principio**: las lecturas a offset fijo
+  devolvían un centinela y tiraban la ruta de recepción. Moon detecta el
+  layout en el primer paquete vivo y accede por accessors (`3bd8bc7`).
+- Los mensajes CM llegan a `CCMInterface::RecvPkt` como `CNetPacket` en vez de
+  por `CProtoBufMsgBase::InitFromPacket`, y los handlers dejaban de dispararse
+  (`22eee28`).
+- Raíces de `RunIPCFrame` desplazadas ~1,9 M (`0x876D658x → 0x85E5D66B`),
+  marco de pila mayor, campos de `UserStats` cambiados de registro y offset
+  (`016a536`); el call-site del *builder* de `reconcilepin` se mueve
+  (`b0bb093`); un hook opcional sin resolver ya no tumba la inyección entera
+  (`edfc7ea`).
+
+Es la primera vez que vemos a moon adaptarse a un cliente **antes** de que
+llegue al stable. Para lumalinux es un aviso, no un accionable: `watch-steam`
+sólo mira `ubuntu12_32` stable y `steamdeck_stable`. **Vale la pena pasar
+nuestros patrones por el beta `1790036264` (22-sep) en CI** para saber si el
+`+8` de `CNetPacket` o la raíz de `RunIPCFrame` nos afectan cuando ese build
+sea stable. Se apunta; no se ha hecho.
+
+### D24 — Carreras y límites del hot reload (`1f22f01`, `5aef42e`, `2176c6b`, `5d4e52a`, `7e69d4c`)
+
+Memoización por app para que añadir un juego no rescanee la biblioteca (~2,8 s
+en 155 apps); dos carreras corregidas en las que un escaneo de `steamapps/` o
+del directorio de scripts, coincidiendo con una escritura de Steam, daba por
+desinstalado un juego presente y **le quitaba la propiedad y la caché**; el
+techo de 4096 ids que limitaba a la vez apps y depots se separa porque una
+biblioteca mediana lo pasaba en depots y perdía la sincronía en caliente.
+Ninguno nos toca (nuestro reconcile es por licencia, `RESEARCH.md` §18), pero
+el de `2176c6b` es el mismo tipo de carrera que LumaDeck evita al no escribir
+nunca el `.acf` mientras Steam lo reescribe.
+
+### D25 — El resto
+
+`1bcdfb1` (el pre-seed síncrono se acota a depots pineados por lua: para los
+demás el gid de appinfo *"is not the gid Steam requests"*, la misma lección que
+nuestro §19.6), `72ccfca` y `837e0dd` (appinfo: preferir el wrapper `steamshim`;
+la lista de plataformas de la app manda sobre el `oslist` del depot, que
+*"is frequently tagged windows,linux even when no native build exists"*),
+`e5321c0`, `9b67364` (join del hilo del watcher en `atexit`: el mismo problema
+de teardown que upstream arregló en `CFileWatcher` el 12-sep), `1052d4b`
+(escritura de la lista de apps suscritas acotada al búfer del llamador),
+`1fac75a`, `b101ef6`, `2fa7e67` (el analizador de `process.cpp` y la caché de
+tickets, endurecidos el 17-sep, **cuatro días antes** de que upstream `dev`
+hiciera lo mismo el 20; `slssteam-analysis.md` §7.12).
+
+### Los satélites
+
+- **`luatools-moon` 2.9** (`9edb704`, 19-sep; 8 commits ese día sobre un
+  merge que también publicó 25 commits locales del 22-ago al 7-sep: catálogo de
+  fuentes gestionado, validación de argumentos RPC, TLS obligatorio y sha256
+  antes de descomprimir, journals para deshacer fixes, CLI de proveedores de
+  nube). Lo visible: **ya no pide reiniciar Steam al añadir un juego**
+  (`41d008e`, el hot reload lo aplica en vivo; lo mismo que nuestro Add Game
+  sin reinicio de §18), un fix "build-agnóstico" se aplica en cualquier build
+  instalada, y el instalador deja de avisar de que el hook de CloudRedirect no
+  trae firma (es un fichero crudo del repo, sin `.sha256`).
+- **Lumen** (`swwayps/lumen`, 106 commits desde junio, `52475c3` 21-sep): el
+  puente "sin Millennium" que ya aparecía en el `manifest.json` de jsDelivr.
+  Un binario Lua estático que **inyecta el frontend de LuaTools por el puerto
+  CDP de CEF** y sirve el backend Lua por RPC en loopback. La misma técnica
+  que nuestro `cef_cdp.py` en LumaDeck, elevada a producto.
+- **`cloudredirect-moon`** (`19da055`, 19-sep): merge de `github/master`,
+  README reescrito como *fork of CloudRedirect*, `.so` reconstruido; el 30-ago
+  había absorbido upstream v2.6.5 y el 3-sep un `join` del init diferido antes
+  de descargar. Nada del `HandleGetUserStats` con store vacío (nuestro
+  `cr_stats_fix`, `docs/cloudredirect.md`): moon arrastra el mismo bug.
+- **jsDelivr** (`2d1a26e`, 22-sep): los tres componentes a **v2.9**
+  (`slsteam-moon-linux-2.9-lumen.zip` sha `4420d410…`, `luatools-linux.zip`
+  `f4ddb67c…`, `lumen-linux.zip` `7aa0cb7f…`). El zip de moon se resubió el
+  21 y el 22 bajo el mismo tag: el patrón de D18 sigue.
+- **steam-monitor** (`92d027b`, 22-sep): el punto 3 del balance anterior queda
+  resuelto por el otro lado. TOML para el stable de escritorio del 5-sep
+  (`237495b4…` reetiquetado a `1788652215` el 18-sep: mismo `steamclient.so`
+  que el build del 3) y para los betas `1789606022` (18-sep), `1789781627`
+  (19-sep) y `1790036264` (22-sep). Deck stable sin cambio (`1788291500`).
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | Donaciones de códigos (D20) | Decisión | Explica el modelo de proveedores; LumaDeck es cliente del archivo, no donante. Decidir con el usuario si donar; **no** implementar por defecto |
+| 2 | Moon deja de inyectar códigos (D20, `c1b5e15`) | — | El solape GMRC con moon desaparece; nada que hacer |
+| 3 | Beta recompilada: `CNetPacket +8`, raíces `RunIPCFrame` (D23) | Vigilar | Pasar nuestros patrones por `1790036264` en CI antes de que sea stable |
+| 4 | Steamless opt-in con `--steamless` (D21) | — | Misma tensión que nuestro *Remove DRM*; sin cambio |
+| 5 | Patrones firmados (steam-monitor) | — | Stable 5-sep y betas cubiertos; Deck sin cambio |
+| 6 | Issues / releases de moon | Pendiente | No legibles desde el sandbox; recuperar en el próximo barrido |
+
+El próximo barrido arranca en `837e0dd` (`slsteam-moon`), `62767b3` (`beta`),
+`499b50e` (`millennium`), `9edb704` (`luatools-moon`), `52475c3` (`lumen`),
+`19da055` (`cloudredirect-moon`), `2d1a26e` (`jsdelivr`) y `92d027b`
+(`steam-monitor`).
