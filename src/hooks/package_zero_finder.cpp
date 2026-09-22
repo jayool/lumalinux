@@ -21,19 +21,54 @@ namespace Hooks::PackageZeroFinder {
 namespace {
 
 // =============================================================================
-// Cache layout — STABLE offsets (class layout, verified to match across the
-// 7c4ac73e and db0d79c2 steamclient builds).
+// Cache layouts — the KNOWN class layouts of CPackageInfoCache, one row per
+// layout Valve has shipped. A row is (root index offset, node array offset).
 // =============================================================================
 // CPackageInfoCache stores packages in an index-based search tree:
-//   cache + 0xc58   int32   root node index (-1 = empty)
-//   cache + 0xc6c   T*      node array base
+//   cache + root    int32   root node index (-1 = empty)
+//   cache + nodes   T*      node array base          (always root + 0x14)
 // Each node is 0x18 bytes:
 //   +0x00  int32  left  child index (-1 = none)
 //   +0x04  int32  right child index
 //   +0x10  uint32 packageId        ← search key
 //   +0x14  PackageInfo*            ← what we want
-constexpr std::size_t kCacheRootIdxOff = 0xc58;
-constexpr std::size_t kCacheNodesOff   = 0xc6c;
+//
+// Why a TABLE and not one pair of constants: the root offset is also the byte
+// anchor FindCacheGlobalDisp scans the code for ("read [cache + root]"), so a
+// layout change is invisible until the scan comes back NOT_FOUND — and the same
+// .so has to keep working on the build the Deck runs today AND the one Valve
+// promotes tomorrow. Each row is scanned; the run accepts a row only when it
+// is the ONLY one whose idiom resolves (see FindCacheGlobalDisp). Rows are
+// never removed: a Steam downgrade or a slow rollout makes the old one live
+// again.
+//
+//   stable  0xc58/0xc6c  verified by hand on 7c4ac73e and db0d79c2, and by
+//                        tools/experiment_cache_idiom.py on bc54101b (2 sites,
+//                        both disp32=0x3b7d4).
+//   beta    0xf90/0xfa4  9cf4720f (1790036264, 2026-09-22): Valve added an
+//                        0x338-byte member ahead of the trees; EVERY field of
+//                        the object moved by exactly 0x338 (26 fields matched
+//                        one-to-one with tools/experiment_cache_idiom_free.py,
+//                        same site counts, same RBTree signature). 2 sites,
+//                        both disp32=0x3c7b0, same registers as on stable.
+//
+// Node offsets are shared by all rows: the RBTree signature (`cmp r,-1` +
+// `lea r,[r+r*2]`, i.e. 0x18-byte nodes) is present on both builds, and
+// FindPackage0 cross-checks the object it reaches before anything is written.
+//
+// MIRRORED in tools/check_patterns.py (CACHE_LAYOUTS), tools/derive_patterns.py
+// and tools/experiment_cache_idiom.py — the four must change together
+// (tools/test_cache_idiom.py pins them).
+struct CacheLayout {
+    const char* name;
+    std::size_t rootIdxOff;
+    std::size_t nodesOff;
+};
+constexpr CacheLayout kCacheLayouts[] = {
+    {"stable-0xc58", 0xc58, 0xc6c},
+    {"beta-0xf90",   0xf90, 0xfa4},
+};
+constexpr int kNumCacheLayouts = static_cast<int>(sizeof(kCacheLayouts) / sizeof(kCacheLayouts[0]));
 constexpr std::size_t kNodeLeftOff     = 0x00;
 constexpr std::size_t kNodeRightOff    = 0x04;
 constexpr std::size_t kNodePkgIdOff    = 0x10;
@@ -162,11 +197,30 @@ uintptr_t DeriveGotBase(ScRange rx) {
     if (!rx.base || rx.size < 23) return 0;
     const uint8_t* p = reinterpret_cast<const uint8_t*>(rx.base);
     const std::size_t n = rx.size - 23;
-    // bytes after the wildcarded imm32: 55 89 E5 57 56 53 81 EC 10 01 00 00
+    // bytes after the wildcarded imm32: 55 89 E5 57 56 53 81 EC ?? ?? 00 00
     //                                   8B 7D 08 8B 4D 20
+    // The two `??` are the low bytes of the frame size (`sub esp,imm32`):
+    // 0x110 on every build up to bc54101b, 0x120 on the 9cf4720f beta
+    // (2026-09-22), where Valve added 16 bytes of locals and nothing else in
+    // the prologue changed. They are compared as "any value, high bytes still
+    // 00 00" (a frame under 64 KB) instead of a literal, so a locals-only
+    // change no longer takes the GOT derivation down. Measured with
+    // tools/experiment_cache_idiom_free.py (pass 4): with the wildcard the
+    // tail still hits exactly ONE site on both builds — and even if a second
+    // PIC prologue of this shape ever appears, the consensus rule below only
+    // fails when the derived GOTs DISAGREE.
     static const uint8_t tail[] = {
         0x55, 0x89, 0xE5, 0x57, 0x56, 0x53, 0x81, 0xEC, 0x10, 0x01, 0x00, 0x00,
         0x8B, 0x7D, 0x08, 0x8B, 0x4D, 0x20
+    };
+    constexpr std::size_t kTailFrameLo = 8;    // the two wildcarded bytes
+    constexpr std::size_t kTailFrameHi = 9;
+    auto tailMatches = [&](const uint8_t* q) {
+        for (std::size_t k = 0; k < sizeof(tail); ++k) {
+            if (k == kTailFrameLo || k == kTailFrameHi) continue;
+            if (q[k] != tail[k]) return false;
+        }
+        return true;
     };
     // Like FindCacheGlobalDisp below, this must not take the first match and
     // run: it used to `return` from inside the loop, so a second site would
@@ -186,7 +240,7 @@ uintptr_t DeriveGotBase(ScRange rx) {
 
     for (std::size_t i = 0; i <= n; ++i) {
         if (p[i] != 0x05) continue;                          // add eax, imm32
-        if (std::memcmp(p + i + 5, tail, sizeof(tail)) != 0) continue;
+        if (!tailMatches(p + i + 5)) continue;
         int32_t imm = *reinterpret_cast<const int32_t*>(p + i + 1);
         const uintptr_t cand =
             rx.base + i + static_cast<uintptr_t>(static_cast<intptr_t>(imm));
@@ -239,9 +293,10 @@ uintptr_t DeriveGotBase(ScRange rx) {
 // The idiom is 14 bytes:
 //   8D /r mod=10 disp32        lea  r1,[GOT + X]
 //   8B /r mod=00               mov  r2,[r1]
-//   8B /r mod=10 58 0C 00 00   mov  r3,[r2 + 0xc58]
+//   8B /r mod=10 <root>        mov  r3,[r2 + root]   (root = the layout's
+//                                                    anchor, e.g. 58 0C 00 00)
 // The mod fields and the rm exclusions (no SIB, no disp32-only) are what pin
-// those 6+2+6 lengths, so the 0xc58 anchor lands exactly at +10.
+// those 6+2+6 lengths, so the root anchor lands exactly at +10.
 //
 // Beyond the shape we require the three to be CHAINED — reg(lea)==rm(mov1) and
 // reg(mov1)==rm(mov2), i.e. each instruction's destination is the next one's
@@ -268,15 +323,22 @@ uintptr_t DeriveGotBase(ScRange rx) {
 // build, it does not fix a live failure.
 constexpr int kMaxDistinctDisp = 4;   // only so the log can list them
 
-int32_t FindCacheGlobalDisp(ScRange rx) {
-    if (!rx.base || rx.size < 14) return 0;
+// One scan of the r-x span for the idiom anchored on `rootOff`. Fills the
+// distinct disp32 values seen (capped at kMaxDistinctDisp, `overflow` says so)
+// and returns the number of matching sites. The predicates are exactly the
+// ones described above; the only parameter is the anchor.
+struct IdiomScan {
+    int32_t distinct[kMaxDistinctDisp] = {0};
+    int     nDistinct = 0;
+    int     sites     = 0;
+    bool    overflow  = false;
+};
+
+IdiomScan ScanCacheIdiom(ScRange rx, std::size_t rootOff) {
+    IdiomScan out;
     const uint8_t* p   = reinterpret_cast<const uint8_t*>(rx.base);
     const std::size_t n = rx.size - 14;
-
-    int32_t distinct[kMaxDistinctDisp] = {0};
-    int  nDistinct = 0;
-    int  sites     = 0;
-    bool overflow  = false;
+    const uint32_t anchor = static_cast<uint32_t>(rootOff);
 
     for (std::size_t i = 0; i <= n; ++i) {
         // lea r1, [base + disp32] : 8d MODRM(mod=10, base!=SIB) disp32
@@ -287,48 +349,90 @@ int32_t FindCacheGlobalDisp(ScRange rx) {
         if (p[i + 6] != 0x8b) continue;
         uint8_t m2 = p[i + 7];
         if ((m2 & 0xc0) != 0x00 || (m2 & 0x07) == 0x04 || (m2 & 0x07) == 0x05) continue;
-        // mov r3, [r2 + 0xc58] : 8b MODRM(mod=10) 58 0c 00 00
+        // mov r3, [r2 + root] : 8b MODRM(mod=10) <root as disp32>
         if (p[i + 8] != 0x8b) continue;
         uint8_t m3 = p[i + 9];
         if ((m3 & 0xc0) != 0x80 || (m3 & 0x07) == 0x04) continue;
-        if (*reinterpret_cast<const uint32_t*>(p + i + 10) != 0x00000c58u) continue;
+        if (*reinterpret_cast<const uint32_t*>(p + i + 10) != anchor) continue;
         // chained: each instruction's destination is the next one's base
         if (((m1 >> 3) & 0x07) != (m2 & 0x07)) continue;   // reg(lea)  == rm(mov1)
         if (((m2 >> 3) & 0x07) != (m3 & 0x07)) continue;   // reg(mov1) == rm(mov2)
 
         int32_t disp = *reinterpret_cast<const int32_t*>(p + i + 2);
-        ++sites;
+        ++out.sites;
         bool seen = false;
-        for (int k = 0; k < nDistinct; ++k) {
-            if (distinct[k] == disp) { seen = true; break; }
+        for (int k = 0; k < out.nDistinct; ++k) {
+            if (out.distinct[k] == disp) { seen = true; break; }
         }
         if (seen) continue;
-        if (nDistinct < kMaxDistinctDisp) distinct[nDistinct++] = disp;
-        else                              overflow = true;
+        if (out.nDistinct < kMaxDistinctDisp) out.distinct[out.nDistinct++] = disp;
+        else                                  out.overflow = true;
+    }
+    return out;
+}
+
+// Scan for every known layout and decide. Returns X (the disp32) and, through
+// `layoutOut`, the index into kCacheLayouts of the row that resolved; 0 / -1
+// when there is no single answer.
+//
+// The rule is UNIQUE-or-nothing twice over:
+//   * across layouts: exactly ONE row may have sites at all. Two rows with
+//     sites means Steam reads two of our anchors with the same three-
+//     instruction shape — nothing says which is the tree root, so refuse.
+//     (Measured 2026-09-22: the stable build has 0 sites at 0xf90 and the beta
+//     has 0 at 0xc58, so on every build seen so far exactly one row answers.)
+//   * within that row: exactly ONE distinct disp32, as before.
+int32_t FindCacheGlobalDisp(ScRange rx, int* layoutOut = nullptr) {
+    if (layoutOut) *layoutOut = -1;
+    if (!rx.base || rx.size < 14) return 0;
+
+    IdiomScan scans[kNumCacheLayouts];
+    int hitRows = 0, row = -1;
+    for (int L = 0; L < kNumCacheLayouts; ++L) {
+        scans[L] = ScanCacheIdiom(rx, kCacheLayouts[L].rootIdxOff);
+        if (scans[L].sites > 0) { ++hitRows; row = L; }
     }
 
-    if (sites == 0) {
-        Log::Error("PKG0_FINDER: cache-access idiom NOT_FOUND (anchor 0x%x) — "
-                   "CPackageInfoCache layout changed? Not injecting",
-                   (unsigned)kCacheRootIdxOff);
+    if (hitRows == 0) {
+        char anchors[96] = {0};
+        int  off = 0;
+        for (int L = 0; L < kNumCacheLayouts && off < (int)sizeof(anchors) - 12; ++L) {
+            int r = std::snprintf(anchors + off, sizeof(anchors) - (std::size_t)off,
+                                  " 0x%x", (unsigned)kCacheLayouts[L].rootIdxOff);
+            if (r < 0) break;
+            off += r;
+        }
+        Log::Error("PKG0_FINDER: cache-access idiom NOT_FOUND for every known layout "
+                   "(anchors%s) — CPackageInfoCache layout changed? Not injecting",
+                   anchors);
         return 0;
     }
-    if (nDistinct == 1) {   // overflow implies nDistinct == kMaxDistinctDisp
-        Log::Info("PKG0_FINDER: cache-access idiom UNIQUE — %d site(s), disp=0x%x",
-                  sites, (unsigned)distinct[0]);
-        return distinct[0];
+    if (hitRows > 1) {
+        Log::Error("PKG0_FINDER: cache-access idiom AMBIGUOUS-LAYOUT — %d of %d known "
+                   "layouts have sites — refusing to guess, not injecting",
+                   hitRows, kNumCacheLayouts);
+        return 0;
+    }
+
+    const IdiomScan& sc = scans[row];
+    const CacheLayout& lay = kCacheLayouts[row];
+    if (sc.nDistinct == 1) {   // overflow implies nDistinct == kMaxDistinctDisp
+        Log::Info("PKG0_FINDER: cache-access idiom UNIQUE — layout %s, %d site(s), disp=0x%x",
+                  lay.name, sc.sites, (unsigned)sc.distinct[0]);
+        if (layoutOut) *layoutOut = row;
+        return sc.distinct[0];
     }
     char list[80] = {0};
     int  off = 0;
-    for (int k = 0; k < nDistinct && off < (int)sizeof(list) - 12; ++k) {
+    for (int k = 0; k < sc.nDistinct && off < (int)sizeof(list) - 12; ++k) {
         int r = std::snprintf(list + off, sizeof(list) - (std::size_t)off,
-                              " 0x%x", (unsigned)distinct[k]);
+                              " 0x%x", (unsigned)sc.distinct[k]);
         if (r < 0) break;
         off += r;
     }
-    Log::Error("PKG0_FINDER: cache-access idiom AMBIGUOUS — %d site(s), %d distinct "
+    Log::Error("PKG0_FINDER: cache-access idiom AMBIGUOUS — layout %s, %d site(s), %d distinct "
                "disp32%s:%s — refusing to guess, not injecting",
-               sites, nDistinct, overflow ? "+" : "", list);
+               lay.name, sc.sites, sc.nDistinct, sc.overflow ? "+" : "", list);
     return 0;
 }
 
@@ -379,20 +483,20 @@ void ResetReadable() {
 // Returns package 0's PackageInfo*, or nullptr (with a diagnostic log line at
 // the failure point). cacheGlobal is GOT + X (the runtime address of the slot
 // holding the cache pointer).
-void* FindPackage0(uintptr_t cacheGlobal) {
+void* FindPackage0(uintptr_t cacheGlobal, const CacheLayout& lay) {
     if (!IsReadable(reinterpret_cast<void*>(cacheGlobal), sizeof(void*))) {
         Log::Debug("PKG0_FINDER: cache-global slot 0x%lx not readable",
                    (unsigned long)cacheGlobal);
         return nullptr;
     }
     auto* cache = *reinterpret_cast<uint8_t**>(cacheGlobal);
-    if (!cache || !IsReadable(cache, kCacheNodesOff + sizeof(void*))) {
+    if (!cache || !IsReadable(cache, lay.nodesOff + sizeof(void*))) {
         Log::Debug("PKG0_FINDER: cache object %p not readable/null", (void*)cache);
         return nullptr;
     }
 
-    int32_t rootIdx = *reinterpret_cast<int32_t*>(cache + kCacheRootIdxOff);
-    auto*   nodes   = *reinterpret_cast<uint8_t**>(cache + kCacheNodesOff);
+    int32_t rootIdx = *reinterpret_cast<int32_t*>(cache + lay.rootIdxOff);
+    auto*   nodes   = *reinterpret_cast<uint8_t**>(cache + lay.nodesOff);
     if (rootIdx < 0) {
         Log::Debug("PKG0_FINDER: tree empty (rootIdx=%d) — packages not loaded yet",
                    rootIdx);
@@ -497,6 +601,17 @@ void Run() {
     int32_t     disp = 0;
     const char* dispMethod = "none";   // how disp was obtained: rva | scan | none
     const char* gotMethod  = "none";   // how got  was obtained: rva | scan | none
+    // Which CPackageInfoCache layout to walk (root / node-array offsets). Named
+    // by the scan (the kCacheLayouts row whose idiom resolved) or by the feed
+    // (finder.cache_root_off / cache_nodes_off, published by check_patterns.py
+    // from the row ITS scan resolved). A feed that carries disp but no layout
+    // (files written before 2026-09-22) still needs the scan for this one
+    // answer; a build where neither names a layout is a refusal, never a
+    // default — there is no "probably 0xc58" when the alternative is walking
+    // a struct at the wrong offsets.
+    const CacheLayout* layout = nullptr;
+    CacheLayout feedLayout{"feed", 0, 0};
+    const char* layoutMethod = "none";
     uintptr_t   cacheGlobal = 0;
     bool      foundOnce = false;
 
@@ -582,11 +697,31 @@ void Run() {
                         disp = feed;
                         dispMethod = "rva";
                     }
-                    if (!disp) {
-                        if (const int32_t scanned = FindCacheGlobalDisp(rx)) {
+                    if (disp && RvaFeed::CacheLayout(&feedLayout.rootIdxOff,
+                                                     &feedLayout.nodesOff)) {
+                        layout = &feedLayout;
+                        layoutMethod = "rva";
+                    }
+                    // The scan names the layout as a by-product of finding X, so
+                    // one call serves both holes: no disp, or a disp from a feed
+                    // that predates the layout keys.
+                    if (!disp || !layout) {
+                        int row = -1;
+                        const int32_t scanned = FindCacheGlobalDisp(rx, &row);
+                        if (!disp && scanned) {
                             disp = scanned;
                             dispMethod = "scan";
                         }
+                        if (!layout && row >= 0) {
+                            layout = &kCacheLayouts[row];
+                            layoutMethod = "scan";
+                        }
+                    }
+                    if (disp && !layout) {
+                        Log::Error("PKG0_FINDER: cache layout unknown — the feed names "
+                                   "none and the scan resolved no known layout — a "
+                                   "walk at guessed offsets is not an option. Not injecting");
+                        disp = 0;
                     }
                 }
                 // Both outcomes below emit TWO lines, mirroring what every hook
@@ -631,15 +766,17 @@ void Run() {
                 const char* method = (std::strcmp(gotMethod, "rva") == 0 &&
                                       std::strcmp(dispMethod, "rva") == 0) ? "rva" : "scan";
                 Log::Info("Finder resolve: name=PKG0Finder method=%s got_method=%s "
-                          "disp_method=%s got=0x%lx disp=0x%x cache_global=0x%lx "
+                          "disp_method=%s layout=%s layout_method=%s root_off=0x%zx "
+                          "nodes_off=0x%zx got=0x%lx disp=0x%x cache_global=0x%lx "
                           "outcome=resolved",
-                          method, gotMethod, dispMethod, (unsigned long)got,
+                          method, gotMethod, dispMethod, layout->name, layoutMethod,
+                          layout->rootIdxOff, layout->nodesOff, (unsigned long)got,
                           (unsigned)disp, (unsigned long)cacheGlobal);
             }
 
             if (cacheGlobal) {
                 ResetReadable();  // refresh /proc/self/maps snapshot each attempt
-                void* pkg = FindPackage0(cacheGlobal);
+                void* pkg = FindPackage0(cacheGlobal, *layout);
                 if (pkg) {
                     if (!foundOnce) {
                         auto* vec = Hooks::LoadPackage::AppIdVec(pkg);

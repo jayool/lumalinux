@@ -188,7 +188,7 @@ CXX_HARNESS = r'''
 #include <cstring>
 #include <cstddef>
 struct ScRange { uintptr_t base = 0; std::size_t size = 0; };
-constexpr std::size_t kCacheRootIdxOff = 0xc58;
+%(LAYOUTS)s
 namespace Log { void Info(const char*, ...) {} void Error(const char*, ...) {} }
 %(FN)s
 int main(int argc, char** argv) {
@@ -221,10 +221,14 @@ def build_cxx():
     i = src.index("uintptr_t DeriveGotBase(ScRange rx) {")
     j = src.index("// ============================================================"
                   "=================\n// Readability gate")
+    # The layout TABLE is lifted from the .cpp too (struct + kCacheLayouts +
+    # kNumCacheLayouts), so the C++ leg scans exactly the rows the Deck does.
+    a = src.index("struct CacheLayout {")
+    b = src.index("\n", src.index("constexpr int kNumCacheLayouts"))
     tmp = tempfile.mkdtemp()
     cpp, exe = os.path.join(tmp, "h.cpp"), os.path.join(tmp, "h")
     with open(cpp, "w") as f:
-        f.write(CXX_HARNESS % {"FN": src[i:j]})
+        f.write(CXX_HARNESS % {"FN": src[i:j], "LAYOUTS": src[a:b]})
     r = subprocess.run(["g++", "-std=c++20", "-Wall", "-Wextra", "-o", exe, cpp],
                        capture_output=True, text=True)
     if r.returncode != 0:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 // RVA-first hook resolution from the per-build feed (res/rvas/<sha256>.yaml).
@@ -29,6 +30,16 @@ uintptr_t Resolve(const char* hookName);
 // Resolve()'s inSteamclientExec() guard, both of which are right for a code
 // address, would be wrong here. Same feed, different kind of number.
 int32_t CacheGlobalDisp();
+
+// The package-0 finder's CPackageInfoCache layout for THIS build (feed keys
+// `finder.cache_root_off` / `finder.cache_nodes_off`): the root-index and
+// node-array offsets of the row check_patterns.py's own scan resolved. True
+// and both out-params set when the feed carries both keys; false (out-params
+// untouched) when it carries neither — files written before 2026-09-22 don't,
+// and the finder then names the layout by scanning. Plain struct offsets, not
+// addresses: no translation, no mapping check, same kind of number as
+// CacheGlobalDisp().
+bool CacheLayout(std::size_t* rootIdxOff, std::size_t* nodesOff);
 
 // The package-0 finder's GOT base for THIS build (feed key `finder.got_rva`),
 // already translated to a runtime address, or 0 when the feed has no usable

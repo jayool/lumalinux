@@ -28,6 +28,8 @@ std::map<std::string, uintptr_t> g_hooks;    // hook name -> file vaddr (RVA)
 // either of those — so folding it in would have thrown the value away in cases
 // where it is perfectly usable.
 int32_t                          g_cacheGlobalDisp = 0;
+std::size_t                      g_cacheRootOff = 0;     // finder.cache_root_off
+std::size_t                      g_cacheNodesOff = 0;    // finder.cache_nodes_off
 uintptr_t                        g_gotRva = 0;          // file vaddr, untranslated
 
 std::string cacheDir() {
@@ -95,6 +97,18 @@ void load() {
                 g_cacheGlobalDisp = static_cast<int32_t>(v);
                 Log::Info("RvaFeed: finder cache_global_disp = 0x%x from the feed",
                           static_cast<unsigned>(g_cacheGlobalDisp));
+            }
+        }
+        if (finder && finder.IsMap() && finder["cache_root_off"] && finder["cache_nodes_off"]) {
+            const unsigned long r = std::strtoul(
+                finder["cache_root_off"].as<std::string>().c_str(), nullptr, 16);
+            const unsigned long n = std::strtoul(
+                finder["cache_nodes_off"].as<std::string>().c_str(), nullptr, 16);
+            if (r && n) {
+                g_cacheRootOff = static_cast<std::size_t>(r);
+                g_cacheNodesOff = static_cast<std::size_t>(n);
+                Log::Info("RvaFeed: finder cache layout root_off=0x%zx nodes_off=0x%zx from the feed",
+                          g_cacheRootOff, g_cacheNodesOff);
             }
         }
         if (finder && finder.IsMap() && finder["got_rva"]) {
@@ -172,6 +186,14 @@ bool inSteamclientExec(uintptr_t addr) {
 int32_t CacheGlobalDisp() {
     std::call_once(g_once, load);
     return g_cacheGlobalDisp;      // no g_loaded gate: see the note on g_hooks
+}
+
+bool CacheLayout(std::size_t* rootIdxOff, std::size_t* nodesOff) {
+    std::call_once(g_once, load);
+    if (!g_cacheRootOff || !g_cacheNodesOff) return false;   // same no-gate rule
+    if (rootIdxOff) *rootIdxOff = g_cacheRootOff;
+    if (nodesOff)   *nodesOff   = g_cacheNodesOff;
+    return true;
 }
 
 uintptr_t GotBase() {
