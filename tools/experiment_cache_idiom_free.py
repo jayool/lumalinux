@@ -13,7 +13,7 @@
 # reportan las dos anclas del finder NOT_FOUND. Ninguna de las dos herramientas
 # busca con el offset libre — es su trabajo decir "no está", no "a dónde fue".
 #
-# Cuatro pasadas, todas de sólo lectura sobre el .so:
+# Seis pasadas, todas de sólo lectura sobre el .so:
 #
 #   1. MISMO idiom, offset libre — los predicados de FindCacheGlobalDisp
 #      (opcodes, campos mod, exclusiones rm, ENCADENADO de registros) tal cual,
@@ -25,6 +25,11 @@
 #   4. El TAIL del prólogo de GMRC con el tamaño de frame como comodín
 #      (`81 EC ?? ?? 00 00`), clasificado como DeriveGotBase: sitios, GOTs
 #      distintos, UNIQUE / AMBIGUOUS. Dice qué frame lleva cada sitio.
+#   5. HUELLA del singleton sin exigir adyacencia: todas las cargas de su
+#      puntero (X autodetectado, o --x) y los campos [r+OFF] tocados en los
+#      96 bytes siguientes. Histograma comparable entre builds.
+#   6. FIRMA del RBTree: qué OFF de la pasada 5 va seguido de `cmp r,-1` y
+#      `lea r,[r+r*2]` (índice raíz comparado con invalid y escalado por 0x18).
 #
 # Validación: en la estable conocida (bc54101b) la pasada 1 debe dar la fila
 # `0xc58: 2 sitios, 1 X (0x3b7d4)` y la 4 un sitio con frame 0x110. Si no
@@ -33,6 +38,7 @@
 # Uso:  python3 tools/experiment_cache_idiom_free.py <steamclient.so>
 #           [--window LO-HI]   ventana de offsets a listar (hex, defecto 0xb00-0xe00)
 #           [--all]            lista TODOS los offsets, no sólo la ventana
+#           [--x HEX]          X del puntero del singleton para las pasadas 5/6
 #
 # Reutiliza el cargador ELF, las secciones y los nombres de registro de
 # experiment_cache_idiom.py; no duplica nada del runtime.
@@ -151,6 +157,150 @@ def scan_tail(segs):
     return out
 
 
+# ── pasadas 5 y 6: huella de campos del singleton + firma del RBTree ─────────
+#
+# Las pasadas 1 y 2 exigen que la carga del puntero y el acceso al campo estén
+# PEGADOS. Un compilador distinto (la beta) carga el puntero una vez en un
+# registro y lo reutiliza más lejos, y entonces esas pasadas ven una fracción
+# de los accesos. Aquí se localizan TODAS las cargas del puntero del singleton
+# (mov r,[GOT+X] y lea r,[GOT+X];mov r2,[r]) y se mira hacia delante, hasta
+# LOOKAHEAD bytes, qué campos [r+OFF] se leen (8B), escriben (89), comparan /
+# operan con inmediato (83 /x, 81 /x) o direccionan (8D). Es una heurística de
+# bytes, sin decodificador: se detiene en `ret` y cuando r se reasigna con un
+# mov/lea (no ve otras reasignaciones), y no ve accesos más lejos que LOOKAHEAD. Lo que se compara es la FORMA del
+# histograma entre dos builds, no cada cuenta.
+#
+# La firma del RBTree (pasada 6): la raíz de un CUtlRBTree se lee y se compara
+# con -1 (`cmp r,-1` = 83 F8+r FF) y el índice se escala por 0x18 (`lea
+# r,[r+r*2]` = 8D ModRM(mod=00,rm=100) SIB(scale=1,index==base), luego shl 3).
+# Un OFF cuyo `mov q,[r+OFF]` va seguido de esas dos cosas es la raíz.
+
+LOOKAHEAD = 96
+SIG_WINDOW = 64
+
+
+def singleton_x(three, two, secs, got):
+    """X más frecuente entre los sitios de las pasadas 1 y 2 cuyo GOT+X cae en
+    .bss — el puntero global de la caché. None si el GOT no es único."""
+    if got is None:
+        return None
+    votes = defaultdict(int)
+    for s in three:
+        if section_of(secs, (got + s[1]) & 0xFFFFFFFF) == ".bss":
+            votes[s[1]] += 1
+    for s in two:
+        if section_of(secs, (got + s[1]) & 0xFFFFFFFF) == ".bss":
+            votes[s[1]] += 1
+    if not votes:
+        return None
+    return max(votes.items(), key=lambda kv: kv[1])[0]
+
+
+def pointer_loads(segs, x):
+    """[(rva, reg, forma, longitud)] — cada carga del puntero del singleton en un registro."""
+    needle = struct.pack("<i", x)
+    out = []
+    for vaddr, buf in segs:
+        start = 0
+        while True:
+            o = buf.find(needle, start)
+            if o < 0:
+                break
+            start = o + 1
+            i = o - 2
+            if i < 0:
+                continue
+            op, m = buf[i], buf[i + 1]
+            if (m & 0xC0) != 0x80 or (m & 0x07) == 0x04:
+                continue
+            reg = (m >> 3) & 7
+            if op == 0x8B:
+                out.append((vaddr + i, reg, "mov", 6))
+            elif op == 0x8D and i + 8 <= len(buf) and buf[i + 6] == 0x8B:
+                m2 = buf[i + 7]
+                if (m2 & 0xC0) == 0x00 and (m2 & 0x07) == reg:
+                    out.append((vaddr + i, (m2 >> 3) & 7, "lea+mov", 8))
+    return out
+
+
+def _is_lea_x3(buf, j):
+    """8D ModRM(mod=00, rm=100) SIB(scale=1 -> *2, index==base): lea r,[q+q*2]."""
+    if buf[j] != 0x8D:
+        return False
+    m, sib = buf[j + 1], buf[j + 2]
+    if (m & 0xC0) != 0x00 or (m & 0x07) != 0x04:
+        return False
+    return (sib & 0xC0) == 0x40 and ((sib >> 3) & 7) == (sib & 7)
+
+
+def field_accesses(segs, loads):
+    """Por cada carga, los [r+OFF] en los LOOKAHEAD bytes siguientes.
+    Devuelve {OFF: {"n": sitios, "kinds": {op: n}, "sig": n_con_firma}}."""
+    by_vaddr = {vaddr: buf for vaddr, buf in segs}
+    hist = defaultdict(lambda: {"n": 0, "kinds": defaultdict(int), "sig": 0})
+    for rva, reg, _form, length in loads:
+        # segmento que contiene rva
+        seg = None
+        for vaddr, buf in segs:
+            if vaddr <= rva < vaddr + len(buf):
+                seg = (vaddr, buf)
+                break
+        if seg is None:
+            continue
+        vaddr, buf = seg
+        base = rva - vaddr + length
+        end = min(len(buf) - 6, base + LOOKAHEAD)
+        j = base
+        while j < end:
+            op, m = buf[j], buf[j + 1]
+            if op == 0xC3:                                   # ret: fin de función
+                break
+            if op in (0x8B, 0x8D) and ((m >> 3) & 7) == reg:  # r reasignado
+                break
+            hit = False
+            if op in (0x8B, 0x89, 0x8D) and (m & 0xC0) == 0x80 and (m & 7) == reg:
+                off = struct.unpack_from("<i", buf, j + 2)[0]
+                hit = True
+                q = (m >> 3) & 7
+            elif op in (0x83, 0x81) and (m & 0xC0) == 0x80 and (m & 7) == reg:
+                off = struct.unpack_from("<i", buf, j + 2)[0]
+                hit = True
+                q = None
+            if hit:
+                h = hist[off]
+                h["n"] += 1
+                h["kinds"]["%02X" % op] += 1
+                # firma RBTree: sólo tras una lectura (8B) en q
+                if op == 0x8B:
+                    w_end = min(len(buf) - 3, j + 6 + SIG_WINDOW)
+                    ret = buf.find(b"\xC3", j + 6, w_end)      # no cruzar un ret
+                    if ret >= 0:
+                        w_end = ret
+                    cmp_m1 = buf.find(bytes([0x83, 0xF8 | q, 0xFF]), j + 6, w_end)
+                    lea3 = any(_is_lea_x3(buf, k) for k in range(j + 6, w_end))
+                    if cmp_m1 >= 0 and lea3:
+                        h["sig"] += 1
+                j += 6
+            else:
+                j += 1
+    return hist
+
+
+def print_hist(title, hist, lo, hi, show_all):
+    print("\n--- %s ---" % title)
+    rows = sorted(hist.items())
+    shown = 0
+    for off, h in rows:
+        if not (show_all or lo <= off <= hi):
+            continue
+        kinds = " ".join("%s:%d" % kv for kv in sorted(h["kinds"].items()))
+        sig = "  RBTREE-SIG x%d" % h["sig"] if h["sig"] else ""
+        mark = "  <== 0xc58 conocido" if off == KNOWN_ROOT else ""
+        print("  OFF 0x%-6x  sitios=%-3d  %-28s%s%s" % (off & 0xFFFFFFFF, h["n"], kinds, sig, mark))
+        shown += 1
+    print("  (%d offset(s) distintos en total, %d mostrados)" % (len(rows), shown))
+
+
 # ── informe ──────────────────────────────────────────────────────────────────
 
 def group(sites, off_index):
@@ -188,6 +338,9 @@ def main():
     ap.add_argument("--window", default="b00-e00",
                     help="ventana de offsets a listar, hex LO-HI (defecto b00-e00)")
     ap.add_argument("--all", action="store_true", help="listar todos los offsets")
+    ap.add_argument("--x", type=lambda v: int(v, 16), default=None,
+                    help="X del puntero del singleton (hex) para las pasadas 5/6; "
+                         "por defecto se autodetecta (X más votado con GOT+X en .bss)")
     args = ap.parse_args()
     lo, hi = parse_window(args.window)
 
@@ -242,6 +395,23 @@ def main():
             print("  [2] @0x%08x  OFF 0x%x  X 0x%-8x GOT+X en %-10s %s" % (
                 rva, off & 0xFFFFFFFF, x & 0xFFFFFFFF, where(x),
                 asm_two(x, off, m1, m2)))
+
+    # 5 y 6: huella del singleton sin exigir adyacencia + firma del RBTree.
+    x = args.x if args.x is not None else singleton_x(three, two, secs, got)
+    print("\n--- pasada 5/6: huella de campos del singleton ---")
+    if x is None:
+        print("  sin X: ni --x ni un GOT único con sitios en .bss")
+        return 0
+    loads = pointer_loads(segs, x)
+    forms = defaultdict(int)
+    for _r, _reg, form, _len in loads:
+        forms[form] += 1
+    print("  X = 0x%x (GOT+X en %s); cargas del puntero: %d  %s"
+          % (x & 0xFFFFFFFF, where(x), len(loads), dict(forms)))
+    hist = field_accesses(segs, loads)
+    print_hist("campos [r+OFF] hasta %d bytes tras cada carga (ventana 0x%x-0x%x); "
+               "8B=lectura 89=escritura 83/81=cmp/op-imm 8D=lea; RBTREE-SIG = "
+               "cmp -1 y lea *3 detrás" % (LOOKAHEAD, lo, hi), hist, lo, hi, args.all)
     return 0
 
 
