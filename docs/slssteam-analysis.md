@@ -4150,3 +4150,43 @@ solape DepotKey/GMRC que marcaba ese análisis vuelve a estar en vigor.
 
 **Accionable: ninguno.** La coexistencia (§5) no cambia. El próximo barrido
 arranca en `dev@003f8f0` y `main@71021ad`.
+
+### 7.12 Ventana 2026-09-17 → 2026-09-22 — `Process_t` se endurece; el hash del stable del 5-sep, resuelto
+
+*Barrido el 2026-09-22 sobre el clon de `AceSLS/SLSsteam` (`main`, `dev`, tags),
+`res/updates.yaml` de upstream por raw, y el tracker de moon
+(`swwayps/steam-monitor`). **Las issues no se han podido leer esta vez**: la API
+de GitHub para repos ajenos está cerrada desde este sandbox (403), y el clon no
+las trae. `main` sigue en `71021ad` (release `20260903114323`): sin commit, tag
+ni release. `dev`: 10 commits después de `003f8f0`, del 17 al 20 de septiembre,
+todos de Ace, sin publicar. Leídos como diff completo.*
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `0cad406` (17-sep) | `CNetPacket::serialize`: el `lock_guard` de `g_packetSerializeMutex` sube por encima de la lectura de `g_packetsArrayOffset` (antes se leía el offset sin el mutex y se bloqueaba después). El propio mensaje: *"Doesn't really matter right now, since RecvPkt seems to always get called from the CSteamEngine thread anyway"*. `newBdy->type = getType()` en vez de `body->type`. | No. Capa CM, ajena (§5). |
+| `2c021bd`, `65d4071`, `ae4d4c7` (17–19 sep) | Typo en el README de Lua; alineado de comentarios en `CServerPipe` (sin cambio de layout); el log de `RecvPkt` añade `refs`, `body` y `originalBody`, y `originalBody` queda comentado como *"Ref counted pointer"*. | No. |
+| `3ca4b73` (20-sep) | `CPortableExecutableFile::parseSections`: el nombre de sección se copiaba con `strncpy` en un búfer de 8 bytes **sin terminador**; ahora búfer de 9 a cero. ELF: `shdrs[...]`/`strSec[...]` pasan a `.at()`. `parseSections` de ELF devuelve el resultado del parseo (antes devolvía `true` aunque fallara). | No. Es el analizador de PE/ELF de SmartTickets (§7.9), que corre sobre el exe del juego al conectar el pipe. |
+| `ed347d7` (20-sep) | Todos los miembros de `Process_t` con valor por defecto (`pid = -1`, `appId = 0`, `steamDRM = false`…), *"so even when parsing fails we have fallback values"*. | No. |
+| `e7e54f7` (20-sep) | `Process_t::init` entero dentro de `try { … } catch (...) { return false; }` (*"There might be some weirder procfs isolations"*), y `analyse()` pasa a devolver su resultado. Además `hkSteamEngine_ProcessIPCFrame` sólo llama a `Ticket::connectPipe` **si `init` devolvió `true`**: antes lo llamaba siempre, también para el proceso `steam` (cuyo `init` falla en `appId == 0`) y sobre un `Process_t` a medio rellenar. Cierra la familia de la issue #157 (crash con SamRewritten, §7.10) por el lado seguro. | No directamente. Sí explica dos cosas que vemos en Deck: SLSsteam analiza **cada** proceso que abre un pipe, y hasta este commit un `/proc` raro podía tirar Steam. Sin publicar aún. |
+| `2a538fd` (20-sep) | `Utils::strsplit` deja `strtok` (que mutaba la cadena y se saltaba tokens vacíos) por `std::regex` + `sregex_token_iterator`. Firma nueva `(const std::string&, const char*)`; los cuatro llamadores dejan el `const_cast`. | **Un detalle a vigilar, no nuestro.** El llamador de `process.cpp:698` hace `strsplit(readFile("cmdline"), "\0")`: como `const char*`, `"\0"` es la **cadena vacía**, así que el delimitador es la regex vacía, que casa en cada posición. Con `strtok` eso partía `cmdline` por sus NUL reales (funcionaba de casualidad); con regex, `cmdLine` queda troceado por caracteres. Hoy es inocuo: `cmdLine` no se lee en ningún sitio (`git grep`: sólo la asignación y la declaración). Se anota por si algún día lo usan. |
+| `1298aa8` (20-sep) | `getOpenFiles`: resuelve el symlink de `/proc/<pid>/map_files/*` y **descarta lo que no sea fichero regular** (antes metía el symlink tal cual). | No. |
+| `4a24b69` (20-sep) | `analyse`: no vuelve a analizar el exe principal cuando aparece entre los ficheros mapeados (*"only affects wine games"*): con Proton el exe del juego está mapeado, así que se parseaba dos veces. | No. Ahorra un parseo por lanzamiento en Proton. |
+
+**Hashes de SafeMode — corrección a §7.11.** Allí se dio `237495b4…` (3-sep)
+como versión `1788400362` y se dejó abierto si el stable de escritorio
+`1788652215` (5-sep) tenía `steamclient.so` distinto y sin hash. El tracker de
+moon lo cerró el 18-sep: el TOML de `237495b4…` cambió su `steam_version` de
+`1788400362` a `1788652215` (`19ca7ee`), es decir, **el stable del 5 de
+septiembre lleva el mismo `steamclient.so` que el build del día 3**, y su hash
+está en el feed de SLSsteam desde `71021ad`. No hubo issue "missing hash" porque
+no faltaba. `res/updates.yaml` de upstream no ha cambiado desde entonces. Lo
+demás que moon ha publicado en la ventana son betas de escritorio
+(`1789606022` 18-sep, `1789781627` 19-sep, `1790036264` 22-sep), sin hash en
+SLSsteam como siempre. **La Deck sigue en `1788291500`** (`bc54101b…`, 2-sep),
+con hash en upstream, en moon y en nuestro `res/updates.yaml` (nuestro feed
+sigue sin `237495b4…`, sólo escritorio: cosmético, §7.10).
+
+**Accionable: ninguno.** La coexistencia (§5) no cambia: los diez commits tocan
+la capa CM, el analizador de procesos de SmartTickets y utilidades. El próximo
+barrido arranca en `dev@4a24b69` y `main@71021ad`, y debe recuperar la lectura
+de issues cuando haya vía.

@@ -1744,6 +1744,34 @@ reencuadre de §6.1: **el valor de lumalinux nunca estuvo en los tres hooks, sin
 en seguir funcionando el día después de que Steam se actualice.** Eso ningún
 plugin lo puede copiar, porque no es código: es una máquina de mantenimiento.
 
+> **[2026-09-22] Segundo plugin en circulación: `spliced-tickets.lua`.** Del
+> propio Ace, publicado en el Discord de SLSsteam el 30 de agosto (recibido
+> el 21-sep por vía informal, 80 líneas), y según él parte también de su
+> SLSsteam privado. Método atribuido al creador de OpenSteamTools. Hace una
+> sola cosa: engancha `IClientUser::GetAppOwnershipTicketExtendedData` (por
+> `VFTableInfo_t("14IClientUserMap", …)` + `LuaHook` + `place_lua_hook`, la
+> misma API de §2) y, cuando el original devuelve tamaño 0 —el juego no está
+> en la cuenta—, vuelve a pedir el ticket de la **app 7** (el cliente, que
+> toda cuenta posee), inserta el appid pedido justo antes de la firma y
+> ajusta `pOffAppId`/`pOffSig`. SteamStub recibe un ticket "suyo" y se
+> desempaqueta como si el juego fuera legítimo. Ace: *"you don't need
+> steamless anymore as long as this plugin is loaded … i tried this exploit
+> on about 20 games. only 1 didn't fall for it"* (Insurgency Sandstorm), y
+> la ventaja que subraya: no tocar el exe evita romper mods y verificaciones
+> de ficheros. La firma del ticket no cuadra con el contenido, así que cae
+> en los stubs que verifican firma en local; cuáles, no lo dice.
+>
+> Para este análisis: (1) es el **primer plugin que entra en la capa de
+> ownership/tickets**, la que §4.7 daba por disjunta de lumalinux —sigue
+> siéndolo: nosotros no tocamos tickets, y SmartTickets de upstream (§7.9)
+> sólo replica tickets reales cacheados de una cuenta que sí posee el juego;
+> este plugin cubre justo el hueco contrario, cualquier juego sin ninguna
+> cuenta; (2) es una alternativa a Steamless para el "Application load
+> error" del stub, es decir, para lo que LumaDeck resuelve hoy con el botón
+> *Remove DRM*; (3) exige `Plugins: yes`, que LumaDeck no toca (D/E′
+> archivados, §6.6). Sin probar en dispositivo. Decisión del 21-sep:
+> **esperar**; si Ace lo integra en `main`, llega solo con la release.
+
 ---
 
 ## 7. Anexo técnico — cómo localiza funciones cada proyecto
