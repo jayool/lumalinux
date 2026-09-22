@@ -56,6 +56,16 @@ prog    = currentProgram
 fm      = prog.getFunctionManager()
 mem     = prog.getMemory()
 listing = prog.getListing()
+# Ghidra loads the .so at its own image base (0x10000 by default), so every
+# Address it hands us is file vaddr + IMAGE_BASE. Addresses are PRINTED as
+# Ghidra shows them (what a human sees in the GUI), but every "rva" written to
+# --json is a FILE vaddr — the space check_patterns.py, the Python locators,
+# res/rvas/*.yaml and the selftest's second-opinion check all speak.
+IMAGE_BASE = prog.getImageBase().getOffset()
+
+
+def file_rva(addr):
+    return addr.getOffset() - IMAGE_BASE
 refmgr  = prog.getReferenceManager()
 mon     = ConsoleTaskMonitor()
 
@@ -412,7 +422,7 @@ for label, anchor in ANCHORED_HOOKS:
     if len(fns) == 1 and len(uniq) == 1:
         f, pat = uniq[0]
         DERIVED[label] = {"pattern": pat, "matches": 1,
-                          "rva": "0x%x" % f.getEntryPoint().getOffset()}
+                          "rva": "0x%x" % file_rva(f.getEntryPoint())}
         print("  -> use the pattern above for %s" % label)
     elif len(fns) == 1:
         print("  -> single candidate but not UNIQUE; needs manual tightening")
