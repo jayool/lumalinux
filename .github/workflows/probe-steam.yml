@@ -1,0 +1,219 @@
+name: probe-steam
+
+# Manual, read-only PROBE of any Steam client channel against the CURRENT
+# patterns — the "what would break if this build became stable?" question.
+# Companion to watch-steam.yml (the daily monitor), kept as a separate workflow
+# on purpose: it shares the tools, not the job, so nothing here can alter the
+# daily flow. It never opens a PR or an issue, never touches res/updates.yaml,
+# res/rvas or src/patterns.hpp on any branch, and never marks a version as
+# processed. Everything it learns goes into a job summary and an artifact.
+#
+# What it does:
+#   1. fetch the steamclient.so of the chosen manifest (LUMA_STEAM_MANIFEST,
+#      see tools/fetch_steamclient.py);
+#   2. tools/check_patterns.py against src/patterns.hpp (exit 0/2/3 reported,
+#      never fails the job);
+#   3. optionally (derive=true, default), when something MOVED, the same
+#      re-derivation chain the monitor uses — Ghidra for the string-anchored
+#      hooks (tools/run_ghidra_derive.sh), RTTI by-name for DepotKey — applied
+#      to the runner's working copy only, then re-validated. The resulting
+#      patterns.hpp diff, derived.json and both reports are uploaded.
+#
+# Typical use: a Steam beta lands (steam_client_publicbeta_ubuntu12 /
+# steam_client_steamdeck_publicbeta_ubuntu12); run this to see the verdict and
+# collect the re-derived patterns BEFORE the build is promoted to stable. Finder
+# anchors (finder:cache_idiom / finder:gmrc_tail) are a code fix, not a pattern
+# (docs/maintenance.md §C): the probe reports them, it cannot derive them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: "Steam client manifest to probe"
+        type: choice
+        default: steam_client_steamdeck_publicbeta_ubuntu12
+        options:
+          - steam_client_steamdeck_publicbeta_ubuntu12
+          - steam_client_publicbeta_ubuntu12
+          - steam_client_ubuntu12
+          - steam_client_steamdeck_stable_ubuntu12
+      derive:
+        description: "On a moved pattern, run the re-derivation (Ghidra, ~20 min) and upload the patterns.hpp diff"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read              # checkout + `gh release download` of Ghidra; nothing is written
+
+concurrency:
+  group: probe-steam
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90       # Ghidra analysis of steamclient.so is ~5–30 min
+    env:
+      LUMA_STEAM_MANIFEST: ${{ inputs.manifest }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fetch steamclient.so (${{ inputs.manifest }})
+        id: dl
+        run: |
+          V=$(python3 tools/fetch_steamclient.py --version-only)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "manifest: $LUMA_STEAM_MANIFEST  version: $V"
+          OUT=$(python3 tools/fetch_steamclient.py --output steamclient.so)
+          SHA=${OUT#sha256=}
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "steamclient.so SHA-256: $SHA"
+          if grep -qiF "$SHA" res/updates.yaml; then
+            echo "whitelisted=true" >> "$GITHUB_OUTPUT"
+            echo "This hash is already whitelisted in res/updates.yaml."
+          else
+            echo "whitelisted=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate current patterns
+        id: check
+        run: |
+          mkdir -p probe-out/rvas
+          set +e
+          python3 tools/check_patterns.py steamclient.so --json result.json \
+            --emit-rvas probe-out/rvas --steam-version "${{ steps.dl.outputs.version }}" \
+            > report.txt 2>&1
+          code=$?
+          set -e
+          cat report.txt
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "check_patterns.py exit: $code (0 clean / 2 non-critical moved / 3 blocking)"
+
+      # ── moved (2/3) and derive=true: the monitor's re-derivation chain, applied to
+      # the runner's working copy only. Unlike watch-steam.yml this re-derives EVERY
+      # constant that did not resolve UNIQUE (diagnostics included) — the point of
+      # a probe is to collect as much as possible, not to gate a whitelist.
+      - name: Set up Java for re-derivation
+        if: inputs.derive && (steps.check.outputs.exit == '2' || steps.check.outputs.exit == '3')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Re-derive moved patterns (working copy only)
+        id: derive
+        if: inputs.derive && (steps.check.outputs.exit == '2' || steps.check.outputs.exit == '3')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VER: ${{ steps.dl.outputs.version }}
+        run: |
+          echo "applied=false" >> "$GITHUB_OUTPUT"
+          # Every patterns.hpp constant whose hook did not come back UNIQUE, using
+          # check_patterns' own tier maps (no second copy of the const names here).
+          ONLY=$(python3 - <<'PY'
+          import json, sys
+          sys.path.insert(0, "tools")
+          import check_patterns as cp
+          r = json.load(open("result.json"))
+          tiers = {}
+          tiers.update(cp.CRITICAL); tiers.update(cp.NONCRITICAL); tiers.update(cp.DIAGNOSTIC)
+          moved = [c for c, label in tiers.items()
+                   if r["hooks"].get(label, {}).get("status") != "UNIQUE"]
+          print(",".join(moved))
+          PY
+          )
+          echo "constants to re-derive: '${ONLY:-<none>}'"
+          echo "only=$ONLY" >> "$GITHUB_OUTPUT"
+          if [ -z "$ONLY" ]; then
+            echo "nothing to re-derive (only finder anchors moved — a code fix, §C)."; exit 0
+          fi
+          rm -f derived.json
+          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | paste -sd, - || true)
+          if [ -n "$GHIDRA_ONLY" ]; then
+            set +e
+            bash tools/run_ghidra_derive.sh steamclient.so derived.json
+            dcode=$?
+            set -e
+            if [ "$dcode" -ne 0 ]; then
+              echo "Ghidra derivation failed (exit $dcode) — reporting without a diff."; exit 0
+            fi
+          fi
+          case ",$ONLY," in *,kDepotKeyFnPattern,*)
+            set +e
+            python3 tools/derive_depotkey_byname.py steamclient.so --derived derived.json
+            bcode=$?
+            set -e
+            [ "$bcode" -ne 0 ] && echo "DepotKey by-name derivation failed (exit $bcode) — continuing."
+          ;; esac
+          # apply exits 4 when SOME constant could not be applied; for a probe a
+          # partial apply is still information, so keep going and re-validate.
+          set +e
+          python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
+          echo "apply_derived_pattern.py exit: $?"
+          mkdir -p probe-out/rvas-after
+          python3 tools/check_patterns.py steamclient.so --json recheck.json \
+            --emit-rvas probe-out/rvas-after --steam-version "$VER" > recheck.txt 2>&1
+          rcode=$?
+          set -e
+          cat recheck.txt
+          echo "recheck exit: $rcode"
+          echo "recheck=$rcode" >> "$GITHUB_OUTPUT"
+          git diff -- src/patterns.hpp > probe-out/patterns.diff || true
+          if [ -s probe-out/patterns.diff ]; then
+            echo "applied=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Job summary
+        if: always() && steps.check.outcome == 'success'
+        env:
+          MANIFEST: ${{ inputs.manifest }}
+          VER: ${{ steps.dl.outputs.version }}
+          SHA: ${{ steps.dl.outputs.sha }}
+          WL: ${{ steps.dl.outputs.whitelisted }}
+          EXIT: ${{ steps.check.outputs.exit }}
+          ONLY: ${{ steps.derive.outputs.only }}
+          RECHECK: ${{ steps.derive.outputs.recheck }}
+          APPLIED: ${{ steps.derive.outputs.applied }}
+        run: |
+          {
+            echo "## probe-steam: \`$MANIFEST\`"
+            echo
+            echo "- Steam client version: \`$VER\`"
+            echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo "- already whitelisted in res/updates.yaml: \`$WL\`"
+            echo "- check_patterns.py exit (current patterns): \`$EXIT\` (0 clean / 2 non-critical moved / 3 blocking)"
+            if [ -n "$ONLY" ]; then
+              echo "- re-derived: \`$ONLY\` → re-validation exit \`${RECHECK:-n/a}\`, patterns.hpp diff: \`${APPLIED:-false}\`"
+            fi
+            echo
+            echo '<details><summary>check_patterns.py report (current patterns)</summary>'
+            echo; echo '```'; cat report.txt; echo '```'; echo '</details>'
+            if [ -f recheck.txt ]; then
+              echo
+              echo '<details><summary>check_patterns.py report (after re-derivation)</summary>'
+              echo; echo '```'; cat recheck.txt; echo '```'; echo '</details>'
+            fi
+            if [ -s probe-out/patterns.diff ]; then
+              echo
+              echo '<details><summary>src/patterns.hpp diff (NOT committed — runner working copy)</summary>'
+              echo; echo '```diff'; cat probe-out/patterns.diff; echo '```'; echo '</details>'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload probe artifact
+        if: always() && steps.check.outcome == 'success'
+        uses: actions/upload-artifact@v5
+        with:
+          name: probe-${{ inputs.manifest }}-${{ steps.dl.outputs.version }}
+          if-no-files-found: warn
+          path: |
+            report.txt
+            result.json
+            derived.json
+            recheck.txt
+            recheck.json
+            probe-out/
