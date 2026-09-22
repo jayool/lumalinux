@@ -41,10 +41,13 @@ So: no pattern re-derivation, no new hooks. SteamOS behavior is unchanged.
    header and the `MANIFEST_NAME` note stated the Deck and desktop clients "are
    DIFFERENT builds with different steamclient.so hashes." Rewritten to be
    precise: the two are **separate manifests with independent version numbers**
-   (so they can point at different builds at any moment), but for current builds
-   they resolve to a **byte-identical** `steamclient.so`; the default stays
+   (so they can point at different builds at any moment); the default stays
    `steamdeck_stable` because it authoritatively tracks what Decks run, and the
    port validator overrides `LUMA_STEAM_MANIFEST` to the desktop channel.
+   (2026-09-22 update: the note's claim that the two channels resolved to a
+   byte-identical `steamclient.so` stopped holding — Deck stable 1788652215 /
+   `bc54101b…` vs a different desktop stable — and was removed from the script;
+   the port validator must keep measuring the desktop channel itself.)
 
 3. **Keep `res/updates.yaml` in sync with the pinned build. ✅ confirmed.**
    lumalinux carries its own SafeMode whitelist (independent of SLSsteam's).

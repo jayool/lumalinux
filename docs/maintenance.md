@@ -498,9 +498,11 @@ promotes tomorrow.
    python3 tools/experiment_cache_idiom_free.py ~/so/stable.so --window 800-1400
    python3 tools/experiment_cache_idiom_free.py ~/so/beta.so   --window 800-1400
    ```
-   Check the `sha256=` line of each fetch: a CDN hiccup makes the fetcher fall
-   back to the SDK's `linux32/steamclient.so`, which is NOT the binary Decks
-   load. Read pass 5/6 of both outputs side by side: the cache object has a
+   Check the `sha256=` line of each fetch against the manifest you expect. (A
+   CDN hiccup used to make the fetcher fall back to the SDK's
+   `linux32/steamclient.so`, which is NOT the binary Decks load; since
+   2026-09-22 it retries and then fails loudly instead, so a fetch that exits 0
+   is the `ubuntu12_32` client.) Read pass 5/6 of both outputs side by side: the cache object has a
    recognisable fingerprint — the package tree root has ~3 sites with the
    `RBTREE-SIG` mark and the node array sits at `root + 0x14`; a second,
    heavily used tree (~39 sites, also signed) sits `0x40` above it. Match the
