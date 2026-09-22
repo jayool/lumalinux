@@ -2883,3 +2883,161 @@ the main window instance) with no local listener. Nothing to do.
 to watch is not SLSDeck's: the September 2026 Steam beta reaching stable,
 which will require Decky ≥ 3.2.9 on every Deck and is where a `@decky/ui`
 bump would be tested for real.
+
+## §18 Delta — 2026-09-22 (commits after `e4a7bfb`)
+
+**Frozen references for this section.** `main` @ `458271a` (2026-09-17): ONE
+commit since §17, the merge of the Hubcap updater. The work of the period is on
+`dlc-fix` @ `5c54b1f` (2026-09-22, rolling release `dlc-fix-latest`, plugin
+`0.9.64` vs `0.9.61` on `main`), which carries `tokeer-testing` @ `7520175`
+(09-21) and `cloudredirect-dev` @ `67bf33d` (09-18); `archived-stable` was
+synced to `main` on 09-17. 29 commits on `dlc-fix` not on `main`, all by
+"Vibe-coder Jimmy". Method as in §0: every commit listed; the Hubcap updater,
+the moon-config adaptation, the DLC boot reconcile, the manifest-source
+priority, the multiplayer proxies, the SLSonline toggle and the Tokeer Proton
+fallback were read as diffs; Tokeer UI and CloudRedirect at subject level.
+Pattern to note: `main` receives one merge per week while users are pointed at
+per-branch rolling prereleases (five `*-latest` tags, the newest two from 09-21
+and 09-22).
+
+### §18.1 Automatic Hubcap manifest updates (`96a6009` → `main` as `458271a`)
+
+**[read]** `hubcap_updates.py` (272 L). Opt-in toggle `hubcapUpdates` (default
+off) that refuses to enable without a Hubcap/Morrenus key. A daemon thread
+starts 90 s after boot and runs every 2 h (or on demand when the toggle is
+switched on). Per loaded app: skip if not installed or pinned; the current
+target gids are moon's lua manifests overlaid with the `.preferred_<depot>`
+markers `smart_merge` writes; probe `GET /api/v1/manifest/<appid>/contents`
+(cheap, no quota); only if some overlapping depot's gid differs, download
+`?force_update=true` (counts against the key's quota), parse every
+`<depot>_<gid>.manifest` in the zip, and replace only when at least one depot's
+`creation_time` is strictly newer and none is older than the local target
+("positive evidence"). A `buildhistory` snapshot is taken first; the install
+goes through `_process_and_install_lua(prefer_source_newest=True)`, i.e. into
+moon's ManifestStore and Steam's `depotcache`, so Steam finds the manifest and
+never asks for a request code. Both workers are stopped on unload/uninstall.
+
+**[inferred]** This is SLSDeck's own answer to moon dropping request codes
+(`slsteam-moon-findings.md` D20): a key holder gets updates by polling Hubcap
+every two hours at the cost of quota; everyone else waits for the LuaTools
+archive to be donated the manifest. Ours needs neither: GMRC-native codes let
+Steam update natively the moment Valve publishes, and when the providers are
+down LumaDeck pins (`pins.py`). **Not adopted.**
+
+### §18.2 SLSDeck follows moon's new configuration (`6d75879`, `f76a5c4`, `169d0c4`, `7208bff`)
+
+**[read]** `DisableUpdates` leaves the managed keys (moon removed it; the
+CRITICAL comment that it "must be `no`" is gone with it); `AutoUpdateApps`,
+`PatternCache`, `AsyncProvision`, `SteamIdOverride`, `AchievementOwners` and
+`Donate` are now recognised by the config healer. The Advanced page gains two
+switches: "Automatically update managed games" (`AutoUpdateApps`, read as
+`yes` when absent) and manifest donation (`Donate.Enabled`, **read as enabled
+when absent**, edited without touching URL/limits). The install trigger moves
+from the world-writable `/tmp/SLSsteam.API` to moon's private per-user runtime
+API at `/run/user/<uid>/SLSsteam/api` (fallback `~/.cache/SLSsteam/api`); the
+legacy endpoint is used only if it already exists and is "never recreated".
+Headcrab's automatic client repair now fires only on an explicit steamclient
+hash failure in the *latest* moon session ("unknown steamclient.so hash!
+aborting", "hash mismatch"); a generic "aborting"/"refusing to load" no longer
+triggers a Steam client downgrade, and an unreadable log now means "unknown",
+not "repair".
+
+**[inferred]** Donation is confirmed default-on at the plugin layer: SLSDeck
+exposes the switch but leaves it on, so every SLSDeck user donates request
+codes for the games they own unless they find the Advanced page. The repair
+tightening is the cost of the Headcrab model surfacing: until 09-21 any engine
+failure could downgrade the user's whole Steam client. Nothing to adopt; the
+donation default goes into the D20 decision as context.
+
+### §18.3 DLC policy persisted and repaired at boot (`c62cc81`, `ebb3f0e`, `e041f2c`)
+
+**[read]** DLC options default on. `InjectAllAdvertisedDlc: yes` is written
+persistently ("keep Moon's ownership policy across Steam restarts"). New
+`autoDlcRecords` in settings: per game, the DLC appids moon must authorise and
+the content depots positively classified as DLC (`enrich_depot_relationships`,
+so language/OS/base depots are not mistaken for missing DLC). A
+`_boot_dlc_reconcile` step at plugin start compares those records with what
+Steam mounted and requests repair for depots Steam dropped; the docstring:
+*"Steam may reconcile appmanifests before Moon finishes publishing its
+package-0 DLC snapshot. The engine fix prevents that race; this is the
+plugin-side safety net for already-affected installs."* Game-manifest sources
+are re-ordered so a configured Hubcap source ranks above the health-ranked
+free providers (`_partition_game_manifest_apis`; fix-catalogue ordering is
+untouched); a Hubcap bundle's own DLC keys are now imported (they used to be
+discarded and every provider was labelled "hubcap"), and its manifests are
+copied into the ManifestStore and `depotcache`.
+
+**[inferred]** The race they describe is moon's package-0 DLC snapshot losing
+to Steam's startup appmanifest reconcile — the same window our package-0
+finder lives in (RESEARCH §13.5): it walks Steam's own cache, re-injects on
+every poll and fires the license reconcile only after the injection landed.
+Their fix is plugin-side bookkeeping on top of an engine fix; ours is in the
+engine. Recorded as a second sighting of the "DLC lost at startup" class.
+**Nothing to adopt.**
+
+### §18.4 Tokeer (Denuvo) flow (`1fdfd46`, `0780223`, `7f52717`, `7570afe`, `b21ac3c`, `1da418b`)
+
+**[read]** The Tokeer runtime is fetched from the lua.tools Forgejo
+(`git.lua.tools/luatools-dedivision/TokeerDRM-App`, release API with a pinned
+`v1.0.28` bundle as fallback); activation is hidden until the game download
+completes, reset after uninstall or a zero build, and the installed build is
+pinned after activation. Proton fallback: a compatibility tool installed while
+Steam runs "is present on disk before it appears in Steam's live tool
+registry", and `SpecifyCompatTool` with an undiscovered name is silently
+ignored, so if Tokeer's GE build is not in `GetAvailableCompatTools` the
+plugin selects `proton_experimental` instead of proceeding with no layer.
+
+**[inferred]** Still the parked Denuvo/TOKEER item. The `SpecifyCompatTool`
+caveat does not reach us: LumaDeck writes `CompatToolMapping` into
+`localconfig.vdf` (`set_compat_tool_for_app`) rather than calling the live
+API, and only ever names the built-in `proton_experimental`.
+
+### §18.5 Manual multiplayer proxy fixes (`950a8d6`, `95c90ce`, `2d7ec5a`, `152cd4c`)
+
+**[read]** `multiplayer_proxies.py` (207 L): per-game installs of UC Online 2
+(`steam_api.dll` / `steam_api64.dll` from `UnionCrax-Team/uc-online2`) and EOS
+Proxy (`EOSSDK-Win64-Shipping.dll` from `yesyes0649/eos-proxy`), targets found
+by walking the install dir (symlinks excluded), originals backed up and the
+install recorded in the per-game fix log so it is reversible; DLLs cached and
+refreshed by the dependency updater; a dedicated entry for Absolum
+(`1904480`).
+
+**[inferred]** Same class as LumaDeck's online fixes and the same principle as
+our `luatools-backup-<appid>/` (every overwritten original is restorable
+through the fix log). It is the model our pending "Steamless into the fix
+circuit" item follows. **Not adopted** as a feature.
+
+### §18.6 Per-game SLSonline toggle (`c8cb013`)
+
+**[read]** Edits only the selected game's entry in moon's `FakeAppIds` map
+(`<appid>: 480`), refusing on duplicate or inline maps, no launch-option
+rewrite. **[inferred]** LumaDeck applies a `FakeAppId` as part of the fix that
+needs it and withdraws it symmetrically on unfix; no manual per-game switch is
+needed. **Not adopted.**
+
+### §18.7 CloudRedirect (`37ff17c`, `27f06f8`, `6f42f2b`, `cloudredirect-dev`)
+
+**[subject]** Custom cloud-folder provider, its migration fix, a manual save
+importer with the Decky folder picker starting at the detected Steam user
+home. §16.4 stance unchanged: **not adopted**.
+
+### §18.8 Summary
+
+| Item | Verdict |
+|---|---|
+| Hubcap automatic updates (2 h poll, quota, key holders only) | their substitute for lost request codes; ours updates natively via GMRC; **not adopted** |
+| moon config: `DisableUpdates` gone, `AutoUpdateApps` + `Donate` switches, private runtime API | donation default-on confirmed at plugin layer (D20 context); trigger endpoint hardened |
+| Headcrab repair only on explicit hash failure | Headcrab-model cost made visible; not applicable |
+| DLC policy persisted + boot reconcile | second sighting of "DLC lost at startup"; our finder covers it in the engine; nothing to do |
+| Hubcap above free providers; bundle DLC keys imported | their source ordering; ours is the LuaTools/Hubcap cascade of RESEARCH §20 |
+| Tokeer on lua.tools Forgejo, Proton Experimental fallback | parked Denuvo item; `SpecifyCompatTool` caveat does not reach `localconfig.vdf` writes |
+| UC Online 2 / EOS Proxy manual fixes with reversible backups | same principle as our fix log + backup dir; supports the "Steamless into the fix circuit" item |
+| SLSonline per-game toggle | not needed (FakeAppId is fix-owned) |
+| CloudRedirect folder/import UI | not adopted |
+
+**[inferred]** Nothing in this window changes the §7 verdicts. Two things to
+watch: whether `dlc-fix` (0.9.64) lands on `main` as-is, and whether the
+donation default stays on once users notice the Advanced page.
+
+The next sweep starts at `458271a` (`main`), `5c54b1f` (`dlc-fix`),
+`7520175` (`tokeer-testing`) and `67bf33d` (`cloudredirect-dev`).
