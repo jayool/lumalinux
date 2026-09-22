@@ -10,13 +10,13 @@
 # CHANNEL (important): defaults to the STEAMDECK_STABLE manifest, because that is
 # the client a real Steam Deck loads and is the authoritative source for what to
 # whitelist. The generic steam_client_ubuntu12 (desktop Linux) is a SEPARATE
-# manifest with its own version number and release cadence — so at any given
-# moment the two channels can point at different builds. Historically their
-# steamclient.so hashes also differed; for current builds (since ~Jan 2026) the
-# two channels resolve to a BYTE-IDENTICAL steamclient.so (SLSsteam's upstream
-# whitelist annotates one hash as `ubuntu12_32 & steamdeck_stable`). Defaulting
-# to steamdeck_stable is still correct: it tracks exactly what Decks run rather
-# than depending on the channels staying converged. Override with
+# manifest with its own version number and release cadence, so at any given
+# moment the two channels can point at different builds — and they do: on
+# 2026-09-22 the Deck stable was 1788652215 (bc54101b…) while desktop stable
+# was on a different build (237495b4… per steam-monitor). An earlier note here
+# claimed the two resolved to a byte-identical steamclient.so; that held for a
+# few months in 2026 and is NOT a property to rely on. Defaulting to
+# steamdeck_stable tracks exactly what Decks run. Override with
 # LUMA_STEAM_MANIFEST (see MANIFEST_NAME below) — e.g. the CachyOS/desktop port
 # validator points it at the generic channel to prove the binary matches.
 #
@@ -48,6 +48,7 @@ import lzma
 import os
 import struct
 import sys
+import time
 import urllib.request
 import zipfile
 
@@ -55,10 +56,9 @@ CDN = "https://media.steampowered.com/client/"
 # A Steam Deck loads the steamdeck_stable channel, NOT the generic desktop-Linux
 # steam_client_ubuntu12. These are SEPARATE manifests with independent version
 # numbers, so they can point at different builds at any moment (headcrab pins via
-# the steamdeck manifests too). For current builds the steamclient.so they
-# resolve to is byte-identical across channels, but watch-steam exists to
-# validate what real Decks actually run, so default to the steamdeck_stable
-# manifest rather than assuming the channels stay converged. Earlier this read
+# the steamdeck manifests too). watch-steam exists to validate what real Decks
+# actually run, so default to the steamdeck_stable manifest and never assume the
+# channels are converged (see the header). Earlier this read
 # steam_client_ubuntu12 and silently validated the wrong client for every Deck
 # user. Override via LUMA_STEAM_MANIFEST for the generic ("steam_client_ubuntu12",
 # used by the port validator) or beta ("steam_client_steamdeck_publicbeta_ubuntu12").
@@ -73,6 +73,35 @@ def http_get(url, timeout=120):
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
+
+
+# Package downloads are retried: the CDN answers a transient 504 now and then
+# (seen 2026-09-22 on the beta bins package), and before this the script's
+# reaction to that was to move on to the NEXT package and hand back whatever
+# steamclient.so it found there — the Steamworks SDK's linux32/ copy
+# (51e450e2…), which is not the client at all, with exit 0. A transient network
+# error must end in a loud failure, never in the wrong binary.
+RETRIES = 3                 # attempts per package file
+RETRY_BACKOFF = (2, 4, 8)   # seconds between attempts
+RETRY_SLEEP = time.sleep    # tests stub this
+
+
+def http_get_retry(url, timeout=120):
+    """http_get with RETRIES attempts and RETRY_BACKOFF between them. Raises the
+    last error when every attempt fails."""
+    last = None
+    for attempt in range(RETRIES):
+        try:
+            return http_get(url, timeout=timeout)
+        except Exception as e:               # noqa: BLE001
+            last = e
+            if attempt + 1 < RETRIES:
+                wait = RETRY_BACKOFF[min(attempt, len(RETRY_BACKOFF) - 1)]
+                print("  (%s: attempt %d/%d failed: %s — retrying in %ds)"
+                      % (url.rsplit("/", 1)[-1], attempt + 1, RETRIES, e, wait),
+                      file=sys.stderr)
+                RETRY_SLEEP(wait)
+    raise last
 
 
 # ── tiny Valve text-VDF parser ───────────────────────────────────────────────
@@ -228,9 +257,10 @@ def open_package_zip(key, plain, vz):
         variants.append((plain, False))
     for fname, is_vz in variants:
         try:
-            blob = http_get(CDN + fname)
+            blob = http_get_retry(CDN + fname)
         except Exception as e:               # noqa: BLE001
-            print("  (%s: download failed: %s)" % (key, e), file=sys.stderr)
+            print("  (%s: download failed after %d attempts: %s)" % (key, RETRIES, e),
+                  file=sys.stderr)
             continue
         try:
             if is_vz or blob[:2] == b"VZ":
@@ -246,21 +276,37 @@ def open_package_zip(key, plain, vz):
     return None
 
 
+def _bins_unreachable(key):
+    """The bins packages (rank <= 1) are where ubuntu12_32/steamclient.so lives.
+    One of them failing to download is not something to skip past: nothing
+    later in the manifest carries the client library (the SDK package carries
+    a linux32/ copy that is NOT it), so stop here with a clear message."""
+    raise RuntimeError(
+        "package %s could not be downloaded after %d attempts — it is the one "
+        "carrying ubuntu12_32/steamclient.so; not falling back to another "
+        "package (transient CDN error? re-run)" % (key, RETRIES))
+
+
 def extract_steamclient(man, out_path):
-    """Download packages until we find steamclient.so; extract it to out_path.
-    Returns the member name."""
-    want = "steamclient.so"
+    """Download packages until we find ubuntu12_32/steamclient.so; extract it to
+    out_path. Returns the member name.
+
+    Only that exact member is accepted. Until 2026-09-22 any member ending in
+    steamclient.so that was not 64-bit qualified, with linux32/ preferred —
+    which is the Steamworks SDK's copy inside a later package, and a 504 on the
+    bins package made the script return it as if it were the client."""
+    want = "ubuntu12_32/steamclient.so"
     for key, plain, vz in package_entries(man):
         zf = open_package_zip(key, plain, vz)
         if zf is None:
+            if _package_rank(key) <= 1:
+                _bins_unreachable(key)
             continue
         members = zf.namelist()
-        # lumalinux hooks the 32-bit binary — exclude the 64-bit one.
-        cand = [m for m in members if m.endswith(want)
-                and "ubuntu12_64" not in m and "linux64" not in m]
+        cand = [m for m in members if m.endswith(want)]
+        if len(cand) > 1:
+            raise RuntimeError("%s: %d members end in %s: %s" % (key, len(cand), want, cand))
         if cand:
-            cand.sort(key=lambda m: (0 if ("ubuntu12_32" in m or "linux32" in m)
-                                     else 1, len(m)))
             print("  (found steamclient.so in package %s: %s)" % (key, cand[0]),
                   file=sys.stderr)
             with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
@@ -269,9 +315,9 @@ def extract_steamclient(man, out_path):
         # A valid zip without the file: move on to the NEXT PACKAGE. (The
         # variant retry that this used to skip now lives inside
         # open_package_zip, so plain-vs-vz is already handled there.)
-        print("  (%s: %d members, no steamclient.so)" % (key, len(members)),
+        print("  (%s: %d members, no %s)" % (key, len(members), want),
               file=sys.stderr)
-    raise RuntimeError("steamclient.so not found in any client package")
+    raise RuntimeError("%s not found in any client package" % want)
 
 
 def sha256_file(path):
@@ -309,6 +355,8 @@ def extract_client_tree(man, out_dir):
             break
         zf = open_package_zip(key, plain, vz)
         if zf is None:
+            if _package_rank(key) <= 1 and not found_client:
+                _bins_unreachable(key)
             continue
         members = [m for m in zf.namelist()
                    if want in m and not m.endswith("/") and "ubuntu12_64" not in m]
