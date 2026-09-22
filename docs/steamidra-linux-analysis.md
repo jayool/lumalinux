@@ -469,3 +469,31 @@ de 2025 si está en el espejo, o pide una key.
 
 **Ninguno produce trabajo.** El próximo barrido arranca en `drappula/SFF`
 `3f72cdf` (v6.8.0); `Midrags/SFF` y `KoriaPolis/LumaCore` siguen parados.
+
+## §11 Delta — 2026-09-22 (`3f72cdf` → `8eaf238`, sin release)
+
+*Barrido el 2026-09-22. `drappula/SFF` `main` @ `8eaf238` (20-sep): dos
+commits después de v6.8.0, ambos de mallusrgreat el 20-sep, sin tag (el
+CHANGELOG los lista bajo "Unreleased"). `Midrags/SFF` sigue en `fa44fc9`
+(21-ago): parado, como se esperaba del autor desaparecido. Leídos como diff
+completo en las partes de manifests, downloader, ACF y Linux; UI al nivel de
+changelog. Novedad de método: el repo lleva ahora un `AGENTS.md` para
+"opencode", que obliga a tocar el CHANGELOG en cada commit y prohíbe
+"ejemplos de conversación" en comentarios de código: el fork se desarrolla
+con un agente de IA y lo dice.*
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `c2c35af` (20-sep) | **El archivo de LuasTools pasa a ser la primera fuente de manifests** (`manifest.luastools.xyz/m/<depot>/<gid>`), para juegos y para workshop, por delante de los espejos de GitHub y de ManifestHub; el explorador de ficheros también lo prueba antes que Hubcap, así que ya no exige key para ver el árbol. Además: chunks en formato ZIP para depots antiguos (Assassin's Creed 15101) en su downloader nativo; botón *Remove Key* en el diálogo de key caducada; RAM en reposo de ~1 GB a ~650 MB dejando de precargar `games.json` y la base de 369k claves. | **Dato, no trabajo.** SFF se suma al archivo de donaciones (`slsteam-moon-findings.md` D20) como **consumidor puro**: no hay ni una línea de donación en `sff/` (grep `donat`/`manifestcode`: cero). Con esto el archivo alimenta a moon, luatools-moon, SLSDeck y SFF; los donantes siguen siendo solo los clientes de moon y del LuaTools de Windows. Para nosotros no cambia nada: el archivo es un espejo de manifests ya bajados, nuestro camino es el código de la sesión (GMRC nativo). |
+| `8eaf238` (20-sep) | **Regresión de v6.8.0 en Linux, corregida.** Para esconder la insignia de "actualización disponible" (su modo de "no auto-update" en Linux, §6 G7/G8) los escritores de ACF de v6.8.0 escribían `InstalledDepots {}`; resultado, `StateFlags 36`, depots vacíos y Steam marcando el juego como *"Content still encrypted"* aunque los chunks estuvieran bien (Celeste 504230, verificado por ellos en 504231/504233). Ahora vuelven a escribir los manifests pineados. Además: su filtro por SO tiraba `.dll`/`.exe` de depots nativos de Linux (Celeste con Mono se quedaba sin `mscorlib.dll`), nombre de proceso `SteaMidra` vía `prctl` y `StartupWMClass` en el `.desktop`, progreso por tamaño total del depot. | **No, y confirma nuestra postura.** LumaDeck nunca escribe un `.acf` "completo" a mano: la semilla es `StateFlags 1` sin `InstalledDepots` (`downloads.py`, clasificación `seed`/`real`), Steam instala en nativo y escribe su propio `.acf` con `StateFlags 4` e `InstalledDepots` reales (RESEARCH §12, §18); y "update required" es un flip `4→6` de un solo campo (`pins.py`), nunca vaciar los depots. El fallo de SFF es lo que pasa cuando el `.acf` se usa para mentirle a Steam sobre lo que hay en disco. El filtro por SO tampoco aplica: no filtramos ficheros, descarga Steam. |
+
+**Balance del delta**
+
+| # | Qué | Estado |
+|---|---|---|
+| 1 | LuasTools primero para manifests, sin donar | Dato para D20: cuarto consumidor del archivo, cero donantes nuevos |
+| 2 | `InstalledDepots {}` rompía instalaciones Linux ("still encrypted") | Regresión suya, corregida; nuestra semilla `StateFlags 1` no la puede sufrir |
+| 3 | Chunks ZIP, filtro Mono, RAM | Su downloader nativo; no aplica |
+
+**Ninguno produce trabajo.** El próximo barrido arranca en `drappula/SFF`
+`8eaf238`; `Midrags/SFF` parado.
