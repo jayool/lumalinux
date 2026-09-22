@@ -124,12 +124,12 @@ int main(int argc, char** argv) {
     std::printf("eh_frame_hdr  : %zu function starts (0x%lx..0x%lx)\n", starts.size(),
                 (unsigned long)starts.front(), (unsigned long)starts.back());
 
-    auto fnOf = [&](uintptr_t site) -> uintptr_t {
+    auto fnOf = [&](uintptr_t site, uintptr_t& s, uintptr_t& e) -> bool {
         auto it = std::upper_bound(starts.begin(), starts.end(), site);
-        if (it == starts.begin()) return 0;
-        const uintptr_t s = *(it - 1);
-        const uintptr_t e = (it != starts.end()) ? *it : rx.addr + rx.size;
-        return (site < e) ? s : 0;
+        if (it == starts.begin()) return false;
+        s = *(it - 1);
+        e = (it != starts.end()) ? *it : rx.addr + rx.size;
+        return site < e;
     };
 
     ReconcileAnchorCore::Info info;

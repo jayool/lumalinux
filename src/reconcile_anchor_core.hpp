@@ -91,8 +91,12 @@ inline std::size_t FindCallbackPostSites(Region rx, uintptr_t* out, std::size_t 
     return n;
 }
 
-// The locator. `fnOf(site)` returns the entry of the function containing
-// `site`, or 0 if unknown. Returns the ONE function passing c1+c2+c3, else 0.
+// The locator. `fnOf(site, start, end)` fills the [start, end) bounds of the
+// function containing `site` and returns true, or false if unknown. The head
+// inspected for c2/c3 is bounded by `end`, not just by kHeadBytes: a small
+// function's 96-byte window would otherwise run into its NEIGHBOUR and borrow
+// its this-read (reproduced with a gcc -m32 object, tools/reconcile_anchor_selftest.cpp).
+// Returns the ONE function passing c1+c2+c3, else 0.
 template <class FnOf>
 inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = nullptr) {
     Info local;
@@ -106,14 +110,14 @@ inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = 
     if (total == 0 || total > kMaxSites) return 0;     // none, or not the module we know
 
     // Distinct containing functions, in site order (small N: linear dedupe).
-    uintptr_t fns[kMaxSites];
+    uintptr_t fns[kMaxSites], ends[kMaxSites];
     std::size_t nf = 0;
     for (std::size_t i = 0; i < total; ++i) {
-        const uintptr_t f = fnOf(sites[i]);
-        if (!f) continue;
+        uintptr_t f = 0, e = 0;
+        if (!fnOf(sites[i], f, e) || !f || e <= f) continue;
         bool seen = false;
         for (std::size_t j = 0; j < nf; ++j) if (fns[j] == f) { seen = true; break; }
-        if (!seen) fns[nf++] = f;
+        if (!seen) { fns[nf] = f; ends[nf] = e; ++nf; }
     }
     I.candidates = nf;
 
@@ -122,7 +126,8 @@ inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = 
         const uintptr_t f = fns[i];
         if (f < rx.addr || f >= rx.addr + rx.size) continue;
         const std::size_t off = static_cast<std::size_t>(f - rx.addr);
-        const std::size_t len = (rx.size - off < kHeadBytes) ? rx.size - off : kHeadBytes;
+        std::size_t len = (rx.size - off < kHeadBytes) ? rx.size - off : kHeadBytes;
+        if (ends[i] - f < len) len = static_cast<std::size_t>(ends[i] - f);
         uint32_t disp = 0;
         if (!ReadsThisThenBails(rx.p + off, len, &disp)) continue;
         ++I.kept;

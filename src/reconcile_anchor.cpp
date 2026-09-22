@@ -21,11 +21,10 @@ uintptr_t FindNotifyLicensesUpdated() {
     // place resolves to 0 and drops out of the candidate set (fail-closed).
     const uintptr_t execEnd = rx.addr + rx.size;
     bool tableOk = true;
-    auto fnOf = [&](uintptr_t site) -> uintptr_t {
-        uintptr_t s = 0, e = 0;
-        if (EhFrame::FindFunction(site, execEnd, s, e)) return s;
+    auto fnOf = [&](uintptr_t site, uintptr_t& s, uintptr_t& e) -> bool {
+        if (EhFrame::FindFunction(site, execEnd, s, e)) return true;
         tableOk = false;
-        return 0;
+        return false;
     };
 
     ReconcileAnchorCore::Info info;

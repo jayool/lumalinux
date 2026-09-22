@@ -59,6 +59,18 @@ def function_of(starts, va):
     return starts[i] if i >= 0 else None
 
 
+def function_bounds(starts, va):
+    """(start, end) of the function containing va; end is the next start, or
+    None for the last one. The head inspected for c2/c3 is bounded by `end`:
+    a small function's 96-byte window would otherwise run into its neighbour
+    and borrow its this-read (found with a gcc -m32 object, 2026-09-22; the
+    C++ port in src/reconcile_anchor_core.hpp applies the same bound)."""
+    i = bisect.bisect_right(starts, va) - 1
+    if i < 0:
+        return None, None
+    return starts[i], (starts[i + 1] if i + 1 < len(starts) else None)
+
+
 def posts_callback_125(text, text_va):
     """Every `push 0x7d ; push eax ; call` site in .text (c1), as RVAs."""
     out, i = [], 0
@@ -89,10 +101,16 @@ def locate(text, text_va, starts, read_va):
     """The pure part: candidates by c1, filtered by c2+c3. Returns
     (status, rva, info) with status UNIQUE / NOT_FOUND / AMBIGUOUS."""
     sites = posts_callback_125(text, text_va)
-    fns = sorted({f for f in (function_of(starts, s) for s in sites) if f is not None})
+    bounds = {}
+    for s_ in sites:
+        f, e = function_bounds(starts, s_)
+        if f is not None:
+            bounds[f] = e
+    fns = sorted(bounds)
     kept = []
     for f in fns:
-        ok, disp = reads_this_then_bails(read_va(f, HEAD_BYTES))
+        n = HEAD_BYTES if bounds[f] is None else min(HEAD_BYTES, bounds[f] - f)
+        ok, disp = reads_this_then_bails(read_va(f, n))
         if ok:
             kept.append((f, disp))
     info = {"callback_sites": len(sites), "candidate_fns": len(fns),

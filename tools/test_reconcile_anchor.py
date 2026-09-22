@@ -43,9 +43,12 @@ int main(int argc, char** argv) {
     Region rx{ buf, n, (uintptr_t)strtoul(argv[2], nullptr, 16) };
     std::vector<uintptr_t> starts;                   // the ".eh_frame_hdr" of the test
     for (int i = 3; i < argc; ++i) starts.push_back(strtoul(argv[i], nullptr, 16));
-    auto fnOf = [&](uintptr_t site) -> uintptr_t {   // largest start <= site, like bisect
+    auto fnOf = [&](uintptr_t site, uintptr_t& s, uintptr_t& e) -> bool {   // like Python's function_bounds
         auto it = std::upper_bound(starts.begin(), starts.end(), site);
-        return it == starts.begin() ? 0 : *(it - 1);
+        if (it == starts.begin()) return false;
+        s = *(it - 1);
+        e = (it != starts.end()) ? *it : rx.addr + rx.size;
+        return true;
     };
     Info info;
     uintptr_t r = LocateNotifyLicensesUpdated(rx, fnOf, &info);
@@ -109,6 +112,21 @@ def main():
         if py_status == "UNIQUE":
             check(disp == int(py_info["member_disp"], 16),
                   "%-52s member disp agrees: 0x%x" % ("", disp))
+
+    # a SMALL neighbour before the real one must not borrow its this-read: the
+    # head is bounded by the function's end (reproduced with a gcc -m32 object)
+    small = bytes.fromhex("5589E5") + b"\x6A\x7D\x50\xE8\x00\x00\x00\x00" + b"\xC3"   # 12 bytes
+    text = bytearray(0x300)
+    text[0x40:0x40 + len(small)] = small
+    real = reconcile_like()
+    text[0x40 + len(small):0x40 + len(small) + len(real)] = real          # right after it
+    text = bytes(text)
+    starts = [VADDR + 0x40, VADDR + 0x40 + len(small)]
+    read_va = lambda va, n: text[va - VADDR:va - VADDR + n]
+    py_status, py_rva, py_info = drb.locate(text, VADDR, starts, read_va)
+    rva, sites, cands, kept, disp = cxx(exe, text, starts)
+    check(py_status == "UNIQUE" and py_rva == starts[1], "adjacent small poster: Python keeps only the real one (%s)" % py_status)
+    check(rva == starts[1] and kept == 1, "adjacent small poster: C++ keeps only the real one (kept %d)" % kept)
 
     # no function table at all -> every site is unplaced -> 0, no crash
     text, starts, read_va = layout(reconcile_like())
