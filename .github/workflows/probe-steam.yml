@@ -14,8 +14,8 @@ name: probe-steam
 #   2. tools/check_patterns.py against src/patterns.hpp (exit 0/2/3 reported,
 #      never fails the job);
 #   3. optionally (derive=true, default), when something MOVED, the same
-#      re-derivation chain the monitor uses — Ghidra for the string-anchored
-#      hooks (tools/run_ghidra_derive.sh), RTTI by-name for DepotKey — applied
+#      re-derivation chain the monitor uses (tools/derive_python_first.sh:
+#      Python locators first, Ghidra only as a second opinion) — applied
 #      to the runner's working copy only, then re-validated. The resulting
 #      patterns.hpp diff, derived.json and both reports are uploaded.
 #
@@ -131,31 +131,12 @@ jobs:
           if [ -z "$ONLY" ]; then
             echo "nothing to re-derive (only finder anchors moved — a code fix, §C)."; exit 0
           fi
-          rm -f derived.json
-          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | grep -vx kNotifyLicensesUpdatedPattern | paste -sd, - || true)
-          if [ -n "$GHIDRA_ONLY" ]; then
-            set +e
-            bash tools/run_ghidra_derive.sh steamclient.so derived.json
-            dcode=$?
-            set -e
-            if [ "$dcode" -ne 0 ]; then
-              echo "Ghidra derivation failed (exit $dcode) — reporting without a diff."; exit 0
-            fi
-          fi
-          case ",$ONLY," in *,kDepotKeyFnPattern,*)
-            set +e
-            python3 tools/derive_depotkey_byname.py steamclient.so --derived derived.json
-            bcode=$?
-            set -e
-            [ "$bcode" -ne 0 ] && echo "DepotKey by-name derivation failed (exit $bcode) — continuing."
-          ;; esac
-          case ",$ONLY," in *,kNotifyLicensesUpdatedPattern,*)
-            set +e
-            python3 tools/derive_reconcile_byanchor.py steamclient.so --derived derived.json
-            rcode=$?
-            set -e
-            [ "$rcode" -ne 0 ] && echo "Reconcile anchor derivation failed (exit $rcode) — continuing."
-          ;; esac
+          # The same chain the monitor runs (tools/derive_python_first.sh):
+          # Python locators first, Ghidra as a second opinion for the rest.
+          set +e
+          bash tools/derive_python_first.sh steamclient.so "$ONLY" derived.json
+          echo "derivation chain exit: $?"
+          set -e
           # apply exits 4 when SOME constant could not be applied; for a probe a
           # partial apply is still information, so keep going and re-validate.
           set +e

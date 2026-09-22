@@ -6,7 +6,8 @@ name: watch-steam-selftest
 # Dispatching watch-steam normally is a no-op on a known/whitelisted hash — it
 # never exercises the Ghidra leg. So here we fetch the live steamclient.so,
 # deliberately corrupt shipped pattern(s) to force the verdict we want, then run
-# the REAL chain — run_ghidra_derive.sh -> apply_derived_pattern.py ->
+# the REAL chain — derive_python_first.sh (Python locators, Ghidra as second
+# opinion) -> apply_derived_pattern.py ->
 # check_patterns.py — and ASSERT it comes back CLEAN.
 #
 #   target=shaderdepot (default): corrupt ShaderDepot -> exit 2 (noncritical)
@@ -46,6 +47,10 @@ on:
       - 'tools/derive_patterns.py'
       - 'tools/apply_derived_pattern.py'
       - 'tools/derive_depotkey_byname.py'
+      - 'tools/derive_from_address.py'
+      - 'tools/derive_reconcile_byanchor.py'
+      - 'tools/derive_bytext.py'
+      - 'tools/derive_python_first.sh'
       - 'tools/check_patterns.py'
       - 'tools/blocking_constants.py'
       - 'tools/whitelist_hash.py'
@@ -126,18 +131,11 @@ jobs:
           else
             ONLY=kShaderCacheDepotPattern
           fi
-          # Same split as watch-steam.yml: DepotKey comes from its RTTI name
-          # (tools/derive_depotkey_byname.py, no Ghidra); Ghidra only runs for
-          # the string-anchored hooks. A criticals run therefore never starts
-          # Ghidra at all — that is the production path, exercised as-is.
-          rm -f derived.json
-          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | paste -sd, - || true)
-          if [ -n "$GHIDRA_ONLY" ]; then
-            bash tools/run_ghidra_derive.sh steamclient.so derived.json
-          fi
-          case ",$ONLY," in *,kDepotKeyFnPattern,*)
-            python3 tools/derive_depotkey_byname.py steamclient.so --derived derived.json
-          ;; esac
+          # The production chain, as-is (tools/derive_python_first.sh): Python
+          # locators first, Ghidra only for what they could not derive. Both
+          # targets therefore run WITHOUT Ghidra on the builds seen so far —
+          # ShaderDepot by its string, DepotKey by its RTTI name.
+          bash tools/derive_python_first.sh steamclient.so "$ONLY" derived.json
           echo "── derived.json ──"; cat derived.json
           python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
           set +e
@@ -151,5 +149,5 @@ jobs:
           if [ "$TARGET" = "criticals" ]; then
             echo "SELFTEST PASSED (criticals): forced exit 3 -> DepotKey re-derived by RTTI name (no Ghidra) UNIQUE -> CLEAN"
           else
-            echo "SELFTEST PASSED (shaderdepot): forced exit 2 -> Ghidra re-derived UNIQUE -> CLEAN"
+            echo "SELFTEST PASSED (shaderdepot): forced exit 2 -> ShaderDepot re-derived by its string (no Ghidra) UNIQUE -> CLEAN"
           fi

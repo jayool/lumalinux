@@ -146,8 +146,13 @@ To tell which of the two broke, `tools/experiment_rtti_depotkey.py` compares the
 RTTI walk against the byte pattern on the new binary (see E).
 
 > **Automated first (`watch-steam.yml`).** You rarely run the steps below by hand.
-> When a Steam update moves a **critical** hook, the daily monitor runs the same
-> Ghidra derivation and — if it produces a UNIQUE pattern that re-validates
+> When a Steam update moves a hook, the daily monitor runs
+> `tools/derive_python_first.sh`: a Python locator per hook (DepotKey by RTTI
+> name, Reconcile by its callback anchor, GMRC/ShaderDepot/BuildDep by the
+> string each loads — `derive_bytext.py`) feeding one shared masking core
+> (`derive_from_address.py`), and Ghidra **only** as a second opinion for what
+> Python could not derive. On every build measured so far Ghidra never has to
+> start. If that produces a UNIQUE pattern that re-validates
 > **CLEAN** — opens a PR that already contains **everything**: the new
 > `src/patterns.hpp`, a bumped `res/version.txt` (a fresh `SafeModeHashes` group),
 > and this build's hash whitelisted under that new group. So when you see a
