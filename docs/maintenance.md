@@ -154,7 +154,7 @@ the `Hook install:` line, in order; each step runs only if the previous missed):
 | GMRC | idem | `kGmrcFunctionPattern` | `xref(rescue)`: job-name string → unique `lea` → `.eh_frame_hdr` |
 | ShaderDepot | idem | `kShaderCacheDepotPattern` | `xref(rescue)` on `"shadercachedepot"` (since 2026-09-22) |
 | BuildDep | idem | `kBuildDepotDependencyPattern` | `xref(rescue)` on `"BuildDepotDependency"` (since 2026-09-22) |
-| Reconcile | idem | `kNotifyLicensesUpdatedPattern` | none yet — `Reconcile: … unresolved — no-op (restart still works)` |
+| Reconcile | idem | `kNotifyLicensesUpdatedPattern` | `anchor(rescue)`: the one function posting callback 125 that reads `this` and bails (since 2026-09-22); else `Reconcile: … unresolved — no-op (restart still works)` |
 
 The three `xref(rescue)` rows are one locator (`src/gmrc_xref.cpp`,
 `FindFunctionByString`): the string is a contract Steam keeps (a job name, a
@@ -165,9 +165,12 @@ inside their `push …; call thunk` prologue); only GMRC, whose preamble is its
 first instruction, keeps the walk-back as a last fallback. Offline check of the
 shared C++ against a real binary: `tools/gmrc_xref_selftest.cpp` (GMRC entry;
 `--needle <string> --expect-site <hex>` for the other two, the site being what
-`tools/derive_bytext.py` prints). A rescue that fires is a sign the pattern
-moved: the monitor's PR is still the fix, the rescue only keeps the Deck working
-until it lands.
+`tools/derive_bytext.py` prints). The Reconcile rescue (`src/reconcile_anchor.cpp`) is the C++ port of
+`tools/derive_reconcile_byanchor.py`, the locator CI derives that pattern with;
+`tools/test_reconcile_anchor.py` runs both on the same bytes, and
+`tools/reconcile_anchor_selftest.cpp <so> <expected_rva>` runs the C++ against a
+real binary. A rescue that fires is a sign the pattern moved: the monitor's PR
+is still the fix, the rescue only keeps the Deck working until it lands.
 
 > **Automated first (`watch-steam.yml`).** You rarely run the steps below by hand.
 > When a Steam update moves a hook, the daily monitor runs

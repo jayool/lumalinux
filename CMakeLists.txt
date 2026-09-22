@@ -81,6 +81,7 @@ set(LUMA_SOURCES
     src/patterns.cpp
     src/rtti.cpp
     src/gmrc_xref.cpp
+    src/reconcile_anchor.cpp
     src/eh_frame.cpp
     src/vaddr_xlate.cpp
     src/rva_feed.cpp

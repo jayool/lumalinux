@@ -161,6 +161,8 @@ uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool wal
 
 namespace GmrcXref {
 
+GmrcXrefCore::Region SteamclientExecRegion() { return GetExecRegion(); }
+
 uintptr_t FindGmrcFunction() {
     // The bare job name, as before 2026-09-22: the string is unique in the
     // module either way, and keeping the exact needle keeps this path's

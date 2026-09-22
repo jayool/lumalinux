@@ -1,5 +1,7 @@
 #pragma once
 
+#include "gmrc_xref_core.hpp"   // Region
+
 #include <cstdint>
 
 // GMRC string-xref locator (update-resilient, in-client — issue #13 Part 1).
@@ -101,5 +103,10 @@ uintptr_t FindGmrcFunction();
 // BuildDep; GMRC keeps FindGmrcFunction (same steps, plus its walk-back
 // fallback for a build without a table).
 uintptr_t FindFunctionByString(const char* needle, const char* tag);
+
+// steamclient.so's executable span as one Region (LOADED addresses), or an
+// empty Region when the module is not mapped. Shared with the Reconcile anchor
+// locator (src/reconcile_anchor.cpp) so there is one reading of /proc/self/maps.
+GmrcXrefCore::Region SteamclientExecRegion();
 
 } // namespace GmrcXref

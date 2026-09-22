@@ -1,5 +1,6 @@
 #include "license_reconcile.hpp"
 #include "patterns.hpp"
+#include "reconcile_anchor.hpp"
 #include "rva_feed.hpp"
 #include "log.hpp"
 
@@ -45,7 +46,18 @@ uintptr_t ResolveAddr() {
                           "investigate drift", (unsigned long)feed, (unsigned long)p);
             return feed;
         }
-        return Patterns::FindNotifyLicensesUpdatedFunction();
+        if (uintptr_t p = Patterns::FindNotifyLicensesUpdatedFunction()) return p;
+        // Last resort (2026-09-22): the callback-125 anchor — the same locator CI
+        // derives the pattern with (tools/derive_reconcile_byanchor.py), so a
+        // rebuild that moves the prologue leaves add-without-restart working
+        // until the monitor's PR lands. Unique or 0, like everything above.
+        if (uintptr_t a = ReconcileAnchor::FindNotifyLicensesUpdated()) {
+            Log::Warn("Reconcile: feed and pattern both MISSED or AMBIGUOUS; callback "
+                      "anchor resolved 0x%lx — Steam likely reshuffled the prologue "
+                      "(method=anchor(rescue))", (unsigned long)a);
+            return a;
+        }
+        return 0;
     }();
     return addr;
 }
