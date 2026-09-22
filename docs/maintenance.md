@@ -206,12 +206,12 @@ RTTI walk against the byte pattern on the new binary (see E).
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
    - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) is
-     **not derived by Ghidra**. `derive_patterns.py` still tries the *indirect*
+     **not derived by Ghidra**. The postScript used to try the *indirect*
      anchor (the dispatcher refs `"Software\Valve\Steam\Depots\"`, then
-     `CALL [reg+0x18]` to the inner accessor, RESEARCH §12.5), but headless
-     Ghidra does not resolve indirect calls, so that walk fails on every build
-     tried (`selftest` run #7, 2026-09-14: "found 2 dispatcher candidate(s) but
-     none had a resolvable CALL [reg+0x18]"). The tool that works is
+     `CALL [reg+0x18]` to the inner accessor, RESEARCH §12.5); headless Ghidra
+     never resolved that indirect call on any build tried (`selftest` run #7,
+     2026-09-14), so since 2026-09-22 the script only **validates** the
+     shipped literal and points at the tool that works,
      `tools/derive_depotkey_byname.py`: it takes the address `check_patterns.py`
      1c already resolves **by name** (`IClientConfigStoreMap` "GetBinary" → map
      slot → `CConfigStore`'s vtable → the accessor, the same resolver the Deck
@@ -222,11 +222,11 @@ RTTI walk against the byte pattern on the new binary (see E).
      python3 tools/derive_depotkey_byname.py /tmp/steamclient.so --derived derived.json
      python3 tools/apply_derived_pattern.py --derived derived.json --only kDepotKeyFnPattern
      ```
-     No Ghidra, seconds instead of ~20 min. This is what `watch-steam.yml`'s
-     exit-3 leg runs (Ghidra only starts if something *else* is blocking).
+     No Ghidra, seconds instead of ~20 min. This is what
+     `tools/derive_python_first.sh` runs for it in every workflow leg.
      Verified end to end by `watch-steam-selftest.yml` target=criticals
-     (2026-09-14, build `bc54101b`): pattern corrupted → exit 3 →
-     `blocking_constants.py` → by-name derive → apply → re-validate CLEAN.
+     (2026-09-14, build `bc54101b`; again 2026-09-22 through the shared chain):
+     pattern corrupted → exit 3 → by-name derive → apply → re-validate CLEAN.
    - **Reconcile** (`kNotifyLicensesUpdatedPattern`) is **not derived by
      Ghidra** either: the postScript follows the `type_info` of
      `LicensesUpdated_t`, and the function never references it (it posts the

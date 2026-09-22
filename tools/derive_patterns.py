@@ -15,16 +15,17 @@
 #     `[picbase+disp32]` global-load offset are wildcarded — those offsets shift
 #     per build, RESEARCH §13.10). ShaderDepot is non-critical: a miss only loses
 #     the per-game shader skip, installs still work.
-#   - DepotKey: NO usable in-function anchor. BUT there's an indirect anchor:
-#     the dispatcher (outer LoadDepotDecryptionKey) references the KeyValues
-#     path "Software\Valve\Steam\Depots\". From the dispatcher we can follow a
-#     virtual call (this->vtable[+0x18]) to the inner accessor we actually hook
-#     (RESEARCH §12.5). Tries that automatically; falls back to validating the
-#     current pattern if the vcall walk fails. In practice the walk FAILS on
-#     headless Ghidra (indirect calls are not resolved; selftest run #7,
-#     2026-09-14), so CI derives DepotKey by RTTI NAME instead, with
-#     tools/derive_depotkey_byname.py (no Ghidra needed). Kept here as a
-#     best-effort extra opinion, not as the path that matters.
+#   - DepotKey and Reconcile (NotifyLicensesUpdated): NOT derived here. Both
+#     used to have an "indirect" walk in this script (dispatcher -> vcall
+#     [+0x18] for DepotKey; type_info xref for Reconcile) and neither ever
+#     resolved on a real binary: headless Ghidra does not resolve indirect calls
+#     (selftest run #7, 2026-09-14), and NotifyLicensesUpdated posts its
+#     callback by NUMBER (0x7d) so nothing references the type_info at all
+#     (2026-09-22). CI derives them in Python — tools/derive_depotkey_byname.py
+#     (RTTI name -> vtable slot) and tools/derive_reconcile_byanchor.py
+#     (callback 125 + this-read + jle) — through the shared
+#     tools/derive_from_address.py core. Here they are only VALIDATED: does the
+#     current patterns.hpp literal still match uniquely on this binary?
 #   - LoadPackage: diagnostic-only since v0.13.1. NOT installed by default; only
 #     enabled by LUMA_LOADPKG_DEBUG=1. A broken pattern here doesn't break
 #     installs (the package-0 finder injects, not this hook). Output is
@@ -142,25 +143,18 @@ ANCHORED_HOOKS = [
     ("kShaderCacheDepotPattern", "shadercachedepot"),
 ]
 
-# DepotKey: indirect-anchored. The dispatcher constructs / refs the KeyValues
-# path; we follow the vcall to reach the inner accessor we hook.
+# DepotKey: validated only (derived in Python by RTTI name — see the header).
 DEPOTKEY_LABEL = "kDepotKeyFnPattern"
-DEPOTKEY_ANCHOR  = "Software\\Valve\\Steam\\Depots\\"
-DEPOTKEY_VTABLE_OFFSET = 0x18  # see RESEARCH §12.5: fn = *(vtable + 0x18)
 
 # LoadPackage: diagnostic-only in v0.13.1+ (opt-in via LUMA_LOADPKG_DEBUG=1).
 # A broken pattern here does NOT break installs.
 LOADPKG_LABEL    = "kLoadPackagePattern"
 
-# NotifyLicensesUpdated (v0.16.15, the no-restart licence reconcile). Indirect
-# RTTI anchor: the callback-poster function references the type_info for
-# LicensesUpdated_t, whose name string is "17LicensesUpdated_t". Non-load-bearing:
-# a miss only disables no-restart (Add Game falls back to needing a Steam
-# restart), never blocks installs. NOTE: the auto-walk below is UNTESTED against a
-# live Ghidra run — it degrades to validating the current pattern + a manual
-# recipe, exactly like DepotKey.
+# NotifyLicensesUpdated (v0.16.15, the no-restart licence reconcile): validated
+# only (derived in Python by its callback anchor — see the header).
+# Non-load-bearing: a miss only disables no-restart (Add Game falls back to
+# needing a Steam restart), never blocks installs.
 NOTIFY_LABEL   = "kNotifyLicensesUpdatedPattern"
-NOTIFY_ANCHOR  = "17LicensesUpdated_t"
 
 # Package-0 finder anchors (§13.5)
 # One row per KNOWN CPackageInfoCache layout: (name, root-index offset,
@@ -278,105 +272,6 @@ def pattern_matches(patstr):
             break
         hits.append(a); a = a.add(1)
     return hits
-
-
-def try_derive_depotkey():
-    """Follow the dispatcher → vtable[+0x18] indirection to reach the inner
-    accessor we hook (RESEARCH §12.5). Returns (label, addr, pattern_str) or
-    None if any step fails."""
-    sa = find_string_addrs(DEPOTKEY_ANCHOR)
-    if not sa:
-        return None, "anchor string %r not found in this binary" % DEPOTKEY_ANCHOR
-    dispatchers = funcs_referencing(sa)
-    if not dispatchers:
-        return None, "anchor found at %d site(s) but no enclosing function resolved" % len(sa)
-    # The dispatcher we want is the one that performs the indirect call into
-    # vtable[+0x18]. Walk each candidate's instructions looking for a CALL
-    # whose target is `[reg + 0x18]` (8B/FF mod=01 disp8=0x18). When we find
-    # one and its callee resolves to a concrete function, that's the inner
-    # accessor we hook.
-    for disp in dispatchers:
-        body = disp.getBody()
-        ins = listing.getInstructions(body, True)
-        for i in ins:
-            if i.getMnemonicString().upper() != "CALL":
-                continue
-            # CALL [reg + 0x18] : opcode FF, ModR/M mod=01 reg=010 (/2)
-            raw = i.getBytes()
-            if len(raw) < 3:
-                continue
-            if (raw[0] & 0xFF) != 0xFF:
-                continue
-            modrm = raw[1] & 0xFF
-            # /2 = call near indirect, mod=01 (disp8), check disp8 == 0x18
-            if ((modrm >> 3) & 7) != 2:
-                continue
-            if (modrm >> 6) != 1:
-                continue
-            if (raw[2] & 0xFF) != DEPOTKEY_VTABLE_OFFSET:
-                continue
-            # This CALL targets [reg + 0x18]. Ask Ghidra for its resolved
-            # references (any vtable Ghidra recognised will surface here).
-            for ref in i.getReferencesFromInstruction(0) if hasattr(i, "getReferencesFromInstruction") else []:
-                pass  # not portable; rely on FlowReferences below
-            for ref in i.getReferencesFrom():
-                ra = ref.getToAddress()
-                if ra is None:
-                    continue
-                fn = fm.getFunctionAt(ra)
-                if fn is None:
-                    fn = fm.getFunctionContaining(ra)
-                if fn is None:
-                    continue
-                # Got the inner accessor candidate.
-                pat = extract_pattern(fn.getEntryPoint())
-                hits = pattern_matches(pat)
-                return (fn.getEntryPoint(), pat, len(hits)), None
-    return None, "found %d dispatcher candidate(s) but none had a resolvable CALL [reg+0x18]" % len(dispatchers)
-
-
-def try_derive_notifylicenses():
-    """Indirect RTTI anchor. The RTTI name string "17LicensesUpdated_t" is held
-    by the type_info object `_ZTI17LicensesUpdated_t` in its name field (at
-    type_info + 0x4 on i386); the callback-poster references the type_info start.
-    So: string -> (name-field ref, so type_info = ref - 0x4) -> functions
-    referencing that type_info -> the one whose fresh prologue matches UNIQUELY.
-    Returns (addr, pattern, 1) or (None, errmsg). This walk is UNTESTED on a live
-    binary; the caller falls back to validating the shipped pattern (patterns.hpp)."""
-    sa = find_string_addrs(NOTIFY_ANCHOR)
-    if not sa:
-        return None, "anchor string %r not found" % NOTIFY_ANCHOR
-    typeinfos = set()
-    for a in sa:
-        for r in refmgr.getReferencesTo(a):
-            # from-address is the type_info name field (type_info + 0x4 on i386);
-            # the type_info object itself starts one pointer earlier.
-            try:
-                typeinfos.add(r.getFromAddress().add(-4))
-            except Exception:
-                pass
-    if not typeinfos:
-        return None, "RTTI name %r not referenced by any type_info" % NOTIFY_ANCHOR
-    fns = []
-    seen = set()
-    for ti in typeinfos:
-        for r in refmgr.getReferencesTo(ti):
-            f = fm.getFunctionContaining(r.getFromAddress())
-            if f and f.getEntryPoint().getOffset() not in seen:
-                seen.add(f.getEntryPoint().getOffset())
-                fns.append(f)
-    if not fns:
-        return None, "type_info not referenced by any function"
-    uniq = []
-    for f in fns:
-        pat = extract_pattern(f.getEntryPoint())
-        if len(pattern_matches(pat)) == 1:
-            uniq.append((f, pat))
-    if len(uniq) == 1:
-        f, pat = uniq[0]
-        return (f.getEntryPoint(), pat, 1), None
-    return None, ("found %d function(s) via type_info, %d with a UNIQUE prologue "
-                  "— pick manually" % (len(fns), len(uniq)))
 
 
 def verify_finder_cache_idiom(root_off):
@@ -524,67 +419,32 @@ for label, anchor in ANCHORED_HOOKS:
     else:
         print("  -> multiple candidates; pick the UNIQUE one whose prologue matches the hook")
 
-# 2) DepotKey: dispatcher → vcall → inner accessor (RESEARCH §12.5)
-print("\n---- %s ----" % DEPOTKEY_LABEL)
-result, errmsg = try_derive_depotkey()
-if result is not None:
-    addr, pat, n = result
-    tag = "UNIQUE" if n == 1 else ("%d matches" % n)
-    print("  vcall-derived @ %s : %s   (%s)" % (addr, pat, tag))
-    if n == 1:
-        print("  -> derived via dispatcher vcall — use the pattern above")
-        DERIVED[DEPOTKEY_LABEL] = {"pattern": pat, "matches": 1,
-                                   "rva": "0x%x" % addr.getOffset()}
-    else:
-        print("  -> derived but not UNIQUE; double-check or tighten manually")
-else:
-    print("  vcall derivation failed: %s" % errmsg)
-    print("  (expected on headless Ghidra — it does not resolve indirect calls.")
-    print("   CI derives DepotKey from its RTTI NAME with tools/derive_depotkey_byname.py;")
-    print("   run that against this binary instead of re-deriving by hand.)")
-    _cur = current_pattern(DEPOTKEY_LABEL)
-    hits = pattern_matches(_cur) if _cur else []
-    if _cur is None:
-        print("  CURRENT pattern unknown (patterns.hpp not found) — nothing to validate.")
-    elif len(hits) == 1:
-        print("  CURRENT pattern (from patterns.hpp) still matches UNIQUELY @ %s — keep it." % hits[0])
-    elif len(hits) == 0:
-        print("  CURRENT pattern NO LONGER MATCHES — re-derive manually:")
-        print("    open steamclient.so in Ghidra, locate the function (RESEARCH §12.5),")
-        print("    copy its first ~28 prologue bytes, wildcard the get_pc_thunk call rel32")
-        print("    and the following `add reg,imm32`.")
-    else:
-        print("  CURRENT pattern matches %d places (ambiguous) — tighten it." % len(hits))
-
-# 2b) NotifyLicensesUpdated: indirect RTTI anchor (non-load-bearing, no-restart)
-print("\n---- %s ----" % NOTIFY_LABEL)
-print("  (non-load-bearing since v0.16.15: a miss only disables the no-restart")
-print("   licence reconcile — Add Game falls back to needing a Steam restart.")
-print("   the auto-walk is UNTESTED; it degrades to validating the current pattern.)")
-result, errmsg = try_derive_notifylicenses()
-if result is not None:
-    addr, pat, n = result
-    print("  RTTI-derived @ %s : %s   (UNIQUE)" % (addr, pat))
-    print("  -> derived via type_info xref — use the pattern above")
-    DERIVED[NOTIFY_LABEL] = {"pattern": pat, "matches": 1,
-                             "rva": "0x%x" % addr.getOffset()}
-else:
-    print("  RTTI derivation failed: %s" % errmsg)
-    _cur = current_pattern(NOTIFY_LABEL)
+# 2) DepotKey and Reconcile: VALIDATE the shipped literal, do not derive.
+#    Derivation is Python-side (see the header); a miss here tells the human
+#    which tool to run, instead of pretending a walk that never worked.
+def validate_only(label, python_tool, manual_hint):
+    print("\n---- %s ----" % label)
+    print("  (not derived by Ghidra — CI derives it with tools/%s;" % python_tool)
+    print("   here the CURRENT patterns.hpp literal is only validated.)")
+    _cur = current_pattern(label)
     hits = pattern_matches(_cur) if _cur else []
     if _cur is None:
         print("  CURRENT pattern unknown (patterns.hpp not found) — nothing to validate.")
     elif len(hits) == 1:
         print("  CURRENT pattern still matches UNIQUELY @ %s — keep it." % hits[0])
     elif len(hits) == 0:
-        print("  CURRENT pattern NO LONGER MATCHES — re-derive manually:")
-        print("    in Ghidra, find the string \"17LicensesUpdated_t\", follow its")
-        print("    type_info xref to the poster function, copy its ~40 prologue bytes,")
-        print("    and wildcard the get_pc_thunk call rel32, the `add ebx,imm32`, the")
-        print("    frame size, the `mov edi,[eax+0x1bXX]` member offset, and the spill")
-        print("    offset (see patterns.hpp kNotifyLicensesUpdatedPattern for the mask).")
+        print("  CURRENT pattern NO LONGER MATCHES — run:")
+        print("    python3 tools/%s steamclient.so --derived derived.json" % python_tool)
+        print("  %s" % manual_hint)
     else:
         print("  CURRENT pattern matches %d places (ambiguous) — tighten it." % len(hits))
+
+
+validate_only(DEPOTKEY_LABEL, "derive_depotkey_byname.py",
+              "(manual fallback: RESEARCH §12.5 / §15 — CConfigStore vtable slot 6.)")
+validate_only(NOTIFY_LABEL, "derive_reconcile_byanchor.py",
+              "(manual fallback: the function that `push 0x7d ; push eax ; call`s AND reads a\n"
+              "   field of `this` then `jle`; see tools/experiment_reconcile_xref.py.)")
 
 # 3) LoadPackage: diagnostic-only, downgraded output
 print("\n---- %s ----" % LOADPKG_LABEL)
