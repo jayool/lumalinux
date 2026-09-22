@@ -10,6 +10,13 @@ name: watch-steam-selftest
 # opinion) -> apply_derived_pattern.py ->
 # check_patterns.py — and ASSERT it comes back CLEAN.
 #
+#   target=ghidra:                no corruption. Run the Ghidra postScript alone
+#                                 (tools/run_ghidra_derive.sh, ~20 min) and assert
+#                                 its derivations AGREE with the Python locators
+#                                 (same function per hook, unique pattern). Since
+#                                 2026-09-22 nothing else in CI runs Ghidra — it is
+#                                 the second opinion — so this is the only thing
+#                                 that keeps it honest before it is needed.
 #   target=shaderdepot (default): corrupt ShaderDepot -> exit 2 (noncritical)
 #   target=criticals:             corrupt DepotKey -> exit 3 (blocking; since
 #                                 v0.20.0 DepotKey is the ONLY critical hook —
@@ -32,6 +39,7 @@ on:
         options:
           - shaderdepot
           - criticals
+          - ghidra
   # Auto-run when the auto-derivation MACHINERY changes, so a PR that breaks the
   # watch-steam auto-heal chain is caught at review time — instead of silently,
   # the day a real Steam update finally needs the auto-fix. A manual self-test
@@ -89,6 +97,7 @@ jobs:
           echo "baseline exit=$? (0 = current shipped patterns all resolve)"
 
       - name: Force a pattern move + assert verdict
+        if: inputs.target != 'ghidra'
         env:
           TARGET: ${{ inputs.target }}
         run: |
@@ -120,6 +129,7 @@ jobs:
           test "$mc" -eq "$WANT"
 
       - name: Auto-derive + apply + re-validate (the new code)
+        if: inputs.target != 'ghidra'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TARGET: ${{ inputs.target }}
@@ -151,3 +161,27 @@ jobs:
           else
             echo "SELFTEST PASSED (shaderdepot): forced exit 2 -> ShaderDepot re-derived by its string (no Ghidra) UNIQUE -> CLEAN"
           fi
+
+      # ── target=ghidra: the second opinion, checked against the first ────────
+      - name: Ghidra postScript vs Python locators (second-opinion check)
+        if: inputs.target == 'ghidra'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/derive_bytext.py steamclient.so --derived python.json
+          bash tools/run_ghidra_derive.sh steamclient.so ghidra.json
+          python3 - <<'PY'
+          import json, sys
+          py = json.load(open("python.json")); gh = json.load(open("ghidra.json"))
+          bad = []
+          for c in ("kGmrcFunctionPattern", "kBuildDepotDependencyPattern", "kShaderCacheDepotPattern"):
+              p, g = py.get(c), gh.get(c)
+              line = "%-30s python=%s ghidra=%s" % (c, p and p["rva"], g and g["rva"])
+              if not p or not g or int(p.get("matches", 0)) != 1 or int(g.get("matches", 0)) != 1 \
+                      or int(p["rva"], 16) != int(g["rva"], 16):
+                  bad.append(c); line += "  <-- DISAGREE"
+              print(line)
+          if bad:
+              print("Ghidra and Python disagree on: %s" % ", ".join(bad)); sys.exit(1)
+          print("SELFTEST PASSED (ghidra): the Ghidra postScript agrees with the Python locators on all three text-anchored hooks")
+          PY
