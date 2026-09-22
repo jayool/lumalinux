@@ -204,13 +204,32 @@ jobs:
           # to make sure the patterns.hpp change lands on a clean base. The
           # untracked steamclient.so download survives the checkout.
           git checkout -f ${{ github.sha }}
-          set +e
-          bash tools/run_ghidra_derive.sh steamclient.so derived.json
-          dcode=$?
-          set -e
-          if [ "$dcode" -ne 0 ]; then
-            echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+          rm -f derived.json
+          # Reconcile is derived in Python from its callback anchor
+          # (tools/derive_reconcile_byanchor.py, seconds, no Ghidra): the Ghidra
+          # postScript's type_info walk for it never resolves — the function
+          # posts LicensesUpdated_t by number and never touches the type_info.
+          # Same shape as the critical leg's DepotKey-by-name: Ghidra only runs
+          # for whatever ELSE moved.
+          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kNotifyLicensesUpdatedPattern | paste -sd, - || true)
+          if [ -n "$GHIDRA_ONLY" ]; then
+            set +e
+            bash tools/run_ghidra_derive.sh steamclient.so derived.json
+            dcode=$?
+            set -e
+            if [ "$dcode" -ne 0 ]; then
+              echo "Ghidra derivation failed (exit $dcode) — falling back to issue."; exit 0
+            fi
           fi
+          case ",$ONLY," in *,kNotifyLicensesUpdatedPattern,*)
+            set +e
+            python3 tools/derive_reconcile_byanchor.py steamclient.so --derived derived.json
+            rcode=$?
+            set -e
+            if [ "$rcode" -ne 0 ]; then
+              echo "Reconcile anchor derivation failed (exit $rcode) — falling back to issue."; exit 0
+            fi
+          ;; esac
           set +e
           python3 tools/apply_derived_pattern.py --derived derived.json --only "$ONLY"
           acode=$?

@@ -222,6 +222,17 @@ RTTI walk against the byte pattern on the new binary (see E).
      Verified end to end by `watch-steam-selftest.yml` target=criticals
      (2026-09-14, build `bc54101b`): pattern corrupted → exit 3 →
      `blocking_constants.py` → by-name derive → apply → re-validate CLEAN.
+   - **Reconcile** (`kNotifyLicensesUpdatedPattern`) is **not derived by
+     Ghidra** either: the postScript follows the `type_info` of
+     `LicensesUpdated_t`, and the function never references it (it posts the
+     callback by number, 125). Since 2026-09-22 CI derives it in Python from
+     that very fact — `tools/derive_reconcile_byanchor.py` keeps, of the
+     functions that `push 0x7d ; push eax ; call`, the one that reads a field
+     of `this` and bails on `<= 0` (exactly one on every build measured), and
+     hands the address to `tools/derive_from_address.py`, the masking core
+     every Python deriver now shares (frame size, member and spill offsets and
+     the temporary's register all wildcarded). Both non-critical legs run it
+     before Ghidra, exactly as the critical leg runs DepotKey by name.
    - **LoadPackage** (since v0.13.1) is diagnostic-only; the script flags it
      as such, and a `miss` here does NOT block installs (the package-0
      finder injects).

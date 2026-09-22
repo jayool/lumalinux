@@ -132,7 +132,7 @@ jobs:
             echo "nothing to re-derive (only finder anchors moved — a code fix, §C)."; exit 0
           fi
           rm -f derived.json
-          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | paste -sd, - || true)
+          GHIDRA_ONLY=$(echo "$ONLY" | tr ',' '\n' | grep -vx kDepotKeyFnPattern | grep -vx kNotifyLicensesUpdatedPattern | paste -sd, - || true)
           if [ -n "$GHIDRA_ONLY" ]; then
             set +e
             bash tools/run_ghidra_derive.sh steamclient.so derived.json
@@ -148,6 +148,13 @@ jobs:
             bcode=$?
             set -e
             [ "$bcode" -ne 0 ] && echo "DepotKey by-name derivation failed (exit $bcode) — continuing."
+          ;; esac
+          case ",$ONLY," in *,kNotifyLicensesUpdatedPattern,*)
+            set +e
+            python3 tools/derive_reconcile_byanchor.py steamclient.so --derived derived.json
+            rcode=$?
+            set -e
+            [ "$rcode" -ne 0 ] && echo "Reconcile anchor derivation failed (exit $rcode) — continuing."
           ;; esac
           # apply exits 4 when SOME constant could not be applied; for a probe a
           # partial apply is still information, so keep going and re-validate.
