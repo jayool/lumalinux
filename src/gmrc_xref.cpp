@@ -10,9 +10,11 @@
 #include <fstream>
 #include <string>
 
-// Runtime half of the GMRC string-xref locator: source the executable span and
-// the job-name string from /proc/self/maps (LOADED memory), then delegate the
-// byte scanning to GmrcXrefCore (shared with tools/gmrc_xref_selftest.cpp).
+// Runtime half of the string-xref locator: source the executable span and the
+// anchor string from /proc/self/maps (LOADED memory), then delegate the byte
+// scanning to GmrcXrefCore (shared with tools/gmrc_xref_selftest.cpp). GMRC's
+// job name is the original anchor; since 2026-09-22 the same steps serve any
+// string a hook can anchor on (FindFunctionByString).
 namespace {
 
 using GmrcXrefCore::Region;
@@ -58,9 +60,8 @@ Region GetExecRegion() {
              static_cast<std::size_t>(hi - lo), lo };
 }
 
-// Find the job-name string in any readable steamclient.so mapping -> loaded addr.
-uintptr_t FindJobNameLoaded() {
-    const std::size_t nlen = std::strlen(kJobName);
+// Find `needle` (nlen bytes) in any readable steamclient.so mapping -> loaded addr.
+uintptr_t FindStringLoaded(const char* needle, std::size_t nlen) {
     std::ifstream maps("/proc/self/maps");
     if (!maps.is_open()) return 0;
     std::string line;
@@ -69,40 +70,38 @@ uintptr_t FindJobNameLoaded() {
         if (!m.ok || m.perms[0] != 'r') continue;
         Region r{ reinterpret_cast<const uint8_t*>(m.start),
                   static_cast<std::size_t>(m.end - m.start), m.start };
-        uintptr_t hit = GmrcXrefCore::FindBytes(r, kJobName, nlen);
+        uintptr_t hit = GmrcXrefCore::FindBytes(r, needle, nlen);
         if (hit) return hit;
     }
     return 0;
 }
 
-} // namespace
-
-namespace GmrcXref {
-
-uintptr_t FindGmrcFunction() {
+// Steps 1-4 for one string. `walkBack` enables the step-4 fallback for a build
+// with no usable .eh_frame_hdr — right only for GMRC's preamble-first shape.
+uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool walkBack) {
     Region rx = GetExecRegion();
     if (!rx) {
-        Log::Debug("GMRC xref: steamclient.so r-x mapping not found");
+        Log::Debug("%s: steamclient.so r-x mapping not found", tag);
         return 0;
     }
 
-    uintptr_t s = FindJobNameLoaded();
+    uintptr_t s = FindStringLoaded(needle, nlen);
     if (!s) {
-        Log::Debug("GMRC xref: job-name string not found in steamclient.so");
+        Log::Debug("%s: anchor string not found in steamclient.so", tag);
         return 0;
     }
 
     // Steps 1-3 (GOT base, the unique lea) are prologue-independent; step 4 —
     // turning the site into the function ENTRY — is the fragile one, and the one
     // the KNOWN LIMIT in gmrc_xref.hpp is about.
-    uintptr_t got = 0, site = 0;
-    uintptr_t entry = GmrcXrefCore::DeriveGmrcEntry(rx, s, &got, &site);
+    uintptr_t got = 0;
+    const uintptr_t site = GmrcXrefCore::FindUniqueLeaForString(rx, s, &got);
     if (!got) {
-        Log::Debug("GMRC xref: could not derive GOT base");
+        Log::Debug("%s: could not derive GOT base", tag);
         return 0;
     }
     if (!site) {
-        Log::Debug("GMRC xref: no unique lea for the job-name (ambiguous or absent)");
+        Log::Debug("%s: no unique lea for the anchor string (ambiguous or absent)", tag);
         return 0;
     }
 
@@ -114,36 +113,67 @@ uintptr_t FindGmrcFunction() {
     // Measured viable on build bc54101b29 (tools/experiment_eh_frame.py).
     uintptr_t ehStart = 0, ehEnd = 0;
     if (EhFrame::FindFunction(site, rx.addr + rx.size, ehStart, ehEnd)) {
-        if (entry && entry != ehStart) {
-            // Expected on any function whose PIC preamble is not at offset 0 — the
-            // walk-back's two documented failure modes. Recorded rather than
-            // silently corrected, so the frequency is visible in real logs.
-            Log::Warn("GMRC xref: walk-back said 0x%lx, .eh_frame_hdr says 0x%lx "
-                      "(delta %+ld) — using .eh_frame_hdr (exact)",
-                      (unsigned long)entry, (unsigned long)ehStart,
-                      (long)(static_cast<intptr_t>(entry) - static_cast<intptr_t>(ehStart)));
+        if (walkBack) {
+            const uintptr_t wb = GmrcXrefCore::WalkBackToPrologue(rx, site);
+            if (wb && wb != ehStart) {
+                // Expected on any function whose PIC preamble is not at offset 0 —
+                // the walk-back's two documented failure modes. Recorded rather
+                // than silently corrected, so the frequency is visible in real logs.
+                Log::Warn("%s: walk-back said 0x%lx, .eh_frame_hdr says 0x%lx "
+                          "(delta %+ld) — using .eh_frame_hdr (exact)",
+                          tag, (unsigned long)wb, (unsigned long)ehStart,
+                          (long)(static_cast<intptr_t>(wb) - static_cast<intptr_t>(ehStart)));
+            }
         }
-        entry = ehStart;
-        Log::Info("GMRC xref: getter at 0x%lx (RVA 0x%lx, size %lu) via job-name "
+        Log::Info("%s: function at 0x%lx (RVA 0x%lx, size %lu) via string "
                   "anchor + .eh_frame_hdr",
-                  (unsigned long)entry, (unsigned long)(entry - rx.addr),
+                  tag, (unsigned long)ehStart, (unsigned long)(ehStart - rx.addr),
                   (unsigned long)(ehEnd - ehStart));
-        return entry;
+        return ehStart;
+    }
+
+    if (!walkBack) {
+        // No table -> no answer. A walk-back result for this prologue shape would
+        // be a plausible WRONG address, and the caller would detour it.
+        Log::Warn("%s: .eh_frame_hdr unavailable — lea @ 0x%lx found but no exact "
+                  "function entry; refusing (no walk-back for this anchor)",
+                  tag, (unsigned long)site);
+        return 0;
     }
 
     // No table (old build, unreadable module, unimplemented encoding): fall back
     // to the walk-back, with its limits, rather than losing the rescue entirely.
+    const uintptr_t entry = GmrcXrefCore::WalkBackToPrologue(rx, site);
     if (!entry) {
-        Log::Debug("GMRC xref: lea @ 0x%lx has no reachable prologue and no "
-                   ".eh_frame_hdr entry", (unsigned long)site);
+        Log::Debug("%s: lea @ 0x%lx has no reachable prologue and no "
+                   ".eh_frame_hdr entry", tag, (unsigned long)site);
         return 0;
     }
-    Log::Warn("GMRC xref: .eh_frame_hdr unavailable — falling back to the "
+    Log::Warn("%s: .eh_frame_hdr unavailable — falling back to the "
               "walk-back for 0x%lx (see the KNOWN LIMIT in gmrc_xref.hpp)",
-              (unsigned long)site);
-    Log::Info("GMRC xref: derived getter at 0x%lx (RVA 0x%lx) via job-name anchor",
-              (unsigned long)entry, (unsigned long)(entry - rx.addr));
+              tag, (unsigned long)site);
+    Log::Info("%s: derived function at 0x%lx (RVA 0x%lx) via string anchor",
+              tag, (unsigned long)entry, (unsigned long)(entry - rx.addr));
     return entry;
+}
+
+} // namespace
+
+namespace GmrcXref {
+
+uintptr_t FindGmrcFunction() {
+    // The bare job name, as before 2026-09-22: the string is unique in the
+    // module either way, and keeping the exact needle keeps this path's
+    // behaviour byte-for-byte (verified by tools/gmrc_xref_selftest.cpp).
+    return Locate(kJobName, std::strlen(kJobName), "GMRC xref", /*walkBack=*/true);
+}
+
+uintptr_t FindFunctionByString(const char* needle, const char* tag) {
+    // WITH the NUL terminator: "shadercachedepot" must not be found inside a
+    // longer string first (a hit at the wrong address means disp is wrong and
+    // the lea scan silently finds nothing). Same rule as check_patterns.py's
+    // gmrc_xref_derive, the CI mirror that verified both strings on two builds.
+    return Locate(needle, std::strlen(needle) + 1, tag, /*walkBack=*/false);
 }
 
 } // namespace GmrcXref

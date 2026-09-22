@@ -141,17 +141,36 @@ inline uintptr_t WalkBackToPrologue(Region rx, uintptr_t site,
     return 0;
 }
 
-// Full derivation given the executable region and the resolved string address.
-// Optional out-params expose intermediates for logging / tests. Returns the
-// getter's entry address, or 0 on any miss/ambiguity.
-inline uintptr_t DeriveGmrcEntry(Region rx, uintptr_t strAddr,
-                                 uintptr_t* outGot = nullptr,
-                                 uintptr_t* outSite = nullptr) {
+// Steps 1-3 for ANY string: GOT base by consensus, then the UNIQUE
+// `lea reg,[got + (strAddr - got)]` that loads it. Returns that lea SITE (an
+// address inside the function that uses the string), or 0 on miss/ambiguity.
+// Turning the site into the function ENTRY is the caller's step 4 — at runtime
+// .eh_frame_hdr (exact), offline whatever the tool has. Nothing here depends on
+// the string being GMRC's: the same three steps locate "shadercachedepot" and
+// "BuildDepotDependency" (tools/derive_bytext.py is the Python mirror).
+inline uintptr_t FindUniqueLeaForString(Region rx, uintptr_t strAddr,
+                                        uintptr_t* outGot = nullptr) {
     const uintptr_t got = DeriveGotBaseConsensus(rx);
     if (outGot) *outGot = got;
     if (!got) return 0;
     const int32_t disp = static_cast<int32_t>(static_cast<intptr_t>(strAddr - got));
-    const uintptr_t site = ScanLeaUnique(rx, disp);
+    return ScanLeaUnique(rx, disp);
+}
+
+// Full derivation given the executable region and the resolved string address.
+// Optional out-params expose intermediates for logging / tests. Returns the
+// getter's entry address, or 0 on any miss/ambiguity.
+//
+// Step 4 here is the WALK-BACK, which is right only for a function whose PIC
+// preamble is its first instruction (GMRC's `E8 …; 05 …` shape). It is WRONG
+// by a few bytes for the ordinary `push …; call thunk` prologues (BuildDep
+// `55 89 E5 57 56 E8`, ShaderDepot `57 56 53 E8`), so it must not be used for
+// any other string — the runtime uses .eh_frame_hdr for those and refuses
+// without it (src/gmrc_xref.cpp).
+inline uintptr_t DeriveGmrcEntry(Region rx, uintptr_t strAddr,
+                                 uintptr_t* outGot = nullptr,
+                                 uintptr_t* outSite = nullptr) {
+    const uintptr_t site = FindUniqueLeaForString(rx, strAddr, outGot);
     if (outSite) *outSite = site;
     if (!site) return 0;
     return WalkBackToPrologue(rx, site);

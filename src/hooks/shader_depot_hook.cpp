@@ -3,6 +3,7 @@
 #include "../rva_feed.hpp"
 #include "../key_store.hpp"
 #include "../gmrc_store.hpp"
+#include "../gmrc_xref.hpp"
 #include "gmrc_hook.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
@@ -99,10 +100,23 @@ uint32_t HookFn(void* appinfo) {
 namespace Hooks::ShaderDepot {
 
 bool Install() {
-    // RVA feed first (prologue-independent), else the unique-match byte pattern.
+    // RVA feed first (prologue-independent), else the unique-match byte pattern,
+    // else (2026-09-22) the string anchor: the function is the ONE place that
+    // loads "shadercachedepot" (the PICS key it reads), so it is found wherever a
+    // rebuild put it — same locator GMRC has used since 2026-09-07, same string
+    // CI derives the pattern from (tools/derive_bytext.py). Runs only when the
+    // two cheap resolvers came up empty.
     const char* method = "rva";
     uintptr_t target = RvaFeed::Resolve("ShaderDepot");
     if (!target) { method = "pattern"; target = Patterns::FindShaderCacheDepotFunction(); }
+    if (!target) {
+        if (uintptr_t xref = GmrcXref::FindFunctionByString("shadercachedepot", "ShaderDepot xref")) {
+            target = xref; method = "xref(rescue)";
+            Log::Warn("ShaderDepot: feed and pattern both MISSED or AMBIGUOUS; string "
+                      "anchor resolved 0x%lx — Steam likely reshuffled the prologue",
+                      (unsigned long)xref);
+        }
+    }
     if (!target) {
         Log::Warn("ShaderDepot hook: GetShaderCacheDepot not found — "
                   "per-game shader skip not installed (non-fatal; keyless shader "

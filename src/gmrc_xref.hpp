@@ -88,4 +88,18 @@ namespace GmrcXref {
 // BEFORE the GMRC detour is installed (the walk-back reads the intact prologue).
 uintptr_t FindGmrcFunction();
 
+// The same locator for ANY string Steam loads with a GOT-relative `lea` from
+// exactly one place (2026-09-22): steps 1-3 as above, step 4 ALWAYS from
+// .eh_frame_hdr. Returns the entry of the one function that references
+// `needle` (searched WITH its NUL terminator, as the CI mirror does), or 0 when
+// the string is absent, referenced from zero or several sites, or the function
+// table is unusable — there is no walk-back here, because for the ordinary
+// `push …; call thunk` prologue the walk-back lands a few bytes INSIDE the
+// function, and a detour there is a crash (gmrc_xref_core.hpp, DeriveGmrcEntry).
+// `tag` prefixes the log lines ("ShaderDepot xref", …). Used as the third
+// resolver, after the RVA feed and the byte pattern, by ShaderDepot and
+// BuildDep; GMRC keeps FindGmrcFunction (same steps, plus its walk-back
+// fallback for a build without a table).
+uintptr_t FindFunctionByString(const char* needle, const char* tag);
+
 } // namespace GmrcXref

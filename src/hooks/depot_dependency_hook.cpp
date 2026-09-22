@@ -1,6 +1,7 @@
 #include "depot_dependency_hook.hpp"
 #include "../patterns.hpp"
 #include "../rva_feed.hpp"
+#include "../gmrc_xref.hpp"
 #include "../key_store.hpp"
 #include "../lmhook.hpp"
 #include "../log.hpp"
@@ -148,10 +149,24 @@ bool HookFn(void* this_, uint32_t AppId, void* pUserConfig,
 namespace Hooks::DepotDependency {
 
 bool Install() {
-    // RVA feed first (prologue-independent), else the byte pattern.
+    // RVA feed first (prologue-independent), else the byte pattern, else
+    // (2026-09-22) the string anchor: the function is the ONE place that loads
+    // "BuildDepotDependency" (its own name, for a log/VProf scope), so it is
+    // found wherever a rebuild put it — same locator GMRC has used since
+    // 2026-09-07, same string CI derives the pattern from
+    // (tools/derive_bytext.py). Runs only when the two cheap resolvers came up
+    // empty.
     const char* method = "rva";
     uintptr_t target = RvaFeed::Resolve("BuildDep");
     if (!target) { method = "pattern"; target = Patterns::FindBuildDepotDependencyFunction(); }
+    if (!target) {
+        if (uintptr_t xref = GmrcXref::FindFunctionByString("BuildDepotDependency", "BuildDep xref")) {
+            target = xref; method = "xref(rescue)";
+            Log::Warn("BuildDep: feed and pattern both MISSED or AMBIGUOUS; string "
+                      "anchor resolved 0x%lx — Steam likely reshuffled the prologue",
+                      (unsigned long)xref);
+        }
+    }
     if (!target) {
         Log::Error("DepotDependency hook: cannot install — target not found");
         Log::Warn("Hook install: name=BuildDep method=%s outcome=miss", method);

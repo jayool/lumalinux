@@ -145,6 +145,30 @@ DepotKey's pattern to refresh that fallback, using the indirect anchor below.
 To tell which of the two broke, `tools/experiment_rtti_depotkey.py` compares the
 RTTI walk against the byte pattern on the new binary (see E).
 
+**What the Deck itself tries before you do anything** (the `method=` field of
+the `Hook install:` line, in order; each step runs only if the previous missed):
+
+| Hook | 1. `rva` (feed) | 2. `pattern` | 3. rescue, in the `.so` |
+|---|---|---|---|
+| DepotKey | `res/rvas/<sha>.yaml` | `kDepotKeyFnPattern` | `byname(rescue)`: RTTI class name → vtable slot |
+| GMRC | idem | `kGmrcFunctionPattern` | `xref(rescue)`: job-name string → unique `lea` → `.eh_frame_hdr` |
+| ShaderDepot | idem | `kShaderCacheDepotPattern` | `xref(rescue)` on `"shadercachedepot"` (since 2026-09-22) |
+| BuildDep | idem | `kBuildDepotDependencyPattern` | `xref(rescue)` on `"BuildDepotDependency"` (since 2026-09-22) |
+| Reconcile | idem | `kNotifyLicensesUpdatedPattern` | none yet — `Reconcile: … unresolved — no-op (restart still works)` |
+
+The three `xref(rescue)` rows are one locator (`src/gmrc_xref.cpp`,
+`FindFunctionByString`): the string is a contract Steam keeps (a job name, a
+PICS key, a scope name), the `lea` that loads it is unique, and `.eh_frame_hdr`
+turns that site into the exact function entry. Without a usable `.eh_frame_hdr`
+the ShaderDepot/BuildDep rescue refuses (a walk-back would land a few bytes
+inside their `push …; call thunk` prologue); only GMRC, whose preamble is its
+first instruction, keeps the walk-back as a last fallback. Offline check of the
+shared C++ against a real binary: `tools/gmrc_xref_selftest.cpp` (GMRC entry;
+`--needle <string> --expect-site <hex>` for the other two, the site being what
+`tools/derive_bytext.py` prints). A rescue that fires is a sign the pattern
+moved: the monitor's PR is still the fix, the rescue only keeps the Deck working
+until it lands.
+
 > **Automated first (`watch-steam.yml`).** You rarely run the steps below by hand.
 > When a Steam update moves a hook, the daily monitor runs
 > `tools/derive_python_first.sh`: a Python locator per hook (DepotKey by RTTI

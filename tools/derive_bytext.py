@@ -45,11 +45,14 @@ TEXT_ANCHORS = {
 
 
 def locate(path, anchor):
-    """(status, rva, info): the function that loads `anchor`, or why not."""
+    """(status, rva, note): the function that loads `anchor`, or why not. On
+    UNIQUE the note carries the lea site — the quantity the offline C++ selftest
+    (tools/gmrc_xref_selftest.cpp --needle … --expect-site …) can reproduce."""
     info, note = gmrc_xref_derive(path, anchor)
     if info.get("status") != "UNIQUE":
         return info.get("status", "?"), None, note
-    return "UNIQUE", int(info["rva"], 16), note
+    sites = info.get("sites") or []
+    return "UNIQUE", int(info["rva"], 16), "lea site %s" % (sites[0] if sites else "?")
 
 
 def derive_one(path, const, min_bytes=PROLOGUE_BYTES, max_bytes=96, segments=None):
@@ -57,7 +60,7 @@ def derive_one(path, const, min_bytes=PROLOGUE_BYTES, max_bytes=96, segments=Non
     status, rva, note = locate(path, anchor)
     if status != "UNIQUE":
         return None, "text anchor %r did not resolve (%s): %s" % (anchor, status, note)
-    print("  %s: %r -> function @ 0x%x" % (label, anchor, rva))
+    print("  %s: %r -> function @ 0x%x (%s)" % (label, anchor, rva, note))
     return derive_at(path, rva, "text-xref", min_bytes, max_bytes,
                      mask_frame=True, segments=segments)
 
