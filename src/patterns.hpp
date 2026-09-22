@@ -209,8 +209,19 @@ inline constexpr const char* kShaderCacheDepotPattern =
 // verified exactly 1 match. Because we cannot re-verify against the user's
 // exact build, FindNotifyLicensesUpdatedFunction requires a UNIQUE match and
 // returns 0 otherwise (-> reconcile no-ops, restart path unaffected).
+//
+// 2026-09-22: two more bytes masked — the REGISTER of the member load and of
+// the test that follows. The shipped literal pinned `edi` (8B B8 = mov
+// edi,[eax+disp32]; 85 FF = test edi,edi); the 9cf4720f beta's compiler
+// picked another register for that temporary and nothing else in the prologue
+// changed, so the exact literal stopped matching. With the ModRM of the mov
+// and the test wildcarded the pattern is UNIQUE on both builds:
+//   bc54101b (stable)  @ 0x188c950   9cf4720f (beta)  @ 0x1a0d010
+// — the beta address agreeing with steam-monitor's CUser::NotifyLicensesUpdated
+// locator for that build, which is how the drift was diagnosed without Ghidra
+// (derive_patterns.py's RTTI walk for this function does not resolve).
 inline constexpr const char* kNotifyLicensesUpdatedPattern =
-    "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B B8 ?? ?? 00 00 89 9D ?? ?? FF FF 85 FF";
+    "55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B ?? ?? ?? 00 00 89 9D ?? ?? FF FF 85 ??";
 
 
 // =============================================================================
