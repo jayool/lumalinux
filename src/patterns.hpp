@@ -140,11 +140,15 @@ inline constexpr const char* kLoadPackagePattern =
 //   05 ?? ?? ?? ??      add eax, <GOT>
 //   55 89 E5            push ebp; mov ebp, esp
 //   57 56 53            push edi; push esi; push ebx
-//   81 EC 10 01 00 00   sub esp, 0x110
+//   81 EC ?? ?? ?? ??   sub esp, <frame>   (0x110 up to bc54101b, 0x120 on the
+//                                          9cf4720f beta — locals only, so the
+//                                          imm32 is wildcarded since v0.22.0;
+//                                          measured UNIQUE on both builds by
+//                                          tools/derive_bytext.py, 2026-09-22)
 //   8B 7D 08            mov edi, [ebp+8]
 //   8B 4D 20            mov ecx, [ebp+0x20]
 inline constexpr const char* kGmrcFunctionPattern =
-    "E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20";
+    "E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC ?? ?? ?? ?? 8B 7D 08 8B 4D 20";
 
 
 // =============================================================================

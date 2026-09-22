@@ -38,6 +38,11 @@ def shipped(const):
     return m.group(1).split() if m else None
 
 
+# Shipped literals that carry the frame size as a WILDCARD (derived with
+# mask_frame): only GMRC so far — BuildDep's shipped literal still has its
+# frame (81 EC 2C 02 00 00) and ShaderDepot's prologue has no `sub esp`.
+FRAME_MASKED = {"kGmrcFunctionPattern"}
+
 random.seed(20260914)
 for const in AUTO_DERIVED:
     toks = shipped(const)
@@ -49,7 +54,10 @@ for const in AUTO_DERIVED:
         raw = bytes(random.randrange(256) if t == "??" else int(t, 16) for t in toks)
         raw += bytes(random.randrange(256) for _ in range(64))
         try:
-            out = wildcard_prologue(raw, len(toks))
+            # The text-anchored family derives with the frame size masked
+            # (derive_bytext.py, since v0.22.0 — GMRC's `sub esp` grew on the
+            # 9cf4720f beta); DepotKey keeps the literal frame.
+            out = wildcard_prologue(raw, len(toks), mask_frame=(const in FRAME_MASKED))
         except Undecodable as e:
             bad = "undecodable: %s" % e
             break
