@@ -466,33 +466,69 @@ a Steam build that breaks them stops the whitelist PR instead of shipping.
 
 **Fix for `NOT_FOUND`** (manual code edits, no patterns.hpp involved):
 
-1. Diff `CPackageInfoCache` in the new binary against the old one to find
-   the new root-offset (very likely still around `0xc5n` / `0xc6n`).
-2. Update `kCacheRootIdxOff` / `kCacheNodesOff` (and the related node
-   offsets if anything else moved) at the top of
-   `src/hooks/package_zero_finder.cpp`.
-3. Update the anchor literal `0xc58` **in all four places at once**. The same
-   idiom scan is implemented four times, deliberately, so that CI, Ghidra and
-   the offline probe check exactly what the runtime does. They must change in
-   lockstep or the CI verdict stops describing the runtime:
+Since 2026-09-22 the finder does not carry ONE root offset but a **table of
+known layouts** (`kCacheLayouts` in `package_zero_finder.cpp`: `stable-0xc58`
+and `beta-0xf90`). Every row is scanned and exactly one must resolve. So the
+fix is never "change the number": it is **add a row**, and never remove one
+(a slow rollout or a Steam downgrade brings the old layout back). The same
+`.so` must keep working on the build Decks run today and on the one Valve
+promotes tomorrow.
 
-   | file | function | role |
-   |---|---|---|
-   | `src/hooks/package_zero_finder.cpp` | `FindCacheGlobalDisp` | the runtime scan (the one that matters) |
-   | `tools/check_patterns.py` | `verify_cache_idiom` / `classify_cache_idiom` | nightly CI gate |
-   | `tools/derive_patterns.py` | `verify_finder_cache_idiom` | Ghidra postScript (§A.2) |
-   | `tools/experiment_cache_idiom.py` | `scan_idiom` | offline probe |
+1. Find the new layout **without Ghidra**, with the free-offset probe:
+   ```bash
+   python3 tools/fetch_steamclient.py --output ~/so/stable.so
+   LUMA_STEAM_MANIFEST=steam_client_steamdeck_publicbeta_ubuntu12 \
+       python3 tools/fetch_steamclient.py --output ~/so/beta.so   # or whichever broke
+   python3 tools/experiment_cache_idiom_free.py ~/so/stable.so --window 800-1400
+   python3 tools/experiment_cache_idiom_free.py ~/so/beta.so   --window 800-1400
+   ```
+   Check the `sha256=` line of each fetch: a CDN hiccup makes the fetcher fall
+   back to the SDK's `linux32/steamclient.so`, which is NOT the binary Decks
+   load. Read pass 5/6 of both outputs side by side: the cache object has a
+   recognisable fingerprint — the package tree root has ~3 sites with the
+   `RBTREE-SIG` mark and the node array sits at `root + 0x14`; a second,
+   heavily used tree (~39 sites, also signed) sits `0x40` above it. Match the
+   old fingerprint to the new one field by field: on 9cf4720f every field had
+   moved by exactly `0x338` (`0xc58` → `0xf90`, `0xc6c` → `0xfa4`). Then
+   confirm with a narrow window that the finder's exact idiom exists at the
+   new root (`--window f80-fb0`: pass 1 must list it with 2 sites and one X).
+2. Add the row `{"<name>", <root>, <root + 0x14>}` to `kCacheLayouts` in
+   `src/hooks/package_zero_finder.cpp`. Node offsets are shared by all rows;
+   only touch them if the `RBTREE-SIG` (`lea r,[r+r*2]`, 0x18-byte nodes) is
+   gone too.
+3. Add the same row **in all four places at once**. The same idiom scan is
+   implemented four times, deliberately, so that CI, Ghidra and the offline
+   probe check exactly what the runtime does. They must change in lockstep or
+   the CI verdict stops describing the runtime:
 
-   `tools/test_cache_idiom.py` pins the predicates the four share (opcodes,
-   mod fields, register chaining, the anchor, the UNIQUE-or-nothing policy)
-   against a synthetic ELF and **fails if any of them drifts**. It runs in
-   `build.yml`, so a partial edit is caught in CI, not on a Deck. Run it
-   locally after the edit: `python3 tools/test_cache_idiom.py`.
+   | file | table | function | role |
+   |---|---|---|---|
+   | `src/hooks/package_zero_finder.cpp` | `kCacheLayouts` | `FindCacheGlobalDisp` | the runtime scan (the one that matters) |
+   | `tools/check_patterns.py` | `CACHE_LAYOUTS` | `verify_cache_layouts` / `classify_cache_layouts` | nightly CI gate |
+   | `tools/derive_patterns.py` | `CACHE_LAYOUTS` | `verify_finder_cache_idiom` | Ghidra postScript (§A.2) |
+   | `tools/experiment_cache_idiom.py` | `CACHE_LAYOUTS` | `scan_layouts` | offline probe |
+
+   `tools/test_cache_idiom.py` pins the table (the four must list the same
+   rows, `nodes == root + 0x14`), the predicates the four share (opcodes, mod
+   fields, register chaining) and the two-level UNIQUE-or-nothing policy (one
+   row / no row / two rows) against a synthetic ELF and **fails if any of them
+   drifts**; `tools/test_package_zero_walk.py` walks `FindPackage0` with every
+   row. Both run in `build.yml`, so a partial edit is caught in CI, not on a
+   Deck. Run them locally after the edit. The test also asserts the exact set
+   of rows — extend that assertion when adding one.
 4. If the prologue tail changed, update the `tail` byte array inside
-   `DeriveGotBase` — and its twin in `check_patterns.verify_gmrc_got` /
-   `derive_patterns.verify_gmrc_prologue_tail`.
+   `DeriveGotBase` — and its twins in `check_patterns.verify_gmrc_got` /
+   `derive_patterns.verify_gmrc_prologue_tail` /
+   `experiment_cache_idiom.derive_got`. The two frame-size bytes
+   (`sub esp,imm32`) are already wildcarded in all four (0x110 → 0x120 on the
+   beta was a locals-only change), so only a real reshuffle of the prologue
+   gets here.
 5. Rebuild + release as in A.2 step 4–5, then validate on-device (below)
-   before releasing.
+   before releasing. `check_patterns.py` on the new binary must say
+   `cache_idiom UNIQUE (layout <name>, …)` and on the old one still name the
+   old row; the RVA feed then carries `cache_root_off` / `cache_nodes_off`
+   next to `cache_global_disp`, so a Deck with the feed walks the right struct
+   without re-scanning.
 
 **If the verdict is `AMBIGUOUS`, do not apply the Fix above.** Nothing is
 missing: the anchor is still there, it is just no longer *specific* — several

@@ -31,6 +31,13 @@
 #   6. FIRMA del RBTree: qué OFF de la pasada 5 va seguido de `cmp r,-1` y
 #      `lea r,[r+r*2]` (índice raíz comparado con invalid y escalado por 0x18).
 #
+# Historial: 2026-09-22, primera vez que sirvió. Beta 9cf4720f: la pasada 1 con la
+# ventana por defecto no veía nada (el offset nuevo, 0xf90, cae fuera), las
+# pasadas 5/6 con --window 800-1400 casaron los 26 campos del objeto entre la
+# estable y la beta (todos +0x338, mismas cuentas, misma firma RBTree) y
+# --window f80-fb0 confirmó el idioma exacto del finder en 0xf90 con 2 sitios.
+# De ahí salió la fila "beta-0xf90" de kCacheLayouts (RESEARCH §13.5.b).
+#
 # Validación: en la estable conocida (bc54101b) la pasada 1 debe dar la fila
 # `0xc58: 2 sitios, 1 X (0x3b7d4)` y la 4 un sitio con frame 0x110. Si no
 # reproduce lo conocido, no vale para la beta.

@@ -928,14 +928,53 @@ at runtime:
    0x05 byte) + imm32` (`DeriveGotBase`, reproduces the exact `.got` VA).
 
 2. **`X` from the cache-access idiom.** Scan `steamclient.so`'s `r-x` span
-   for `lea r1, [GOT+X] ; mov r2, [r1] ; mov r3, [r2+0xc58]`. The trailing
-   `0xc58` (the stable tree-root offset) is the anchor that confirms the
-   match; `X` comes out of the `lea`'s `disp32` (`FindCacheGlobalDisp`).
-   `cache_global = GOT + X`.
+   for `lea r1, [GOT+X] ; mov r2, [r1] ; mov r3, [r2+root]`. The trailing
+   `root` (the tree-root offset of a KNOWN layout, `0xc58` until 2026-09)
+   is the anchor that confirms the match; `X` comes out of the `lea`'s
+   `disp32` (`FindCacheGlobalDisp`). `cache_global = GOT + X`.
 
 Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
 per-build offsets, everything reconstructed from stable anchors (the
-hook-surviving GMRC prologue tail and the `0xc58` class-layout offset).
+hook-surviving GMRC prologue tail and the class-layout root offset).
+
+**13.5.b The layout table (2026-09-22).** The root offset is not one number
+any more. The `1790036264` beta (`9cf4720f…`, desktop and Deck public-beta
+manifests ship the same file) recompiled `steamclient.so` (49.8 → 53.5 MB) and
+both anchors came back NOT_FOUND. Measured with
+`tools/experiment_cache_idiom_free.py` (root offset left free, then a
+field-access histogram of the cache singleton on both builds):
+
+| | `bc54101b` (stable) | `9cf4720f` (beta) |
+|---|---|---|
+| loads of the cache pointer | 598 | 607 |
+| package-tree root (`RBTREE-SIG`, 3 sites) | `0xc58` | `0xf90` |
+| node array | `0xc6c` | `0xfa4` |
+| second tree root (`RBTREE-SIG`, 39 sites) | `0xc98` | `0xfd0` |
+| its node array (8 sites) | `0xcac` | `0xfe4` |
+| most-read field (40 / 42 sites) | `0xa70` | `0xda8` |
+| GMRC `sub esp,imm32` | `0x110` | `0x120` |
+| `X` | `0x3b7d4` | `0x3c7b0` |
+
+26 fields matched one-to-one, same site counts, same signatures, **every one
+of them exactly `0x338` higher**: Valve inserted an 824-byte member ahead of
+the trees and changed nothing else. The finder's exact idiom exists at
+`0xf90` with 2 sites (`lea eax,[esi+X] ; mov ecx,[eax] ; mov edx,[ecx+0xf90]`,
+the same registers as on stable), and the GMRC prologue only grew its frame.
+So `kCacheRootIdxOff`/`kCacheNodesOff` became `kCacheLayouts`, a table scanned
+row by row with a two-level UNIQUE-or-nothing (exactly one row with sites, one
+`disp32` within it; stable has 0 sites at `0xf90`, the beta 0 at `0xc58`), the
+tail's frame bytes became wildcards, and the RVA feed carries the resolved row
+(`finder.cache_root_off` / `cache_nodes_off`) so a Deck with the feed walks the
+right struct without re-scanning. The four copies of the scan carry the same
+table (`maintenance.md` §C). The SDK's `linux32/steamclient.so` of the same
+version has the same layout (`X = 0x3dcdc`), so the change is in Steam's
+source, not one compile. Ahead of that, the cache object also holds a second,
+much busier tree `0x40` above the package tree (probably the app-id index) —
+the same fingerprint in every build, which is what the free-offset probe keys
+on. `Reconcile`'s pattern broke on the same build for an unrelated reason: it
+pinned the register of one temporary (`edi`); the two ModRM bytes are
+wildcarded now and the pattern is UNIQUE on both builds (stable `0x188c950`,
+beta `0x1a0d010`, the latter agreeing with steam-monitor's locator).
 
 **Y entonces por qué la ficha no rompe eso.** Desde 2026-09-08 los dos números
 salen primero del RVA feed y sólo se escanea si la ficha no los trae, lo cual
