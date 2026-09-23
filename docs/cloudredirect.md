@@ -449,3 +449,25 @@ suele estar presente; es un arreglo para multi-cuenta. No aplicado.
   `.local/share/Steam` y `.steam/steam`. Esa ruta es de escritorios
   Debian/Ubuntu; irrelevante en SteamOS salvo que algún día importe el Decky de
   escritorio.
+
+## Re-barrido 2026-09-23 — sin movimiento desde `bc5e38a`
+
+*`Selectively11/CloudRedirect` `master` sigue en `bc5e38a` (2026-08-18, "Remove
+the SteamTools patcher"), última release **v2.6.5** (18-ago); `gh-pages` (repo
+flatpak firmado) también del 18-ago; la rama `ost` (JanitorialMess) parada
+desde mayo. Cinco semanas sin un commit.*
+
+Lo que sí se ha movido está fuera de este repo y ya está anotado en los otros
+docs: `cloudredirect-moon` reconstruyó su `.so` el 19-sep arrastrando el mismo
+bug del store vacío que parcheamos con `cr_stats_fix` (`slsteam-moon-findings.md`,
+satélites), y SLSDeck añadió proveedor de carpeta personalizada e importador de
+saves sobre CR (`slsdeck-analysis.md` §18.7). Ninguno toca el camino de
+contenido; la premisa de superficies disjuntas sigue intacta.
+
+**Pendiente nuestro, no suyo:** el report a Selectively11 de la sección
+"Lo que hay que pedirle" (yield hook en Linux con oferta del locator de
+`CJob::BYieldIfTimeSlice`, publicación diferida que sobreviva a la sesión,
+exclusión por app, el parche de una línea de stats sync, y el `CAINFO` del
+`libcurl` cargado por `dlopen`) sigue **sin enviar**. Con el repo parado desde
+agosto no hay prisa por su lado, pero tampoco motivo para esperar. Próximo
+barrido desde `bc5e38a` / v2.6.5.
