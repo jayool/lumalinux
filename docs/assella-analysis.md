@@ -463,3 +463,103 @@ SLSsteam.
 | 4 | Todo lo demás | — | Nada |
 
 El siguiente barrido arranca en `beta@b099de7`.
+
+## §10 Delta — 2026-09-23 (`beta@b099de7` → `a0869bd`; rama nueva `canary`)
+
+*Barrido el 2026-09-23. `beta`: 13 commits después de `b099de7`, del 17 al
+20 de septiembre, niwia salvo tres de "You-know-who" (README y `voices.json`);
+tag **v2.6.5** el 17-sep, `src/res/version` ya en `2.6.6dev`. `main` sigue en
+`f582f4f` (13-sep). **Rama nueva `canary`** (`568552c`, 20-sep, versión
+`3.0.0testing200926002`): 14 commits sobre `beta` en dos días, +2.873/−194 en
+28 ficheros. Leídos como diff `185e201`, `a0869bd`, `78dbda7` (sus dos
+plugins Lua enteros), `native_steam_handoff.py`, `steam_manifest_pinning.py`
+y `native_steam_download_task.py`; el resto por mensaje y stat. Sigue sin
+ningún provider de request codes en `src/` (grep: cero); el que hay está en
+el plugin Lua, ver abajo.*
+
+### `beta`: catálogo "Voices" y menudencias
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `185e201`, `711bc37`, `db1bdd9` (19-sep) | **"Voices"**: un `voices.json` en el repo (rama `beta`, sincronizado al arrancar con caché) con builds "probados y recomendados" por juego: `recommended_build_id`, `reason`, `manifest_overrides` (depot → gid) y alias de búsqueda; instrucciones de contribución por PR. Al buscar un juego que está en la lista sale un diálogo "Voices version available" que pinea ese build y sus gids; si `manifest_overrides` está vacío, resuelve los gids del build por SteamDB. Entradas: Persona 3 Reload, Black Myth: Wukong, Dead Space… ("Known stable and compatible build"). | **No, pero es una idea limpia**: una lista curada de "el build que funciona con el crack/bypass actual", mantenida por PR. Es lo que LumaDeck hace implícitamente con los fixes de lua.tools (el fix trae su build y LumaDeck lo pinea, `pinsource.py`); ellos lo separan del fix. Apuntado como referencia, sin acción. |
+| `4428bec` (19-sep) | Comprobación previa: aborta limpio si no puede encontrar o generar los manifests de un depot, en vez de petar. | No. |
+| `878b966`, `bc34aa2` (19-sep) | Workshop: sincronía de ACF, tamaño, enlace de mods locales (Ravenfield), y luego quitan el symlink porque cargaba el contenido dos veces. | No (Workshop no es nuestro). |
+| `1fcd7a8` (19-sep) | Carrera "worker deleted" en su `TaskRunner` de Qt. | No. |
+| `a0869bd` (20-sep) | `assfixer` (su reparador de `config.yaml`) reconoce `AdditionalDepots` y `DecryptionKeys` como claves legítimas "del plugin" y las conserva al sincronizar con la plantilla upstream; lee la plantilla del `res/config.yaml` de SLSsteam con fallback al `config_default.hpp` embebido. Motivo: usuarios de `beta` con `download.lua` veían avisos falsos. | Dato: confirma que **`download.lua` escribe esas dos claves en `config.yaml`** y que ASSella ya lo da por instalado en `beta`. |
+
+### `canary`: "Vapor", descarga nativa por Steam con los plugins Lua
+
+**[read] Qué es.** Un modo nuevo, pestaña "Vapor Beta" ("Enable Vapor (Native
+Steam Integration)", "Always Native Steam"), que sustituye su DepotDownloader
+por **que Steam descargue el juego**. `native_steam_download_task.py`, en su
+propia cabecera:
+
+1. claves y gids del bundle de Hubcap (o caché);
+2. escribe en `config.yaml` de SLSsteam `Plugins: yes`, `AdditionalApps`,
+   `AdditionalDepots`, `DecryptionKeys` (atómico, fsync) y, si el build va
+   pineado, `ManifestIds` (`steam_manifest_pinning.py`);
+3. despliega **`download.lua` y `spliced-tickets.lua`** en
+   `~/.config/SLSsteam/plugins/` desde copias que **ahora viajan dentro de
+   ASSella** (`src/res/plugins/`, 328 y 79 líneas);
+4. espera a ver `AppLicensesChanged`/`Unlocked` para el appid en
+   `.SLSsteam.log`, más 1,5 s "para que Steam propague en memoria";
+5. limpia un ACF stub de un intento anterior;
+6. manda `install|<appid>|<lib>` por **`/tmp/SLSsteam.API`**;
+7. vigila `content_log.txt` y el `.acf` hasta `StateFlags 4`;
+8. **al terminar con éxito borra `AdditionalDepots`, `DecryptionKeys` y los
+   plugins** ("transient"), conservando solo `AdditionalApps`; en fallo
+   restaura el backup del yaml, borra el ACF y manda `uninstall|<appid>`.
+
+"Vapor library scan" (`2651bd1`, `48f11fe`, `568552c`) recorre la biblioteca
+de Steam para descubrir juegos añadidos, con un watcher de refresco, y filtra
+los que la cuenta posee de verdad.
+
+**[read] Los dos plugins.** `download.lua` es el que analizamos en
+`slssteam-plugins-analysis.md` (mismos nombres `getPackageHook` /
+`getBinaryHook` / `getMRCHook`, mismo `place_lua_hook`): inyecta depots en el
+paquete 0 (`GetPackage`), sirve claves (`GetBinary`) y engancha
+`GetManifestRequestCode` con **un solo proveedor, `http://gmrc.wudrm.com`, en
+HTTP claro**, con `manifest.opensteamtool.com` comentado; localiza
+`GetManifestRequestCode` por un patrón de bytes fijo
+(`E8 ? ? ? ? 83 C4 ? 83 F8 ? 0F 85 …`) sin derivación. `spliced-tickets.lua`
+es el de Ace (§ nota del 22-sep en `slssteam-plugins-analysis.md`): ticket de
+la app 7 con el appid empalmado, para que SteamStub se desempaquete sin
+Steamless.
+
+**[inferred] Lo que esto significa.** ASSella ha llegado, dos días de commits
+mediante, a **nuestra arquitectura**: Steam descarga en nativo, el motor
+inyecta depots y claves en el paquete 0, y el código de manifest sale de un
+hook de `GetManifestRequestCode`. La diferencia está en cómo:
+
+| | ASSella "Vapor" | LumaDeck + lumalinux |
+|---|---|---|
+| Inyección de depots/claves | plugin Lua de SLSsteam (`download.lua`), desplegado por descarga y **retirado al acabar** | `.so` propio, finder del paquete 0 + `keys.txt`, permanente |
+| Request codes | wudrm en solitario, HTTP, patrón fijo en Lua | cascada opensteamtool → wudrm → steam.run, HTTPS, validación contra el CDN, hook GMRC con ficha + patrón + rescate por cadena |
+| Después de instalar | claves y depots fuera de `config.yaml`; el juego queda **pineado** a los gids de Hubcap (`ManifestIds`) y sin update nativo | claves siempre cargadas; Steam actualiza en nativo mientras haya proveedor, pin solo si caen |
+| "El juego ya es tuyo" | espera `AppLicensesChanged` en el log | reconcile (`NotifyLicensesUpdated`) sin reiniciar |
+| Canal de órdenes | `/tmp/SLSsteam.API` (mundo-escribible; moon lo ha retirado por inseguro, `slsdeck-analysis.md` §18.2) | fichero de claves propio + inotify |
+| Cuando Valve recompila | el patrón Lua de GMRC se rompe como cualquier patrón fijo; ASSella no tiene monitor ni derivación | watch-steam + derivación Python + tres capas en el `.so` |
+
+Dos cosas para nosotros. (1) **Nada que adoptar**: es nuestro modelo con menos
+capas. (2) **Spliced tickets ya no es teoría**: ASSella lo distribuye
+empaquetado en su AppImage y lo instala en cada descarga nativa, junto con el
+plugin de descarga. Es el tercer sitio donde aparece el plugin de Ace (Discord,
+SLSDeck vía moon, ASSella), y refuerza el punto aparcado del bloque 1 de moon:
+decidir si lo llevamos como plugin de SLSsteam o dentro de lumalinux. Sin
+cambio de prioridad; el dato queda.
+
+**Riesgo suyo, anotado.** `canary` es "3.0.0testing" con `AGENTS.md` que
+restringe las builds de desarrollo a `ASSella.AppImage.dev`; se desarrolla con
+un agente de IA, como SFF y SteamFlipper esta misma semana.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | "Vapor": descarga nativa por Steam con `download.lua` + `spliced-tickets.lua` empaquetados | — | Convergen a nuestro modelo; nada que adoptar |
+| 2 | Spliced tickets distribuido a usuarios finales por un tercer programa | Dato | Refuerza el punto aparcado (plugin o lumalinux) |
+| 3 | Catálogo "Voices" de builds recomendados | Referencia | Idea limpia; sin acción |
+| 4 | `assfixer` conserva `AdditionalDepots`/`DecryptionKeys` | — | Confirma qué escribe `download.lua` |
+| 5 | §6.5 (`yaml_config_manager.py`) sigue sin re-auditar | — | Pendiente si se vuelve a esa sección |
+
+El siguiente barrido arranca en `beta@a0869bd` y `canary@568552c`.
