@@ -464,10 +464,11 @@ satélites), y SLSDeck añadió proveedor de carpeta personalizada e importador 
 saves sobre CR (`slsdeck-analysis.md` §18.7). Ninguno toca el camino de
 contenido; la premisa de superficies disjuntas sigue intacta.
 
-**Pendiente nuestro, no suyo:** el report a Selectively11 de la sección
+**Decisión 2026-09-23: el report a Selectively11 NO se envía.** La sección
 "Lo que hay que pedirle" (yield hook en Linux con oferta del locator de
 `CJob::BYieldIfTimeSlice`, publicación diferida que sobreviva a la sesión,
 exclusión por app, el parche de una línea de stats sync, y el `CAINFO` del
-`libcurl` cargado por `dlopen`) sigue **sin enviar**. Con el repo parado desde
-agosto no hay prisa por su lado, pero tampoco motivo para esperar. Próximo
-barrido desde `bc5e38a` / v2.6.5.
+`libcurl` cargado por `dlopen`) queda como referencia nuestra, no como issue
+abierto. La mitigación sigue siendo local: Steam Cloud desmarcado por juego (hoy
+mismo, app 2545360 tras el incidente de arriba) o `~/.config/CloudRedirect/disable`.
+Próximo barrido desde `bc5e38a` / v2.6.5.
