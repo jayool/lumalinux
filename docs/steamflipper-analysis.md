@@ -1566,3 +1566,122 @@ toolchain. **Noted, not changed.**
 | Our `.so` needs GLIBCXX_3.4.32 / GLIBC_2.38 | portability fact, noted |
 
 Nothing in this window changes the §7 verdicts.
+
+## §11 Delta — 2026-09-23 (`7b6e5f7` → `b43bc19`)
+
+**Frozen reference for this section.** `main` @ `b43bc19` (2026-09-21). Five
+commits after `7b6e5f7`, all by IPedrax between 09-17 and 09-21, no release
+after v1.3.0 (09-07), no other branch. Every one carries an AI co-author
+trailer. All five read as full messages; `b43bc19` (`Hooks_Decryption.cpp`)
+and `6ea2485`/`c6c5257` (`gen_linux_patterns.py`, `Hooks_Package.cpp`) read
+as diffs. Issue #2 is referenced by the commits and is not readable from
+here.
+
+### §11.1 Depot keys served live, through `CConfigStore` slot 6 (`b43bc19`)
+
+**[read]** Motivation, verbatim: *"Steam strips injected depot keys out of
+config.vdf while it runs … leaving `"<depot>" { }` behind. The download then
+fails as still encrypted and Steam deletes the manifest as bad. Writing the
+key back only restarts the cycle."* Fix: the dormant `Hooks_Decryption` is
+now attached on Linux. `ConfigStore::GetBinary` has no VProf scope and no
+symbol, so their generator cannot derive it; they resolve it at runtime from
+the call site that formats `"...Depots\%u\DecryptionKey"`:
+
+```
+lea  <global>(%ebx),%eax   ; CPackageInfoCacheGlobal
+mov  (%eax),%eax           ; the object
+lea  0xD60(%eax),%edx      ; this = object + 0xD60 (the config store)
+mov  0xD60(%eax),%eax      ; its vptr
+mov  0x18(%eax),%eax       ; vtable slot 6
+call *%eax
+```
+
+with the write site at slot `0x38` as the cross-check, `kGlobalRva =
+0x2F85B20`, resolved lazily once the singleton exists, verified as an
+alignment-padded entry loading five 4-byte arguments before being hooked;
+`/api/status` gains a "Key hook" row.
+
+**[inferred] This is our DepotKey hook, arrived at three weeks later by the
+same road.** Their `0x2F85B20` is our `CPackageInfoCache` global exactly
+(`got_rva 0x2f4a34c` + `cache_global_disp 0x3b7d4` in
+`res/rvas/bc54101b….yaml`), the `+0xD60` subobject and `slot 6` are the call
+site RESEARCH §15 step 2 recorded in July (`this=*(global)+0xd60;
+vtable=*this`), and `GetBinary` at slot 6 of `CConfigStore` is what
+`depot_key_hook.cpp` resolves by RTTI name (`12CConfigStore`,
+`21IClientConfigStoreMap`, `GetBinary`) — without waiting for the singleton,
+because the vtable lives in `.data.rel.ro` and RTTI names it. Two independent
+readings of the binary landing on the same global, offset and slot is a
+confirmation of both. Their reason for needing it (Steam prunes injected
+`config.vdf` keys) is the reason we never wrote keys to `config.vdf` at all.
+Nothing to adopt; §10.5's "we serve keys live; lead retained" row is now
+"converged".
+
+### §11.2 The licence-refresh pair: pinned, then reverted after two segfaults (`6ea2485`, `c6c5257`)
+
+**[read]** `MarkLicenseAsChanged` and `ProcessPendingLicenseUpdates` have no
+VProf scope, so they are pinned per build; only `bc54101b` was pinned and on
+the desktop stable `237495b4` they resolved to nothing, so a manifest added
+while Steam runs did not appear until restart (issue #2). `6ea2485` pinned
+the same two RVAs for `237495b4` (`0x188C700`, `0x188C950`) on the argument
+that *"every function the generator derives for both builds lands at an
+identical RVA"*, checked by byte signature at the address, alignment pad and
+real call sites (five and two), and reported "Live refresh: working". Three
+days later `c6c5257` reverted it: *"Steam segfaults on adding or removing a
+manifest, which is exactly when NotifyLicenseChanged calls this pair. Two
+cores … frame 0 is an instruction pointer in unmapped memory, reached from
+Coroutine_Continue."* Their own lesson: *"I verified the addresses were real
+entry points … that is not the same as verifying the signatures match, which
+is what a call through them actually depends on."*
+
+**[inferred]** `0x188C950` is our Reconcile target on `bc54101b`
+(`CUser::NotifyLicensesUpdated`, RESEARCH §18; §7 of this document already
+paired their `ProcessPendingLicenseUpdates` with it). Two things follow.
+(1) Whether `237495b4` really carries the same code at the same RVAs is
+something our tooling answers in one click and theirs could not:
+`probe-steam.yml` on `steam_client_ubuntu12` runs `check_patterns.py` and
+the callback-anchor locator on that exact binary and prints the RVA it
+finds. If Reconcile lands on `0x188c950` there too, SF's addresses were
+right and the crash lives in how the pair is called (`MarkLicenseAsChanged`'s
+`this`/arity, which we never touch: we call one cdecl function with the live
+`CUser`); if it lands elsewhere, their "identical RVA" premise was wrong and
+the crash is explained. Either answer is a data point for the CachyOS port
+(`cachyos-port.md`), which targets that channel. **Recorded as the one
+follow-up of this sweep.** (2) The method gap is the one §7.6 predicted:
+address-level pins with no derivation cannot be re-verified on a new build
+except by crashing; our Reconcile is located by what the function does
+(callback 125 + this-read + bail, `derive_reconcile_byanchor.py` and, since
+09-22, the same locator inside the `.so`), verified UNIQUE per build in CI
+and in the offline selftest before anything calls it.
+
+### §11.3 Manifest pinning and keeping, from the outside (`06acd83`, `b896a9f`)
+
+**[read]** Two Python tools, not engine changes. `pin_manifests.py`
+uncomments a pack's `setManifestid` line only when
+`depotcache/<depot>_<gid>.manifest` is present (114 pins across 27 games on
+the reporting machine; 256 absent ones left alone), backing each pack up as
+`.lua.sf-orig`; motivation is the log line *"Failed to get manifest request
+code, 'Access Denied'"*, which the client shows as "no internet connection".
+`keep_manifests.py` copies pinned manifests out of `depotcache` and restores
+them when Steam deletes them, because *"Steam removes a depot's manifest from
+depotcache once that depot is installed"* (494 copies, 129 MB); eleven were
+already lost and had to be re-downloaded from Ryuu.
+
+**[inferred]** Both tools work around the absence of a request-code path
+(§10.1: dead providers still hardcoded). The two facts they document are
+ours already: Steam deletes the installed depot's manifest (RESEARCH §19,
+the reason pre-seeding cannot cover updates) and a pin without the file
+sends Steam to Valve for a code it will not get. Our answer to both is
+GMRC-native plus the provider cascade (0.21.0); LumaDeck's uninstall purge
+and `manifests.py` handle the on-disk copies. Nothing to adopt.
+
+### §11.4 Summary
+
+| Item | Verdict |
+|---|---|
+| Depot keys via `CConfigStore` slot 6 at `CPackageInfoCacheGlobal+0xD60` (`0x2F85B20`) | same global, offset and slot as our DepotKey hook and finder; independent confirmation; **converged** |
+| Licence-refresh pair pinned on `237495b4` then reverted (segfaults) | their `0x188C950` = our Reconcile on `bc54101b`; **follow-up: probe `steam_client_ubuntu12`** to learn whether the RVAs really coincide |
+| Manifest pin/keep tools | workarounds for having no request codes; facts already in RESEARCH §19 |
+| Five commits, all AI co-authored, no release since v1.3.0 | cadence note |
+
+Nothing in this window changes the §7 verdicts; §10.5's "lead retained" on
+depot keys becomes "converged". Next sweep starts at `b43bc19`.
