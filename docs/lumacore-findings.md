@@ -605,3 +605,52 @@ nuevo sin clave y Hubcap no la trae".**
 > **2026-09-14:** `Midrags/SFF` no se ha movido desde `fa44fc9` (2026-08-21). El desarrollo de SteaMidra continúa en el fork `drappula/SFF`; su capa Linux, su cadena de adquisición y los vectores de "brickeo" de la Deck están en `steamidra-linux-analysis.md` (congelado en `92d6813`, 2026-09-13). El próximo barrido de SFF arranca ahí.
 >
 > **2026-09-17:** sin cambios en `Midrags/SFF` (`fa44fc9`) ni en `KoriaPolis/LumaCore` (`8a32798`, 2026-05-18). `drappula/SFF` publicó v6.8.0 el 15-sep; delta en `steamidra-linux-analysis.md` §10.
+
+## Re-sweep 2026-09-23 — `LumaCore/` en `drappula/SFF` (`fa44fc9` → `8eaf238`) y el feed `Steam-Auto-PT`
+
+**Referencias.** `Midrags/SFF` sigue en `fa44fc9` (21-ago) y
+`KoriaPolis/LumaCore` en `8a32798` (18-may): parados. El subárbol `LumaCore/`
+del fork vivo (`drappula/SFF`, `main` @ `8eaf238`, 20-sep) tiene **un solo
+commit** desde `fa44fc9`. El feed de patrones del DLL,
+`KoriaPolis/Steam-Auto-PT` rama `pattern`, clonado hoy: último commit
+`654dab1` del **2026-08-19** ("stable 1785799196, beta 1787097529").
+
+- **`cb71021` (2026-09-04, wtfseanscool) "Fix IClientRemoteStorage FileExists
+  hook ABI"**, `hooks/client/IPCBus.cpp`, +7/−8. El hook del OnlineFix para
+  `IClientRemoteStorage::FileExists` asumía la firma vieja `(this, pchFile)` y
+  parcheaba el appid escribiendo en `this+0x38` alrededor de la llamada; la
+  real lleva `(this, appId, fileRoot, pchFile)`, así que ahora sustituye el
+  `appId` del argumento (480 → el real) y no toca memoria del objeto. Es la
+  capa OnlineFix de Windows (Finding 5); en Linux LumaCore no existe y el
+  `FakeAppIds` de SLSsteam hace ese papel. Nada.
+
+**El feed está muerto y el cliente actual no está en él.** Comparado con
+`madoiscool/steam-monitor` `pattern` (el feed de BetterSteamTools,
+`opensteamtool-findings.md`, delta del 22-sep): 28 TOMLs de `steamclient`
+en `Steam-Auto-PT`, 24 en el de madoiscool, 15 comunes; **9 hashes solo en el
+de madoiscool**, todos posteriores al 19-ago, entre ellos el `steamclient64`
+de la **estable de Windows 1788652215** (añadido allí el 10-sep) y los cinco
+betas de septiembre. `IpcMethodLoader.cpp` recorre GitHub raw → jsDelivr →
+gitflic, todos espejos del mismo repo, y sin fichero devuelve `false`
+(`"all network legs failed for sha="`); `HookStatus` lo registra como
+`g_steamclientToml = false` con `PatternError`. Es decir: **desde que la
+estable 1788652215 llegó a Windows (5/8-sep), LumaCore no tiene patrones
+para el cliente que corre.** El fork tampoco ha cambiado la URL del feed
+(grep de `Steam-Auto-PT|MigoReleases|migo3` en todo `drappula/SFF`: solo las
+tres URLs de KoriaPolis). Lo que eso rompe exactamente en el DLL no lo
+medimos desde aquí (Windows); lo que sí es un hecho es que el bot de KoriaPolis
+dejó de publicar el mismo día que Midrag dejó de commitear en `Midrags/SFF`,
+y nadie lo ha recogido.
+
+**[inferred] Para nosotros.** Es el mismo modo de fallo que
+`OpenSteam001/steam-monitor` (mudo desde el 6-sep) visto una vez más: un feed
+mantenido por una persona muere con la persona, y el cliente que depende de él
+se queda sin patrones en silencio. En el ecosistema OST/LumaCore ya solo queda
+vivo el feed de madoiscool. Nuestra ficha la produce el monitor de CI del repo
+(`watch-steam.yml`), no un bot aparte, y su ausencia no es silenciosa: el `.so`
+cae a patrón y a rescate, y el monitor abre issue. Nada que adoptar; la
+observación va al balance de `update-resilience-comparison.md` cuando se
+vuelva a tocar.
+
+El próximo barrido arranca en `drappula/SFF` `8eaf238` (subárbol `LumaCore/`)
+y `Steam-Auto-PT` `654dab1`.
