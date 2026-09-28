@@ -563,3 +563,145 @@ un agente de IA, como SFF y SteamFlipper esta misma semana.
 | 5 | §6.5 (`yaml_config_manager.py`) sigue sin re-auditar | — | Pendiente si se vuelve a esa sección |
 
 El siguiente barrido arranca en `beta@a0869bd` y `canary@568552c`.
+
+## §11 Delta — 2026-09-28 (`beta@a0869bd` → `028832e`; `canary@568552c` → `3fb2e32`)
+
+*Barrido el 2026-09-28. `beta`: 18 commits después de `a0869bd`, del 23 al
+28, todos de niwia; sin tag (v2.6.5 del 17-sep sigue siendo la release,
+marcada pre-release; `src/res/version` en `2.6.6dev`). `canary`: 40 commits
+después de `568552c`, del 24 al 28, versión `3.0.0testing280926001`. `main`
+sigue en `f582f4f` (13-sep). Leídos como diff: `at0m.py`/`vapor.py`
+(`7413be8`, `66750ad`, `3cd01ee`, `2e83813`, `d340ed9`), `download.lua` entero
+entre las dos puntas de `canary`, `native_steam_handoff.py` (`ac7fec9`,
+`9b3240a`, `4d483cc`, `76af3c2`), `steam_manifest_pinning.py` y el patch del
+config (`2b5d9a6`), `task_manager.py` (`eae10e4`), `assfixer.py` (`0e2ae82`);
+el resto por mensaje y stat. Issues leídas: #17 y #18 (niwia, 21-sep, sin
+cuerpo), #19 (fuente, duplicada). Una semana de 58 commits; el tema es uno.*
+
+### El tema: wudrm bloquea a libcurl, y ASSella lo esquiva por tres sitios
+
+**[read] Lo que pasó.** `gmrc.wudrm.com` está detrás de Cloudflare y su
+filtro de huella TLS responde **503** a libcurl "a pelo". Le pega a ASSella en
+dos sitios: al `download.lua` de SLSsteam (el hook de `GetManifestRequestCode`
+usa el `curl.downloadString` de SLSsteam) y a la ACCELA clásica cuando quiere
+un código por su cuenta. La respuesta, en orden cronológico:
+
+1. **`at0-m` (antes "Vapor engine", `7413be8` 24-sep, renombrado `7aacd56`
+   25-sep; en `beta` sigue en `vapor.py`): ASSella deja de depender de Hubcap
+   para los manifests.** Un módulo de 693 líneas que hace lo que hace nuestro
+   `manifests.py`: pide el código a wudrm, descubre los CDN por
+   `IContentServerDirectoryService/GetServersForSteamPipe`, baja
+   `/depot/<depot>/manifest/<gid>/5/<mrc>`, desempaqueta y descifra nombres
+   con la clave del depot, y produce un `.manifest` válido (magic
+   `0x71F617D0`). Hubcap (`morrenus_api.generate_single_manifest`) pasa a ser
+   el **fallback** cuando el código o el CDN fallan. Es la misma inversión que
+   hicimos en 0.21.0: el código de manifest es el camino, el zip de Hubcap el
+   rescate.
+2. **`WudrmMRCFetcher` en dos niveles (`66750ad`, `3cd01ee`, `2e83813`).**
+   Nivel 1, `requests` con UA `curl/7.88.1` (elección suya; ver abajo); si el
+   cuerpo no es numérico o llega 503, nivel 2: `curl_cffi` con
+   `impersonate="chrome120"` (Client Hello, orden de cifrados y cabeceras de
+   Chrome 120), y si `curl_cffi` no está, `curl` del sistema por subprocess.
+   Backoff 1-2-4-8 s, cinco intentos, 400/404 son fatales (código inválido,
+   no reintentar). Códigos cacheados en memoria y en SQLite
+   (`db/mrc_cache.db`) por gid; `d340ed9` invalida la entrada cuando el CDN
+   rechaza el código ("self-healing"). Nota suya en el código: reusar la
+   sesión de `curl_cffi` da 503 sistemáticos, hay que abrir conexión por
+   petición. `2e83813`: wudrm pasa a HTTPS.
+3. **`download.lua` (`canary`, `7bb058a`, `26a2427`, `9b3240a`): el mismo
+   truco dentro de SLSsteam.** `getManifestRequestCode` deja la recursión por
+   un bucle con backoff, y ante cuerpo vacío o no numérico (detecta "503",
+   "Service Unavailable", 502, 500 por texto) ejecuta con `io.popen` un
+   **binario `curl-impersonate` de 31,7 MB** que ASSella despliega en
+   `~/.config/SLSsteam/plugins/bin/` junto al wrapper `curl_chrome120`
+   (script bash con la lista de cifrados de Chrome 120, `-4` para resolver
+   solo IPv4). Ruta configurable por la clave `ImpersonateBin` del config de
+   SLSsteam. Si todo falla devuelve el resultado nativo (`false`) para que
+   Steam aborte limpio: *"un éxito silencioso con `pOutMRC=0` sería peor para
+   los updates: Steam seguiría con el manifest viejo de depotcache y parecería
+   que funciona"*. `7685ad4` **revierte** un fallback a depotcache dentro del
+   hook por esa misma razón. Sigue con **un solo proveedor**, wudrm, y con
+   el patrón de bytes fijo para localizar la función.
+4. **`ac7fec9`: sembrar depotcache antes de la entrega a Steam.** El handoff
+   nativo extrae los `.manifest` del zip de Hubcap en caché y los copia a
+   todos los `depotcache/` que encuentra (raíz de Steam, `.local/share`,
+   `.steam`, flatpak, biblioteca destino), *"para que Steam instale sin
+   consultar endpoints MRC que Cloudflare puede bloquear"*. Es nuestro modelo
+   0.8 (RESEARCH §19: fichero en depotcache = Steam no pide código), añadido
+   como cinturón sobre el hook.
+
+**[read] Lo que sabíamos y ellos no.** Nuestro `gmrc_store.hpp` documenta
+desde 0.21.0 que wudrm *"sirve un reto JS de Cloudflare al User-Agent `curl`,
+no al nuestro"* (`lumalinux/<versión>`), y que 20770407 también va tras
+Cloudflare y exige un UA que no sea el de curl. El nivel 1 de niwia se
+identifica precisamente como `curl/7.88.1`, y el `curl.downloadString` de
+SLSsteam manda el UA por defecto de libcurl: **lo que Cloudflare filtra es el
+UA, no la huella TLS**, o al menos con el UA cambiado nuestro hook no ve el
+503 (medido 42/42 el 16-sep, RESEARCH §20.4, y cascada opensteamtool → wudrm
+→ steam.run sin fallo por Cloudflare en los logs desde entonces). ASSella ha
+resuelto con 31 MB de binario y una impersonación de Chrome lo que se
+resuelve con una cabecera. No lo van a leer aquí; queda anotado por si el
+filtro cambia de criterio, momento en el que su solución sería la correcta y
+la nuestra dejaría de valer.
+
+### `canary`: rollback nativo, separación de modos, y el puente que no fue
+
+- **`2b5d9a6`, `76af3c2`, `652ab67`, `3fb2e32` (28-sep): rollback de build
+  por `ManifestIds`.** `steam_manifest_pinning.py` conserva los comentarios de
+  cada pin (`# Juego [desc] (appid)`), el patch del config escribe
+  `AdditionalDepots` comentados y, en modo solo-DLC, saca el appid base de
+  `AdditionalApps` y mete los DLC (si son menos de 64). Para volver a un
+  build: pin en `ManifestIds`, manifest sembrado en depotcache, y primero
+  `steam://validate/<appid>` para forzar la verificación (`76af3c2`),
+  revertido el mismo día: *"rely on Steam manual/boot update"*, el texto de la
+  UI pasa a "Steam will apply this build automatically on next launch or
+  update". Es exactamente lo que medimos en `pins.py` (Steam relee el pin al
+  lanzar, al arrancar y en cada reintento de update, no en reposo) y lo que
+  nuestro Change version hace con `StateFlags |= 2` en el ACF. Convergen.
+- **`eae10e4` (27-sep): un juego instalado por ACCELA no se "secuestra"
+  hacia el handoff nativo al actualizar.** Decide por marcadores (`.accela`,
+  `.depotdownloader`) y por el registro de "plugin games"; los nativos siguen
+  nativos, los ACCELA siguen con su descargador. Nosotros no tenemos dos
+  modos; nada que hacer.
+- **`0855aae` → `4d483cc` (24 → 26-sep): `assella_bridge.lua`, nacido y
+  muerto en dos días.** Un plugin de SLSsteam que abría un socket Unix
+  (`/tmp/assella_ipc.sock`) para avisar a ASSella de eventos y contar depots y
+  claves cargados. Retirado *"para evitar un crash"*; con él se va el
+  `reloadlua` por `/tmp/SLSsteam.API` y el "touch" del config: `sls_bridge.py`
+  ahora confía en el inotify de SLSsteam, y el handoff no reescribe un plugin
+  idéntico (`4d483cc`, `63a998c`: sin ventana de aviso por fichero vacío
+  durante la escritura atómica). Es la lección de moon D27 y de nuestro
+  `key_store`: el watcher del propio `.so` basta.
+- **`e8ad701` (27-sep): asistente de bienvenida de 5 pasos** (1.292 líneas +
+  un GIF de Skyrim de 2,4 MB) y menos ajustes de SLS. `40b5aa5`: el updater e
+  `install.sh` aíslan el canal `canary` del stable/beta. `d206ad4`, `e500221`,
+  `114f9a1`, `2aae4ae`: en modo nativo se deshabilitan branch, verify, update
+  all y uninstall; badge "Vapor"; Hubcap `get_user_stats` con caché de 60 s y
+  espera de 120 s tras un 429 (*"throttle Hubcap stats to fix 429"*: el panel
+  llamaba a la API de estadísticas demasiado). `d693baa`: búsqueda del
+  marcador sin distinguir mayúsculas.
+
+### `beta`: lo que no es wudrm
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `0e2ae82`, `2ab3e84` (23-sep) | `assfixer` 3.2.3 **escanea los `.lua` de `~/.config/SLSsteam/plugins/`** buscando `SLS.config:get*("Clave")` y añade esas claves a las legítimas, para no borrar `AdditionalDepots`/`DecryptionKeys`/`ImpersonateBin` como si fueran errores (issue #18). | No, pero es un dato sobre el config de SLSsteam: **los plugins Lua leen claves que no están en `res/config.yaml`**. Nuestro `slssteam_schema.py` completa claves que faltan, nunca borra, así que no tropieza con ellas. |
+| `a134e07` (23-sep) | Workshop: descargador por lotes multi-juego, sincronía con depotcache, `workshop_helpers.py` nuevo (491 líneas) (issue #17). | No (Workshop no es nuestro). |
+| `54ca547` (24-sep) | `workshop_keys.txt` a `db/` con migración. | No. |
+| `2544d5e`, `52d9ca0`, `589fba4` (24-27 sep) | **Caracteres nulos en nombres de fichero de manifests**: `DepotDownloader.dll` recompilado, y saneado en la extracción del zip, la caché local y el descargador. | Vigilar: si Hubcap está sirviendo manifests con nombres corruptos, nuestro `manifests.py` los pasa a Steam sin tocar. Sin caso visto en los nuestros. |
+| `9eef02e` (27-sep) | "Manifest envenenado": si la descarga falla con un manifest de Hubcap, lo regenera por wudrm (`at0-m`) y reintenta. | No. |
+| `8424c84`, `028832e` (28-sep) | Modo solo-DLC: purga de ajustes aplicados al desactivar, respeta los depots que eligió el usuario en vez de podar por heurística. | No. |
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | wudrm 503 por Cloudflare; ASSella lo esquiva con impersonación de Chrome | **Vigilar** | A nosotros no nos pasa: el filtro va por User-Agent y el nuestro no es `curl` (`gmrc_store.hpp`). Si un día el 503 nos llega con UA propio, la solución es la suya |
+| 2 | `at0-m`: manifest por código + CDN, Hubcap como rescate | — | Nuestro modelo desde 0.21.0; convergen |
+| 3 | Sembrar depotcache antes del handoff | — | Nuestro modelo 0.8; convergen |
+| 4 | Rollback por `ManifestIds`, sin `validate`, "al siguiente arranque" | — | Lo que mide `pins.py`; convergen |
+| 5 | `assfixer` lee las claves que piden los plugins | Dato | Las claves de plugin no están en `res/config.yaml`; nuestro completado no las toca |
+| 6 | Nombres de manifest con caracteres nulos desde Hubcap | Vigilar | Sin caso en los nuestros |
+| 7 | §6.5 (`yaml_config_manager.py`) sigue sin re-auditar | — | Pendiente |
+
+El siguiente barrido arranca en `beta@028832e` y `canary@3fb2e32`.
