@@ -226,9 +226,10 @@ razonable y no verificada.**
 > esfuerzo de plugin de descarga desde el lado de LuaTools Linux, en pausa
 > desde el 09-09, y con intención de ofrecerlo como opción**. Eso encaja con el
 > perfil de §1.5 (RE previa, port a la API nueva) y añade un candidato con
-> nombre. Pero el cruce de código **no lo confirma**: los dos patrones de
-> `download.lua` (`E8 ? ? ? ? 8B 75 ? 89 D8` y `E8 ? ? ? ? 83 C4 ? 83 78 ? ?
-> 0F 84`, resolución por sitio de llamada, captura por `GetPackage`) no
+> nombre. Pero el cruce de código **no lo confirma**: los patrones de sitio de
+> llamada de `download.lua` (`E8 ? ? ? ? 83 C4 ? 83 78 ? ? 0F 84` para
+> `GetPackage`; el `E8 ? ? ? ? 8B 75 ? 89 D8` que se citaba aquí es de
+> `example.lua`, corregido 28-sep) no
 > aparecen en `slsteam-moon`, que ancla prólogos y captura el paquete 0 por
 > `LoadPackage`. Son ingenierías distintas, no un port literal. Caben dos
 > lecturas: SWay reescribió la resolución para la API de Lua, o `download.lua`
