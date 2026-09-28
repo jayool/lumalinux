@@ -560,8 +560,10 @@ nada), y B solo si C no responde y A demuestra que pasa.
 los anónimos adyacentes (±16 MiB) y el scan corre al arrancar, cuando hay más
 fragmentación, así que 22 es una cota inferior; aun así queda lejos de 64.
 **Decisión: el defecto 1 se considera teórico para nuestra pila; el camino A se
-descarta.** Queda C (dos parches a Selectively11) como opcional, y el defecto 2
-como requisito del port a CachyOS. Para CachyOS, el
+descarta.** **C también, cerrado por el usuario el 28-sep**: no se proponen a
+Selectively11 parches que no hemos escrito ni probado nosotros. Queda B como
+opción futura si el port a CachyOS lo exige, y el defecto 2 como requisito de
+ese port. Para CachyOS, el
 defecto 2 va a `cachyos-port.md` como requisito: sin B o C, CloudRedirect en
 CachyOS es una lotería de 10 segundos.
 

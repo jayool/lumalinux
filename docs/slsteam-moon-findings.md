@@ -1778,7 +1778,7 @@ hiciera lo mismo el 20; `slssteam-analysis.md` §7.12).
 
 | # | Qué | Prioridad | Estado |
 |---|---|---|---|
-| 1 | Donaciones de códigos (D20) | Decisión | Explica el modelo de proveedores; LumaDeck es cliente del archivo, no donante. Decidir con el usuario si donar; **no** implementar por defecto |
+| 1 | Donaciones de códigos (D20) | **Cerrado 2026-09-28** | LumaDeck es cliente del archivo, no donante. **Decisión del usuario: no se dona**, ni por defecto ni como opción |
 | 2 | Moon deja de inyectar códigos (D20, `c1b5e15`) | — | El solape GMRC con moon desaparece; nada que hacer |
 | 3 | Beta recompilada: `CNetPacket +8`, raíces `RunIPCFrame` (D23) | Vigilar | Pasar nuestros patrones por `1790036264` en CI antes de que sea stable |
 | 4 | Steamless opt-in con `--steamless` (D21) | — | Misma tensión que nuestro *Remove DRM*; sin cambio |

@@ -3179,7 +3179,8 @@ as a data point; it does not change the preference for the ticket layer.
   `defaults/slssteam/config.default.yaml` on `main` ships `Donate: Enabled:
   yes` (URL `manifest.luastools.xyz`, 30 s interval) and `AutoUpdateApps: yes`.
   Every SLSDeck user donates request codes for owned depots unless they open
-  Advanced. Context for the D20 decision, unchanged: LumaDeck does not donate.
+  Advanced. D20 closed 2026-09-28: LumaDeck does not donate, by decision, not
+  as a pending default.
 
 ### §19.6 Summary
 
