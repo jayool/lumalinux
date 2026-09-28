@@ -4190,3 +4190,47 @@ sigue sin `237495b4…`, sólo escritorio: cosmético, §7.10).
 la capa CM, el analizador de procesos de SmartTickets y utilidades. El próximo
 barrido arranca en `dev@4a24b69` y `main@71021ad`, y debe recuperar la lectura
 de issues cuando haya vía.
+
+### 7.13 Ventana 2026-09-22 → 2026-09-28 — `dev` arregla lo que anotamos; el fichero que LumaDeck lee de upstream desaparece de git
+
+*Barrido el 2026-09-28 sobre el clon de `AceSLS/SLSsteam` (`main`, `dev`, tags),
+el tracker de moon (`swwayps/steam-monitor`) y, esta vez sí, las issues (la
+página pública se ha podido leer). `main` sigue en `71021ad` (release
+`20260903114323`): sin commit, tag ni release desde el 3 de septiembre.
+`dev`: 5 commits después de `4a24b69`, del 22 al 25 de septiembre, todos de
+Ace, sin publicar. Leídos como diff completo.*
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `ae5cbf1` (22-sep) | El log de arranque pasa a `SLSsteam (<rama> -> <commit>) loading in <proceso>` a nivel INFO (antes DEBUG, sin rama ni commit): `embed-version.sh` genera `BUILD_BRANCH` y `LAST_COMMIT_HASH` en `src/version.hpp`. De paso **`src/config_default.hpp` sale de git** (168 líneas borradas): ya se generaba en cada build desde `res/config.yaml` (`embed-config.sh`, regla que estaba antes), y con `32d6d96` queda en `.gitignore` junto a `version.hpp`. | **Sí, a LumaDeck.** `backend/slssteam_schema.py` refresca el esquema de claves del config descargando `raw.githubusercontent.com/AceSLS/SLSsteam/main/src/config_default.hpp`. Hoy sigue en `main`; el día que `dev` se publique, esa URL da 404. El código lo aguanta (`status != 200` → *keeping cache*, y si no hay caché, el YAML empaquetado), así que no rompe nada: **deja de refrescarse en silencio** y el completado de `config.yaml` se queda con las claves que LumaDeck lleve empaquetadas. La fuente correcta ya existe en `main` y es idéntica byte a byte al YAML del `.hpp` (verificado con diff): `res/config.yaml`. Cambio pequeño: apuntar la URL a `res/config.yaml` y saltarse la extracción del raw string. Pendiente de OK. |
+| `d659a66` (22-sep) | `Config::logLevels` arranca en `0xff`: los mensajes anteriores a la creación del config no se perdían por nivel. Quita el constructor por valor de `MTVariable`. | No. |
+| `6d9ad4e` (24-sep) | `hkUser_CheckAppOwnership` devuelve `bool` en vez de `uint32_t` (la función real devuelve `bool`; en i386 el llamador lee `al`, así que el `uint32_t` funcionaba de casualidad). | No. No enganchamos esa función. |
+| `1c2cc92` (25-sep) | `Utils::strsplit` toma `const std::string&`, y `Process_t::init` parte `cmdline` con `std::string("\0", 1)`: **exactamente el detalle anotado en §7.12** (`"\0"` como `const char*` era la cadena vacía). Tres días después de anotarlo, arreglado, aún sin que nadie leyera `cmdLine`. | No. Cierra la nota de §7.12. |
+
+**Issues (leídas).** Nuevas desde el último barrido con lectura: **#159**
+(kaunkrishna, 27-sep, abierta, sin respuesta): si las horas y los logros de
+SLScheevo persisten al comprar el juego, y si van a Steam Cloud. Pregunta de
+usuario, nada técnico. **#158** (EINTR en el `FileWatcher`) ya estaba cubierta
+en §7.11 con su arreglo `e6082d0`; sigue abierta aunque el commit está en
+`dev`. **#156** (Ace, 4-sep, "LuaHook issues") sigue abierta sin novedad.
+**#46** (Ace, nov-2025, "Problems with FakeAppIds"): abierta, sin comentarios;
+el cuerpo lista dos cosas que se rompen al cambiar el AppId, *tickets* y
+*achievements*, y pide reportes. Es la lista de efectos secundarios conocidos
+de la 480 que ahora aplica el Online de LumaDeck: los logros del juego bajo
+480 no son los del appid real (SLScheevo trabaja con el appid que ve), y los
+tickets son justamente por lo que Denuvo y el Online no se mezclan
+(`DenuvoGames`, FIXES_MAP.md de LumaDeck). Nada nuevo, pero es la referencia
+upstream para ambas decisiones.
+
+**Hashes de SafeMode y tracker de moon.** `res/updates.yaml` de upstream no
+ha cambiado (sigue `main@71021ad`). Moon ha publicado cuatro `steamclient.so`
+nuevos, todos **betas de escritorio**: `1790121765` (23-sep), `1790380355`
+(26-sep), `1790534246` y `1790545198` (27-sep). Stable de escritorio sin
+cambio (`1788652215`, 5-sep) y **la Deck sigue en `1788291500`**
+(`bc54101b…`, 2-sep). Nuestro `watch-steam.yml` no ha añadido nada, coherente:
+sin stable nuevo no hay hash que validar, y las betas no entran por decisión
+(§7.12, y RESEARCH: el feed RVA no lleva betas).
+
+**Accionable: uno, pequeño.** `slssteam_schema.py` → `res/config.yaml` como
+fuente del esquema (arriba). El resto de la coexistencia (§5) no cambia. El
+próximo barrido arranca en `dev@1c2cc92` y `main@71021ad`.
