@@ -654,3 +654,22 @@ vuelva a tocar.
 
 El próximo barrido arranca en `drappula/SFF` `8eaf238` (subárbol `LumaCore/`)
 y `Steam-Auto-PT` `654dab1`.
+
+## Re-sweep 2026-09-28 — `LumaCore/` sin cambios; ¿está muerto?
+
+*Mismo clon de `drappula/SFF` (`8eaf238`, 20-sep). `LumaCore/` no ha cambiado
+desde `cb71021` (4-sep, el ABI fix de `IClientRemoteStorage::FileExists` de
+§ anterior).* Pregunta del 28-sep: si LumaCore, ahora que Midrag paró en v6.6.6
+(21-ago), sigue vivo. Medido: commits en `LumaCore/` por mes, 13 en julio, 5 en
+agosto, 1 en septiembre, ninguno de Midrag desde el 21-ago; los mantenedores
+del fork (mallusrgreat, drappula, wtfseanscool) tocan el lanzador Python y
+entran en la DLL sólo para arreglar. **No está muerto, está en mantenimiento**:
+las notas de la release 6.8.0 (15-sep) lo tienen como motor por defecto en
+Windows ("Windows downloads use LumaCore again instead of the built-in
+downloader"), SteaMidra le precalienta la caché de patrones al arrancar tras
+un update de Steam y ofrece reiniciar el cliente para que los cargue, y el
+banner "No cached LumaCore support data" se limpia cuando el build actual queda
+cubierto. Es decir: la DLL no evoluciona, pero el lanzador la alimenta con los
+feeds de patrones del ecosistema BST (§ anterior: `Steam-Auto-PT` parado desde
+el 19-ago, el de madoiscool con más hashes). Se sigue barriendo con SFF, al
+mismo coste cero. Próximo barrido en `8eaf238`.

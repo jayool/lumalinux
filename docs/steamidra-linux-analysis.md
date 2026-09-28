@@ -497,3 +497,13 @@ con un agente de IA y lo dice.*
 
 **Ninguno produce trabajo.** El próximo barrido arranca en `drappula/SFF`
 `8eaf238`; `Midrags/SFF` parado.
+
+## §12 Re-sweep 2026-09-28 — sin commits desde `8eaf238`
+
+*Clon fresco de `drappula/SFF` el 2026-09-28: `main` sigue en `8eaf238`
+(20-sep, "fix: process name, ACF depots, and linux mono filter"), único
+branch, último tag `v6.8.0` (`3f72cdf`, 15-sep). Sin issues (el repo no las
+tiene abiertas). El `CHANGELOG.md` lleva un bloque "Unreleased" posterior a
+6.8.0 ya cubierto en §11 (depot picker, chunks ZIP, `InstalledDepots {}`,
+manifests con LuasTools primero, `Remove Key`, menos RAM). Nada que añadir; el
+próximo barrido arranca en `8eaf238`.*
