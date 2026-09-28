@@ -3083,17 +3083,22 @@ the new zip, and a fresh marker tells that callback to stop live workers but
 per channel (`build.json` with `channel` + `runNumber`).
 
 **[inferred]** This is the first place the two plugins differ in update UX
-rather than in the engine. LumaDeck's `self_update.py` (#23) compares the
-installed version with the latest release and, on request, downloads the zip
-and extracts it over the plugin directory, manual-first, one channel, our
-repo only; the user then restarts. Theirs goes through Decky's install flow
-(so Decky's own bookkeeping stays consistent) and survives Decky's
-uninstall-on-replace by design. Two things worth taking as questions, not
-code: (a) whether extracting over the plugin directory while Decky believes
-it owns it is a risk we have simply not hit yet, and (b) whether the marker
-trick (survive `_uninstall`) is what we would need if we ever let Decky
-install the zip. **Recorded as a follow-up for the update track**
-(`DESIGN_UI.md` "UPDATES"), not adopted.
+rather than in the engine. What LumaDeck actually does today (checked against
+the frontend on 09-28, not the module docstring): `downloadUpdateToDownloads`
+saves the release zip into `~/Downloads` and the user installs it by hand
+through Decky ▸ Developer ▸ Install from ZIP. The in-place path
+(`update_plugin`, extract over the plugin directory, pending zip applied at
+the next start) exists in `self_update.py` but **no UI calls it**: it was
+abandoned because the plugin directory is root-owned on most setups
+(`api.ts` comment). Theirs installs from inside the plugin through Decky's own
+install flow and survives Decky's uninstall-on-replace with the marker. That
+is the part the user notices. **Follow-up recorded (2026-09-28, user's
+decision): "update through Decky from inside the plugin"** — read how Decky
+exposes plugin install to a plugin, whether our `_uninstall` would wipe
+anything on replace, and whether a marker like theirs is needed. Rolling
+channels (a moving `<branch>-latest` per branch) are the automated form of
+"download the branch zip" we do by hand for testers; only worth it if the
+Decky-install path lands first.
 
 ### §19.2 ISP bypass: Zapret as a managed dependency, Hubcap over DoH and Tor (`vpn-bypass`)
 
@@ -3180,7 +3185,7 @@ as a data point; it does not change the preference for the ticket layer.
 
 | Item | Verdict |
 |---|---|
-| Update system through Decky's install path, replacement marker, channels, banner, changelogs | first UX divergence on updates; **follow-up question** for our update track (extract-over vs Decky install), not adopted |
+| Update system through Decky's install path, replacement marker, channels, banner, changelogs | first UX divergence on updates; **follow-up recorded: update through Decky from inside the plugin** (today: zip to ~/Downloads + Developer ▸ Install from ZIP) |
 | Zapret DPI bypass as root + Hubcap over DoH/Tor | censorship workaround for RU users; not our problem space; credentials-in-headers already ours |
 | Nexus Mods collections (stage only, `nxm://` relay) | scope creep; not adopted |
 | Automatic Unsteam on error 65432 (branch, not on `main`) | third shape of the SteamStub answer; data point for the Steamless/spliced-tickets decision |
