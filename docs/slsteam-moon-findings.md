@@ -1789,3 +1789,117 @@ El próximo barrido arranca en `837e0dd` (`slsteam-moon`), `62767b3` (`beta`),
 `499b50e` (`millennium`), `9edb704` (`luatools-moon`), `52475c3` (`lumen`),
 `19da055` (`cloudredirect-moon`), `2d1a26e` (`jsdelivr`) y `92d027b`
 (`steam-monitor`).
+
+## Delta — 2026-09-28 (desde el delta del 2026-09-22)
+
+*Barrido el 2026-09-28 sobre clones refrescados de `swwayps/slsteam-moon` (las
+tres ramas, tags), `luatools-moon`, `lumen`, `cloudredirect-moon`, `jsdelivr` y
+`steam-monitor`. Issues y releases leídas esta vez por la página pública. Nada
+compilado, nada probado en dispositivo.*
+
+**Seis commits, todos del 23-sep, todos de moon**, sobre `837e0dd`; sin tag
+(v2.9 sigue siendo la release, 19-sep). `beta` en `62767b3` y `millennium` en
+`499b50e`, sin movimiento. Un solo tema: **que un juego añadido en caliente se
+vea, con sus DLC, sin reiniciar Steam**, y que cuando no se vea, el log diga por
+qué. Son remates del hot reload de D19/D24, no funcionalidad nueva.
+
+### D26 — `43f5b6d`: los DLC de un juego añadido en caliente salían como no poseídos hasta reiniciar
+
+`DLC::shouldUnlockDlc` exigía `IClientUtils::getAppId() != 0`, es decir, un
+contexto de app activa, que sólo existe en el pipe de un juego. En el pipe del
+propio cliente `getAppId()` es 0, así que la biblioteca y la tienda nunca
+recibían respuesta del hook y Steam derivaba la propiedad del DLC de la licencia
+del paquete 0. Esa derivación corre antes de que la UI pinte en un arranque frío,
+pero no para un juego añadido con Steam ya abierto: sus DLC se listaban como no
+poseídos hasta el siguiente reinicio. Ahora la puerta es sólo el ámbito (DLC
+descubierto desde una base gestionada o declarado en `DlcData`, no excluido, sin
+licencia nativa), sin contexto. **Para nosotros: la misma familia que nuestro
+§19 de RESEARCH** — la propiedad de DLC que ve el descargador sale del paquete 0
+vía `keys.txt`, y nuestro reconcile (`NotifyLicensesUpdated`) es lo que evita el
+reinicio; el caso Brotato ("Update Optional" tras añadir clave y manifest) es el
+mismo síntoma por el lado del descargador. Sin cambio: no tenemos hook de DLC
+por pipe, lo hace SLSsteam.
+
+### D27 — `100d39e`: el watcher del directorio de scripts se registraba sólo si el directorio ya existía
+
+`config/stplug-in` no existe hasta el primer juego añadido, e inotify no puede
+vigilar un path inexistente; nadie volvía a registrar el watch, así que en una
+instalación limpia **el primer Add no producía evento** y hacía falta reiniciar
+Steam. Ahora crea el directorio antes de `addFile`, y si el watch o el hilo
+fallan (el caso típico: límite de watches inotify por usuario) lo dice con un
+`warn` que nombra la consecuencia ("adding a game will need a Steam restart").
+**Verificado en el nuestro, ya lo hacíamos**: `src/key_store.cpp:170-189` hace
+`mkdir` del directorio de `keys.txt` antes de `inotify_add_watch` y avisa con
+`Warn` si `inotify_init1` o el watch fallan ("no-restart disabled").
+
+### D28 — `447ef71`, `013550d`, `44436f3`: el splice de `appinfo.vdf` deja de rendirse en silencio
+
+Tres commits sobre la capa que no tenemos (el aprovisionamiento anónimo de
+appinfo, `slsdeck-analysis.md` §2 "theirs"), leídos por lo que enseñan:
+
+- `447ef71`: un lock de fichero tiene tres estados, adquirido / en manos de otro
+  / **inutilizable** (el path no es un fichero regular nuestro), y todo el código
+  preguntaba `!acquired()`, con lo que un lock inutilizable era *"un interruptor
+  de apagado silencioso"* para el splice de arranque, el splice en vivo y el
+  commit de metadatos de DLC. Nuevo `heldByAnother()`; sólo la contención real
+  hace parar, y la escritura pasa a ser compare-and-swap sobre la identidad del
+  fichero (`publishCheckedIfUnchanged`) con snapshot previo para el rollback.
+- `013550d`: el conjunto de "autoridad local" (el filtro que impide que un
+  refresco PICS vacío, con token denegado, pise un registro empalmado) se publica
+  **antes** del splice, no después: una transacción fallida retiraba la
+  protección a apps que no tenían nada que ver y Steam les borraba la sección
+  `common`, con lo que **desaparecían de la biblioteca**. Además la autoridad cae
+  al par de caché en disco (`picsbuffer_<appid>`) cuando el conjunto publicado
+  está incompleto, y un registro de DLC malo ya no aborta el lote entero.
+- `44436f3`: cada rechazo de publicación tiene su línea con motivo ("the managed
+  set changed during preparation", "the owner work queue is tearing down"…), y
+  si no hay `appinfo.vdf` lo dice en `warn` en vez de saltarse todo el bloque.
+
+**Lección transversal, no acción**: los tres son "un fallo parcial no puede
+costar el conjunto, y nunca en silencio". Nuestro equivalente ya está escrito
+así en las capas que tenemos (rescate de patrones por capas, `guard.log`, el
+reconcile que loguea cada anchor); no hay splice de appinfo que endurecer.
+
+### Issues y releases (leídas por fin)
+
+- **#6** (ItszFinn, 17-ago, cerrada sin respuesta visible): pregunta si moon
+  enviaría arriba sus arreglos portables (nueve de `cloudredirect-moon`, los
+  crashes de arranque y el cuelgue en frío de `slsteam-moon`) en vez de mantener
+  forks permanentes. Cerrada; sin comentario del mantenedor. Coherente con lo
+  que ya sabíamos: moon y upstream se leen (D25, §7.12 de SLSsteam) pero no se
+  envían nada.
+- **#7** (yofukashino, 24-ago, abierta, sin respuesta): pide poder desactivar la
+  "cobertura de escritorio" del instalador — servicios systemd de usuario,
+  sobreescritura de `.desktop`, edición de `.bashrc`/`.zshrc` — por variable de
+  entorno, en instalación y en ejecución. El instalador de moon toca todo eso
+  por defecto; el nuestro (`setup.sh`) no edita rc files ni instala servicios,
+  sólo el wrapper y el `.desktop`. Nada que hacer.
+- **Releases**: v2.9 (19-sep) sigue siendo la última; ninguna pre-release.
+
+### Los satélites
+
+- **`luatools-moon`**, **`lumen`**, **`cloudredirect-moon`**: sin commits
+  (`9edb704`, `52475c3`, `19da055`).
+- **jsDelivr** (`94d9148`, 24-sep): el zip `slsteam-moon-linux-2.9-lumen.zip`
+  **resubido otra vez bajo el mismo tag** (5021441 → 5020684 bytes, sha
+  `4420d410…`), y el `manifest.json` actualizado. Cuarta resubida de v2.9 (21, 22
+  y ahora 24-sep); el patrón de D18 sigue: el tag no identifica el binario.
+- **steam-monitor** (`58c784a`, 27-sep): cuatro betas de escritorio nuevas
+  (`1790121765` 23-sep, `1790380355` 26-sep, `1790534246` y `1790545198` 27-sep).
+  Stable de escritorio `1788652215` sin cambio; **Deck sin cambio
+  (`1788291500`)**. Detalle en `slssteam-analysis.md` §7.13.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | DLC de un juego añadido en caliente (D26) | — | Lo cubre SLSsteam por pipe; nuestro lado (paquete 0 + reconcile) ya no reinicia |
+| 2 | Watch del directorio antes de que exista (D27) | — | Verificado: `key_store.cpp` ya crea el directorio y avisa |
+| 3 | Locks inutilizables como "apagado silencioso" (D28) | — | Capa que no tenemos; lección ya aplicada en las nuestras |
+| 4 | Beta recompilada (D23) | Vigilar | Cuatro betas más desde el 22; ninguna stable. Sigue en pie: pasar patrones por la última beta en CI antes de que ascienda |
+| 5 | Issues / releases | Cerrado | Leídas; #6 y #7 sin efecto para nosotros |
+
+El próximo barrido arranca en `44436f3` (`slsteam-moon`), `62767b3` (`beta`),
+`499b50e` (`millennium`), `9edb704` (`luatools-moon`), `52475c3` (`lumen`),
+`19da055` (`cloudredirect-moon`), `94d9148` (`jsdelivr`) y `58c784a`
+(`steam-monitor`).
