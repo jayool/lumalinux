@@ -1685,3 +1685,36 @@ and `manifests.py` handle the on-disk copies. Nothing to adopt.
 
 Nothing in this window changes the §7 verdicts; §10.5's "lead retained" on
 depot keys becomes "converged". Next sweep starts at `b43bc19`.
+
+## §12 Re-sweep 2026-09-28 — nothing since `b43bc19`; the project is winding down
+
+**[measured]** `IPedrax/SteamFlipper` `main` @ `b43bc19` (2026-09-21), no
+commit since; one branch; tags up to `v1.3.0`, **no GitHub release at all**
+("There aren't any releases here") — the installer's update chain points at
+`madoiscool/SteamFlipper` (404 today) and `git.lua.tools`, never here. 100
+commits in total, all IPedrax, all between 09-02 and 09-21: 83 in the first
+week, 12 in the second, 3 in the third, 2 in the fourth, 0 in the fifth.
+Issues: two, both closed. #1 (AussieAppz, 09-04, "[BUG] Steam Deck
+Installation Issue"). #2 (LucianoSkx, CachyOS, build `237495b4…`): the
+`CheckAppOwnership` hook installed and 130 apps entered the fake licence
+cache, but `MarkLicenseAsChanged` / `ProcessPendingLicenseUpdates` were not
+found on that build and *"Steam never processed these license changes,
+leaving games displaying as unpurchased"*; asks for pattern data because the
+generator's fallback addresses are for another build. Closed 09-18 with no
+maintainer reply visible — the same pair §11.2 saw pinned on `237495b4` and
+reverted for segfaults. That is the state of the fork's Gate 6 on the desktop
+stable: it does not have one.
+
+**[inferred] Whether the doc earns its sweep.** What SteamFlipper gave us was
+never its code, which is OpenSteamTool's with a Linux backend, but the fact
+that it hooks **our exact binary** (32-bit `steamclient.so`) and therefore
+occasionally agrees or disagrees with our addresses independently: depot keys
+via `CConfigStore` slot 6 (§11.1, converged), the licence-refresh pair (§11.2,
+our Reconcile). That value is realised; with the author gone quiet and no
+release channel, there is nothing left to learn weekly. The §11 follow-up
+(probe `steam_client_ubuntu12` = `237495b4` with `probe-steam.yml` to learn
+whether our Reconcile lands on `0x188c950` there) is ours to run for the
+CachyOS port regardless of this fork and stays in `cachyos-port.md`.
+**Decision proposed: keep the document, drop the periodic sweep** — a
+`git ls-remote` on `IPedrax/SteamFlipper` at the start of the next round is
+enough to notice if it moves again. Next sweep, if any, starts at `b43bc19`.
