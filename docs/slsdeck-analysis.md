@@ -3041,3 +3041,152 @@ donation default stays on once users notice the Advanced page.
 
 The next sweep starts at `458271a` (`main`), `5c54b1f` (`dlc-fix`),
 `7520175` (`tokeer-testing`) and `67bf33d` (`cloudredirect-dev`).
+
+## §19 Delta — 2026-09-28 (commits after `458271a` / `5c54b1f`)
+
+**Frozen references for this section.** `main` @ `8dd2c0e` (2026-09-27):
+two commits since §18 — `4c15480` "Promote update-system to main" (09-26, a
+**squash** with one parent, 51 files, +14.148/−8.706) and the rolling-release
+publish. So everything §18 read on `dlc-fix` (0.9.64) is on `main` now, plus
+the update system below; `archived-stable` @ `29a1430` holds the pre-promotion
+`main` (`04ebf69` "Archive main before update-system promotion"). `dlc-fix`,
+`tokeer-testing`, `cloudredirect-dev` unchanged. New branches since §18:
+`update-system` @ `6b4a1b1` (11 commits, 09-25/26), `vpn-bypass` @ `5569009`
+(4 commits, 09-27, reset onto `main`), `nexus-mods-integration` @ `3636a6f`
+(2 commits on top of `vpn-bypass`, 09-28). Two older branches never covered:
+`unsteam-automatic` @ `d5a9099` and `hubcap-workshop` @ `80f2fdb` (both
+09-13, not on `main`). Releases after 09-21: immutable
+`update-system-v0.9.65` … `v0.9.68` and `update-system-build-113/114`
+(09-26), rolling `vpn-bypass-latest` (0.9.64, 09-27),
+`nexus-mods-integration-latest` (0.9.63, 09-28), `main-latest` (09-27),
+`archived-stable-latest`. `plugin.json` on `main` still says 0.9.61; the
+version users see comes from the release, not the tree. Issues: creation
+restricted, none listed. Twenty branches, nineteen release workflows.
+
+### §19.1 A Decky-native update system (`plugin_updates.py`, 339 L, on `main`)
+
+**[read]** The plugin now updates and downgrades **itself through Decky's own
+install path**. It lists `Kaal31/slsdeck` releases from the GitHub API (with
+the releases Atom feed as fallback when the API is rate-limited; the XML
+module is blocked in Decky's sandbox, so the feed is parsed by regex),
+normalises them into channels — rolling `<branch>-latest` tags and immutable
+`update-system-v<semver>` / `update-system-build-<n>` tags, each with an
+expected asset name (`SLSDeckUniversal-<channel>.zip`, …) and an allow-listed
+download prefix (`github.com/Kaal31/slsdeck/releases/download/`) — and
+exposes a channel selector, a Quick Access update banner, automatic
+changelogs, and "reinstall" for the current rolling build. The mechanism:
+before asking Decky to install another version it arms a **replacement
+marker** in Decky's settings directory (outside the plugin directory Decky
+replaces, TTL 5 min); Decky calls the plugin's `_uninstall` while installing
+the new zip, and a fresh marker tells that callback to stop live workers but
+**keep managed dependencies and user data**. Semantic versions are tracked
+per channel (`build.json` with `channel` + `runNumber`).
+
+**[inferred]** This is the first place the two plugins differ in update UX
+rather than in the engine. LumaDeck's `self_update.py` (#23) compares the
+installed version with the latest release and, on request, downloads the zip
+and extracts it over the plugin directory, manual-first, one channel, our
+repo only; the user then restarts. Theirs goes through Decky's install flow
+(so Decky's own bookkeeping stays consistent) and survives Decky's
+uninstall-on-replace by design. Two things worth taking as questions, not
+code: (a) whether extracting over the plugin directory while Decky believes
+it owns it is a risk we have simply not hit yet, and (b) whether the marker
+trick (survive `_uninstall`) is what we would need if we ever let Decky
+install the zip. **Recorded as a follow-up for the update track**
+(`DESIGN_UI.md` "UPDATES"), not adopted.
+
+### §19.2 ISP bypass: Zapret as a managed dependency, Hubcap over DoH and Tor (`vpn-bypass`)
+
+**[read]** Two layers. (1) `zapret.py` (333 L): downloads the latest
+`bol-van/zapret` release unchanged into
+`~/.local/share/slsdeck/dependencies/zapret/upstream`, keeps a **67-host
+list copied from SteaMidra's `zapret-SteaMidra-1.9.9.d` bundle**
+(Cloudflare, Discord, cloudfront…; `assets/zapret/SOURCE.md`) as an overlay,
+and when the user enables it runs `nfqws` as `daemon` with
+`--dpi-desync=multisplit --dpi-desync-split-seqovl=568` and a fake TLS
+pattern, on NFQUEUE 210 for tcp 80/443, adding `iptables`/`ip6tables` rules
+tagged `SLSDeck-zapret`; PID in `/run/slsdeck-zapret.pid`, resumed after a
+cold boot if it was enabled, removed with its rules on disable/uninstall.
+Refuses unless the Decky backend runs as root and SteamOS has `iptables`.
+(2) `httpc.py`: for `hubcapmanifest.com` only, a 451, an HTML body on 200 or
+a transport error triggers a retry via **DoH** (Cloudflare, then Google) to
+the resolved IP with `Host` + SNI set to the real name, and then an
+**already-running local Tor** (9080 http / 9050 socks5; never installs or
+starts Tor). Alongside, the Hubcap key moves from `?api_key=` in the URL to
+`Authorization: Bearer`, and Ryuu's key goes as `X-Auth-Key`, so no secret is
+logged in a URL.
+
+**[inferred]** Zapret is the Russian DPI-bypass tool; the host list is the
+one SteaMidra ships for the same users. This is SLSDeck deciding that
+reaching Hubcap and Discord (Tokeer's activation runs through Discord) from
+a censored ISP is the plugin's job, at the price of running a packet
+mangler as root on the Deck with firewall rules. Not our problem space: our
+manifest path is native GMRC with a provider cascade, and CloudRedirect /
+LuaTools traffic is HTTPS to hosts we do not proxy. The credential detail is
+already ours: `manifests.py` and `downloads.py` move Hubcap's `?api_key=`
+into `Authorization: Bearer` and scrub the URL before logging (since the
+Hubcap integration). **Nothing to adopt.**
+
+### §19.3 Nexus Mods collections (`nexus-mods-integration`, 09-28)
+
+**[read]** `nexusmods.py` (457 L) + `NexusMods.tsx`: the Nexus API with the
+user's own API key (`apikey` header, GraphQL for collection revisions),
+trending mods, a collection's file list, and downloads: Premium accounts get
+direct links; free accounts get the **official `nxm://` handoff** — the plugin
+writes a user-level `.desktop` (`slsdeck-nexus-nxm.desktop`, `xdg-mime
+default … x-scheme-handler/nxm`) whose relay script queues each link the user
+produces with one "Slow Download" click per file. The module states it never
+scrapes or forges links, and that archives are **staged only**: *"Deploying
+them is game-specific and must not be guessed."*
+
+**[inferred]** Scope creep in the same direction as the roulette, the
+minigame and the Store patch: SLSDeck is becoming a Deck front-end for
+everything around a pirated game. The honest limit they wrote (stage, do not
+deploy) is the right one; our Workshop page is the nearest thing we have and
+it stays Workshop-only. **Not adopted.**
+
+### §19.4 Two branches from 09-13 that §17/§18 missed
+
+**[read]** `unsteam-automatic` (`d5a9099`): the frontend enables per-app
+Proton logging and reports short launches; the backend reads the fresh log
+for the SteamStub failure signature (`application load error 3:0000065432`)
+and, once per app, starts the existing **Universal Unsteam** fix job
+(`fixes.py` remains the only writer, so the normal un-fix path still works);
+previously managed appids stay listed so disabling the feature can remove
+exactly the launch-option additions it made. `hubcap-workshop` (`80f2fdb`):
+automatic Hubcap fallback for Workshop manifests, fetched concurrently, woken
+on Steam state changes, plus a Workshop-button visibility toggle. Neither has
+reached `main`.
+
+**[inferred]** The Unsteam branch is SLSDeck's answer to the same problem our
+Steamless button, the spliced-tickets plugin and `steam-stubbed` all address
+(the stub's ownership check failing, error 65432): **detect the failure in
+the Proton log and apply a `steam_api` replacement automatically**. It is a
+third shape for the decision parked in LumaDeck (`FIXES_MAP.md`, Steamless
+vs spliced tickets): reactive, file-level, after a failed launch. Recorded
+as a data point; it does not change the preference for the ticket layer.
+
+### §19.5 Watch items from §18, closed
+
+- *"whether `dlc-fix` (0.9.64) lands on `main` as-is"* — it did, inside the
+  update-system squash, with `main`'s `plugin.json` left at 0.9.61.
+- *"whether the donation default stays on"* — it does:
+  `defaults/slssteam/config.default.yaml` on `main` ships `Donate: Enabled:
+  yes` (URL `manifest.luastools.xyz`, 30 s interval) and `AutoUpdateApps: yes`.
+  Every SLSDeck user donates request codes for owned depots unless they open
+  Advanced. Context for the D20 decision, unchanged: LumaDeck does not donate.
+
+### §19.6 Summary
+
+| Item | Verdict |
+|---|---|
+| Update system through Decky's install path, replacement marker, channels, banner, changelogs | first UX divergence on updates; **follow-up question** for our update track (extract-over vs Decky install), not adopted |
+| Zapret DPI bypass as root + Hubcap over DoH/Tor | censorship workaround for RU users; not our problem space; credentials-in-headers already ours |
+| Nexus Mods collections (stage only, `nxm://` relay) | scope creep; not adopted |
+| Automatic Unsteam on error 65432 (branch, not on `main`) | third shape of the SteamStub answer; data point for the Steamless/spliced-tickets decision |
+| `dlc-fix` on `main`; donation default-on confirmed | §18 watch items closed |
+
+The next sweep starts at `8dd2c0e` (`main`), `6b4a1b1` (`update-system`),
+`5569009` (`vpn-bypass`), `3636a6f` (`nexus-mods-integration`), `5c54b1f`
+(`dlc-fix`), `7520175` (`tokeer-testing`), `67bf33d` (`cloudredirect-dev`),
+`d5a9099` (`unsteam-automatic`).
