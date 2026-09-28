@@ -673,3 +673,40 @@ cubierto. Es decir: la DLL no evoluciona, pero el lanzador la alimenta con los
 feeds de patrones del ecosistema BST (§ anterior: `Steam-Auto-PT` parado desde
 el 19-ago, el de madoiscool con más hashes). Se sigue barriendo con SFF, al
 mismo coste cero. Próximo barrido en `8eaf238`.
+
+### De dónde saca los patrones el fork de drappula (leído el 28-sep)
+
+**Windows, dos capas.** (1) La DLL (`LumaCore/source/patterns/PatternFetcher.cpp`)
+lleva grabados tres orígenes para `<sha>.toml` por módulo (`steamclient`,
+`steamui`, `steamclientipc`): `raw.githubusercontent.com/KoriaPolis/Steam-Auto-PT`
+rama `pattern`, su espejo jsDelivr, y `gitflic.ru/midrags/steam-auto-pt` por la
+API de blobs; TOML firmado (RSA-PSS, `.sig` opcional). Orden: **caché local
+primero** (`<Steam>\lumacore\pattern\<sha>.toml`), luego un espejo de usuario
+opcional, luego los tres orígenes. `Steam-Auto-PT` está **parado desde el
+19-ago** (último: stable 1785799196, beta 1787097529), así que para cualquier
+build posterior la DLL no encuentra nada por red. (2) El lanzador Python
+(`sff/lumacore/lumacore_setup.py`, `ffd70db` 8-sep, "switch pattern source to
+MigoReleases") **precalienta esa caché** al arrancar: calcula el sha256 de
+`steamclient64.dll` y `steamui.dll`, baja `<sha>.toml` de
+`raw.githubusercontent.com/michelegoku3/MigoReleases` rama `pattern` (los
+otros dos orígenes, comentados) y lo escribe donde la DLL lo lee. Ese repo es
+de una persona (michelegoku3, "migo3"), sin README, con un bot de Actions que
+commitea "patterns <steam_version> (<sha>…)" y TOML generados por una
+herramienta llamada `SteamPatternForge` (cabecera de cada fichero: `name`,
+`rva`, `sig` por función, con `RecvPkt`, `IPCProcessMessage`,
+`BBuildAndAsyncSendFrame`, `GetPipeClient`…). Contenido a 28-sep: dos
+`steamclient` (`caba4826…` = stable Windows 1788652215 del 5-sep, `3f864358…`
+= 1782533657), dos `steamui`, dos `steamclientipc`, bundles para 1782533657,
+1788400362 y 1788652215; una prueba con una beta el 23-sep, revertida el 24.
+Es decir: **la cobertura Windows de SteaMidra hoy es el stable actual, servida
+por un repo unipersonal**; la fuente original de LumaCore está muerta.
+
+**Linux: no hay patrones que traer.** SFF no descarga patrones para SLSsteam;
+los de SLSsteam van compilados en el `.so` y el gate es su lista SafeMode. Lo
+que hace el fork ante "Unknown steamclient.so hash" (`sff/linux/slssteam.py::
+fix_hash_mismatch`) es: parar Steam, `headcrab reset` (rebaja el bootstrap de
+Steam a la versión que Headcrab fija), arrancar Steam un momento, `headcrab
+install` para reinyectar, y reescribir el config con `SafeMode: no` y
+`WarnHashMissmatch: no`. O sea, **sujeta el cliente y apaga la puerta del
+hash** en vez de conseguir patrones nuevos. Lo contrario de nuestro modelo
+(feed RVA + derivación + rescate por capas sobre el cliente que Valve sirva).
