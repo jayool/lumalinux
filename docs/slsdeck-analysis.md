@@ -1579,7 +1579,7 @@ of our stack three iterations out of date.
 - **Ours**: `jayool/LumaDeck` @ `eea30e5`, `jayool/lumalinux` @ `87ee544`.
 - **DeckTools**: [`lopesleo/DeckTools`](https://github.com/lopesleo/DeckTools)
   — the common ancestor, used as the control corpus in §5.9.
-- **Superseded**: `slsdeck-findings.md` (2026-07-22) — analysed a repository
+- **Superseded**: `slsdeck-findings.md` (2026-07-22; withdrawn, file removed 2026-09-28, in git history) — analysed a repository
   that no longer exists (§1.1).
 
 ---

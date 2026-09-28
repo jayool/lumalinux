@@ -3,7 +3,7 @@
 *Investigation date: 2026-08-13. Reference: [`Midrags/SFF`](https://github.com/Midrags/SFF)
 @ `6d2fb30` (SteaMidra `6.6.4`), the `LumaCore/` subtree — the injected DLL, not
 the Python launcher. C++20/CMake, MSVC, **x64-only**, Microsoft Detours + Lua 5.4
-+ protobuf + toml++. Companion to [`opensteamtool-findings.md`](opensteamtool-findings.md),
++ protobuf + toml++. Companion to [`bettersteamtools-findings.md`](bettersteamtools-findings.md),
 [`slsteam-moon-findings.md`](slsteam-moon-findings.md) and
 [`slssteam-analysis.md`](slssteam-analysis.md); the same coexistence lens applies.*
 
@@ -87,7 +87,7 @@ implemented as a network / IPC / wire hook is not portable to lumalinux** — it
 would double-wrap or reorder SLSsteam's own hooks and crash. lumalinux must use
 distinct **function-layer** seams, exactly as it already does for DepotKey /
 BuildDep / GMRC. This one ruling — identical to `slsteam-moon-findings.md` and
-`opensteamtool-findings.md` — is *why* several things LumaCore does in one place
+`bettersteamtools-findings.md` — is *why* several things LumaCore does in one place
 are split across three components on our side.
 
 ### LumaCore feature inventory (reference)
@@ -596,7 +596,7 @@ nuevo sin clave y Hubcap no la trae".**
 - lumalinux: `src/hooks/{depot_key_hook,depot_dependency_hook,gmrc_hook,shader_depot_hook,package_zero_finder,load_package_hook}.cpp`,
   `src/{patterns,rva_feed,vaddr_xlate,update,sha256,key_store,license_reconcile,sls_achievement_unblock,status,gmrc_store}.*`,
   `src/main.cpp`, `tools/steamidra_lite.py`; `docs/method.md`, `docs/RESEARCH.md` §11 + §15 + §17,
-  `docs/rva-feed-design.md`, `docs/opensteamtool-findings.md`, `docs/slsteam-moon-findings.md`,
+  `docs/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon-findings.md`,
   `docs/slssteam-analysis.md`.
 - SLSsteam (`AceSLS/SLSsteam`): `ticket.cpp`, `apps.cpp`, `Achievements::sendAndRecvGetUserStats`.
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.
@@ -626,7 +626,7 @@ commit** desde `fa44fc9`. El feed de patrones del DLL,
 
 **El feed está muerto y el cliente actual no está en él.** Comparado con
 `madoiscool/steam-monitor` `pattern` (el feed de BetterSteamTools,
-`opensteamtool-findings.md`, delta del 22-sep): 28 TOMLs de `steamclient`
+`bettersteamtools-findings.md`, delta del 22-sep): 28 TOMLs de `steamclient`
 en `Steam-Auto-PT`, 24 en el de madoiscool, 15 comunes; **9 hashes solo en el
 de madoiscool**, todos posteriores al 19-ago, entre ellos el `steamclient64`
 de la **estable de Windows 1788652215** (añadido allí el 10-sep) y los cinco

@@ -1,4 +1,10 @@
-# Findings — OpenSteamTool vs lumalinux + LumaDeck (research notes)
+# Findings — BetterSteamTools (the live OpenSteamTool fork, LuaTools' engine) vs lumalinux + LumaDeck
+
+> *Renamed from `opensteamtool-findings.md` on 2026-09-28: since the 09-12 delta
+> this file tracks `madoiscool/BetterSteamTools` (LuaTools' official engine, its
+> MRC/donation system) and `huanyuejue/OpenSteamTool` (the Chinese fork), not
+> the dormant `OpenSteam001/OpenSteamTool`. The original investigation below is
+> kept as written.*
 
 *Investigation date: 2026-07-03. Reference: [`OpenSteam001/OpenSteamTool`](https://github.com/OpenSteam001/OpenSteamTool)
 @ `main` (GPL-3.0, C++20/CMake, Windows-only). These are notes for a possible

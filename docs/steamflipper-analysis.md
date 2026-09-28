@@ -1,5 +1,12 @@
 # SteamFlipper vs the LumaDeck stack — exhaustive analysis
 
+> *Status 2026-09-28: reference only, **no periodic sweep** (decision with the
+> user, §12). The fork went quiet on 09-21 with no release channel; what it gave
+> us — independent agreement on our exact binary (§11.1 depot keys, §11.2 the
+> licence pair = our Reconcile), the LD_PRELOAD argument (§3.3) and the CachyOS
+> follow-up — is realised. A `git ls-remote` on `IPedrax/SteamFlipper` at the
+> start of a round is enough to notice if it moves again.*
+
 *Complete. Provenance and inventory (§1–§2), the injection model (§3), the
 gate-by-gate comparison (§4), surviving a Steam update (§5), trust and risk (§6),
 and the verdict (§7). **§7.5 is the adversarial pass** over the conclusions that
@@ -22,7 +29,7 @@ load-bearing.*
 | **Theirs** | SteamFlipper (one `.so`, injected into the 32-bit Steam client) |
 
 SteamFlipper is a single in-process module that spans what our stack splits
-across three components. Like OpenSteamTool before it (`opensteamtool-findings.md`),
+across three components. Like OpenSteamTool before it (`bettersteamtools-findings.md`),
 its ownership/PICS/DLC layer is **SLSsteam's** territory, its keys/pin/GMRC layer
 is **lumalinux's**, and its tickets/cloud/stats layer is **LumaDeck's**. Unlike
 OST, it targets **our platform and our binary**: 32-bit `steamclient.so`, GCC-built,
@@ -278,7 +285,7 @@ default. **§6 has not been written; nothing above is a risk assessment.**
 
 ### §2.4 This invalidates our own architecture-constraint ruling — for this fork
 
-`opensteamtool-findings.md` closes its Context section with a ruling we have since
+`bettersteamtools-findings.md` closes its Context section with a ruling we have since
 reused twice:
 
 > *"any OST mechanism implemented as a network/IPC/message hook is **not portable
@@ -294,7 +301,7 @@ GCC-built i386 `steamclient.so` we hook, by a script we can run
 The second leg still stands — we run vanilla SLSsteam and it owns
 `CProtoBufMsgBase` — so "message-layer hooks collide with SLSsteam" remains true.
 But "not portable because the platform is different" is now **false for anything
-in this fork**, and `opensteamtool-findings.md` should carry a pointer to that
+in this fork**, and `bettersteamtools-findings.md` should carry a pointer to that
 correction once this document has a verdict. That is a documentation fix, deferred
 to §8 rather than made now.
 
@@ -671,7 +678,7 @@ the first thing I would test if we ever move to §0's excluded execution track.
 
 ### §4.4 Function layer vs message layer — and why the choice bit them here
 
-`opensteamtool-findings.md` recorded that OST hooks freely at the message/wire/IPC
+`bettersteamtools-findings.md` recorded that OST hooks freely at the message/wire/IPC
 layer while lumalinux must use function-layer seams, because SLSsteam already owns
 `CProtoBufMsgBase` on our side. We framed that as *our* constraint — a limitation
 imposed by not forking SLSsteam.
@@ -1326,7 +1333,7 @@ Five, and **none is a code change**. Three are corrections to our own
 documentation that this analysis turned up; two are evidence-gated candidates that
 must not be implemented before §5.9's experiment runs.
 
-- **F1 — documentation, `opensteamtool-findings.md`.** Its architecture-constraint
+- **F1 — documentation, `bettersteamtools-findings.md`.** Its architecture-constraint
   ruling loses its platform leg for this fork (§2.4). The message-layer leg still
   holds — but for the original reason only (coexistence with vanilla SLSsteam),
   **not** because the layer is unavailable on Linux. §4.4 corrects a claim this
@@ -1414,7 +1421,7 @@ than *absent from upstream*.
 - OpenSteamTool (`OpenSteam001/OpenSteamTool` @ `2a08b0b` and 12 branch tips):
   `src/OSTPlatform/Linux/.gitkeep` (the placeholder confirming upstream never
   implemented a Linux backend), and the counterparts of every file above.
-- Ours: `docs/opensteamtool-findings.md` (the ruling corrected in §2.4),
+- Ours: `docs/bettersteamtools-findings.md` (the ruling corrected in §2.4),
   `docs/method.md` (the six gates, §3's spine), `docs/maintenance.md` §A.2
   (the derivation workflow §5 will compare against), `docs/RESEARCH.md`,
   `docs/slsdeck-analysis.md` (the template this document follows),

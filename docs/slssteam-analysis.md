@@ -6,7 +6,7 @@ Re-verificado contra las releases `20260705132808` (`5c632dd`) y `20260705144737
 (`da97d11`) — ver §7 para los deltas. **Barrido de la ventana `20260723102618` →
 `20260815201341` (205 commits) en §7.7, en curso día a día.** Compañero de
 [`slsteam-moon-findings.md`](slsteam-moon-findings.md) (el mod) y
-[`opensteamtool-findings.md`](opensteamtool-findings.md).*
+[`bettersteamtools-findings.md`](bettersteamtools-findings.md).*
 
 SLSsteam **no compite** con lumalinux: es el fork base, la capa de propiedad /
 tickets / mensajes sobre la que lumalinux coexiste. Este doc no es una tabla
@@ -486,7 +486,7 @@ respuestas PICS) y `IClientAppManager::GetAppStateInfo` (nuevo mecanismo de
 bloqueo de updates, limpia los flags `APPSTATE_UPDATE_*` en sitio)— y reescribe
 el hot-reload para añadir/quitar apps en vivo posteando callbacks
 `AppLicensesChanged_t` (su equivalente al `MarkLicenseAsChanged` de OST,
-`opensteamtool-findings.md`). **Los dos hooks nuevos siguen en la capa
+`bettersteamtools-findings.md`). **Los dos hooks nuevos siguen en la capa
 appdata/ownership de SLSsteam; ninguno roza tus cinco puntos.** La disjunción de
 la tabla de arriba se mantiene 11 días y una release después. Detalle §7.
 

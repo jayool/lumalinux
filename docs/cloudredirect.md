@@ -552,7 +552,16 @@ Tres caminos, ninguno gratis, para decidir con el usuario:
 
 Recomendación: **A ahora** (barato, y nos dice si el defecto 1 ocurre de
 verdad en las Decks), **C en paralelo** (cuesta una hora y no compromete
-nada), y B solo si C no responde y A demuestra que pasa. Para CachyOS, el
+nada), y B solo si C no responde y A demuestra que pasa.
+
+**Medido 2026-09-28 en el codespace** (misma pila: SLSsteam de Ace + lumalinux +
+`steamclient.so` de 32 bits, Steam en marcha): `grep -c steamclient.so
+/proc/<steam>/maps` → **22** rangos con nombre. La ventana de CR cuenta también
+los anónimos adyacentes (±16 MiB) y el scan corre al arrancar, cuando hay más
+fragmentación, así que 22 es una cota inferior; aun así queda lejos de 64.
+**Decisión: el defecto 1 se considera teórico para nuestra pila; el camino A se
+descarta.** Queda C (dos parches a Selectively11) como opcional, y el defecto 2
+como requisito del port a CachyOS. Para CachyOS, el
 defecto 2 va a `cachyos-port.md` como requisito: sin B o C, CloudRedirect en
 CachyOS es una lotería de 10 segundos.
 

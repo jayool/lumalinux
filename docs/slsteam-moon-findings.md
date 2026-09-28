@@ -1482,7 +1482,7 @@ un caso Debian de escritorio que no se da en SteamOS ni en el port CachyOS. Nada
 
 > **Nota 2026-09-13.** LuaTools ha anunciado que su motor pasa a ser
 > BetterSteamTools con el archivo crowd-sourced `manifest.luastools.xyz`
-> (ver `opensteamtool-findings.md`, addendum 2026-09-13) y que "los
+> (ver `bettersteamtools-findings.md`, addendum 2026-09-13) y que "los
 > desarrolladores de Linux publicarán una actualización con el nuevo sistema".
 > A 2026-09-13 `swwayps/slsteam-moon`, `luatools-moon` y `cloudredirect-moon`
 > no tienen commits posteriores al 2026-09-02. Re-barrer cuando llegue.
@@ -1528,7 +1528,7 @@ que cubren tres cosas que a un fork de SLSsteam le tendrían que doler:
    locator estructural resuelva solo, y nadie ha mirado si lo hace.
 
 3. **El anuncio de LuaTools del 13-sep** (BetterSteamTools + archivo
-   `luastools`, `opensteamtool-findings.md`) prometiendo "una actualización de
+   `luastools`, `bettersteamtools-findings.md`) prometiendo "una actualización de
    los desarrolladores de Linux con el nuevo sistema". Cuatro días después no
    hay ni rama ni commit ni issue que lo mencione en ningún repo de swwayps.
 

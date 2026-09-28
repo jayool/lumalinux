@@ -2310,7 +2310,7 @@ and a code minted by a provider's server works from any machine (measured:
 a 20770407 code fetched `steampipe.akamaized.net/depot/2545361/manifest/…`
 from the codespace, 200, 160159 B). What changed on 09-09 is the check **at
 issue time**: Valve mints only for an account holding a licence for the app
-(BetterSteamTools' reading, `opensteamtool-findings.md` delta 09-12: the code
+(BetterSteamTools' reading, `bettersteamtools-findings.md` delta 09-12: the code
 became depot-bound; a gid-only request fell back to a free-to-play carrier
 account and 401'd everywhere else). The pre-09-09 providers lived off that
 missing check and died together.
