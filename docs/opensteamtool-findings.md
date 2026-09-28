@@ -939,3 +939,61 @@ upstream without anyone noticing for 16 days. Our monitor fails loudly
 **Actionable: nothing** (jsDelivr mirror parked). Next sweep starts at
 `4747385` (BST `main`), `bfa812e` (`updates`), `7109796` (huanyuejue),
 `7bea3a6` / `134c9b1` (the two `pattern` branches).
+
+## Delta — 2026-09-28: BST quiet; huanyuejue stops giving up at the first 404; upstream's pattern feed silent for 22 days
+
+**Frozen references.** `madoiscool/BetterSteamTools` `main` @ `4747385`
+(unchanged since 09-21, v1.0.4 still latest); `updates` @ `bfa812e`
+(`latest.toml` → `v1.0.4/OpenSteamTool.dll`, sha256 `fe849c7e…`, unchanged);
+the twelve side branches (`feature/*`, `fix/*`, `refactor/*`,
+`beta-client-support`) all sit on May/June tips or on `main` — nothing moved.
+Issue creation is restricted and the page lists none. `huanyuejue/OpenSteamTool`
+`main` @ `840477d` (2026-09-25, one commit after `7109796`; tag `1.5.1.2` of
+09-18 still the release). Pattern feeds: `madoiscool/steam-monitor` `pattern` @
+`b72ebd4` (09-27), `OpenSteam001/steam-monitor` `pattern` @ `134c9b1`
+(**still 09-06**), `ipc` @ `c61b16c` (09-26), `protobuf` @ `a6839ec` (09-26).
+Clones fresh, issues and releases read from the public pages.
+
+### huanyuejue (`840477d`)
+
+**[read] "fix: keep trying the next mirror when the remote signature 404s".**
+`RemoteToml::Fetch` no longer stops the mirror loop at the first 404 (the
+09-18 code took a 404 as "all mirrors serve the same content, upstream has
+not published"). Reason, in the commit's own comment: *"CDN sync has a delay;
+when the first mirror 404s the next one may already have the file"* — the
+jsDelivr-first order of `47cc7ad` made that gap visible. Now every mirror is
+polled, a 200 with an empty body is treated as a miss and the next mirror
+tried, 404s are counted, and the final log line distinguishes *"upstream has
+not published (all N mirrors 404)"* from *"no source available"* (a network
+failure). The three READMEs are rewritten to state the order that the code
+has had since `02d7955`: local cache first (a hit skips the network), then
+jsDelivr, then GitHub raw; the outbound request happens only on a cache miss.
+
+**[inferred] Relevance to us.** Two small confirmations, no change. (a)
+"Cache first, remote only on a miss" is what `rva_feed.cpp` does
+(`~/.cache/lumalinux/`). (b) "Tell an unpublished build apart from a broken
+network" is the distinction `watch-steam.yml` has made loudly since 09-22 (a
+fetch error is a failure, not a quiet skip). The mirror-lag case does not
+arise for us: `res/rvas/` is served from one origin (raw GitHub); the jsDelivr
+mirror stays a parked candidate (09-22).
+
+### The two pattern feeds, six days later
+
+**[read]** `madoiscool/steam-monitor` `pattern` published a TOML pair
+(`steamclient`, `steamui`) for every desktop beta Valve shipped: `1790121765`
+(09-23), `1790380355` (09-26), `1790534246` and `1790545198` (09-27) — the
+same four moon's tracker recorded for Linux (`slsteam-moon-findings.md`,
+delta 09-28). Stable unchanged at `1788652215`. `OpenSteam001/steam-monitor`
+`pattern` has **still not published since 09-06** — 22 days, nine betas
+missing — while its `ipc` and `protobuf` branches kept updating (09-22,
+09-23, 09-26). The upstream bot runs; only its pattern step is dead, and
+nobody has fixed it. huanyuejue's fork still reads `OpenSteam001` only
+(`RemoteToml.cpp`, unchanged); `840477d` makes that 404 louder but does not
+change the source. So for the Chinese fork the picture of 09-22 holds: no
+remote patterns for any client after `1788652215`, and the recompiled beta
+(the `CNetPacket +8` layout BST and moon both handle) is unsupported there
+until upstream's step is repaired or the fork switches feeds.
+
+**Actionable: nothing** (jsDelivr mirror parked). Next sweep starts at
+`4747385` (BST `main`), `bfa812e` (`updates`), `840477d` (huanyuejue),
+`b72ebd4` / `134c9b1` (the two `pattern` branches), `c61b16c` (upstream `ipc`).
