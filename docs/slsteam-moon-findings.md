@@ -1881,8 +1881,9 @@ reconcile que loguea cada anchor); no hay splice de appinfo que endurecer.
 - **`luatools-moon`**, **`lumen`**, **`cloudredirect-moon`**: sin commits
   (`9edb704`, `52475c3`, `19da055`).
 - **jsDelivr** (`94d9148`, 24-sep): el zip `slsteam-moon-linux-2.9-lumen.zip`
-  **resubido otra vez bajo el mismo tag** (5021441 → 5020684 bytes, sha
-  `4420d410…`), y el `manifest.json` actualizado. Cuarta resubida de v2.9 (21, 22
+  **resubido otra vez bajo el mismo tag** (asset del 23-sep 23:09 UTC:
+  5021178 → 5020684 bytes, sha `4420d410…` → `614d93aa…`; el espejo conserva
+  el anterior como historial), y el `manifest.json` actualizado. Cuarta resubida de v2.9 (21, 22
   y ahora 24-sep); el patrón de D18 sigue: el tag no identifica el binario.
 - **steam-monitor** (`58c784a`, 27-sep): cuatro betas de escritorio nuevas
   (`1790121765` 23-sep, `1790380355` 26-sep, `1790534246` y `1790545198` 27-sep).
