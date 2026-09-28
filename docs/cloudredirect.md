@@ -472,3 +472,90 @@ exclusión por app, el parche de una línea de stats sync, y el `CAINFO` del
 abierto. La mitigación sigue siendo local: Steam Cloud desmarcado por juego (hoy
 mismo, app 2545360 tras el incidente de arriba) o `~/.config/CloudRedirect/disable`.
 Próximo barrido desde `bc5e38a` / v2.6.5.
+
+## Re-barrido 2026-09-28 — upstream sigue parado; el fork de moon lleva dos arreglos que la 2.6.5 que instalamos no tiene
+
+*`Selectively11/CloudRedirect` `master` sigue en `bc5e38a` (18-ago, v2.6.5):
+seis semanas sin un commit. El único fork vivo, `swwayps/cloudredirect-moon`,
+sigue en `19da055` (19-sep) y se apaga: 54/48/51/53 commits de abril a julio,
+26 en agosto, 4 en septiembre. Esta vez, en vez de mirar solo si se movió, se
+ha hecho el diff de `src/platform/linux/` entre las dos puntas (21 ficheros,
++1.337/−221; 15 commits de moon que tocan `src/` desde julio, ninguno leído
+antes) para saber qué arregla moon que nosotros, que instalamos el `.so` de
+Selectively11 (`setup.sh`, `CR_RELEASES`), no tenemos.*
+
+### Dos defectos reales de la 2.6.5, arreglados en moon
+
+1. **La búsqueda de la vtable descarta los mapeos altos, donde vive
+   `.data.rel.ro`** (`2eee675`, 11-ago). En `vtable_hook.cpp` de upstream
+   (verificado en `bc5e38a`, líneas 17-19 y 115) los rangos legibles de
+   `/proc/self/maps` van a un array fijo de **64 entradas**, llenado en orden
+   ascendente y truncado en silencio. Al arrancar, el mapeo de `steamclient.so`
+   está fragmentado; pasadas 64 entradas se pierden **las direcciones más
+   altas**, que es donde está `.data.rel.ro` (vaddr ~0x2e57ae0 de un módulo de
+   ~0x2f38000), mientras la cadena RTTI que se busca primero está mucho más
+   abajo, en `.rodata`. Resultado: encuentra el nombre de tipo, no encuentra
+   su typeinfo, "transport vtable not found", **toast "Incompatible Steam
+   client - hooks disabled"** y CloudRedirect apagado esa sesión, con el log
+   diciendo siempre "64 readable ranges" porque el contador no podía pasar de
+   ahí. Moon: vectores sin tope y reintento con una instantánea fresca del
+   mapa, porque *"mientras el cliente arranca, el propio span etiquetado puede
+   seguir creciendo"*. **Nos afecta**: es el binario que ponemos en la Deck.
+   Cuánto, no lo sabemos: no tenemos ningún caso registrado de ese toast, y
+   la 2.6.5 sincroniza en la Deck (nota del 14-sep). Es intermitente por
+   construcción (depende de cuántos rangos haya en el momento del scan), así
+   que un usuario lo vería como "a veces no sincroniza".
+2. **La espera a que `steamclient.so` esté mapeado es de 10 s fijos**
+   (`init.cpp:542`, `for (int i = 0; i < 20; i++)`). Moon la sube a 120 s con
+   una señal de parada, porque *"en Arch/CachyOS steamclient.so se mapeó más de
+   10 s después del arranque en las pruebas; allí el hook expiraba y nunca se
+   enganchaba"*. En la Deck no se ha visto. **Para el port a CachyOS es un
+   dato directo**: con la 2.6.5 de upstream, CloudRedirect puede no engancharse
+   nunca en ese sistema. Va a `cachyos-port.md`.
+
+### Lo demás que moon cambió, y por qué no lo queremos tal cual
+
+- **`24470b2` (28-ago), el "puente de elegibilidad"**: CloudRedirect pregunta a
+  SLSsteam, por un símbolo débil `slsteam_local_stats_epoch_v1(appId,
+  account, refresh)` que **moon** redirige desde `la_symbind32` (LD_AUDIT), si
+  una app es "de stats locales" antes de servir stats o schemas. En Linux, sin
+  respuesta, `IsEligible` es **falso para todas las apps** (`return pred &&
+  …`), y `HandleGetUserStats` devuelve vacío → passthrough. Es decir: **el
+  `.so` de moon con un SLSsteam que no sea moon no sirve logros locales
+  nunca**. Por eso su fork no es un sustituto para nuestra pila aunque lleve
+  los dos arreglos de arriba. Nuestro `cr_stats_fix` interpone el mismo
+  símbolo (`HandleGetUserStats(uint32_t, const std::vector<PB::Field>&)`,
+  firma intacta en moon) y seguiría funcionando sobre cualquiera de los dos.
+- **`75273a1` (27-jul)**: descubre apps gestionadas desde `stplug-in/*.lua`,
+  `luaappids.yaml` y `AdditionalApps` (las tres fuentes de moon) con un hilo
+  inotify sobre directorios; **`a69363b`**: un hilo por app descubierta en
+  caliente lanzaba cientos de hilos al copiar scripts en bloque y tiraba Steam
+  cuando el constructor lanzaba; ahora un solo worker. Upstream solo lee
+  `AdditionalApps` de `config.yaml` (`cloud_intercept.cpp:60`) con un único
+  hilo de watcher (`:285`), que es justo lo que LumaDeck escribe: el defecto
+  del hilo por app era de moon, no de upstream.
+- **`1f71c0d`, `b5ffb89`**: join del hilo de init diferido antes de descargar
+  la librería (el mismo teardown que upstream SLSsteam y moon SLSsteam
+  arreglaron en septiembre); **`e52279f`**: proveedores de nube por contrato
+  compartido y CLI para Lumen; el popup "Loaded successfully" suprimido; el
+  log de depuración con pid por línea.
+
+### Qué hacer con esto
+
+Tres caminos, ninguno gratis, para decidir con el usuario:
+
+| | Coste | Qué arregla |
+|---|---|---|
+| **A. Seguir con la 2.6.5 de upstream y detectar** | pequeño: LumaDeck lee `~/.config/CloudRedirect/cr_debug.log` (o el log de CR) y, si la última sesión dice "transport vtable not found", lo muestra como salud de CloudRedirect con "Restart Steam" | no arregla, avisa; el reinicio suele coincidir con un mapa distinto |
+| **B. Construir nuestro propio `cloud_redirect.so`** desde upstream `bc5e38a` + `2eee675` + la espera de 120 s | mediano y permanente: un workflow más (`verify-fix.yml` ya compila CR de la rama `linux-test` para el shim, así que la cadena existe), y pasamos a mantener un fork | los dos defectos, hoy |
+| **C. Mandar los dos parches a Selectively11** | un PR pequeño; la decisión del 23-sep fue no mandar el informe largo, esto es otra cosa: dos diffs concretos con el diagnóstico de moon | los dos defectos, si hay alguien al otro lado (nada desde el 18-ago) |
+
+Recomendación: **A ahora** (barato, y nos dice si el defecto 1 ocurre de
+verdad en las Decks), **C en paralelo** (cuesta una hora y no compromete
+nada), y B solo si C no responde y A demuestra que pasa. Para CachyOS, el
+defecto 2 va a `cachyos-port.md` como requisito: sin B o C, CloudRedirect en
+CachyOS es una lotería de 10 segundos.
+
+Próximo barrido desde upstream `bc5e38a` / v2.6.5 y `cloudredirect-moon`
+`19da055`; a partir de ahora el diff de `src/platform/linux/` entre los dos
+forma parte del barrido, no solo el `git log`.
