@@ -1036,3 +1036,20 @@ failover" for OST: either the fork gained a cascade since 09-18, or it took
 ours, name included. Check `huanyuejue/OpenSteamTool` from `840477d`.
 
 **Actionable:** SDM row, parked. Next FSL sweep from `5280749`.
+
+### Seen once, nothing to adopt: `gitee.com/biaogeNB/SteamToolbox` (09-29)
+
+Not code: the data channel of a Chinese Windows launcher (one author,
+B-I-A-O, 324 commits since 2025-11, near-daily `toolbox2.txt` bumps; Gitee
+is blocked from our proxy, read from the codespace clone). `BIAO_kernel`
+lists what it drops into the Steam dir: GreenLuma 2026 x86/x64,
+`OpenSteamTool.dll` + `opensteamtool.toml`, `cloud_redirect.dll`, a
+`CaigamerQ.dll`, and SteamTools leftovers (`steam.cfg`, `version.dll`,
+`winmm.dll`, `hid.dll`…); an `OpenSteamTool_Beta.zip` in its releases (fork
+unknown). It serves mirrors of the `depotkeys.json` / `appaccesstokens.json`
+dumps, an appid list, an NSFW list, `manifest_ids.json` (25 apps, depot_gid
+pins) and `VM.txt` / `manifest_VM.json` (23 apps): "VM" = the Windows
+VBS/HyperVisor Denuvo bypass (`VBS.zip`), the same family SFF ships and we
+ruled out for the Deck; `-V38.zip` bundles are voices38 fixes. A third-party
+redistributor of OST + GreenLuma + CloudRedirect to end users, via Chinese
+cloud drives and a captcha. Context only; no sweep.
