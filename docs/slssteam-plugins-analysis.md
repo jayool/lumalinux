@@ -1772,6 +1772,55 @@ plugin lo puede copiar, porque no es código: es una máquina de mantenimiento.
 > *Remove DRM*; (3) exige `Plugins: yes`, que LumaDeck no toca (D/E′
 > archivados, §6.6). Sin probar en dispositivo. Decisión del 21-sep:
 > **esperar**; si Ace lo integra en `main`, llega solo con la release.
+>
+> **[2026-09-28/29] Probado, medido y decidido: LumaDeck lo instala como
+> plugin.** Prueba en el codespace SteamOS con Joe Danger (229890, SteamStub
+> según el escaneo), con control: sin plugin → `Application load error
+> 6:0000065432`; con plugin (`Plugins: yes`, Steam reiniciado) → arranca y se
+> juega; `Plugins: no` de nuevo → vuelve el error. El log de SLSsteam sólo
+> muestra `spliced-tickets.lua loaded!`: la línea "Spliced ticket for …" es
+> `log.debug`, y `CLog::__debug` está bajo `#ifdef DEBUG` (`log.cpp`), fuera
+> del build release. La evidencia de que actúa es el juego arrancando.
+>
+> **El port nativo se investigó y queda aparcado con los datos.** Sonda
+> `tools/experiment_ownership_ticket.py` contra el `steamclient.so` del
+> codespace: `IClientUserMap` referencia el nombre en la ranura **105** (sin
+> sobrecargas); `5CUser` tiene **cinco** vtables (primaria `CBaseUser` de 338
+> ranuras, luego cuatro secundarias con `offset_to_top` -6356/-6360/-6364/
+> -6368); la secundaria 0 (`subclasses[0]` en SLSsteam, `IClientUser`) tiene
+> 259 ranuras, **las mismas que `IClientUserMap`** (misma interfaz, ranura a
+> ranura: por eso el índice vale para ambas, sin `call [reg+0x1a4]` que
+> buscar, el `*Map` es un proxy IPC, no un despachador). Ranura 105 en la
+> primaria → `0x018e3e20`, en la secundaria 0 → `0x018cf730`: **distintas**;
+> `Rtti::FindTypeVtable` sólo localiza la primaria, así que el port exige un
+> parámetro de sub-vtable. Prólogo de `0x018cf730`: `push ebp/edi/esi/ebx;
+> call get_pc_thunk; add ebx; sub esp,0x24`, el PIC clásico que `LmHook` ya
+> trata. Dos hallazgos más que el port tendría que absorber: (a) **SLSsteam
+> ya engancha esa misma función** (`hkClientUser_GetAppOwnershipTicket
+> ExtendedData`, `VFTHook` sobre la vtable viva, en el primer `RunInterface`
+> del IPC) y nosotros instalamos 0,2–1,2 s tras mapearse steamclient, así que
+> leer la ranura en memoria es una carrera: habría que leer el valor original
+> del fichero en disco; (b) el port sería un hook **inline** en una función
+> que los plugins de terceros también enganchan, y `LuaHook::place` de
+> SLSsteam **no recoloca un `jmp` ajeno** en su trampolín (sólo
+> `fixPICThunkCall`), luego un plugin ajeno encima del nuestro se cae en el
+> primer ticket (§[2026-09-29] de `assella-analysis.md`). Alternativa sin ese
+> choque: enganchar por la vtable, que lumalinux evita por diseño (`rtti.hpp`).
+>
+> **Decisión (29-sep): plugin.** El fichero de Ace byte a byte (sha256
+> `62f377e3…`, la copia pública de `niwia/ASSella@78dbda7`; el original es un
+> adjunto de Discord), con cabecera de crédito a Ace, instalado por LumaDeck
+> como `~/.config/SLSsteam/plugins/lumadeck-spliced-tickets.lua` con
+> `Plugins: yes` (cuarta clave forzada, junto a `DisableCloud`/`SafeMode`/
+> `DisableUpdates`), puerta de versión `>= 20260903114323` (primera release
+> con `lua.cpp`), interruptor `~/.config/lumadeck/no_spliced_tickets`. Nombre
+> propio porque ASSella `canary` copia y **borra** el suyo en cada descarga
+> nativa; sin doble hook porque la guarda `SplicedTickets.setup` del propio
+> plugin convierte la segunda copia en no-op (mismo estado Lua). Sin UI.
+> LumaDeck `b70ea44`, `FIXES_MAP.md` §SteamStub. Esto **revierte D/E′ de
+> §6.6** en lo que toca a `Plugins`: LumaDeck sí lo pone a `yes`. Corrección
+> al párrafo anterior: no llegó "por vía informal": la copia usada es la de
+> ASSella; y no está en SLSDeck ni en moon (sus "spliced" son otra cosa).
 
 ---
 

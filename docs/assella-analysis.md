@@ -543,8 +543,10 @@ hook de `GetManifestRequestCode`. La diferencia está en cómo:
 Dos cosas para nosotros. (1) **Nada que adoptar**: es nuestro modelo con menos
 capas. (2) **Spliced tickets ya no es teoría**: ASSella lo distribuye
 empaquetado en su AppImage y lo instala en cada descarga nativa, junto con el
-plugin de descarga. Es el tercer sitio donde aparece el plugin de Ace (Discord,
-SLSDeck vía moon, ASSella), y refuerza el punto aparcado del bloque 1 de moon:
+plugin de descarga. Es el segundo sitio público donde aparece el plugin de
+Ace (su Discord y ASSella; **no** está en SLSDeck ni en moon, corregido
+29-sep: sus "spliced" son otra cosa), y refuerza el punto aparcado del bloque
+1 de moon:
 decidir si lo llevamos como plugin de SLSsteam o dentro de lumalinux. Sin
 cambio de prioridad; el dato queda.
 
@@ -705,3 +707,79 @@ la nuestra dejaría de valer.
 | 7 | §6.5 (`yaml_config_manager.py`) sigue sin re-auditar | — | Pendiente |
 
 El siguiente barrido arranca en `beta@028832e` y `canary@3fb2e32`.
+
+## §12 — 2026-09-29: el modo nativo de `canary` es incompatible con lumalinux (causa en SLSsteam; sin acción)
+
+Leído en código, sin ejecutar nada de ASSella: `download.lua` de `canary`
+(`d676f04`), `LuaHook::place` / `LuaHook::remove` / `Lua::init` de SLSsteam,
+`lmhook.cpp` de lumalinux.
+
+**Qué engancha cada uno** (funciones de `steamclient.so`):
+
+| Función | lumalinux | `download.lua` | Juntos |
+|---|---|---|---|
+| `CConfigStore::GetBinary` (claves) | DepotKey: feed → RTTI → patrón → por nombre; sirve de `keys.txt` sus depots, el resto a Steam | por nombre (`21IClientConfigStoreMap`→`12CConfigStore`); llama a Steam **primero** y pisa la salida si tiene clave en `DecryptionKeys` del config | misma función, lógica compatible |
+| `BYieldingGetManifestRequestCode` (códigos) | GMRC: feed → patrón → xref; responde **antes** de Steam para sus depots, cuatro proveedores, código validado contra el CDN | patrón de sitio de llamada fijo (30 bytes, sin red); llama a Steam primero y sólo actúa si sale 0, sólo wudrm | misma función, lógica compatible |
+| Paquete 0 | sin hook: finder recorre la caché y **añade** a `AppIdVec` (`+0x38`), revigila | hook en `GetPackage` (patrón fijo); **sustituye** `DepotIdVec` (`+0x48`) y libera el viejo con `Plat_Free`; lo restaura en `luaReload` | vectores distintos, no se tocan (anotar en RESEARCH: nuestro experimento descartó `+0x48`) |
+| Ticket de propiedad | — (decisión: plugin, no hook) | `spliced-tickets.lua` | sin choque |
+
+Los patrones de `download.lua` no se piden a SLSsteam ni se actualizan: van
+en el AppImage y el zip remoto de respaldo sólo se usa si el empaquetado
+falta. Cuando Valve recompile, su modo nativo muere hasta AppImage nuevo.
+
+**Por qué revienta.** Los dos ponen hooks con libmem (5.1.5 en lumalinux),
+que copia el prólogo al trampolín **sin corregir saltos relativos**. Lumalinux
+lo sabe: `RelocateChainedJmp` recalcula el `rel32` cuando el prólogo ya era
+un `jmp` ajeno (verificado, `lmhook.cpp`). SLSsteam **no**: `LuaHook::place`
+hace `LM_HookCode` + `fixPICThunkCall`, que sólo corrige el `call` al thunk
+PIC. Con Steam abierto lumalinux ya está enganchado cuando ASSella despliega
+sus plugins (los copia al empezar cada descarga nativa, con `Plugins: yes`, y
+los borra al acabar), así que:
+
+- **Orden normal (lumalinux → `download.lua` encima):** el trampolín de
+  `download.lua` contiene nuestro `jmp` con el desplazamiento viejo desde una
+  dirección nueva. Primera llamada a `GetBinary` (Steam la usa para cualquier
+  clave de config, constantemente): el hook Lua llama a su trampolín, salto a
+  basura, **Steam se cae** segundos después de cargar el plugin. Su limpieza
+  de fallo restaura el `config.yaml` de antes y borra `.acf` y plugins.
+- **Orden inverso (plugins ya en la carpeta al arrancar Steam, restos de una
+  descarga cortada):** `download.lua` engancha primero, lumalinux se encadena
+  bien encima. Al borrar ASSella sus plugins, `Lua::init` cierra el estado
+  Lua, `~LuaHook` → `LM_UnhookCode` restaura los bytes **que él guardó**: el
+  prólogo limpio. Se lleva nuestro `jmp`. **Lumalinux queda mudo** (claves y
+  códigos sin servir) hasta reiniciar Steam, sin error alguno.
+
+Mientras la ventana está abierta (horas en un juego grande) **todo lo que
+Steam descargue** pasa por la pila, no sólo lo suyo. Fuera de la ventana no
+dejan nada en memoria; en disco, `Plugins: yes` y sus `AdditionalApps` (que
+luego nadie puede actualizar: sin plugins cargados no hay quien sirva el
+código). Otro choque, menor: su restauración de backup del `config.yaml` en
+fallo se lleva lo que LumaDeck haya escrito en ese rato. Salvedad única: si la
+libmem que compila SLSsteam corrigiera saltos (no consta), el orden normal no
+se caería.
+
+**Decisión: sin acción en código.** El defecto es de `LuaHook::place`; lo
+sufre cualquier plugin de SLSsteam sobre cualquier hook inline previo, no
+sólo nosotros; `canary` es "3.0.0testing" escrito por un agente
+(`.agents/AGENTS.md`, `canary_rules.md`); ASSella `main`/`beta` no tocan la
+memoria de Steam y conviven sin problema. No se puede bloquear (ASSella
+escribe `Plugins: yes` él mismo; borrarle el `.lua` llega tarde y sabotea a
+su usuario) y no se ha hecho prueba de convivencia: no es nuestro trabajo que
+ASSella funcione encima de lumalinux. Lo único que cambia en lo nuestro:
+spliced tickets va como **plugin**, porque un hook inline nuestro en esa
+función sería un cuarto punto de choque con el mismo crash
+(`slssteam-plugins-analysis.md`, nota del 28/29-sep).
+
+Apuntado, no escrito, a decidir por el autor: (1) informe del bug a Ace, tres
+líneas sin parche; (2) autocomprobación periódica de prólogos en lumalinux
+(`overridden`/`removed` + módulo en `status.json`) y reinstalación
+automática, que cubre el orden inverso, ~60 líneas; (3) aviso en LumaDeck al
+ver `download.lua` en la carpeta de plugins; (4) sus dos patrones en
+`check_patterns.py` como línea informativa; (5) copiarles el orden de GMRC
+(preguntar a Steam antes de responder), cinco líneas.
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | `canary` nativo sobre lumalinux: crash (orden normal) o lumalinux mudo (orden inverso) | Conocido | Causa en SLSsteam; sin acción; vigilar la promoción a `main` |
+| 2 | Spliced tickets: plugin, no hook inline | Hecho | LumaDeck `b70ea44` |
+| 3 | Opciones (1)–(5) de arriba | — | Decisión del autor |
