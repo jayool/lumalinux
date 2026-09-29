@@ -1045,11 +1045,80 @@ is blocked from our proxy, read from the codespace clone). `BIAO_kernel`
 lists what it drops into the Steam dir: GreenLuma 2026 x86/x64,
 `OpenSteamTool.dll` + `opensteamtool.toml`, `cloud_redirect.dll`, a
 `CaigamerQ.dll`, and SteamTools leftovers (`steam.cfg`, `version.dll`,
-`winmm.dll`, `hid.dll`…); an `OpenSteamTool_Beta.zip` in its releases (fork
-unknown). It serves mirrors of the `depotkeys.json` / `appaccesstokens.json`
+`winmm.dll`, `hid.dll`…); an `OpenSteamTool_Beta.zip` in its releases (read
+the same day, below: B-I-A-O's own branch of huanyuejue's fork). It serves mirrors of the `depotkeys.json` / `appaccesstokens.json`
 dumps, an appid list, an NSFW list, `manifest_ids.json` (25 apps, depot_gid
 pins) and `VM.txt` / `manifest_VM.json` (23 apps): "VM" = the Windows
 VBS/HyperVisor Denuvo bypass (`VBS.zip`), the same family SFF ships and we
 ruled out for the Deck; `-V38.zip` bundles are voices38 fixes. A third-party
 redistributor of OST + GreenLuma + CloudRedirect to end users, via Chinese
 cloud drives and a captcha. Context only; no sweep.
+
+### Read the same day: SteamToolbox's exe and its "TB kernel" (`OpenSteamTool_Beta.zip`)
+
+**[measured, codespace 09-29]** `SteamToolbox_v260925.exe` (66 MB) is a
+Nuitka onefile: 140 KB C bootstrap + zstd payload in `.rsrc` (`KAY` header
+at `0x38558`), 212 files: `BIAO.dll` (105 MB, the compiled Python 3.11 app,
+PySide6), `Steamless.CLI.exe` + `Plugins.zip`, `UnRAR.exe`, and **Uplay R1/R2
+unlockers** (`Uplay/`, `Uplay1/`: `upc_r2_loader64.dll`,
+`uplay_r1_loader64.dll`, an 18 MB `steam_api64.dll`). No kernel inside: the
+`BIAO_kernel` set comes from the Quark drive with a captcha.
+
+Nuitka keeps the Python constants readable, so the app's logic is in
+`strings`:
+
+- **Manifest monitor v3.3 (multi-source)**: on a missing request code it
+  tries ManifestHub2 (API key) → `gmrc.wudrm.com` → **`depotcn.caigamer.cn`**
+  → `20770407.xyz` (all `/manifest/{gid}`, Chrome UA, "SSL verification
+  disabled on every request") and downloads the manifest from
+  `steampipe.akamaized.net/depot/…` into depotcache. `depotcn.caigamer.cn`
+  is therefore a request-code provider run by the forum itself, unknown to
+  us until now. Probe with our UA: nginx **403**; the app sends a Chrome UA.
+  Whether it is a UA filter (like wudrm's) or region/key is untested.
+- **Denuvo ("D加密")**, three tabs: *extract* ("you need an account that
+  bought the game") calls `SteamAPI_ISteamUser_RequestEncryptedAppTicket` /
+  `GetEncryptedAppTicket` / `GetAuthSessionTicket` on the owner's machine and
+  packs encrypted ticket + app ticket + SteamID + owned DLCs + `start_ts` /
+  `expire_ts` into an encrypted **`.cw`** file (`Denuvo.py`,
+  `CWFileCrypto`); *authorize* ("一键授权") decrypts a `.cw`, writes the
+  tickets into the Windows registry (`_write_registry_ticket`) and restarts
+  Steam; *Ubisoft* writes `DenuvoToken` / `OwnershipListToken` under
+  `Software\Uplay\Apps` for the bundled unlockers. The paid "菜玩俱乐部" sells
+  one Denuvo authorization per day, renewed every 10 days (ticket expiry);
+  shop `cdk.caigamer.cn`. Same family as SLSsteam's SmartTickets, with a
+  server behind it. Other hosts it knows: `hubcapmanifest.com` (they use
+  Hubcap too), `online-fix.me` + its mirrors, `api.121058.xyz` (search),
+  `cw.520301.xyz` (unattributed; by name, the `.cw` server).
+
+**The kernel it ships (`OpenSteamTool_Beta.zip`, DLL built 09-29 10:35):**
+huanyuejue's fork (it carries `manifestdex`, which BST lacks) at a point
+before SDM (`3b7c318`, 09-28), plus code in no public repo: a credential
+store at `HKCU\Software\SteamToolbox\BIAO`, Lua commands `setappticket`,
+`seteticket`, `setauthsessionticket`, `forcedenuvo` and **`seteticketurl`**
+(fetch the encrypted ticket from a server: the one-click path), and
+patterns for the current Windows client resolved by his own
+`tools/resolve_patterns.py` ("MACHINE-GENERATED", 09-28) bundled under
+`OpenSteamTool/pattern/` — so this fork is not blind to the dead
+`OpenSteam001` feed; it side-steps it. Hooks named in the TOMLs (38):
+`CUser_BuildSessionTicket`, `CheckAppOwnership`, `GetPackageInfo`,
+`LoadPackage`, `LoadDepotDecryptionKey`, `ConfigStoreGetBinary`,
+`BuildDepotDependency`, `MarkLicenseAsChanged`,
+`ProcessPendingLicenseUpdates`, `RecvPkt`, `IPCProcessMessage`,
+`BBuildAndAsyncSendFrame` (request codes ride the net-packet hook; no GMRC
+hook), `SpawnProcess` + `BuildSpawnEnvBlock` (the `[[inject]]` of
+`OnlineFix.dll` when the game runs with `-480`), `CloseAppCloud`, and
+library-UI ones. Ticket serving: the kernel handles
+`CMsgClientGetAppOwnershipTicketResponse` /
+`CMsgClientRequestEncryptedAppTicketResponse` and `GetAppOwnershipTicket
+ExtendedData`, i.e. it answers the game's ticket requests with the stored
+donor tickets. `OnlineFix.dll` (151 KB) is a Detours DLL that sets the
+`SteamPersonaName` in the game's `steam_api` for online-fix packs.
+`cloud_redirect.dll` is a 07-30 build, older than 2.6.5.
+
+**Public fork, closed the same day:** `a35262b` (09-29) "on failure, try
+the other manifest sources in order" — the failover FSL announced;
+`3b7c318` SDM; `6d0f1b6` default → 20770407. Next fork sweep from
+`a35262b`.
+
+**Actionable:** nothing. `depotcn.caigamer.cn` stays a note until someone
+tests it with a browser UA (our policy is our own UA).
