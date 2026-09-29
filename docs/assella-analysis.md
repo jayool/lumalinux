@@ -784,3 +784,130 @@ ver `download.lua` en la carpeta de plugins; (4) sus dos patrones en
 | 2 | Spliced tickets: plugin, no hook inline | Hecho | LumaDeck `b70ea44` |
 | 3 | Opciones (1)–(5) de arriba | — | Decisión del autor |
 | 4 | Confirmación pública (Discord SLSsteam, 29-sep): con la build `v3.0.0270926006` de `canary` "Steam se cierra a intervalos aleatorios"; niwia: "expected, untested waters, plugin testing", "just lab rats for assella"; Ace: "how do you even crash steam from an external tool?" | Dato | Encaja con §12; sin acción |
+
+## §13 — 2026-09-29: `canary` nativo probado en limpio, y el "crash" de Discord leído con logs y commits
+
+Complementa §12. Allí la incompatibilidad con lumalinux se dedujo del código
+de SLSsteam. Aquí, dos cosas distintas: (a) qué hace de verdad el modo
+nativo de `canary` **sin** lumalinux, medido en un codespace limpio; (b) qué
+son los "crashes" que reportan sus usuarios ese mismo día, leído de sus
+logs y de los commits de niwia. Ninguna de las dos cambia nada en lo nuestro.
+
+### 13.1 Prueba en limpio [measured]
+
+Codespace SteamOS (`.devcontainer/steamos/`, usuario `deck`), Headcrab +
+SLSsteam, **sin lumalinux**, Steam logueado. ASSella `canary@6677a05` en
+`.venv` (el `requirements.txt` no resuelve: `steam` git contra `vdf` git;
+instalado en tres pasos más `pycryptodomex`, que falta), `--headless` con la
+web UI en 8765, clave de Hubcap real en `ACCELA.conf`. Un `watch.sh` vigila
+PID de Steam, md5 del `config.yaml`, listado de `plugins/`, mtime de
+`/tmp/SLSsteam.API` y las líneas nuevas de `~/.SLSsteam.log`.
+
+| # | Qué | Resultado |
+|---|---|---|
+| 1 | Arranque de ASSella | Despliega `download.lua` **y** `spliced-tickets.lua` en `plugins/`, y escribe `Plugins: yes` y `API: yes`. Residentes desde el arranque de la app, no sólo durante una descarga. |
+| 2 | Balatro (2379780) por la web UI, `at0m_default_download_action=native` | Parchea `AdditionalApps`/`AdditionalDepots`/`DecryptionKeys` (`ManifestIds` vacío: sin pin), espera la licencia, envía `install\|2379780\|lib` por `/tmp/SLSsteam.API`. Steam intenta bajar y muere en el código de manifest: wudrm devuelve el reto de Cloudflare (403/503) desde la IP del codespace con cualquier UA; el fallback por `curl_chrome120` ya no existe en `6677a05`. Steam: "Unknown error" / "Content servers unreachable". Desde la misma IP, manifestdex sí da código. |
+| 3 | Matar ASSella | No limpia nada: config, plugins y el `appmanifest` a medias se quedan. |
+| 4 | 15 recargas de `config.yaml` en 30 s con `download.lua` cargado, sin descarga en vuelo | `Config reloaded` ×15, cero errores, Steam vivo. |
+| 5 | Quitar y reponer `download.lua` con Steam abierto (desmontaje de hooks en caliente) | **Pendiente.** |
+
+De (4): la hipótesis "`writeDepotIds` hace `Plat_Free` en cada recarga y
+revienta" pierde fuerza, con la salvedad de que la reescritura es perezosa
+(sólo en la siguiente `GetPackage(0)`) y no se ha contado cuántas veces
+corrió (`grep -c 'writeDepotIds into Package' ~/.SLSsteam.log`, pendiente).
+El defecto sigue ahí de todos modos: el hook guarda `Downloader.Package` la
+primera vez y no lo refresca; si Steam reconstruye el paquete 0, la siguiente
+reescritura escribe en memoria muerta.
+
+### 13.2 El "crash" de Discord del 29-sep, en cristiano [read: logs de usuario + commits]
+
+Cronología en UTC (Discord se lee en CEST; la versión `3.0.0testing290926001`
+del log del usuario y el salto a `…002` en `50fd657` la anclan):
+
+| UTC | Qué |
+|---|---|
+| 07:40 | niwia publica el AppImage "3.0.3 canary", versión `…001`, con "wudrm bypass fixed". |
+| 07:56 en adelante | tranquility (Steam nativo, 4 juegos en modo plugin) reporta: primero "crash", luego "no llega a crashear, se queda pegado", "al cabo de un rato", "sin tocar nada". |
+| 08:14 | `cb3a49b` "sanitize env before io.popen to prevent Steam crash". A las 08:16 le pasa ese `download.lua` a mano al usuario. |
+| 08:37 | `50fd657`: sync de plugins por SHA al arrancar, versión `…002`. |
+| 09:29 | `6677a05`: **revierte** todo, `download.lua` vuelve al original de Ace, sin subproceso. |
+| 13:54 | Nuevo AppImage "3.0canary", "this should fix all". |
+
+**El cuelgue.** El "wudrm bypass" de esa build es un `io.popen` de
+`curl_chrome120` dentro del hook de `GetManifestRequestCode`. Ese hook corre
+con `LuaMutex()` cogido, y `LuaMutex` envuelve `Lua::stateMutex`: un único
+`std::recursive_mutex` compartido por todos los hooks de todos los plugins y
+por los callbacks de config (`lua.cpp`, `lua.hpp`). Por cada manifest sin
+código, con wudrm bloqueado:
+
+| Paso | Máximo |
+|---|---|
+| `curl.downloadString(url, 5)` | 5 s |
+| `io.popen(curl_chrome120 --max-time 6)` | 6 s |
+| `ffi.C.sleep` entre intentos (1, 2, 4, 8) | 15 s |
+| 5 intentos | **70 s** con el mutex cogido |
+
+Mientras, `GetBinary` (lo llama el hilo de UI de Steam sin parar) pide el
+mismo mutex y espera. Steam no muere: se congela. Con 4 juegos sin licencia
+en modo plugin, la comprobación periódica de actualizaciones de Steam
+encadena esos 70 s depot tras depot. El propio niwia pegó su
+`MRC blocked/down (503 Service Temporarily Unavailable)` esa mañana: wudrm
+también le bloquea a él. El comentario del fichero dice que el bucle es "para
+no bloquear Steam dentro del mutex varios segundos" y justo debajo mete un
+`sleep` de 8 s dentro del mutex. El `env -u LD_PRELOAD` de `cb3a49b` arregla
+que el `curl` de 64 bits intente cargar el SLSsteam de 32; no arregla el
+`fork()` desde un Steam multihilo con el mutex cogido, ni los 70 s. Con el
+`download.lua` original de Ace (tras la reversión) quedan 5 × 5 s = 25 s por
+manifest, también con el mutex cogido, pero sin subproceso ni `sleep`.
+
+**La carpeta vacía ("0 KB").** Animal Well (813230) por handoff: el log de
+ASSella muestra config parcheado a las 08:36:40, "Waiting for Steam license
+propagation" durante 16,5 s exactos (= `_poll_license_unlocked` con timeout
+de 15 s + `sleep(1.5)`: **el poll no vio la licencia y siguió**), sin línea
+"Synced N manifest(s) into depotcache" (cero manifests locales), `install`
+por la API a las 08:36:56, y a las 08:36:59 el VaporWatcher lee
+`StateFlags=4` y lo marca `up_to_date`; el escaneo siguiente dice "Skipped
+empty game folder: Animal Well". La causa está en el log de arranque de
+SLSsteam del mismo usuario: `813230` en `AdditionalApps`, pero **ningún
+`813231` en `AdditionalDepots`**. `_patch_config` construye
+`AdditionalDepots` con las claves de depot del bundle menos la del app
+(`native_steam_download_task.py`); el bundle de Hubcap trajo la clave del app
+y no la del depot. Steam ve un juego propio sin depots, "instala" en tres
+segundos y ASSella lo da por bueno. `DisableUpdates: yes` no interviene: no
+hubo depot que actualizar.
+
+**"Pasar el juego a modo ASSella" no es cambiar un flag.** Crea el marcador
+`.ACCELA` en la carpeta instalada por Steam y lanza DepotDownloader (.NET 9)
+contra esa misma carpeta, validando el juego entero fichero a fichero. La UI
+de PyQt se queda sin responder y el proceso sobrevive al cierre de la
+ventana ("python shit", niwia).
+
+**Lo que los logs no contienen.** Ninguno de los cuatro logs pegados
+contiene el momento del cuelgue: los de ASSella son arranques limpios y los
+de SLSsteam están cortados por Discord (`LogLevels: 0x3F`, que ASSella
+fuerza, produce ~1 MB por arranque). El mecanismo del cuelgue está
+deducido del código y de los commits de niwia, no medido.
+
+### 13.3 Qué significa para nosotros [read]
+
+- **Nada que tocar.** LumaDeck no usa `download.lua`. Nuestro
+  `lumadeck-spliced-tickets.lua` es el fichero de Ace byte a byte, igual que
+  el `spliced-tickets.lua` que despliega ASSella; ambos comparten el guard
+  global `SplicedTickets.setup`, así que con los dos instalados el segundo en
+  cargar no engancha nada (verificado en el fuente, líneas 2, 7 y 10).
+- El hook Lua de tickets y el hook VFT propio de SLSsteam sobre la misma
+  dirección (`0xd35ae730` en ese log) es la cadena normal, no un choque.
+- El mutex es global a **todos** los plugins: si `download.lua` se cuelga
+  70 s con él cogido, nuestro hook de tickets también espera y el juego no
+  arranca hasta reiniciar Steam. Sólo afecta a quien tenga ambas
+  herramientas y sólo con las builds de esa mañana; no es nuestro fichero.
+- Sigue en pie §12 (choque con lumalinux por `jmp` encadenado); esta
+  sección no lo contradice, lo acota: los crashes que se reportan en
+  público no vienen de lumalinux, vienen de su propio `download.lua`.
+
+| # | Qué | Estado |
+|---|---|---|
+| 1 | Modo nativo de `canary` en limpio: funciona hasta el código de manifest, muere en wudrm | Medido |
+| 2 | Cuelgue de Steam del 29-sep: `io.popen` + `sleep` dentro del hook de GMRC con el mutex global cogido, hasta 70 s por manifest | Deducido de código y commits; revertido por niwia en `6677a05` |
+| 3 | Carpeta vacía: bundle sin clave de depot → `AdditionalDepots` sin el depot → Steam "instala" en 3 s | Medido en el log del usuario |
+| 4 | Prueba 5 (desmontaje de hooks en caliente) y conteo de `writeDepotIds` | Pendiente |
