@@ -1126,5 +1126,10 @@ not a lua source; its fixes are ours (online-fix.me packs, voices38 `-V38`
 bundles, Steamless) plus the Uplay unlockers; "SteamToolsFix" is the name
 of its manifest monitor, not a crack.
 
-**Actionable:** nothing. `depotcn.caigamer.cn` stays a note until someone
-tests it with a browser UA (our policy is our own UA).
+`depotcn.caigamer.cn` measured (codespace, 09-29): **403** with our UA, with
+a Chrome UA + JSON Accept, and with curl's default — not a UA filter; region
+(GeoIP) or a key/header the app adds. Unusable from outside China; closed.
+(Same-minute control: 20770407 answered, and its code for the gid had
+rotated since the morning, as request codes do.)
+
+**Actionable:** nothing.
