@@ -1120,5 +1120,11 @@ the other manifest sources in order" — the failover FSL announced;
 `3b7c318` SDM; `6d0f1b6` default → 20770407. Next fork sweep from
 `a35262b`.
 
+Closed the same day: `cgmrc.wudrm.com` does not resolve (dead alias);
+`api.121058.xyz/search` is a Steam-store search proxy (appid/name/image),
+not a lua source; its fixes are ours (online-fix.me packs, voices38 `-V38`
+bundles, Steamless) plus the Uplay unlockers; "SteamToolsFix" is the name
+of its manifest monitor, not a crack.
+
 **Actionable:** nothing. `depotcn.caigamer.cn` stays a note until someone
 tests it with a browser UA (our policy is our own UA).
