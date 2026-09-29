@@ -891,6 +891,64 @@ de SLSsteam están cortados por Discord (`LogLevels: 0x3F`, que ASSella
 fuerza, produce ~1 MB por arranque). El mecanismo del cuelgue está
 deducido del código y de los commits de niwia, no medido.
 
+### 13.2b Segundo log (tarde del 29-sep): Steam ya no arranca [read: log completo del usuario]
+
+Tras la build de las 13:54 UTC ("this should fix all"), el mismo usuario: "my
+steam wont start anymore, crashing on startup". Esta vez el log de SLSsteam
+está entero (6495 líneas, build debug) y **termina en el momento del crash**:
+
+```
+SendAndRecv(…, ContentServerDirectory.GetManifestRequestCode#1, …)
+Curl::getString(http://gmrc.wudrm.com/manifest/9024591918084649408)
+[utils.cpp:exec] Created pipe 150 : 151
+[utils.cpp:exec] Child PID 344072
+[utils.cpp:exec] Exit Status: 0
+[lua.cpp:debug] MRC server http://gmrc.wudrm.com/manifest/ returned non-numeric response, skipping
+```
+
+Y ahí acaba el fichero. Sin línea de error. Lo que se lee:
+
+- Es el **arranque**: Steam revisa el juego instalado en modo plugin
+  (`Using config key for 3832490` 36 líneas antes), Valve le niega el
+  código, y el hook de GMRC hace la **primera** petición a wudrm de la
+  sesión. Steam muere justo después. Determinista en cada arranque, de ahí
+  "ya no arranca".
+- El mensaje "MRC server … returned non-numeric response, skipping" no
+  existe en ningún `download.lua` publicado (ni el de Ace ni `cb3a49b`): es
+  el de la build de las 13:54, que no está en el repo. Un bucle por
+  servidores, del que sólo vemos el primero fallar.
+- El remedio de niwia: borrar `AdditionalDepots` y `DecryptionKeys` del
+  config y vaciar `plugins/`. "Yea that worked". Sin plugin no hay hook, y
+  sin depots no hay motivo para pedir código. El usuario se queda sin modo
+  nativo.
+
+**Corrección a lo dicho arriba sobre "sin subproceso".** Las tres líneas
+`utils.cpp:exec` no son de niwia: son de SLSsteam. `Curl::downloadString`,
+lo que Lua ve como `curl.downloadString`, **no usa libcurl: hace `fork` +
+`execve` de `/usr/bin/curl`** y lee su salida por un pipe (`curl.cpp`,
+comentario de Ace: "SteamOS seems broken. Curling certain URLs will crash
+inside libssl.3.so"; es la misma libcurl rota del runtime que nosotros
+esquivamos con `libcurl_pin.cpp`). Con `--connect-timeout N` y **sin
+`--max-time`**: un servidor que acepta la conexión y no contesta deja al
+hijo vivo, al `read` del pipe bloqueado, y al hook con el mutex cogido
+**sin límite**. Así que también el `download.lua` original de Ace bifurca
+Steam en cada petición de código, y sus "25 s" son 5 × 5 s sólo para
+conectar; después no hay techo. El `io.popen` de niwia era un segundo
+`fork` encima del primero.
+
+**Candidato al crash, no verificable sin la build.** El hijo salió con 0 y
+el hook siguió; lo siguiente que hizo no dejó línea. Los hooks Lua de
+SLSsteam son callbacks FFI de LuaJIT llamados directamente por Steam, sin
+`pcall` ni `lua_atpanic` (`lua.cpp`, `hooks.cpp`). La documentación de
+LuaJIT (`ext_ffi_semantics`, "Callbacks"): lanzar un error a través de un
+callback "is allowed but not advisable… only if you know the C function
+that called the callback copes with the forced stack unwinding". Steam no
+está preparado para eso. Un error de Lua sin capturar en el código nuevo
+tras el "skipping" (un `nil` concatenado, un índice fuera de la lista de
+servidores) desenrolla la pila de Steam por la fuerza y el proceso muere
+sin pasar por el log. Encaja con: log cortado sin error, determinista,
+sólo con esa build, sólo cuando wudrm falla.
+
 ### 13.3 Qué significa para nosotros [read]
 
 - **Nada que tocar.** LumaDeck no usa `download.lua`. Nuestro
@@ -914,5 +972,7 @@ deducido del código y de los commits de niwia, no medido.
 |---|---|---|
 | 1 | Modo nativo de `canary` en limpio: funciona hasta el código de manifest, muere en wudrm | Medido |
 | 2 | Cuelgue de Steam del 29-sep: `io.popen` + `sleep` dentro del hook de GMRC con el mutex global cogido, hasta 70 s por manifest | Deducido de código y commits; revertido por niwia en `6677a05` |
+| 2b | Steam no arranca con la build de las 13:54: muere tras la primera petición a wudrm, sin línea de error; remedio de niwia = quitar depots, claves y plugins | Log completo del usuario; causa candidata: error Lua sin capturar en un callback FFI (13.2b) |
+| 2c | `curl.downloadString` de SLSsteam es `fork`+`execve` de `/usr/bin/curl` sin `--max-time`: todo `download.lua`, el de Ace incluido, bifurca Steam por cada código y puede esperar sin límite | Fuente de SLSsteam (`curl.cpp`, `utils.cpp`) |
 | 3 | Carpeta vacía: bundle sin clave de depot → `AdditionalDepots` sin el depot → Steam "instala" en 3 s | Medido en el log del usuario |
 | 4 | Prueba 5 (desmontaje de hooks en caliente) | Medido: Steam sobrevive. El conteo de `writeDepotIds` no es medible en release |
