@@ -813,8 +813,11 @@ PID de Steam, md5 del `config.yaml`, listado de `plugins/`, mtime de
 
 De (4): la hipótesis "`writeDepotIds` hace `Plat_Free` en cada recarga y
 revienta" pierde fuerza, con la salvedad de que la reescritura es perezosa
-(sólo en la siguiente `GetPackage(0)`) y no se ha contado cuántas veces
-corrió (`grep -c 'writeDepotIds into Package' ~/.SLSsteam.log`, pendiente).
+(sólo en la siguiente `GetPackage(0)`) y no se puede contar cuántas veces
+corrió: la línea `writeDepotIds into Package` es un `log.debug` de Lua, que
+en SLSsteam va a `CLog::__debug` bajo `#ifdef DEBUG` y no existe en una
+build release, sea cual sea `LogLevels` (medido: 0 con `0xff`). Los logs de
+Discord llenos de `[Debug …]` son de usuarios con build debug.
 El defecto sigue ahí de todos modos: el hook guarda `Downloader.Package` la
 primera vez y no lo refresca; si Steam reconstruye el paquete 0, la siguiente
 reescritura escribe en memoria muerta.
@@ -910,4 +913,4 @@ deducido del código y de los commits de niwia, no medido.
 | 1 | Modo nativo de `canary` en limpio: funciona hasta el código de manifest, muere en wudrm | Medido |
 | 2 | Cuelgue de Steam del 29-sep: `io.popen` + `sleep` dentro del hook de GMRC con el mutex global cogido, hasta 70 s por manifest | Deducido de código y commits; revertido por niwia en `6677a05` |
 | 3 | Carpeta vacía: bundle sin clave de depot → `AdditionalDepots` sin el depot → Steam "instala" en 3 s | Medido en el log del usuario |
-| 4 | Prueba 5 (desmontaje de hooks en caliente) y conteo de `writeDepotIds` | Pendiente |
+| 4 | Prueba 5 (desmontaje de hooks en caliente) | Pendiente. El conteo de `writeDepotIds` no es medible en release |
