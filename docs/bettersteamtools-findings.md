@@ -1003,3 +1003,36 @@ until upstream's step is repaired or the fork switches feeds.
 **Actionable: nothing** (jsDelivr mirror parked). Next sweep starts at
 `4747385` (BST `main`), `bfa812e` (`updates`), `840477d` (huanyuejue),
 `b72ebd4` / `134c9b1` (the two `pattern` branches), `c61b16c` (upstream `ipc`).
+
+## Delta — 2026-09-29: Fluent-Steam-Lua (huanyuejue's Windows front-end) — SDM measured, `kProviders` claim to verify
+
+**[read]** `huanyuejue/Fluent-Steam-Lua` (`5280749`, 130 commits since 07-22,
+8 on 09-29): WPF/C# front-end for the same author's OpenSteamTool fork (the
+"kernel" it installs). Already our source for `SteamManifestCache_Pro` and
+the `api.993499094.xyz/depotkeys.json` dump (`RESEARCH.md`). New since:
+`658425a` "kernel settings: sync new upstream manifest sources + speed
+test" lists six request-code sources "in the same order as the kernel's
+`kProviders` table, i.e. the failover order": `20770407`, **SDM**
+(`steamapi.993499094.xyz/manifest/<app>/<gid>`, same shape as 20770407),
+manifestdex (UA `ManifestDeX/1.0`), wudrm, steam.run, opensteamtool. Plus
+`6e213d7` "auto-switch source on failure" (covers). Everything else it does
+(Heybox covers, FLiNG trainers, SAM achievements, Denuvo ticket extraction
+from an owning account for the kernel, ManifestHub2 client, `remlua.com` lua
+zips from an S3 bucket via a `walftech` short-link, bundled CloudRedirect
+2.x DLL with a cloned companion) is Windows-side or already known.
+
+**[measured, codespace 09-29]** SDM and 20770407 return the **same** code
+for Spacewar 481 / gid 3183503801510301321 (`5726322088222453673`) at the
+same instant: same upstream or one caches the other. Not new capacity — a
+second front to the same pool, like the pool-B fronts noted in
+`gmrc_store.hpp`. Candidate fifth provider, low priority (one row + a test);
+the CDN check decides whether its codes are good. Our proxy here blocks the
+host; measure on-device.
+
+**To verify on the next OpenSteamTool-fork sweep:** `kProviders` is the name
+of *our* table (`gmrc_store.hpp`). FSL says the kernel now has one, with
+failover, in that order. Our `§` table above still says "single provider, no
+failover" for OST: either the fork gained a cascade since 09-18, or it took
+ours, name included. Check `huanyuejue/OpenSteamTool` from `840477d`.
+
+**Actionable:** SDM row, parked. Next FSL sweep from `5280749`.
