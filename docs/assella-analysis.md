@@ -783,3 +783,4 @@ ver `download.lua` en la carpeta de plugins; (4) sus dos patrones en
 | 1 | `canary` nativo sobre lumalinux: crash (orden normal) o lumalinux mudo (orden inverso) | Conocido | Causa en SLSsteam; sin acción; vigilar la promoción a `main` |
 | 2 | Spliced tickets: plugin, no hook inline | Hecho | LumaDeck `b70ea44` |
 | 3 | Opciones (1)–(5) de arriba | — | Decisión del autor |
+| 4 | Confirmación pública (Discord SLSsteam, 29-sep): con la build `v3.0.0270926006` de `canary` "Steam se cierra a intervalos aleatorios"; niwia: "expected, untested waters, plugin testing", "just lab rats for assella"; Ace: "how do you even crash steam from an external tool?" | Dato | Encaja con §12; sin acción |

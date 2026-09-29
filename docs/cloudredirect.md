@@ -570,3 +570,40 @@ CachyOS es una lotería de 10 segundos.
 Próximo barrido desde upstream `bc5e38a` / v2.6.5 y `cloudredirect-moon`
 `19da055`; a partir de ahora el diff de `src/platform/linux/` entre los dos
 forma parte del barrido, no solo el `git log`.
+
+
+## Re-barrido 2026-09-29 — "CloudRedirect en Linux lleva semanas roto": es el `curl failed: 60`, y lumalinux ya lo corrige
+
+*Upstream sigue en `bc5e38a` / v2.6.5 (18-ago); nada nuevo en `master`, `ost`
+ni `gh-pages`.*
+
+**El dato de fuera.** Discord de SLSsteam, 29-sep: usuarios de Deck con
+CloudRedirect que "ya no sincroniza" (uno tras reinstalar Steam); niwia (mod,
+autor de ASSella): *"Cr in Linux is broken for a long time now … weeks … he
+is working on fixing it … in linux only"*. En el repo, dos issues con el
+mismo texto: **#197** (SteamOS recién instalado, R2 y también Google Drive,
+cerrada el 8-sep sin respuesta) y **#203** (Linux, R2, 2.6.5+870afdb, abierta
+desde el 12-sep, sin respuesta): `[R2] curl failed: 60 (GET https://…)` en
+bucle, `FetchCloudStateBounded … provider exceeded 12000ms -- serving local`,
+Steam "extremely slow". Error 60 de curl = verificación de certificado.
+
+**La causa la teníamos medida desde el 7-sep** (`src/libcurl_pin.cpp`, `f0fab5a`):
+CloudRedirect abre libcurl por soname con `dlopen()`, y dentro de Steam gana la
+del Steam Runtime (libcurl 7.22 / OpenSSL 1.0.1, TLS de 2013), que no valida
+los certificados actuales. Antes lo corregía `library-inject.so` de SLSsteam;
+Ace lo desactivó el 26-ago y la release `20260903` lo trae vacío, así que
+**todo consumidor sin otra corrección cae al TLS viejo** desde esa release.
+Encaja con "semanas" y con "Linux only". Lumalinux interpone `dlopen()` y
+redirige solo esa petición, solo desde `cloud_redirect.so` y desde nosotros,
+a la libcurl del sistema (reproducido en ambos sentidos; con
+`LUMA_NO_LIBCURL_FIX=1` CR da el mismo `curl failed: 60`, nota del cuelgue
+de arriba).
+
+**Consecuencia.** Los usuarios de LumaDeck no están en ese "roto": lo estarían
+solo con lumalinux anterior al 7-sep o con el kill-switch puesto. Los que sí lo
+están son los de Headcrab + ASSella sin lumalinux, y lo que Selectively11
+"está arreglando" será, si es esto, llevar la selección de libcurl a
+CloudRedirect. **Sin acción**; comprobar en el codespace que `cr_debug.log` no
+tiene `curl failed: 60` y que el log de lumalinux muestra el pin activo.
+
+Próximo barrido desde `bc5e38a` / v2.6.5, issues #203 y #193.
