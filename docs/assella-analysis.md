@@ -809,7 +809,7 @@ PID de Steam, md5 del `config.yaml`, listado de `plugins/`, mtime de
 | 2 | Balatro (2379780) por la web UI, `at0m_default_download_action=native` | Parchea `AdditionalApps`/`AdditionalDepots`/`DecryptionKeys` (`ManifestIds` vacío: sin pin), espera la licencia, envía `install\|2379780\|lib` por `/tmp/SLSsteam.API`. Steam intenta bajar y muere en el código de manifest: wudrm devuelve el reto de Cloudflare (403/503) desde la IP del codespace con cualquier UA; el fallback por `curl_chrome120` ya no existe en `6677a05`. Steam: "Unknown error" / "Content servers unreachable". Desde la misma IP, manifestdex sí da código. |
 | 3 | Matar ASSella | No limpia nada: config, plugins y el `appmanifest` a medias se quedan. |
 | 4 | 15 recargas de `config.yaml` en 30 s con `download.lua` cargado, sin descarga en vuelo | `Config reloaded` ×15, cero errores, Steam vivo. |
-| 5 | Quitar y reponer `download.lua` con Steam abierto (desmontaje de hooks en caliente) | **Pendiente.** |
+| 5 | Quitar y reponer `download.lua` con Steam abierto, 5 ciclos con 3 s entre pasos (cada `mv` dispara `Lua::onFileChange` → `Lua::init` → `~LuaHook` → `LM_UnhookCode` y vuelta a colocar) | Steam vivo tras los 10 reinicios del estado Lua; sin errores nuevos en el log. Evidencia indirecta: en release no hay línea de reload (`Ran x.lua` es `Once` y el `notify` está tras el guard), sólo la supervivencia. |
 
 De (4): la hipótesis "`writeDepotIds` hace `Plat_Free` en cada recarga y
 revienta" pierde fuerza, con la salvedad de que la reescritura es perezosa
@@ -906,11 +906,13 @@ deducido del código y de los commits de niwia, no medido.
   herramientas y sólo con las builds de esa mañana; no es nuestro fichero.
 - Sigue en pie §12 (choque con lumalinux por `jmp` encadenado); esta
   sección no lo contradice, lo acota: los crashes que se reportan en
-  público no vienen de lumalinux, vienen de su propio `download.lua`.
+  público no vienen de lumalinux, vienen de su propio `download.lua`. Y
+  con las pruebas 4 y 5, SLSsteam solo (recargas de config y desmontaje de
+  hooks en caliente) tampoco tumba a Steam.
 
 | # | Qué | Estado |
 |---|---|---|
 | 1 | Modo nativo de `canary` en limpio: funciona hasta el código de manifest, muere en wudrm | Medido |
 | 2 | Cuelgue de Steam del 29-sep: `io.popen` + `sleep` dentro del hook de GMRC con el mutex global cogido, hasta 70 s por manifest | Deducido de código y commits; revertido por niwia en `6677a05` |
 | 3 | Carpeta vacía: bundle sin clave de depot → `AdditionalDepots` sin el depot → Steam "instala" en 3 s | Medido en el log del usuario |
-| 4 | Prueba 5 (desmontaje de hooks en caliente) | Pendiente. El conteo de `writeDepotIds` no es medible en release |
+| 4 | Prueba 5 (desmontaje de hooks en caliente) | Medido: Steam sobrevive. El conteo de `writeDepotIds` no es medible en release |
