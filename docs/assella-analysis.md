@@ -972,7 +972,151 @@ sólo con esa build, sólo cuando wudrm falla.
 |---|---|---|
 | 1 | Modo nativo de `canary` en limpio: funciona hasta el código de manifest, muere en wudrm | Medido |
 | 2 | Cuelgue de Steam del 29-sep: `io.popen` + `sleep` dentro del hook de GMRC con el mutex global cogido, hasta 70 s por manifest | Deducido de código y commits; revertido por niwia en `6677a05` |
-| 2b | Steam no arranca con la build de las 13:54: muere tras la primera petición a wudrm, sin línea de error; remedio de niwia = quitar depots, claves y plugins | Log completo del usuario; causa candidata: error Lua sin capturar en un callback FFI (13.2b) |
+| 2b | Steam no arranca con la build de las 13:54: muere tras la primera petición a wudrm, sin línea de error; remedio de niwia = quitar depots, claves y plugins | Log completo del usuario. **Causa verificada el 30-sep con la build (§14.1)**: `download.lua` l.272 concatena el `uint64_t` `manifestId` en un string; LuaJIT lanza, el callback FFI desenrolla Steam |
 | 2c | `curl.downloadString` de SLSsteam es `fork`+`execve` de `/usr/bin/curl` sin `--max-time`: todo `download.lua`, el de Ace incluido, bifurca Steam por cada código y puede esperar sin límite | Fuente de SLSsteam (`curl.cpp`, `utils.cpp`) |
 | 3 | Carpeta vacía: bundle sin clave de depot → `AdditionalDepots` sin el depot → Steam "instala" en 3 s | Medido en el log del usuario |
 | 4 | Prueba 5 (desmontaje de hooks en caliente) | Medido: Steam sobrevive. El conteo de `writeDepotIds` no es medible en release |
+
+---
+
+## §14 — 2026-09-30: la build rota en la mano, el crash con nombre y línea, y un arreglo probado en el codespaces
+
+*Fuentes: el AppImage `3.0.0testing290926005` (la build "pinned" de Discord,
+inventario completo por listado y zip de sus ficheros de texto), el repo
+`canary` hasta `e49c967` (`300926001`), LuaJIT 2.1 local, y dos pruebas en el
+codespaces SteamOS con SLSsteam stock. Cierra el "candidato" de §13.2b.*
+
+### 14.1 El crash, verificado [measured: build + LuaJIT]
+
+La build fijada en Discord lleva un `download.lua` que **no está en el repo**:
+`canary@6677a05` había revertido al lua de Ace, y el AppImage vuelve a meter
+el bucle de servidores (`MRC_SERVERS` = wudrm + `http://167.235.229.108/`,
+"ryuu"; ambos responden 403 desde el codespaces y desde aquí). El camino
+cuando wudrm devuelve HTML:
+
+```lua
+-- tryFetchMRC: respuesta no numérica -> log.debug("... skipping"); return nil
+-- getManifestRequestCode, l.272:
+log.warn("MRC server " .. serverUrl .. " failed for " .. manifestId)
+```
+
+`manifestId` llega al hook como `uint64_t` (firma `GetMRC_t`), y LuaJIT no
+define `..` para cdata de 64 bits:
+
+```
+$ luajit -e 'local ffi=require"ffi"; local m=ffi.new("uint64_t",275796854305563747ULL)
+             print(pcall(function() return "failed for " .. m end))'
+false   attempt to concatenate 'string' and 'uint64_t'
+```
+
+El error salta dentro de un callback FFI sin `pcall` (`lua.cpp`,
+`hooks.cpp`), desenrolla la pila de Steam y el proceso muere sin escribir
+nada más: exactamente el log de §13.2b, cortado tras "skipping". La l.276
+("All MRC servers failed for manifest " .. manifestId) tiene el mismo fallo.
+**El lua original de Ace lo tiene también**, en "Failed to download manifest
+request code for " .. manifestId, pero sólo se alcanza con respuesta vacía;
+con la página de Cloudflare va por "Invalid MRC response " .. codeStr, que es
+string. Niwia unificó los dos casos en la rama que revienta.
+
+Alcance: determinista en cada arranque con un juego en modo plugin (Steam
+pide el código, wudrm falla, l.272). Sólo se salva si wudrm contesta un
+número (el "Animal Well funcionó" de Discord). `SafeMode: 0` en el config de
+Shinji: ni siquiera la lista de hashes de Ace estaba activa. El commit
+`cfc49ef` (30-sep 03:29, "next build will work better") lleva **el mismo
+`download.lua` byte a byte**; la l.272 sigue.
+
+### 14.2 Inventario del AppImage [read: listado + ficheros de texto]
+
+837 MB, 17.702 ficheros. `bin\.venv` 602 MB (venv de Python 3.13 con PyQt6,
+numpy, tcl/tk, PyInstaller: la máquina de niwia tal cual). `bin\src` 169 MB
+(101 MB de `deps`: Goldberg ×4 de 20 MB, SteamKit2, DepotDownloader,
+Steamless, schema-grabber, EOSSDK; 40 MB `steam_headers.db`; 17 MB de gifs y
+fuentes). Y dos cosas que no son de ASSella:
+
+- **`bin\decky_loader` + `decky_loader-3.2.6.dist-info`**: el backend de
+  Decky Loader desempaquetado, con `direct_url` apuntando al runner de CI de
+  Decky (`/home/runner/work/decky-loader/...`). Ninguna referencia desde el
+  código de ASSella. Basura del directorio de build. Inofensivo.
+- **`bin\tor`**: Tor real (`Tor version %s`, torrc), con `libevent`,
+  `libseccomp`, `libcap`, `libsystemd`. Lo lanza `utils/isp_bypass.py` como
+  tercer escalón para la API de Hubcap (ver 14.4). No toca descargas.
+
+Los `.pyc` no cuadran con los `.py` (`vapor.py` de 133 bytes con un pyc de
+58 KB; `at0m.py` de 41 KB con un pyc 3.14 de 253 bytes): es sólo el renombrado
+`vapor` → `at0m`. Nada raro.
+
+### 14.3 Diferencias de la build frente a `canary` [read: diff]
+
+Además del lua: `dispatch_steam_url()` lanza `steam steam://install/<appid>`
+como proceso **además** de escribir `install|<appid>|<lib>` en
+`/tmp/SLSsteam.API` (dos órdenes por vías distintas); los comandos al pipe
+llevan `\n`; el handoff resuelve todos los depots con clave si no se eligen
+y registra en `plugin_library.json`. `cfc49ef` lo empeora: bucle de hasta 8
+intentos cada 3 s por las dos vías más un hilo de 6 reintentos cada 5 s
+(hasta 28 órdenes de instalar), presiembra de manifests en `depotcache`
+(correcto, es lo nuestro) y códigos de salida de Steamless.
+
+### 14.4 Lo demás que salió al revisar la build [read]
+
+| Qué | Dónde | Por qué importa |
+|---|---|---|
+| Clave de Hubcap por un proxy de niwia | `utils/isp_bypass.py`: cadena directo → DoH → Tor → "Wirecutter", un Cloudflare Worker cuya URL va "cifrada" con XOR+base85 (`_WIRECUTTER_SECRET`); descifrada: `rapid-thunder-fba1wirecutter.7ucking.workers.dev` | Todas las llamadas a Hubcap, con `api_key` en la URL, pasan por su servidor cuando los tres escalones anteriores fallan o el usuario elige "Wire". Modo por defecto "auto" |
+| Código de terceros en Steam sin fijar versión | `native_steam_download_task.py`: si faltan los lua empaquetados, baja `plugins-deps.zip` del release "latest" de `ciscosweater/enter-the-wired` a la carpeta de plugins | Lo que haya en ese zip ese día corre dentro de Steam |
+| Web en la LAN sin auth | `utils/web_server.py`: `0.0.0.0:8765`, CORS abierto, POST que lanzan descargas con la clave del usuario | Apagada por defecto (`enable_remote_web_ui`); al activarla, cualquiera en la wifi |
+| AppIDs en `AdditionalDepots` | `native_steam_download_task.py` registra `depot_ids=list(depot_keys.keys())` (incluye la clave del propio AppID) y `plugin_games.register_plugin_game` lo escribe sin filtrar; `sync_all_plugin_games_to_config` lo reescribe en cada arranque | Es lo que Ace avisa en su Discord ("only actual depots in AdditionalDepots, appIds break SLSsteam functionality") culpando a psyche. La captura de Shinji lo muestra: `2483190 # Forza Horizon 6 (2483190)` es el AppID (está en `AppTokens`) |
+| "Missing LogLevels… Missing AdditionalDepots" espurios | ASSella escribe el config varias veces por juego (app, cada depot, cada clave), SLSsteam relee en cada `IN_CLOSE_WRITE`; el "repair" (`assfixer.py`) usa `open(...,"w")` que vacía el fichero antes de rellenarlo | Una relectura que cae en el hueco lee vacío: todo "missing" y el "Missing DecryptionKeys!" del lua. Ruido, no daño |
+| Mensajes remotos | `status_pager.py` lee `broadcast.json` de la rama `beta` cada poco y lo muestra | Sólo texto |
+| Denuvo statuses | `ratings.py`: Supabase con clave anónima, sólo lectura | Nada |
+
+### 14.5 El arreglo, y qué prueba [measured: fork + codespaces]
+
+Rama `fix/mrc-out-of-hook` en `jayool/ASSella` (sobre `canary@e49c967`;
+commits `2fd6ecf`, `81213c6`). No es para PR: es la demostración de que el
+problema es de arquitectura, no de una línea.
+
+- **`download.lua`**: fuera `MRC_SERVERS`, `tryFetchMRC`,
+  `getManifestRequestCode` y los reintentos. `configLoaded` lee una sección
+  `ManifestRequestCodes: {gid: mrc}` del config a una tabla, gid y código
+  como **strings** (`asString`; nunca por número de Lua). `hkGetMRC`
+  convierte el manifest con `snprintf`, busca en la tabla, escribe el código
+  con `strtoull` o devuelve el resultado del trampolín. Cero red, cero
+  `curl`, cero concatenación de cdata dentro del hook.
+- **Python**: `core/native_steam/steam_mrc_prefetch.py` pide los códigos
+  **fuera de Steam** con el `WudrmMRCFetcher` que `at0m.py` ya tenía (2
+  intentos × 6 s por gid, caché de más de 15 min descartada), también para
+  el gid público actual de Valve vía `steamcmd.net`, y los escribe en el
+  config. Enganchado en los tres caminos de instalación: tarea nativa,
+  handoff, e `install_via_sls` (el de la web, con los gids sacados de los
+  nombres de fichero del zip de Hubcap).
+
+Pruebas en el codespaces (SteamOS, SLSsteam stock, `Plugins: yes`, Balatro
+2379780, manifest borrado de `depotcache`):
+
+| # | Cómo | Resultado |
+|---|---|---|
+| A | Instalar desde Steam, sin código y sin manifest: el camino exacto que mataba a Steam | `No prefetched MRC for depot 2379781 manifest 3512319404653808464`; CDN 401; Steam cancela con su error normal ("Unknown error"); **Steam vivo** |
+| B | Desde la web de ASSella (camino `install_via_sls`) | `[MRCPrefetch] 2379780: 3/3 MRC(s) resolved`: **wudrm contesta** desde fuera de Steam gracias a la imitación de Chrome de `curl_cffi` (el `curl` pelado del lua recibe la página de bloqueo). Sección escrita en el config. Steam descarga 2379781 (60 MB) + 228989 con esos códigos, sin un solo 401 para ellos. `InstalledDepots` completo, botón Jugar |
+
+Lo que B deja ver de paso: tras instalar, Steam pide el **depot de shaders**
+(id = AppID, manifest `8352398215100954353`, el mismo que el lua viejo pedía
+a wudrm el 29), sin código → 401 → Steam se rinde y deja el juego instalado.
+Es la limitación de todo el ecosistema con `download.lua`; lumalinux la
+resuelve con su hook de shaders (apagado, como moon). Con la build de niwia
+ese mismo depot era el que disparaba el crash.
+
+### 14.6 Qué significa para nosotros [read]
+
+- Sigue sin haber nada que tocar en lumalinux/LumaDeck. Lo de §13.3 se
+  mantiene, ahora con la causa del crash con nombre y línea.
+- Sobre los AppIDs en la lista de depots (14.4): nosotros también metemos el
+  AppID de `keys.txt` en el paquete 0, **pero en `AppIdVec` (+0x38)**, la
+  lista de apps, que es la que Steam consulta para el filtro de licencia
+  (RESEARCH.md; `DepotIdVec` +0x48 probado y descartado en 0.16.14). El
+  `download.lua` escribe `AdditionalDepots` en la de **depots** (+0x48).
+  Es el caso que Ace avisa; no es el nuestro. Experimento pendiente si se
+  quiere cerrar del todo: variable de entorno que excluya el AppID de la
+  inyección y comparar instalaciones.
+- La precarga fuera de Steam con imitación de Chrome **sí saca códigos de
+  wudrm hoy** (prueba B). Es un dato para nuestra cascada de GMRC, que está
+  desactivada tras `LUMA_GMRC=1`: si algún día vuelve a hacer falta, el
+  `curl_cffi`/impersonate desde LumaDeck es una vía probada.
