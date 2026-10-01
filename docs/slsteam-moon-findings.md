@@ -1904,3 +1904,90 @@ El próximo barrido arranca en `44436f3` (`slsteam-moon`), `62767b3` (`beta`),
 `499b50e` (`millennium`), `9edb704` (`luatools-moon`), `52475c3` (`lumen`),
 `19da055` (`cloudredirect-moon`), `94d9148` (`jsdelivr`) y `58c784a`
 (`steam-monitor`).
+
+## Delta — 2026-10-01 (desde el delta del 2026-09-28)
+
+*Fuentes: `src/patterns.cpp`, `src/pattern_catalog.{hpp,cpp}` y
+`tools/pattern-refresh/` de `slsteam-moon` (clon local), `steam-monitor` @
+`58c784a` (27-sep, verificado hoy con `git fetch`), el `~/.SLSsteam.log` de un
+usuario de SLSDeck (mj, 30-sep), y cinco runs de nuestro `probe-steam.yml` del
+1-oct. No hay commits nuevos que leer en `slsteam-moon` desde el barrido del
+28; este delta cierra cómo resuelve moon de verdad y qué ve su monitor.*
+
+### Cómo resuelve moon un patrón (leído en `patterns.cpp`)
+
+Por cada locator, en este orden:
+
+1. **Caché local** (`pattern_cache.cpp`): el fichero que moon se escribe tras
+   una pasada buena, con las direcciones resueltas para ese sha. Si su política
+   (conjunto de locators y firmas) no coincide con la compilada, se descarta:
+   "Local pattern cache for steamclient changed compiled locator policy;
+   ignoring it".
+2. **Catálogo de steam-monitor** para el sha exacto del módulo cargado.
+   `Catalog::validatePolicy()` exige que cada entrada tenga el mismo `symbol`,
+   `required`, `signature` y `followMode` que el `CompiledLocator` del binario;
+   si una firma difiere, el catálogo entero se ignora ("Pattern catalog for
+   steamclient changed compiled locator policy; ignoring it", lo que se ve en
+   el log de mj con moon 2.9). Un catálogo válido es "authoritative" para ese
+   locator y evita el escaneo.
+3. **Firmas compiladas** (`MemHlp::searchSignatureDetailed`), "the path every
+   unknown client build takes". Un `required` que no casa una vez exacta tira
+   todo: "Failed to find all patterns! Aborting".
+
+Lo que esto fija: **el catálogo no puede aportar una firma nueva**. Sólo
+ahorra el escaneo para firmas que ya van compiladas. Cuando Valve recompila y
+las firmas dejan de casar, el único arreglo es un moon nuevo de swwayps.
+`pattern-refresh` (curl a steam-monitor por sha) alimenta el punto 2, nada
+más. 55 locators, ~24 requeridos; en el build `d9f8d233` de mj fallaron 24.
+
+### Lo que ve steam-monitor, y lo que no
+
+README (27-sep): Stable 1788652215, Beta 1790545198. Sólo canales de
+escritorio. Tiene `bc54101b` (etiquetado 1788291500) porque el 2-sep ese
+binario era también el stable de escritorio; desde el 3-sep escritorio pasó a
+`237495b4` y la Deck se quedó en `bc54101b`, y el monitor dejó de seguir a la
+Deck sin enterarse. No tiene la beta del 29 (`a3661f5b`) ni `d9f8d233`.
+
+Medido el 1-oct con `probe-steam.yml` (runs 3–7, build-id por `readelf`):
+
+| Canal | Versión | `steamclient.so` | build-id | Patrones (nuestros) |
+|---|---|---|---|---|
+| Deck stable | 1788652215 | `bc54101b…` | `a577b836…` | CLEAN (whitelist) |
+| Escritorio stable | 1788652215 | `237495b4…` | `29734b56…` | CLEAN |
+| Deck beta | 1790721607 | `a3661f5b…` | `e6de8467…` | CLEAN |
+| Escritorio beta | 1790721607 | `a3661f5b…` | `e6de8467…` | CLEAN |
+
+Mismo número de versión en stable con binarios distintos (la etiqueta es del
+paquete, no del fichero; Valve la subió en los dos canales el 5-sep sin tocar
+el `steamclient.so` de la Deck). La beta es un solo fichero en ambos.
+`steam_client_steamdeck_{main,preview,beta}_ubuntu12` no existen (404).
+`d9f8d233254bf375…` (steamui `d27e6a9a…`) no es ninguno de los cuatro, no está
+en steam-monitor y no es lo que pinea Headcrab; hipótesis: una beta de Deck
+servida entre el 27 y el 30 y ya retirada. Valve sólo sirve el manifest
+actual, así que no se puede confirmar.
+
+### Qué significa
+
+- Moon cubre la Deck **de rebote**: por el binario del 2-sep que escritorio
+  también tuvo. El día que la Deck salte a algo que escritorio no haya pasado
+  antes, el monitor no lo ve, el compilado no casa y moon aborta hasta que
+  swwayps publique. SLSDeck encima vuelve a pinear A con Headcrab y abre la
+  ventana al updater (§20 de `slsdeck-analysis.md`).
+- Nosotros vigilamos `steam_client_steamdeck_stable_ubuntu12` a diario y
+  podemos sondear cualquier manifest a mano; la beta del 29 pasó limpia con
+  los patrones actuales sin rederivar nada.
+- D23 ("beta recompilada") sigue en pie como vigilancia, con un dato más: la
+  beta actual cae en el layout `beta-0xf90` y resuelve.
+
+### Balance del delta
+
+| # | Qué | Prioridad | Estado |
+|---|---|---|---|
+| 1 | Orden real de resolución; el catálogo no aporta firmas | — | Leído; corrige la idea de que moon "descarga patrones" |
+| 2 | steam-monitor sólo escritorio; Deck cubierta por carambola | Vigilar | Nuestro monitor sí sigue la Deck; el probe imprime build-id |
+| 3 | Beta 1790721607 (`a3661f5b`) | — | CLEAN en CI el 1-oct; no en steam-monitor |
+| 4 | `d9f8d233` sin identificar | Vigilar | Si reaparece en un log de usuario, cotejar con el probe |
+
+El próximo barrido arranca en los mismos refs del delta anterior
+(`slsteam-moon`, `luatools-moon`, `lumen`, `cloudredirect-moon`, `jsdelivr`)
+y `58c784a` (`steam-monitor`, sin cambio).
