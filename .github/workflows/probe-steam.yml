@@ -41,6 +41,10 @@ on:
         description: "Any other manifest name (overrides the choice above; e.g. steam_client_steamdeck_main_ubuntu12)"
         type: string
         default: ""
+      extra_signatures:
+        description: "Optional: extra byte signatures to count in this binary's .text, as LABEL=BYTES;LABEL=BYTES (? = wildcard)"
+        type: string
+        default: ""
       derive:
         description: "On a moved pattern, run the re-derivation (Ghidra, ~20 min) and upload the patterns.hpp diff"
         type: boolean
@@ -106,6 +110,15 @@ jobs:
       # the runner's working copy only. Unlike watch-steam.yml this re-derives EVERY
       # constant that did not resolve UNIQUE (diagnostics included) — the point of
       # a probe is to collect as much as possible, not to gate a whitelist.
+      - name: Count extra signatures (optional)
+        if: ${{ inputs.extra_signatures != '' }}
+        env:
+          SIGS: ${{ inputs.extra_signatures }}
+        run: |
+          set +e
+          python3 tools/scan_signature.py steamclient.so --sigs "$SIGS" | tee extra-signatures.txt
+          echo "scan_signature.py exit: $? (0 all unique / 2 ambiguous / 3 not found)"
+
       - name: Set up Java for re-derivation
         if: inputs.derive && (steps.check.outputs.exit == '2' || steps.check.outputs.exit == '3')
         uses: actions/setup-java@v4
@@ -191,7 +204,12 @@ jobs:
             echo
             echo '<details><summary>check_patterns.py report (current patterns)</summary>'
             echo; echo '```'; cat report.txt; echo '```'; echo '</details>'
-            if [ -f recheck.txt ]; then
+            if [ -f extra-signatures.txt ]; then
+    echo
+    echo '<details open><summary>extra signatures (scan_signature.py)</summary>'
+    echo; echo '```'; cat extra-signatures.txt; echo '```'; echo '</details>'
+  fi
+  if [ -f recheck.txt ]; then
               echo
               echo '<details><summary>check_patterns.py report (after re-derivation)</summary>'
               echo; echo '```'; cat recheck.txt; echo '```'; echo '</details>'
@@ -211,6 +229,7 @@ jobs:
           if-no-files-found: warn
           path: |
             report.txt
+            extra-signatures.txt
             result.json
             derived.json
             recheck.txt
