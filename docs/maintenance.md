@@ -203,12 +203,24 @@ is still the fix, the rescue only keeps the Deck working until it lands.
 > 49.8 → 53.5 MB) is invisible until Valve promotes it. `probe-steam.yml`
 > (Actions → *probe-steam* → *Run workflow*) fetches any manifest
 > (`steam_client_steamdeck_publicbeta_ubuntu12`, `steam_client_publicbeta_ubuntu12`,
-> `steam_client_ubuntu12`, or the stable itself), runs `check_patterns.py`, and on
+> `steam_client_ubuntu12`, or the stable itself; any other name through the
+> free-text `manifest_custom` input), runs `check_patterns.py`, and on
 > a moved pattern runs the same Ghidra + by-name re-derivation on the runner's
 > working copy only. It never opens a PR or an issue and never touches
 > `updates.yaml`, `res/rvas` or `patterns.hpp` on any branch: the verdict, both
 > reports, `derived.json` and the would-be `patterns.hpp` diff land in the job
 > summary and an artifact. Finder anchors (§C) are reported, not derived.
+>
+> Since 2026-10-01 the probe also prints the binary's **GNU build-id**
+> (`readelf -n`). That is the identifier moon/SLSsteam write in their logs
+> ("buildid: steamclient.so d9f8d233…") and steam-monitor keys on, so a user
+> report can be matched to a channel without the sha. Two things learnt the
+> same day: **do not identify a build by Steam's version number** — on
+> 2026-10-01 Deck stable and desktop stable both said `1788652215` and shipped
+> different `steamclient.so` (`bc54101b`/`a577b836` vs `237495b4`/`29734b56`;
+> the label is the package's, the file is what we hash); and the only Deck
+> manifests Valve serves are `steamdeck_stable` and `steamdeck_publicbeta`
+> (`steamdeck_main`, `steamdeck_preview`, `steamdeck_beta` answer 404).
 
 1. Grab the new `steamclient.so` — the loaded `ubuntu12_32` /
    `steamdeck_stable_ubuntu12` binary (the one lumalinux hooks and hashes), **not**

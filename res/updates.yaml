@@ -35,6 +35,11 @@ SafeModeHashes:
     # steam_version: 1788652215
     # caps: shader=ok reconcile=ok gmrc=ok
     # check_patterns CLEAN + live install test in the codespace, 2026-09-22
+    # Same binary Valve served as 1788291500 on 2026-09-02 (listed again in the
+    # 20260611 group below): the Deck stable manifest was relabelled 1788652215
+    # on 2026-09-05 without changing steamclient.so (watch-steam run 75). The
+    # DESKTOP stable carries the same label with a different file (237495b4…),
+    # so the version number alone never identifies a build; the hash does.
     - bc54101b290f9a5b4a0713c9084494a5f05097826f66a661dbe322c469b764a2
   20260611150000:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
