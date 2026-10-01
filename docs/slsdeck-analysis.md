@@ -3196,3 +3196,133 @@ The next sweep starts at `8dd2c0e` (`main`), `6b4a1b1` (`update-system`),
 `5569009` (`vpn-bypass`), `3636a6f` (`nexus-mods-integration`), `5c54b1f`
 (`dlc-fix`), `7520175` (`tokeer-testing`), `67bf33d` (`cloudredirect-dev`),
 `d5a9099` (`unsteam-automatic`).
+
+## §20 Delta — 2026-10-01 (user logs, `core-install-fix`, and the Deck/desktop split)
+
+**Frozen references for this section.** `core-install-fix` @ `a2b85eb`
+(2026-10-01 00:02 +0300, "Fix core SLSsteam install verification and duplicate
+jobs"), eleven commits ahead of `main` (Hubcap ISP-bypass fallbacks, managed
+Zapret, Nexus collection staging and NXM handoff, lua.tools collections + EA
+Tokeer, beta rolling releases, patch notes, credits). The
+`SLSDeckUniversal-core-install-fix.zip` posted on Discord is byte-identical to
+that branch (`main.py`, `httpc.py`, `luatools_collections.py`, `nexusmods.py`,
+`plugin_updates.py`, `slssteam.py`, `tokeer.py`, `updates.py`, `zapret.py`
+differ from `main`), `plugin.json` still 0.9.61. Sources beyond the tree: five
+SLSDeck logs from user *mj* (09-30 21:38 → 22:57), six from *huh* (10-01 02:10 →
+03:38), one `~/.SLSsteam.log` from mj's Deck, the SLSDeck support thread, and
+the live `h3adcr-b` script (fetched 10-01).
+
+### §20.1 What the user logs say
+
+- **mj.** Three Headcrab-wrapped installer passes in one evening. Each pass
+  removes `steam.cfg` (`BootStrapperInhibitAll`) so Headcrab can pin the
+  client, runs it, and restores the block in a `finally`. Steam was not fully
+  stopped during the window; in one of them Valve's updater won the race and
+  the Deck came back half-updated: SteamOS OOBE screen, moon's notification,
+  moon aborting. His moon log shows the good sessions on `steamclient.so`
+  build-id `a577b836…` (= `bc54101b…`, Deck stable) and the bad ones on
+  **`d9f8d233254bf375…`** with steamui `d27e6a9a…`: 24 required locators
+  missing ("Failed to find all patterns! Aborting"). A LuaTools "fix" script
+  run on advice from the thread then installed stock SLSsteam over moon (its
+  session hashes `bc54101b`). Moon 2.9 also logs "Pattern catalog for
+  steamclient changed compiled locator policy; ignoring it" and writes its own
+  local catalog (55 locators).
+- **huh.** Same installer, same `steam.cfg` toggling, advised in-thread to
+  edit `steam.cfg` by hand.
+- **Why three passes.** Until `a2b85eb`, `start_install()` set the state to
+  `queued` *after* preflight, so rapid clicks or RPC retries launched several
+  workers (the commit says so); and the "self-healing" offers the client
+  repair again every time moon fails to load, which after a half-update is
+  every boot.
+
+### §20.2 `core-install-fix`, what it fixes and what it does not
+
+Fixes (all in `py_modules/lt/slssteam.py`, `main.py`, `src/api.ts`,
+`Dependencies.tsx`):
+
+- Install job reserved under `_INSTALL_LOCK` before preflight → no duplicate
+  installers.
+- Steam restart goes through the backend (`restart_steam_apply`: full
+  shutdown, relaunch via `steam.sh`) instead of `SteamClient.User.StartRestart`,
+  which relaunched the bare client without `LD_AUDIT`.
+- `steamclient_identity()`: sha256 + GNU build-id (via `readelf`) of the real
+  `ubuntu12_32`/`ubuntu12_64` `steamclient.so`, saved at install time in
+  `tools/steamclient-install.json`; `moon_runtime_state()` exposes
+  `not-installed | awaiting-restart | active | inactive | incompatible` and a
+  `steamclientChanged` flag. The UI stops saying "installed · injected" when
+  moon is dead.
+- `client_fix_needed()` only triggers the Headcrab downgrade on moon's explicit
+  hash failure ("unknown steamclient.so hash", "hash mismatch"); a pattern
+  abort no longer launches a client downgrade automatically. The manual button
+  still forces the full Headcrab run.
+
+Not fixed:
+
+- `_run_headcrab_shimmed()` is unchanged: `steam.cfg` is still removed on
+  every install, reinstall or repair, with Steam alive. Fewer passes, same
+  window. The root fix is ordering: stop Steam, remove the block, let Headcrab
+  pin, restore the block, start Steam.
+- Same version number as `main` (0.9.61): Decky and the `main-latest`
+  ping-pong cannot tell the fix build apart; the new
+  `release-core-install-fix.yml` publishes a rolling prerelease
+  `core-install-fix-latest`, but the normal update overwrites it.
+- The zip is the whole branch, not the fix: users get Zapret (root NFQUEUE
+  rules), Nexus collections, EA Tokeer and the multiplayer proxies without
+  any of it having gone through `main`.
+- `trigger_steam_install()` now looks for moon's API at
+  `/run/user/<uid>/SLSsteam/api` or `~/.cache/SLSsteam/api`, and only uses
+  `/tmp/SLSsteam.API` if it already exists — it targets a newer moon than the
+  stable channel ships.
+- Still present elsewhere in the tree: the `cpuid_fault_emulation.ko` kernel
+  module fetched from a third-party repo and loaded as root (`modprobe -r
+  kvm_amd kvm; insmod`) for Tokeer, the per-game manifest cascade at boot,
+  and a hard-coded Steam Web API key (answers 403).
+
+### §20.3 Where each piece looks for "the right Steam"
+
+- **Headcrab (live script, 10-01):** `HeadcrabCompatibleClientVer=1788652215`;
+  its Deck manifest (fork `Deadboy666/SteamTracking@headcrab`) pins version
+  `1788291500` → `steamclient.so` `bc54101b`/`a577b836` (A); its desktop
+  manifest pins `1788400362` → `237495b4`/`29734b56` (B). On a Deck today
+  Headcrab downloads A and installs A: a 170 MB no-op with the update window
+  open.
+- **moon:** hashes the loaded file, resolves locators in this order: its own
+  local cache → the steam-monitor catalog for that exact sha (accepted only if
+  every signature matches the compiled set) → compiled signatures. The
+  catalog cannot contribute new signatures; a build the compiled set does not
+  match aborts regardless of what steam-monitor publishes. steam-monitor
+  tracks desktop channels only (README: Stable 1788652215 / Beta 1790545198,
+  last commit `58c784a` 09-27).
+- **SLSDeck:** no notion of a sha; installs moon's zip, runs
+  `pattern-refresh`, reads moon's log for "loaded"/"aborting", and compares
+  Steam's version string with Headcrab's number.
+- **Valve, measured 10-01 with our `probe-steam.yml`** (job logs, runs 3–7):
+
+  | Channel | Version | `steamclient.so` | build-id |
+  |---|---|---|---|
+  | Deck stable | 1788652215 | `bc54101b…` | `a577b836…` |
+  | Desktop stable | 1788652215 | `237495b4…` | `29734b56…` |
+  | Deck beta | 1790721607 | `a3661f5b…` | `e6de8467…` |
+  | Desktop beta | 1790721607 | `a3661f5b…` | `e6de8467…` |
+
+  Same version label on stable, different binaries, since 09-03 (desktop moved
+  to B, the Deck stayed on A; Valve relabelled both to 1788652215 on 09-05).
+  Beta is one file on both. `steam_client_steamdeck_{main,preview,beta}`
+  do not exist (404). **`d9f8d233` is none of these**, is not in
+  steam-monitor, and is not Headcrab's target; the only hypothesis that fits is
+  a Deck beta served between 09-27 and 09-30 and already superseded, which
+  Valve does not let us verify.
+
+### §20.4 Summary
+
+| Item | Verdict |
+|---|---|
+| Duplicate installers, bare-client restart, lying "injected" chip | fixed in `a2b85eb`; the kind of fix that reduces tickets |
+| `steam.cfg` window with Steam alive | **not fixed**; the mechanism that half-updated mj's Deck is intact, only fewer passes |
+| Pattern abort no longer auto-downgrades | correct, and it means a Deck on a build moon lacks shows "incompatible" with no automatic way out |
+| Fix build = same 0.9.61, whole branch in the zip | distribution problem; users cannot tell what they run |
+| The whole stack (Headcrab → moon → SLSDeck) holds because the Deck stable binary has not changed since 09-02 | the day Valve moves the Deck to a binary desktop never shipped, moon has no patterns, Headcrab re-pins A, and the user lives in downgrade/update/downgrade |
+| Our side | nothing to change; `probe-steam.yml` now prints the GNU build-id and takes any manifest name, so a "build xxxxxxxx" from a user log can be matched in a minute |
+
+The next sweep starts at `a2b85eb` (`core-install-fix`) and the `main`
+head of §19.
