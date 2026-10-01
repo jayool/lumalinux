@@ -205,11 +205,11 @@ jobs:
             echo '<details><summary>check_patterns.py report (current patterns)</summary>'
             echo; echo '```'; cat report.txt; echo '```'; echo '</details>'
             if [ -f extra-signatures.txt ]; then
-    echo
-    echo '<details open><summary>extra signatures (scan_signature.py)</summary>'
-    echo; echo '```'; cat extra-signatures.txt; echo '```'; echo '</details>'
-  fi
-  if [ -f recheck.txt ]; then
+              echo
+              echo '<details open><summary>extra signatures (scan_signature.py)</summary>'
+              echo; echo '```'; cat extra-signatures.txt; echo '```'; echo '</details>'
+            fi
+            if [ -f recheck.txt ]; then
               echo
               echo '<details><summary>check_patterns.py report (after re-derivation)</summary>'
               echo; echo '```'; cat recheck.txt; echo '```'; echo '</details>'
