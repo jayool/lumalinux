@@ -66,7 +66,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Fetch steamclient.so (${{ inputs.manifest }})
+      - name: Fetch steamclient.so (${{ env.LUMA_STEAM_MANIFEST }})
         id: dl
         run: |
           V=$(python3 tools/fetch_steamclient.py --version-only)
@@ -167,7 +167,7 @@ jobs:
       - name: Job summary
         if: always() && steps.check.outcome == 'success'
         env:
-          MANIFEST: ${{ inputs.manifest }}
+          MANIFEST: ${{ env.LUMA_STEAM_MANIFEST }}
           VER: ${{ steps.dl.outputs.version }}
           SHA: ${{ steps.dl.outputs.sha }}
           BID: ${{ steps.dl.outputs.buildid }}
