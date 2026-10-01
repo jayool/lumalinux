@@ -302,6 +302,18 @@ es la más robusta, y por eso es nuestro paracaídas.
   cron. Desde el run #9 el camino está verde de punta a punta sobre el binario
   real; lo que sigue sin ensayarse es que Valve mueva DepotKey de verdad.
 
+**Nota 2026-10-01 (probes, no rederivación).** Cinco runs de `probe-steam.yml`
+sobre los cuatro canales de Valve: Deck stable `bc54101b` (A, whitelist),
+escritorio stable `237495b4` (B, misma etiqueta 1788652215, otro binario desde
+el 3-sep), y la beta 1790721607 `a3661f5b` (C, un solo fichero en Deck y
+escritorio): **CLEAN los cuatro con los patrones actuales**, exit 0, sin
+rederivar nada. B y C no entran en la whitelist (no son stable de Deck); el
+dato es que el conjunto de patrones de 0.22 cubre hoy todo lo que Valve sirve.
+steam-monitor (moon) no tiene C ni el `d9f8d233` de un usuario de SLSDeck;
+nosotros podemos sondear cualquier manifest a mano y el probe imprime el
+build-id. No cambia el veredicto ni la adversaria: sigue sin haber una
+rederivación real en producción.
+
 ---
 
 ## §10 Candidatos — decididos uno a uno el 2026-09-14; ninguno es código hoy
