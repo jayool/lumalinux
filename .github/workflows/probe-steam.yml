@@ -37,6 +37,10 @@ on:
           - steam_client_publicbeta_ubuntu12
           - steam_client_ubuntu12
           - steam_client_steamdeck_stable_ubuntu12
+      manifest_custom:
+        description: "Any other manifest name (overrides the choice above; e.g. steam_client_steamdeck_main_ubuntu12)"
+        type: string
+        default: ""
       derive:
         description: "On a moved pattern, run the re-derivation (Ghidra, ~20 min) and upload the patterns.hpp diff"
         type: boolean
@@ -54,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90       # Ghidra analysis of steamclient.so is ~5–30 min
     env:
-      LUMA_STEAM_MANIFEST: ${{ inputs.manifest }}
+      LUMA_STEAM_MANIFEST: ${{ inputs.manifest_custom != '' && inputs.manifest_custom || inputs.manifest }}
     steps:
       - uses: actions/checkout@v5
 
@@ -203,7 +207,7 @@ jobs:
         if: always() && steps.check.outcome == 'success'
         uses: actions/upload-artifact@v5
         with:
-          name: probe-${{ inputs.manifest }}-${{ steps.dl.outputs.version }}
+          name: probe-${{ env.LUMA_STEAM_MANIFEST }}-${{ steps.dl.outputs.version }}
           if-no-files-found: warn
           path: |
             report.txt
