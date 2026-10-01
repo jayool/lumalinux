@@ -1257,3 +1257,26 @@ Ace.
   prioridad: **exportar diagnóstico** desde el plugin (versión, canal de
   Steam, `status.json`, hash del `steamclient.so`) para que un reporte sirva
   sin pedir cinco logs.
+
+### 15.7 Las dos firmas del lua, medidas en CI [measured: probe-steam runs 13–15]
+
+Las firmas de bytes que `download.lua` escanea con `memhlp.patternScan`
+(l.67, `GetPackage`: `E8 ? ? ? ? 83 C4 ? 83 78 ? ? 0F 84`; l.68, `GMRC`:
+`E8 ? ? ? ? 83 C4 ? 83 F8 ? 0F 85 ? ? ? ? 83 EC ? 6A ? FF 75 ? E8 ? ? ? ? 83 C4 ? 88 45`)
+contadas en el `.text` de cada `steamclient.so` que Valve sirve hoy, con el
+mismo alcance que SLSsteam (sólo `.text`; `tools/scan_signature.py` vía la
+entrada `extra_signatures` del probe):
+
+| Binario | Versión | `lua_GetPackage` | `lua_GMRC` |
+|---|---|---|---|
+| A, Deck stable `bc54101b` | 1788652215 | UNIQUE (1) @ `0x188ffa1` | UNIQUE (1) @ `0x1371121` |
+| B, escritorio stable `237495b4` | 1788652215 | UNIQUE (1) @ `0x188ffa1` | UNIQUE (1) @ `0x1371121` |
+| C, beta `a3661f5b` | 1790721607 | UNIQUE (1) @ `0x1a12a41` | UNIQUE (1) @ `0x14f7b01` |
+
+Conclusión, contra lo que 15.5 daba por probable: **las dos anclas de sitio
+de llamada sobreviven a la beta recompilada**. El día que C ascienda a stable
+y Headcrab suba el pin, el lua carga. at0m no muere por sus patrones en este
+ciclo; muere, si muere, por lo de 15.1 y 15.2. Dato lateral: A y B tienen el
+mismo tamaño (49.829.436 bytes), el mismo rango de `.text` y las mismas
+direcciones para todo lo que medimos; el código es idéntico y la diferencia
+está en datos.
