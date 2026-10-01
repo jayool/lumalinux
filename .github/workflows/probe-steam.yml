@@ -72,6 +72,11 @@ jobs:
           SHA=${OUT#sha256=}
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "steamclient.so SHA-256: $SHA"
+          # GNU build-id: the identifier moon/SLSsteam print in their logs and
+          # steam-monitor records per hash, so a user report can be matched here.
+          BID=$(readelf -n steamclient.so 2>/dev/null | awk '/Build ID/{print $3}')
+          echo "buildid=$BID" >> "$GITHUB_OUTPUT"
+          echo "GNU build-id: ${BID:-n/a}"
           if grep -qiF "$SHA" res/updates.yaml; then
             echo "whitelisted=true" >> "$GITHUB_OUTPUT"
             echo "This hash is already whitelisted in res/updates.yaml."
@@ -161,6 +166,7 @@ jobs:
           MANIFEST: ${{ inputs.manifest }}
           VER: ${{ steps.dl.outputs.version }}
           SHA: ${{ steps.dl.outputs.sha }}
+          BID: ${{ steps.dl.outputs.buildid }}
           WL: ${{ steps.dl.outputs.whitelisted }}
           EXIT: ${{ steps.check.outputs.exit }}
           ONLY: ${{ steps.derive.outputs.only }}
@@ -172,6 +178,7 @@ jobs:
             echo
             echo "- Steam client version: \`$VER\`"
             echo "- steamclient.so SHA-256: \`$SHA\`"
+            echo "- GNU build-id: \`${BID:-n/a}\`"
             echo "- already whitelisted in res/updates.yaml: \`$WL\`"
             echo "- check_patterns.py exit (current patterns): \`$EXIT\` (0 clean / 2 non-critical moved / 3 blocking)"
             if [ -n "$ONLY" ]; then
