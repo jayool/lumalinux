@@ -1120,3 +1120,140 @@ ese mismo depot era el que disparaba el crash.
   wudrm hoy** (prueba B). Es un dato para nuestra cascada de GMRC, que está
   desactivada tras `LUMA_GMRC=1`: si algún día vuelve a hacer falta, el
   `curl_cffi`/impersonate desde LumaDeck es una vía probada.
+
+---
+
+## §15 — 2026-10-01: el lua de R2, la caché que no se refresca, beta 2.7.0 y el anuncio
+
+*Fuentes: el `download.lua` servido desde R2 (bajado en el codespaces el
+30-sep), `canary` hasta `64a7ab4` (`300926012`), `beta` hasta `03b8933`
+(`2.7.0beta`), los hilos del Discord de ASSella del 30-sep y 1-oct, y la
+conversación directa con niwia del 29/30-sep. Continúa §14.*
+
+### 15.1 El `download.lua` de R2 [read: fichero]
+
+`sha256 84d6c23f…`, 10.656 bytes, `plugins_manifest.json` con
+`updated_at 2026-09-30T11:14:22Z`. Frente al de la build pineada (§14.1):
+
+- La línea del crash está arreglada: la concatenación usa `manifestIdStr`
+  (l.301/305), no el `uint64_t`.
+- Los hooks van dentro de `pcall`, con el mutex cogido fuera y soltado en las
+  dos ramas. Un error de Lua ya no desenrolla Steam.
+- Sigue todo lo demás: `curl.downloadString` (fork de curl) **dentro del hook
+  de GMRC con el mutex global cogido**, `MAX_MANIFEST_TRIES = 5`, un solo
+  servidor (`http://gmrc.wudrm.com/manifest/`), y una `Downloader.MRCCache`
+  en memoria **sin caducidad**: un código cacheado se sirve hasta que Steam se
+  reinicia, aunque Valve lo haya rotado.
+
+Es la mitad de la pista que se le dio el 29 (§15.5): quitó el síntoma con
+nombre y línea, no la causa.
+
+### 15.2 Por qué el arreglo no llega a quien lo necesita [read: `plugin_manager.py`]
+
+Verificado sobre `canary@64a7ab4`, no de memoria:
+
+1. **Los caminos de instalación no despliegan.** `native_steam_download_task.py:212`,
+   `native_steam_handoff.py:325`, `info_tab.py:2330` y
+   `download_backend_dialog.py` llaman a `are_plugins_present()`, que es un
+   `is_file()` por plugin. Si el fichero existe no se toca; si no existe, error
+   al usuario ("deploy from Settings"). `_deploy_plugin()` del task y
+   `deploy_bundled_plugins()` del handoff siguen en el árbol **sin ningún
+   llamador**.
+2. **Los únicos despliegues** salen del diálogo de bienvenida de canary (una
+   vez: `canary_welcome_seen`) y de los botones de la pestaña AT0-M
+   (`deploy_sls_plugin` / `deploy_plugin(force_download=True)`).
+3. **Y comparan contra un manifest congelado.** `fetch_plugins_manifest()`
+   devuelve la copia local si existe y sólo va a R2 cuando no la hay. Nadie en
+   el árbol pasa `force_refresh=True` ni borra esa caché. El `expected_sha256`
+   es el del primer arranque del usuario.
+4. **Consecuencia:** quien desplegó antes del 30-sep 11:14 tiene el lua viejo
+   y la pestaña lo marca válido; si pulsa redesplegar, `download_plugin` baja
+   el lua nuevo, lo compara con el sha viejo y lo rechaza (`SHA-256 mismatch`).
+   Ni la instalación ni el botón lo arreglan; hay que borrar a mano la
+   carpeta de plugins y la caché de ASSella.
+
+Shinji comprobó el 1-oct que su lua era el `84d6c23f` y niwia lo dio por
+"working"; sólo demuestra que su primer despliegue fue posterior al cambio de
+R2, el caso que no tiene el bug. Pista enviada a niwia el 1-oct 09:25
+("the compare runs against the manifest copy that's cached on first run and
+never re-fetched"); respuesta "noted".
+
+### 15.3 El Discord del 30-sep y 1-oct [read: hilos]
+
+| Qué | Causa (nuestra lectura) |
+|---|---|
+| "Missing LogLevels … Missing AdditionalDepots" y "Missing DecryptionKeys" espurios (Shinji) | El "repair" (`assfixer.py:1334`, `open(..., "w")`) vacía el config antes de rellenarlo; SLSsteam relee en el hueco. Ya en §14.4; no es la línea en blanco que sospechaba Shinji |
+| Steam muere al instalar "Librarian: Tidy Up the Arcane Library!" (Shinji, build pineada) | Sin línea de error de Lua antes de morir en su `.SLSsteam.log`, hash `237495b4` (escritorio stable). Compatible con el lua viejo sin pcall (§14.1); **no sabemos** si ya tenía el de R2. niwia sigue preguntando "have u got any steam crashes" |
+| `UnboundLocalError: QMessageBox` al pulsar actualizar (Bleibeidl) | `from PyQt6.QtWidgets import QMessageBox` dentro de una rama hace el nombre local a toda la función. Arreglado en `64a7ab4` (dos líneas) |
+| Byparr: "0 entries, 0 entries, 20 entries" para el historial de builds | `steamdb_scraper.py`: Byparr devuelve el HTML en cuanto pasa el Turnstile, antes de que SteamDB pinte la tabla por JS; el parser busca una tabla con cabecera "Patch Title", no la encuentra, devuelve 0 sin error ni reintento. Las respuestas de 0 son más pequeñas (41-45 KB) que la buena (49 KB). Guarda `cf_clearance` y UA en QSettings |
+| "No hay botón para actualizar SLSsteam" (humplydinkle) | niwia: "im not touching that, run headcrab script again". SLSsteam se delega entero en Headcrab, como SLSDeck |
+| Despinear no despinea (Shinji) | No borra la entrada de `ManifestIds`; niwia "havent worked on those stuff yet". Reinicio de Steam y "Content Still Encrypted" un minuto |
+| Builds `…010` → `…012` (`e4405b9`, `64a7ab4`) | Restyle de diálogos y el fix de arriba. Nada en `plugin_manager`, nada en el lua, nada en el hook |
+
+### 15.4 `beta` 2.7.0 — la rama por defecto, 1-oct [read: commits]
+
+Once commits entre las 14:36 y las 16:01 (+0530):
+
+- `f27a608` `yaml_config_manager.py` (+963/−270): valida el YAML antes de
+  escribir; `_atomic_write` pasa a `r+` + `seek(0)` + `write` + `truncate` +
+  `fsync`. Sigue sin ser temporal + rename, pero ya no hay ventana de fichero
+  vacío. El `assfixer` con `"w"` no se ha mirado.
+- `8b24001`: entran `plugin_manager.py` (el de R2), `spliced-tickets.lua` y
+  `plugins_manifest.json` **en el repo** (con el sha del `download.lua` de
+  R2); updater por canal (`canary|testing`, `beta|dev|rc`, resto stable) en
+  `main_window.py` e `install.sh`; limpieza de `.acf`. No entra el modo
+  at0m: en `beta`, `at0m.py` es un alias de `vapor.py` y no hay
+  `native_steam/` ni pestaña AT0-M.
+- `814c040`, `d17fc71`, `8089be4`: CI de AppImage con zsync
+  (`gh-releases-zsync|niwia|ASSella|latest`), job de repo de Arch, releases en
+  borrador, y `scripts/prerelease_check.py` (947 líneas, Qt offscreen, con el
+  venv de su máquina hardcodeado: `/home/aiwin/.local/share/ACCELA/…`).
+- `5e4d52d`: versión `2.7.0beta`.
+- `e6c6639` y después **cuatro `fix(ci)` en 25 minutos**: faltaban
+  `python3-venv` y `git` en el runner; las dependencias `steam`/`vdf`
+  pineadas a commit pasan a `@master`/`@v4.0` (builds no reproducibles); un
+  f-string multilínea que sólo compila en Python ≥ 3.12 (desarrolla en 3.12,
+  el CI y el AppImage usan 3.11); falta `checkout` en el job de Arch.
+- `sync_plugins_on_startup()` existe en `yaml_config_manager.py` y
+  `sync_plugins_if_enabled()` en `plugin_manager.py`; **ningún llamador**.
+  `fetch_plugins_manifest` sigue siendo caché primero. El bug de 15.2 llega a
+  `beta` intacto.
+
+Nombres: es un programa con cinco etiquetas. **AT0-M** (descarga por Steam
+vía plugins; en `beta` sólo el alias), **Vapor** (el motor de manifests:
+MRC de wudrm + CDN de Steam), **Wirecutter** (su Cloudflare Worker, proxy
+de Hubcap cuando fallan directo, DoH y Tor), **Byparr** (ajeno: solver de
+Cloudflare empaquetado para raspar SteamDB) y **Steamless** (ajeno).
+"PLUT-O" no aparece en ninguna rama.
+
+### 15.5 La conversación y el anuncio [read: Discord]
+
+Mensaje directo a niwia el 29-sep con tres pistas: la línea del crash y el
+tipo de `manifestId`; sacar la red del hook; probar en un entorno controlado
+en vez de en los usuarios. Lo que hizo con cada una: la primera a medias
+(15.1), la segunda no, la tercera no ("im just having ppl test this out").
+Frases suyas que explican el resto: "i know shit about code", "tbh im not
+biggest fan of steam client download … just having option look nice",
+"ill check ur git, prob something i can inherit". Sobre lo último:
+lumalinux y LumaDeck son AGPL; si algo nuestro aparece en ASSella se le dice
+una vez, con el enlace a la licencia. Quedó un pacto útil: si alguien llega
+con los dos instalados y un crash, avisarse antes de culpar al otro.
+
+El 30-sep 19:07 lo anunció en el Discord de Steamidra ("testing the client
+downloading for Linux … dont join if … not afraid of breaking steam client
+often"). Ace: "you been having lots of fun with it don't you :p". La ruta
+plugin sigue con bendición upstream; los crashes se los va a comer niwia, no
+Ace.
+
+### 15.6 Qué significa para nosotros [read]
+
+- Nada que tocar en lumalinux/LumaDeck. §13.3 y §14.6 se mantienen.
+- Vigilar la AGPL en `niwia/ASSella` (15.5).
+- El concepto "los juegos bajan por el propio Steam" va a sonar en más sitios
+  con la etiqueta AT0-M pegada, incluida gente de Deck a la que no le aplica.
+  El 1-oct se abrió un Discord de LumaDeck por invitación (anuncios, guía,
+  soporte, feedback; builds siempre en GitHub) y se mandaron por privado los
+  cinco pasos a dos usuarios de Reddit que preguntaban. Candidato que sube de
+  prioridad: **exportar diagnóstico** desde el plugin (versión, canal de
+  Steam, `status.json`, hash del `steamclient.so`) para que un reporte sirva
+  sin pedir cinco logs.
