@@ -1350,7 +1350,7 @@ daba por hecho, ahora comprobado contra su fichero.
   y `slssteam_integration.py` dejan de lanzar `steam://install/{appid}` junto
   a `install|appid|lib` por `/tmp/SLSsteam.API`. Si el pipe falla, ya no es
   error: *"config is written, Steam will pick it up on start"*. (Entra
-  mezclado en `d32ce26`.)
+  mezclado en `53c6038`, el commit de temas.)
 - **Cambio de modo** (`d32ce26`): un juego de AT0-M que se reinstala por
   DepotDownloader pasa a "modo ACCELA" (`convert_plugin_game_to_accela`), y al
   pasar a AT0-M se borran `.ACCELA`, `.DepotDownloader`, el `{appid}.depot` y
@@ -1375,9 +1375,10 @@ Nada en `download.lua`. `plugin_manager.py` sólo gana las cinco líneas de
 ### 16.4 `beta` 2.7.1dev [read: commits]
 
 - **CI, 1–3-oct.** Repo de pacman (`assella.db`, release "rolling"), Python
-  standalone embebido y luego subido a 3.13 en el AppImage, y una racha de
-  unos 13 commits en dos horas la madrugada del 3 (`4c6720c` sólo añade
-  `set -x` para ver el fallo; rama `ci-test` para probar sin publicar).
+  standalone embebido (`e201cd9`) y el builder del AppImage subido de 3.11 a
+  3.13 (`80a31f4`), y una racha de 14 commits en 1 h 42 min la madrugada del 3
+  (`1c0bafd` 03:04 → `a7d6124` 04:46; `4c6720c` sólo añade `set -x` para ver
+  el fallo; rama `ci-test` para probar sin publicar).
 - **El updater nunca pudo actualizar** (`9a31e81` en `canary`, `02bcdd0` y
   siguientes en `beta`; lo dice su mensaje): las 66 releases del repo son
   pre-release y `/releases/latest` las excluye → 404 siempre; tags con y sin
@@ -1389,8 +1390,9 @@ Nada en `download.lua`. `plugin_manager.py` sólo gana las cinco líneas de
   Digital-7 Mono para el log, `MainWindow` partida en módulos (`c8f4164`).
 - **Reanudar descargas** (`6316b13`, 4-oct): `download_state.json`, diálogo de
   tres botones al cancelar, los pausados fuera de las comprobaciones de
-  update. Dos arreglos esa misma tarde (`df739f2`, `3cf56bd`) porque daba por
-  terminados depots a medias.
+  update. Arreglos esa misma tarde: `df739f2` (pausados en biblioteca y
+  recientes, progreso al parar, recuperación del archivo) y `3cf56bd` (daba
+  por terminados depots a medias al reanudar).
 - **Symlinks en depots de Linux** (`db24c1e`, `manifest_resolver.py`).
 - **Botón "actualizar SLSsteam"** (`f48b104`): lanza el script de Headcrab.
   Es el "run headcrab script again" de §15.3 metido en un botón; SLSsteam
