@@ -1280,3 +1280,149 @@ ciclo; muere, si muere, por lo de 15.1 y 15.2. Dato lateral: A y B tienen el
 mismo tamaño (49.829.436 bytes), el mismo rango de `.text` y las mismas
 direcciones para todo lo que medimos; el código es idéntico y la diferencia
 está en datos.
+
+## §16 Delta — 2026-10-04 (`canary@64a7ab4` → `22f2759`; `beta@03b8933` → `3cf56bd`)
+
+*Fuentes: `canary` (15 commits, 1-oct 21:22 → 3-oct 15:26 +0530, versión
+`3.0.0testing031026001`) y `beta` (46 commits, 1-oct 16:06 → 4-oct 22:13,
+`2.7.1dev`), y el `main` de SLSsteam (`9c829a7`, 1-oct) para contrastar
+`FakeAppIds`. Los diffs de `plugin_manager`, `yaml_config_manager`,
+`settings_sls`, `native_steam_*`, `slssteam_integration` y los mensajes
+completos del updater, el instalador y la reanudación, leídos; UI, CI y
+DLC, por título y `--stat`. Continúa §15.*
+
+### 16.1 "All games online": `FakeAppIds: 0: 480` [read: ASSella + SLSsteam]
+
+`a0382f0` (`canary`, 1-oct) añade en la pestaña SLS el toggle *"All games
+online (beta)"*. Marcado, llama a `add_fake_app_id(cfg, "0",
+fake_appid="480")`; desmarcado, borra la línea `0: 480` y cualquier `0:`.
+
+En SLSsteam el `0` es un comodín (`src/feats/fakeappid.cpp:12-25`):
+
+```cpp
+if (fakeAppIds->contains(appId)) return fakeAppIds->at(appId);
+else if (fakeAppIds->contains(0) && !g_pSteamEngine->getUser(0)->isSubscribed(appId))
+    return fakeAppIds->at(0);
+```
+
+y `isSubscribed` (`src/sdk/CUser.cpp:37`) llama al **trampolín** de
+`CheckAppOwnership`, o sea la propiedad real de la cuenta, no la que finge
+SLSsteam. Resultado: con el toggle puesto, **todo juego no comprado** sale por
+el pipe como 480, salvo que tenga entrada propia en `FakeAppIds`.
+
+Choque con LumaDeck, si están los dos sobre el mismo `config.yaml`:
+
+- **Denuvo activado por ticket.** `slssteam_ops.is_in_denuvo_games()` hace que
+  el toggle Online de LumaDeck se niegue en los juegos de `DenuvoGames`: con
+  el pipe en 480 SLSsteam no encuentra la identidad del activador y la
+  activación falla (AceSLS `293eb93`). El comodín no mira `DenuvoGames`; esos
+  juegos no son de la cuenta, así que les cae el 480 igual. [read; la rotura en
+  sí, inferida de `293eb93`, sin probar con el comodín]
+- **La UI no lo ve.** El Online de `GameDetail` sale del marcador por juego
+  de `fixes.py` y `check_fake_app_id_status()` busca la línea `{appid}:`
+  exacta; Ajustes lista `{"0": "480"}` como una entrada más. Todos los juegos
+  salen con Online apagado aunque corran como 480. [read]
+- **Quitarlo desde LumaDeck no lo quita.** Apagar Online en un juego borra su
+  entrada; el comodín sigue. [read]
+
+Sólo en `canary`; `beta` no lo tiene.
+
+### 16.2 SmartTickets y `spliced-tickets.lua` [read]
+
+`1edf210` (`canary`, 3-oct): `deploy_plugin("spliced-tickets.lua")` llama a
+`ensure_smart_tickets_enabled()`, que escribe `SmartTickets: 0x1` (o lo
+añade al final). SLSsteam ya trae `1` por defecto desde `2febc71`
+(`slssteam-analysis.md`), así que sólo cambia algo a quien lo tuviera en
+`0`/`no`. Escribe por `_atomic_write`, el de `r+`/`truncate` de §15.4. El
+commit no explica por qué el plugin lo necesitaría; el lua no lee
+`SmartTickets`.
+
+El `spliced-tickets.lua` de ASSella (`src/res/plugins/`, sha `62f377e3…`,
+2.187 bytes, en `beta` desde `8b24001`) es **byte a byte el cuerpo** del
+`lumadeck-spliced-tickets.lua` de LumaDeck por debajo de nuestra cabecera.
+Misma guarda global `SplicedTickets.setup`: con los dos desplegados, el
+segundo en cargar sale sin colocar hook. Lo que la decisión del 28/29-sep
+daba por hecho, ahora comprobado contra su fichero.
+
+### 16.3 `canary`: el resto
+
+- **El pipe, solo.** `native_steam_handoff.py`, `native_steam_download_task.py`
+  y `slssteam_integration.py` dejan de lanzar `steam://install/{appid}` junto
+  a `install|appid|lib` por `/tmp/SLSsteam.API`. Si el pipe falla, ya no es
+  error: *"config is written, Steam will pick it up on start"*. (Entra
+  mezclado en `d32ce26`.)
+- **Cambio de modo** (`d32ce26`): un juego de AT0-M que se reinstala por
+  DepotDownloader pasa a "modo ACCELA" (`convert_plugin_game_to_accela`), y al
+  pasar a AT0-M se borran `.ACCELA`, `.DepotDownloader`, el `{appid}.depot` y
+  el `game_update_status` del juego.
+- **"Smart Select"** (`1d36d98`): `steam_package_info.py` parsea el
+  `packageinfo.vdf` local para preseleccionar los depots de los paquetes que
+  contienen el appid.
+- **Depots sin clave** (`f673d57`): ya no se encolan; se marcan `[No Key]` y
+  un `AccessDenied` o 0 bytes de DepotDownloader aborta en limpio.
+- **EOSProxy por defecto** (`a0382f0`): al terminar una descarga aplica el
+  DLL si `EOSDetector` ve EOS sin proxy. Apagado por defecto.
+- **Logros** (`8e63e7d`, también en `beta` como `b806334`): desbordamiento de
+  entero con signo de 32 bits al serializar el VDF binario de stats en
+  `shsah_reborn.py`.
+- `c153552` (voces de Pragmata, build 22357085), `53c6038` (temas, barra
+  animada de 1.001 líneas, calabaza de Halloween) y la CI de AppImage/Arch
+  portada de `beta` (`477402e`…`22f2759`).
+
+Nada en `download.lua`. `plugin_manager.py` sólo gana las cinco líneas de
+16.2.
+
+### 16.4 `beta` 2.7.1dev [read: commits]
+
+- **CI, 1–3-oct.** Repo de pacman (`assella.db`, release "rolling"), Python
+  standalone embebido y luego subido a 3.13 en el AppImage, y una racha de
+  unos 13 commits en dos horas la madrugada del 3 (`4c6720c` sólo añade
+  `set -x` para ver el fallo; rama `ci-test` para probar sin publicar).
+- **El updater nunca pudo actualizar** (`9a31e81` en `canary`, `02bcdd0` y
+  siguientes en `beta`; lo dice su mensaje): las 66 releases del repo son
+  pre-release y `/releases/latest` las excluye → 404 siempre; tags con y sin
+  `v` y el código anteponía otra (`vv2.7.0beta`); zsync roto desde 2.5.3,
+  ~290 MB por actualización. `c9594ce`: el instalador rotaba el binario bueno
+  a `.bak` **antes** de descargar y escribía encima sin verificar; ahora
+  temporal + sha256 + mover.
+- **UI, 3-oct noche.** Ajustes con barra lateral, ventana compacta, fuente
+  Digital-7 Mono para el log, `MainWindow` partida en módulos (`c8f4164`).
+- **Reanudar descargas** (`6316b13`, 4-oct): `download_state.json`, diálogo de
+  tres botones al cancelar, los pausados fuera de las comprobaciones de
+  update. Dos arreglos esa misma tarde (`df739f2`, `3cf56bd`) porque daba por
+  terminados depots a medias.
+- **Symlinks en depots de Linux** (`db24c1e`, `manifest_resolver.py`).
+- **Botón "actualizar SLSsteam"** (`f48b104`): lanza el script de Headcrab.
+  Es el "run headcrab script again" de §15.3 metido en un botón; SLSsteam
+  sigue delegado en Headcrab.
+- **DLC** (`618b6f0`, `b1ef461`): heurísticas y diálogo de aviso.
+
+**Binario sin fuente (§6.3).** `db24c1e` y `6316b13` cambian
+`src/deps/DepotDownloader.dll` (177.152 → 177.664 → 178.176 bytes; el segundo
+dice *"fast buffered chunk hashing in DepotDownloaderMod"*). No hay fuente del
+cambio en el repo.
+
+### 16.5 Lo que no cambió [read]
+
+- **§15.2 sigue en las dos ramas.** `fetch_plugins_manifest()` sigue siendo
+  caché primero; el único llamador con `force_refresh` es
+  `deploy_all_plugins(force_download=…)` (`plugin_manager.py:324`). Los
+  `force_refresh=True` nuevos que salen en un grep son de
+  `get_depot_info_from_api`, otra caché.
+- `plugins_manifest.json` sigue en `updated_at 2026-09-30T11:14:22Z`, con el
+  `download.lua` `84d6c23f`.
+- El modo AT0-M (`native_steam/`, pestaña AT0-M) sigue sólo en `canary`.
+
+### 16.6 Qué significa para nosotros
+
+- lumalinux: nada.
+- LumaDeck, candidato nuevo, **baja prioridad**: detectar la clave `0` en
+  `FakeAppIds` (16.1) y avisarlo en la UI ("otro programa ha puesto todos los
+  juegos en 480; Online por juego no tiene efecto"), y en los juegos de
+  `DenuvoGames` avisar de que el comodín les rompe la activación. Una línea en
+  `list_fake_app_ids()` y un banner. Disparador: el toggle llega a `beta`, o un
+  reporte de Denuvo que deja de activar con ASSella instalado. Encaja con el
+  **exportar diagnóstico** de §15.6, que debería volcar `FakeAppIds`.
+- La coexistencia de los dos `spliced-tickets` queda cerrada (16.2).
+
+El siguiente barrido arranca en `beta@3cf56bd` y `canary@22f2759`.
