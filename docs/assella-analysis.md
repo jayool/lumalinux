@@ -1284,20 +1284,25 @@ está en datos.
 ## §16 Delta — 2026-10-04 (`canary@64a7ab4` → `22f2759`; `beta@03b8933` → `3cf56bd`)
 
 *Fuentes: `canary` (15 commits, 1-oct 21:22 → 3-oct 15:26 +0530, versión
-`3.0.0testing031026001`) y `beta` (46 commits, 1-oct 16:06 → 4-oct 22:13,
-`2.7.1dev`), y el `main` de SLSsteam (`9c829a7`, 1-oct) para contrastar
-`FakeAppIds`. Los diffs de `plugin_manager`, `yaml_config_manager`,
-`settings_sls`, `native_steam_*`, `slssteam_integration` y los mensajes
-completos del updater, el instalador y la reanudación, leídos; UI, CI y
-DLC, por título y `--stat`. Continúa §15.*
+`3.0.0testing031026001`), `beta` (45 commits, 1-oct 16:06 → 4-oct 22:13,
+`2.7.1dev`), el `main` de SLSsteam (`9c829a7`, 1-oct, historial completo) y
+LumaDeck en su rama actual. Cada afirmación lleva el commit o el
+`fichero:línea` donde se comprobó. Lo que sólo sale del título o del mensaje
+de un commit lo pone. **El `plugins_manifest.json` vivo de R2 no se pudo
+leer** (el proxy de esta sesión bloquea `*.r2.dev`). Continúa §15.*
 
-### 16.1 "All games online": `FakeAppIds: 0: 480` [read: ASSella + SLSsteam]
+### 16.1 "All games online": `FakeAppIds: 0: 480` [read: ASSella, SLSsteam, LumaDeck]
 
-`a0382f0` (`canary`, 1-oct) añade en la pestaña SLS el toggle *"All games
-online (beta)"*. Marcado, llama a `add_fake_app_id(cfg, "0",
-fake_appid="480")`; desmarcado, borra la línea `0: 480` y cualquier `0:`.
+**Qué escribe ASSella.** `a0382f0` (1-oct, sólo en `canary`: `git branch -r
+--contains` da `canary`; en `beta` no hay `all_games_online` en el árbol)
+añade el checkbox *"All games online (beta)"* en `settings_sls.py:285-304`.
+Marcado, llama a `add_fake_app_id(c_path, "0", game_name="All Unowned Apps",
+fake_appid="480")`, que escribe `  0: 480  # All Unowned Apps -> Spacewar`
+bajo `FakeAppIds:` (`yaml_config_manager.py:2152`), siempre que la gestión
+del config de SLS esté activa en ASSella. Desmarcado, borra `0: 480` y
+cualquier `0:`.
 
-En SLSsteam el `0` es un comodín (`src/feats/fakeappid.cpp:12-25`):
+**Qué hace SLSsteam con eso.** `src/feats/fakeappid.cpp:12-26`:
 
 ```cpp
 if (fakeAppIds->contains(appId)) return fakeAppIds->at(appId);
@@ -1305,126 +1310,218 @@ else if (fakeAppIds->contains(0) && !g_pSteamEngine->getUser(0)->isSubscribed(ap
     return fakeAppIds->at(0);
 ```
 
-y `isSubscribed` (`src/sdk/CUser.cpp:37`) llama al **trampolín** de
-`CheckAppOwnership`, o sea la propiedad real de la cuenta, no la que finge
-SLSsteam. Resultado: con el toggle puesto, **todo juego no comprado** sale por
-el pipe como 480, salvo que tenga entrada propia en `FakeAppIds`.
+`CUser::isSubscribed` (`src/sdk/CUser.cpp:37`) llama a
+`Hooks::CUser_CheckAppOwnership->tramp`, la función original de Steam; el
+hook (`hooks.cpp:616`) es el que añade la propiedad falsa. O sea, la clave
+`0` cubre todo juego que la cuenta no posee de verdad y no tenga entrada
+propia en `FakeAppIds`.
 
-Choque con LumaDeck, si están los dos sobre el mismo `config.yaml`:
+**Por qué toca a los juegos Denuvo activados con otra cuenta.**
+`Ticket::getCachedEncryptedTicket` (`src/feats/ticket.cpp:188-197`):
 
-- **Denuvo activado por ticket.** `slssteam_ops.is_in_denuvo_games()` hace que
-  el toggle Online de LumaDeck se niegue en los juegos de `DenuvoGames`: con
-  el pipe en 480 SLSsteam no encuentra la identidad del activador y la
-  activación falla (AceSLS `293eb93`). El comodín no mira `DenuvoGames`; esos
-  juegos no son de la cuenta, así que les cae el 480 igual. [read; la rotura en
-  sí, inferida de `293eb93`, sin probar con el comodín]
-- **La UI no lo ve.** El Online de `GameDetail` sale del marcador por juego
-  de `fixes.py` y `check_fake_app_id_status()` busca la línea `{appid}:`
-  exacta; Ajustes lista `{"0": "480"}` como una entrada más. Todos los juegos
-  salen con Online apagado aunque corran como 480. [read]
-- **Quitarlo desde LumaDeck no lo quita.** Apagar Online en un juego borra su
-  entrada; el comodín sigue. [read]
+```cpp
+const AppId_t fakeAppId = FakeAppIds::getFakeAppId(appId);
+if (!(smartTickets & CConfig::k_ESmartTicketsDenuvo) && appId && fakeAppId && fakeAppId != appId)
+    return nullptr;   // "Returning empty cached encrypted Ticket ... running as ..."
+```
 
-Sólo en `canary`; `beta` no lo tiene.
+Usa `getFakeAppId`, así que el comodín cuenta. Sin el bit `0x2` (Denuvo) en
+`SmartTickets`, un juego con FakeAppId no recibe su ticket cifrado cacheado,
+y `hkClientUser_GetSteamId` (`hooks.cpp:1092-1160`) sin ticket devuelve el
+SteamID real en vez del del propietario. El commit que introdujo la regla,
+`293eb93` (26-jul), lo dice en su mensaje: *"Cons: Breaks Denuvo activations
+on newer versions"*. Los juegos de `DenuvoGames` no son de la cuenta, así que
+el comodín los alcanza. El default de SLSsteam es `SmartTickets: 1`
+(`config.cpp:180`, `res/config.yaml:96`), sin el bit `0x2`. **Sin probar en
+dispositivo**; es el camino del código más el mensaje de Ace.
+
+**Qué hace LumaDeck hoy.**
+- `fixes.enable_online` (`fixes.py:837`) se niega en juegos de
+  `DenuvoGames` (`slssteam_ops.is_in_denuvo_games`), justo por esto. El
+  comodín de ASSella se salta esa negativa.
+- El estado Online de la ficha del juego es el marcador por juego de
+  LumaDeck (`fixes.get_online_status`, `fixes.py:916-938`: `"enabled": marker
+  is not None`). No mira `FakeAppIds`, así que con el comodín la ficha dice
+  Online apagado aunque el juego corra como 480.
+- **Ajustes sí lo enseña**: la lista de FakeAppIds pinta la clave `0` como
+  "All unowned → 480 ✕" (`Settings.tsx:1040`, cadena `slssFakeAllUnowned` en
+  `i18n.ts:275`, en el árbol desde `3ee28e3`, 13-sep) y se puede borrar desde
+  ahí.
+- Apagar Online en un juego borra sólo la entrada de ese appid, y sólo si la
+  puso LumaDeck (`disable_online`, `fixes.py:882-915`). El comodín sigue.
 
 ### 16.2 SmartTickets y `spliced-tickets.lua` [read]
 
-`1edf210` (`canary`, 3-oct): `deploy_plugin("spliced-tickets.lua")` llama a
-`ensure_smart_tickets_enabled()`, que escribe `SmartTickets: 0x1` (o lo
-añade al final). SLSsteam ya trae `1` por defecto desde `2febc71`
-(`slssteam-analysis.md`), así que sólo cambia algo a quien lo tuviera en
-`0`/`no`. Escribe por `_atomic_write`, el de `r+`/`truncate` de §15.4. El
-commit no explica por qué el plugin lo necesitaría; el lua no lee
-`SmartTickets`.
+Las dos ramas tocan `SmartTickets`, por caminos distintos:
 
-El `spliced-tickets.lua` de ASSella (`src/res/plugins/`, sha `62f377e3…`,
-2.187 bytes, en `beta` desde `8b24001`) es **byte a byte el cuerpo** del
-`lumadeck-spliced-tickets.lua` de LumaDeck por debajo de nuestra cabecera.
-Misma guarda global `SplicedTickets.setup`: con los dos desplegados, el
-segundo en cargar sale sin colocar hook. Lo que la decisión del 28/29-sep
-daba por hecho, ahora comprobado contra su fichero.
+- **`beta`, desde `8b24001` (1-oct, en `tools_tab.py`; `d17fc71` lo mueve a
+  la pestaña ASSella; los dos dentro del rango de §15.4, que no lo
+  recogió)**: el botón del plugin (`assela_tab.py:588`,
+  `handle_spliced_ticket_click`) llama a
+  `ensure_smart_tickets_enabled(enable=True)` al activarlo (`:647`) y a
+  `ensure_smart_tickets_enabled(enable=False)` al desactivarlo (`:613`).
+  Desactivar escribe **`SmartTickets: 0x0`**, que apaga SmartTickets de
+  SLSsteam para todo, también el `0x1` (SteamDRM) que trae por defecto, y
+  borra `spliced-tickets.lua` de las carpetas de plugins. Ese borrado es por
+  nombre: el `lumadeck-spliced-tickets.lua` no se toca.
+- **`canary`, `1edf210` (3-oct)**: `deploy_plugin()` llama a
+  `ensure_smart_tickets_enabled()` cuando el fichero es `spliced-tickets.lua`
+  (`plugin_manager.py:252`, +5 líneas).
 
-### 16.3 `canary`: el resto
+La función es la misma en las dos ramas (comparada con `diff`). Escribe
+`0x1` (o `0x0`) si el valor actual no es literalmente ese, o lo añade al
+final si no existe, salvo que la gestión del config esté apagada. Escribe
+con `_atomic_write` (`r+` en sitio, `yaml_config_manager.py:156`). El
+mensaje de `1edf210` es sólo el título y no da el motivo. El lua no contiene
+la cadena `SmartTickets`.
 
-- **El pipe, solo.** `native_steam_handoff.py`, `native_steam_download_task.py`
-  y `slssteam_integration.py` dejan de lanzar `steam://install/{appid}` junto
-  a `install|appid|lib` por `/tmp/SLSsteam.API`. Si el pipe falla, ya no es
-  error: *"config is written, Steam will pick it up on start"*. (Entra
-  mezclado en `53c6038`, el commit de temas.)
-- **Cambio de modo** (`d32ce26`): un juego de AT0-M que se reinstala por
-  DepotDownloader pasa a "modo ACCELA" (`convert_plugin_game_to_accela`), y al
-  pasar a AT0-M se borran `.ACCELA`, `.DepotDownloader`, el `{appid}.depot` y
-  el `game_update_status` del juego.
+**Efecto lateral, comprobado sobre su regex:** un `SmartTickets: 0x3`
+(SteamDRM + Denuvo) se reescribe a `0x1`, y se pierde el bit Denuvo. Con eso
+más el comodín de 16.1, se da exactamente la condición de
+`ticket.cpp:193`. `SmartTickets: 1` también se reescribe, a `0x1`, que vale
+lo mismo.
+
+**El lua.** En `beta`, `src/res/plugins/spliced-tickets.lua` (añadido en
+`8b24001`, 1-oct): 2.187 bytes, sha256 `62f377e3…`, el mismo que lista el
+`plugins_manifest.json` del repo. Es **idéntico byte a byte** (`cmp`) al
+`lumadeck-spliced-tickets.lua` de LumaDeck sin nuestras 19 líneas de
+cabecera. En `canary` el fichero no está en el repo; se baja de R2 y no se
+pudo leer (ver cabecera). SLSsteam ejecuta cada plugin con
+`luaL_dofile(state, …)` sobre un solo `Lua::state` (`lua.cpp:273`, `:565`),
+así que la guarda global `SplicedTickets.setup` hace que la
+segunda copia salga sin colocar hook. Esto vale para el lua de `beta`; el
+de R2 no está comprobado.
+
+### 16.3 `canary`: el resto [read]
+
+- **El pipe, solo** (`53c6038`, el commit de temas): se retira
+  `dispatch_steam_url("steam://install/…")` de `native_steam_handoff.py`,
+  `native_steam_download_task.py` y `slssteam_integration.py`, y queda sólo
+  `install|appid|lib` por `/tmp/SLSsteam.API`. En el handoff, que falle el
+  pipe ya no es error: *"config is written, Steam will pick it up on start"*
+  (`native_steam_handoff.py:353`).
+- **Conflicto ACCELA / AT0-M** (`d32ce26`): si un juego tiene a la vez el
+  marcador de ACCELA y un registro de AT0-M, `game_manager.py` y
+  `acf_scanner.py` comparan fechas (`.DepotDownloader/metadata.json` o mtime
+  del marcador contra `updated_at` del registro) y gana el más reciente. Al
+  registrar un juego en AT0-M (handoff y task) se borran `.ACCELA`,
+  `.accela`, `.DepotDownloader`, `.depotdownloader`, el `{appid}.depot` y
+  `game_update_status/{appid}`. Aparte, `a0382f0` añade en `task_manager.py`
+  que al terminar una descarga por DepotDownloader un juego registrado en
+  AT0-M pase a modo ACCELA.
 - **"Smart Select"** (`1d36d98`): `steam_package_info.py` parsea el
-  `packageinfo.vdf` local para preseleccionar los depots de los paquetes que
-  contienen el appid.
-- **Depots sin clave** (`f673d57`): ya no se encolan; se marcan `[No Key]` y
-  un `AccessDenied` o 0 bytes de DepotDownloader aborta en limpio.
-- **EOSProxy por defecto** (`a0382f0`): al terminar una descarga aplica el
-  DLL si `EOSDetector` ve EOS sin proxy. Apagado por defecto.
-- **Logros** (`8e63e7d`, también en `beta` como `b806334`): desbordamiento de
-  entero con signo de 32 bits al serializar el VDF binario de stats en
-  `shsah_reborn.py`.
-- `c153552` (voces de Pragmata, build 22357085), `53c6038` (temas, barra
-  animada de 1.001 líneas, calabaza de Halloween) y la CI de AppImage/Arch
-  portada de `beta` (`477402e`…`22f2759`).
+  `packageinfo.vdf` local, saca los depots de los paquetes que contienen el
+  appid y quita macOS, Android, extras de media y 32 bits si hay 64. Hace de
+  preselección y además hay un botón "Smart Select (Beta)". Si no hay
+  coincidencias, vuelve a la heurística anterior.
+- **Depots sin clave** (`f673d57`): `[No Key]` en `depotselection.py` para
+  `missing_key`. `process_zip_task.py` sólo añade depots de manifests sueltos
+  si hay clave. `download_depots_task.py` aborta si DepotDownloader da
+  AccessDenied o 0 bytes.
+- **EOSProxy por defecto** (`a0382f0`): `task_manager._finalize_eosproxy`
+  aplica el DLL al terminar si `EOSDetector` ve EOS sin proxy. El ajuste
+  `enable_eosproxy_default` nace en `False`.
+- **Logros** (`8e63e7d`; en `beta` es `b806334`, mismo diff): enteros fuera
+  del rango con signo de 32 bits rompían `vdf.binary_dumps` en
+  `shsah_reborn.py`. Ahora se enmascaran a 32 bits.
+- `c153552`: tres `manifest_overrides` en `voices.json` (depots 3357651,
+  3859920, 3859930). La build 22357085 de Pragmata sale sólo del título.
+- `53c6038`: temas, `animated_progress_bar.py` (+1.001 líneas) y
+  `src/res/halloween/`.
+- CI: `477402e`…`22f2759` traen a `canary` workflows de AppImage/Arch y el
+  updater (`9a31e81`). Los workflows no son copia de los de `beta`:
+  `git diff beta canary -- .github/workflows` da 150+/82−.
+- Fuera de 16.2, `plugin_manager.py` no cambia en `canary` en este delta.
 
-Nada en `download.lua`. `plugin_manager.py` sólo gana las cinco líneas de
-16.2.
+### 16.4 `beta` 2.7.1dev [read: commits; código donde se indica]
 
-### 16.4 `beta` 2.7.1dev [read: commits]
-
-- **CI, 1–3-oct.** Repo de pacman (`assella.db`, release "rolling"), Python
-  standalone embebido (`e201cd9`) y el builder del AppImage subido de 3.11 a
-  3.13 (`80a31f4`), y una racha de 14 commits en 1 h 42 min la madrugada del 3
-  (`1c0bafd` 03:04 → `a7d6124` 04:46; `4c6720c` sólo añade `set -x` para ver
-  el fallo; rama `ci-test` para probar sin publicar).
-- **El updater nunca pudo actualizar** (`9a31e81` en `canary`, `02bcdd0` y
-  siguientes en `beta`; lo dice su mensaje): las 66 releases del repo son
-  pre-release y `/releases/latest` las excluye → 404 siempre; tags con y sin
-  `v` y el código anteponía otra (`vv2.7.0beta`); zsync roto desde 2.5.3,
-  ~290 MB por actualización. `c9594ce`: el instalador rotaba el binario bueno
-  a `.bak` **antes** de descargar y escribía encima sin verificar; ahora
-  temporal + sha256 + mover.
-- **UI, 3-oct noche.** Ajustes con barra lateral, ventana compacta, fuente
-  Digital-7 Mono para el log, `MainWindow` partida en módulos (`c8f4164`).
-- **Reanudar descargas** (`6316b13`, 4-oct): `download_state.json`, diálogo de
-  tres botones al cancelar, los pausados fuera de las comprobaciones de
-  update. Arreglos esa misma tarde: `df739f2` (pausados en biblioteca y
+- **CI.** De los 9 commits del 1 y 2-oct, siete son CI, empaquetado de Arch
+  y README (`44746c5`, `3a0f8c1`, `68be86a` con la base de datos de pacman
+  `assella.db` y la release rolling, `068dd21`, `e201cd9` con
+  python-build-standalone embebido, `bcc1ed6`, `e76f598`). Los otros dos
+  son los gemelos de `canary`: logros (`b806334`) y voces (`2855e2f`, mismo
+  diff que `c153552`). La madrugada del 3 son **14 commits en 1 h 42
+  min** (`1c0bafd` 03:04 → `a7d6124` 04:46): `4c6720c` sólo añade `set -x`
+  y un `ls` para ver por qué falla; `80a31f4` sube el builder del AppImage
+  de Python 3.11 a 3.13; `66db5fe` abre una rama `ci-test` que no publica.
+- **El updater.** El mensaje de `9a31e81` (en `canary`) explica que no podía
+  funcionar: las 66 releases son pre-release y `/releases/latest` las
+  excluye (404 siempre), el tag se construía como `f"v{remote_version}"` y
+  salía `vv2.7.0beta` cuando la versión ya traía `v`, y zsync estaba
+  saltado desde 2.5.3 (~290 MB por actualización). En `beta` el arreglo es
+  otro: `f0ab6f1` (*"full updater overhaul"*) lo reescribe en
+  `main_window.py` y `c8f4164` lo mueve a `managers/app_update_manager.py`. Va por la lista
+  `/releases`, filtrada por canal. **Pero el `vv` sigue en `beta`**:
+  `app_update_manager.py:208` hace `tag = f"v{self.latest_remote_version}"`
+  y `latest_remote_version` viene de `extract_semver(tag_name)`
+  (`:153`, `:24-28`), que no quita la `v`. Ese `tag` se usa en el texto del
+  diálogo y en logs (`:213`, `:232`, `:316`), y en la URL sólo en el camino
+  de respaldo `/releases/tags/{tag}` (`:292`), cuando falla la lista.
+- **Instalador** (`c9594ce`, sólo `beta`): descarga a un temporal
+  (`mktemp`), comprueba contra el `.sha256` de la release y sólo entonces
+  mueve y rota a `.bak`. Antes rotaba el binario bueno a `.bak` y escribía
+  encima sin comprobar. Si no hay `.sha256`, avisa y sigue, salvo con
+  `ASSELLA_REQUIRE_SHA256=1`.
+- **UI, 3-oct tarde/noche** (por título y mensaje): ajustes con barra
+  lateral (`f0ab6f1`), ventana compacta y fuente Digital-7 Mono para el log
+  (`673bad9`), `MainWindow` partida en módulos (`c8f4164`).
+- **Pausar y reanudar** (`6316b13`, 4-oct): estado en
+  `{install}/.DepotDownloader/download_state.json`
+  (`download_resume_manager.py`), diálogo al parar con "Resume Later",
+  "Cancel & Delete" y "Continue Downloading", y los pausados fuera de la
+  comprobación de updates. Esa tarde, `df739f2` (pausados en biblioteca y
   recientes, progreso al parar, recuperación del archivo) y `3cf56bd` (daba
-  por terminados depots a medias al reanudar).
-- **Symlinks en depots de Linux** (`db24c1e`, `manifest_resolver.py`).
-- **Botón "actualizar SLSsteam"** (`f48b104`): lanza el script de Headcrab.
-  Es el "run headcrab script again" de §15.3 metido en un botón; SLSsteam
-  sigue delegado en Headcrab.
-- **DLC** (`618b6f0`, `b1ef461`): heurísticas y diálogo de aviso.
+  por completos depots a medias al reanudar).
+- **Symlinks** (`db24c1e`): `manifest_resolver.restore_depot_symlinks`
+  recorre el manifest (flag 512 o `linktarget`) y cambia por enlaces los
+  ficheros de relleno que deja DepotDownloader.
+- **Actualizar SLSsteam** (`f48b104`): abre una terminal con
+  `curl -fsSL headcrab.pages.dev | bash` y cierra ASSella. Es el "run
+  headcrab script again" de §15.3 metido en un botón.
+- **DLC** (`618b6f0`, `b1ef461`): por título.
 
 **Binario sin fuente (§6.3).** `db24c1e` y `6316b13` cambian
-`src/deps/DepotDownloader.dll` (177.152 → 177.664 → 178.176 bytes; el segundo
-dice *"fast buffered chunk hashing in DepotDownloaderMod"*). No hay fuente del
-cambio en el repo.
+`src/deps/DepotDownloader.dll` (177.152 → 177.664 → 178.176 bytes). El
+segundo dice *"Integrate fast buffered chunk hashing in DepotDownloaderMod"*.
+En el árbol de `beta` no hay `.cs` ni `.csproj`; sólo el DLL, `deps.json` y
+`runtimeconfig.json`.
 
-### 16.5 Lo que no cambió [read]
+### 16.5 Lo que no cambió, y una corrección a §15.2 [read]
 
-- **§15.2 sigue en las dos ramas.** `fetch_plugins_manifest()` sigue siendo
-  caché primero; el único llamador con `force_refresh` es
-  `deploy_all_plugins(force_download=…)` (`plugin_manager.py:324`). Los
-  `force_refresh=True` nuevos que salen en un grep son de
-  `get_depot_info_from_api`, otra caché.
-- `plugins_manifest.json` sigue en `updated_at 2026-09-30T11:14:22Z`, con el
-  `download.lua` `84d6c23f`.
-- El modo AT0-M (`native_steam/`, pestaña AT0-M) sigue sólo en `canary`.
+- **La caché del manifest de plugins sigue congelada en las dos ramas.**
+  `fetch_plugins_manifest(force_refresh=False)` devuelve la copia local si
+  existe (`canary` `plugin_manager.py:76`, `beta` `:75`). Lo único que pasa
+  `force_refresh` es `deploy_all_plugins(force_download=…)` (`canary :324`,
+  `beta :331`), y todos sus llamadores pasan `False` o nada.
+- **Corrección a §15.2 punto 2**, comprobada en `64a7ab4` y en la punta
+  actual: en `canary` sí hay un despliegue automático más, **al arrancar**.
+  `main.py:267` y `main_window.py:1402` llaman a `sync_plugins_on_startup()`
+  → `sync_plugins_if_enabled()` → `deploy_all_plugins(force_download=False)`,
+  si `Plugins` está activo. Usa el manifest cacheado, así que la conclusión
+  de §15.2 no cambia: un lua nuevo en R2 no llega a quien ya tenía la
+  caché. Los llamadores de `deploy_all_plugins` en `native_steam_handoff.py:136`
+  y `native_steam_download_task.py:536` siguen dentro de
+  `deploy_bundled_plugins()` y `_deploy_plugin()`, que nadie llama.
+- En `beta`, `sync_plugins_on_startup()` sigue sin llamador. El único
+  despliegue es el botón de spliced-tickets (`assela_tab.py:651`).
+- El `plugins_manifest.json` **del repo** (`beta`) sigue con `updated_at
+  2026-09-30T11:14:22Z` y `download.lua` `84d6c23f`. El de R2 no se pudo
+  leer.
+- `native_steam/` sigue sólo en `canary`. En `beta`, `src/core/` tiene
+  `at0m.py` y `vapor.py`, pero no `native_steam/`.
 
 ### 16.6 Qué significa para nosotros
 
 - lumalinux: nada.
-- LumaDeck, candidato nuevo, **baja prioridad**: detectar la clave `0` en
-  `FakeAppIds` (16.1) y avisarlo en la UI ("otro programa ha puesto todos los
-  juegos en 480; Online por juego no tiene efecto"), y en los juegos de
-  `DenuvoGames` avisar de que el comodín les rompe la activación. Una línea en
-  `list_fake_app_ids()` y un banner. Disparador: el toggle llega a `beta`, o un
-  reporte de Denuvo que deja de activar con ASSella instalado. Encaja con el
-  **exportar diagnóstico** de §15.6, que debería volcar `FakeAppIds`.
-- La coexistencia de los dos `spliced-tickets` queda cerrada (16.2).
+- LumaDeck, candidato de **baja prioridad**: Ajustes ya enseña la clave
+  `0`, pero la ficha del juego no. Si `FakeAppIds` tiene `0`, avisar en la
+  ficha de que el juego corre como 480 sin importar el toggle Online, y en
+  los juegos de `DenuvoGames` de que eso, con `SmartTickets` sin `0x2`, deja
+  sin ticket cifrado la activación (16.1). Disparador: el toggle llega a
+  `beta`, o alguien reporta que un Denuvo deja de activar con ASSella
+  instalado. Encaja con el **exportar diagnóstico** de §15.6, que debería
+  volcar `FakeAppIds` y `SmartTickets`.
+- La coexistencia de los dos `spliced-tickets` queda cerrada para el lua de
+  `beta`; la copia de R2 que usa `canary` está sin comprobar (16.2).
 
 El siguiente barrido arranca en `beta@3cf56bd` y `canary@22f2759`.
