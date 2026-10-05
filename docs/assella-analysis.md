@@ -1682,8 +1682,9 @@ CrossCode y Blasphemous).
   quedó sin ver.
 - ASSella mantiene su propio cliente de Steam en Python
   (`SteamClientWorker … logged on anonymously`) para consultar PICS.
-- `appmanifest_1628350.acf` (Steam Linux Runtime, por lanzar un juego) y el
-  aviso de `download.lua` `Missing decryptionkey for 1628351`: sin efecto.
+- Apareció `appmanifest_1628350.acf` tras lanzar Brotato, con el aviso de
+  `download.lua` `Missing decryptionkey for 1628351`; no afectó a nada.
+  [inferred] Por el id parece un Steam Linux Runtime; no se miró el `.acf`.
 
 ### 17.8 LumaDeck en el mismo caso: qué necesita Steam y qué deja LumaDeck [read + measured en septiembre]
 
@@ -1691,9 +1692,9 @@ Para instalar o reinstalar, Steam necesita (RESEARCH §1-§6):
 
 | Necesita | LumaDeck + lumalinux | ¿Persiste tras desinstalar desde Steam? |
 |---|---|---|
-| Licencia | SLSsteam `AdditionalApps` | Sí (nadie lo quita) |
-| Saber qué depots hay | finder del paquete 0 a partir de `keys.txt` | Sí |
-| Clave de cada depot (y de shaders si existe) | hook DepotKey sirviendo `keys.txt` | Sí |
+| Licencia | SLSsteam `AdditionalApps` | Sí en V3 (abajo); no se ha leído si LumaDeck reacciona a una desinstalación hecha desde Steam |
+| Saber qué depots hay | finder del paquete 0 a partir de `keys.txt` | Sí en V3 |
+| Clave de cada depot (y de shaders si existe) | hook DepotKey sirviendo `keys.txt` | Sí en V3 |
 | Manifest de cada depot | **código** por el hook GMRC: 20770407 → manifestdex → wudrm → steamrun, UA propio, validado contra el CDN (`gmrc_store.hpp:154-158`); **o** el `.manifest` en `depotcache/` | El de `depotcache/` no (Steam lo purga). LumaDeck guarda copia en `~/.local/share/lumadeck/manifests/<appid>/` y la repone |
 
 Cómo cubre LumaDeck la reinstalación (`pins.py:1-64`):
