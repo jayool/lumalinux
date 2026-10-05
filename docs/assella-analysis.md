@@ -1117,9 +1117,15 @@ ese mismo depot era el que disparaba el crash.
   quiere cerrar del todo: variable de entorno que excluya el AppID de la
   inyección y comparar instalaciones.
 - La precarga fuera de Steam con imitación de Chrome **sí saca códigos de
-  wudrm hoy** (prueba B). Es un dato para nuestra cascada de GMRC, que está
-  desactivada tras `LUMA_GMRC=1`: si algún día vuelve a hacer falta, el
-  `curl_cffi`/impersonate desde LumaDeck es una vía probada.
+  wudrm hoy** (prueba B). Es un dato para nuestra cascada de GMRC.
+  **[Corregido 2026-10-05]** Aquí ponía que la cascada estaba "desactivada
+  tras `LUMA_GMRC=1`". Era falso ya al escribirlo: `LUMA_GMRC=1` fue el
+  opt-in de v0.20.x, y desde v0.21.0 el hook GMRC va **activo por defecto**
+  y se apaga con `LUMA_NO_GMRC` (`src/main.cpp:158-173`; el código actual no
+  lee `LUMA_GMRC`). La imitación de Chrome tampoco nos hace falta para
+  wudrm: Cloudflare reta al User-Agent `curl` (medido el 5-oct: `curl` 403
+  con `Cf-Mitigated: challenge`, UA de navegador 200, misma IP), y
+  `gmrc_store.hpp:57-66` ya manda el suyo propio (`lumalinux/<versión>`).
 
 ---
 

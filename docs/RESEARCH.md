@@ -89,8 +89,12 @@ Clicking Install kicks off, roughly:
    per-manifest **request code** that authorizes the manifest download from the
    CDN. Valve denies for unowned (`Failed to get manifest request code,
    'Access Denied'` → surfaced to the UI as "No connection"). → **GMRC hook**:
-   fetch the code from the provider cascade (opensteamtool → wudrm → steamrun, §7)
-   and return it. **This is the load-bearing piece** — without it nothing
+   fetch the code from the provider cascade and return it. Current order
+   (`src/gmrc_store.hpp:154-158`): 20770407 → manifestdex → wudrm → steamrun,
+   each code checked against Valve's CDN before Steam sees it (`CdnAcceptsCode`).
+   *[Corrected 2026-10-05: this line used to read "opensteamtool → wudrm →
+   steamrun", the pre-2026-09-09 cascade. opensteamtool is gone (Cloudflare 403
+   for any User-Agent, `gmrc_store.hpp:138`); §7 keeps the history.]* **This is the load-bearing piece** — without it nothing
    downloads.
 7. Manifest downloads from the CDN (authorized by the code), chunks download by
    SHA, are decrypted with the depot key, committed to
