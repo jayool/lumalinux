@@ -1669,9 +1669,13 @@ Handoff normal: 3 depots con clave, 3 manifests a `depotcache/`,
   590383`, `Fully Installed`, sin shaders.
 
 [inferred] Con `590380` en `DecryptionKeys` habría instalado a la primera y con
-shaders, como Brotato. No medido. Pendiente: si Steam sigue reintentando los
-shaders cada ~5 min con el juego ya instalado (RESEARCH §13.8 lo vio con
-CrossCode y Blasphemous).
+shaders, como Brotato. No medido.
+
+[measured] **Sin bucle**: de 09:28:40 a 09:52:59 no hay ninguna línea más de
+`590380 Shader` ni de `scheduler` en `content_log.txt`, y `Missing
+decryptionkey for 590380` aparece una sola vez en `~/.SLSsteam.log`. Distinto
+de RESEARCH §13.8 (CrossCode y Blasphemous reintentaban cada ~5 min ya
+instalados); no se ha buscado el porqué.
 
 ### 17.7 Otros datos de la sesión [measured]
 
@@ -1747,8 +1751,8 @@ proveedor, y los salta limpio si no (`shader_depot_hook.cpp:64-89`).
 | 7 | Plugins residentes desde que se abre ASSella | measured | Choque de §12 con quien tenga los dos |
 | 8 | `NameError` de la cola (`native_steam_download_task.py:182`) | read + pyflakes | Sin ejecutar: zip por línea de comandos + "Native Steam" + "Start steam download" |
 
-Pendiente: (a) el `curl` a wudrm desde una IP doméstica; (b) reintentos de
-shaders de Into the Breach ya instalado; (c) el `NameError` de 8; (d) repetir
+Pendiente: (a) el `curl` a wudrm desde una IP doméstica; (b) ~~reintentos de
+shaders de Into the Breach~~ medido: no hay bucle (17.6); (c) el `NameError` de 8; (d) repetir
 T2/V3 con la versión actual de LumaDeck para que 17.8 quede medido hoy.
 
 El siguiente barrido de código arranca en `beta@3cf56bd` y `canary@22f2759`.
