@@ -1692,12 +1692,20 @@ Para instalar o reinstalar, Steam necesita (RESEARCH §1-§6):
 
 | Necesita | LumaDeck + lumalinux | ¿Persiste tras desinstalar desde Steam? |
 |---|---|---|
-| Licencia | SLSsteam `AdditionalApps` | Sí en V3 (abajo); no se ha leído si LumaDeck reacciona a una desinstalación hecha desde Steam |
-| Saber qué depots hay | finder del paquete 0 a partir de `keys.txt` | Sí en V3 |
-| Clave de cada depot (y de shaders si existe) | hook DepotKey sirviendo `keys.txt` | Sí en V3 |
+| Licencia | SLSsteam `AdditionalApps` | Sí |
+| Saber qué depots hay | finder del paquete 0 a partir de `keys.txt` | Sí |
+| Clave de cada depot (y de shaders si existe) | hook DepotKey sirviendo `keys.txt` | Sí |
 | Manifest de cada depot | **código** por el hook GMRC: 20770407 → manifestdex → wudrm → steamrun, UA propio, validado contra el CDN (`gmrc_store.hpp:154-158`); **o** el `.manifest` en `depotcache/` | El de `depotcache/` no (Steam lo purga). LumaDeck guarda copia en `~/.local/share/lumadeck/manifests/<appid>/` y la repone |
 
-Cómo cubre LumaDeck la reinstalación (`pins.py:1-64`):
+LumaDeck **no reacciona** a una desinstalación hecha desde Steam [read]: sus
+pases recorren los juegos con clave en `keys.txt` (`managed_apps`,
+`pins.py:439-449`), instalados o no, y lo único que quita licencia, claves y
+archivo es su propia desinstalación (`uninstall_game_full`,
+`slssteam_ops.py:913`, llamada sólo desde el botón de `GameDetail.tsx:861`).
+Que el juego siga gestionado es lo que hace funcionar la reinstalación:
+
+Cómo cubre LumaDeck la reinstalación (`pins.py:1-64`, `_apply_model`
+`pins.py:693-719`):
 
 - **Proveedor vivo** (`gmrc.json` "up"): Steam pide el código y lumalinux lo
   sirve, como para un juego comprado.
