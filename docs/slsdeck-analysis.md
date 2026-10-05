@@ -250,8 +250,11 @@ exposed (`cr_*` and `os_*` RPCs, plus `sections/CloudRedirect.tsx` and
 Recorded as a concession. **[read]** Their DLC support is three genuinely
 distinct layers, not redundancy:
 
-1. **Steam-client ownership** — moon's config entries. *(We have this:
-   `slssteam_ops.add_game_dlcs`.)*
+1. **Steam-client ownership** — moon's config entries. *(~~We have this:
+   `slssteam_ops.add_game_dlcs`.~~ Corrected 2026-10-05, see below: stock
+   SLSsteam gives client ownership only to `AdditionalApps`, and we put only
+   the base AppID there; `add_game_dlcs` writes `DlcData`, which is not
+   ownership.)*
 2. **In-process ownership** — `smokeapi.py:1`, `dlcunlockers.py:1`: a
    `steam_api` proxy that answers the game's own Steamworks DLC checks, because
    *"SLSsteam only unlocks DLC at the Steam-client level"*. `creamysteamy.py`
@@ -262,9 +265,49 @@ distinct layers, not redundancy:
 3. **Content** — `dlcdepot.py:1`: fetches the DLC depot bytes, because *"Steam
    won't fetch unowned-DLC depots, so we place the files directly"*.
 
-**[inferred]** We implement layer 1 only. This is the clearest functional gap in
+~~**[inferred]** We implement layer 1 only. This is the clearest functional gap in
 the comparison and it is not closable by aggregation alone — layer 2 is real
-engineering.
+engineering.~~
+
+**Correction 2026-10-05 [read: SLSsteam `main@9c829a7`, moon `f50f28e`,
+LumaDeck `slssteam_ops.py`].** The paragraph above took SLSDeck's own comment
+(*"SLSsteam only unlocks DLC at the Steam-client level"*) as a fact about stock
+SLSsteam. It is a fact about **moon**, not about stock SLSsteam, and the
+mapping of our side was wrong on both layers:
+
+- **Layer 2 — stock SLSsteam has it.** `DLC::shouldUnlockDlc`
+  (`src/feats/dlc.cpp:8-27`, in stock since 2025-11, `26987c4`) answers *yes* for any DLC
+  the account does not own and that is not excluded, whenever the request
+  comes from a running game (`getAppId() != 0`). It is wired into the
+  steamclient side of the game's Steamworks checks:
+  `CUser::CheckAppOwnership` (`hooks.cpp:616`, `BIsSubscribedApp`),
+  `IsAppDlcInstalled` (`:800`), `BIsDlcEnabled` (`:824`) and
+  `IsUserSubscribedAppInTicket` (`:1162`). No per-game proxy is needed for a
+  game that asks Steam through `steam_api`. It applies to **owned** base games
+  too: LumaDeck leaves `UseWhitelist: no` and `AppIds` empty
+  (`slssteam_schema.py:85-89`), so nothing is excluded.
+- **Why SLSDeck needs a proxy: moon removed it.** moon `e400331` (2026-08-13,
+  "scope ownership to managed games") added `if (!Apps::isAddedAppDlcId(appId))
+  return false;` to the same function: moon only unlocks DLC discovered from
+  LuaTools-managed base apps (or declared in `DlcData` under one). That
+  predates the `d3402a1` freeze of this document, so SLSDeck's layer 2 is
+  rebuilding, per game, what its own engine took out.
+- **Layer 1 — we do not have it in general.** Stock client-level ownership
+  (`Apps::checkAppOwnership`, `src/feats/apps.cpp:93-136`) unlocks only
+  `AdditionalApps`; `steamidra_lite.py` adds only the base AppID. Ours
+  `add_game_dlcs` (`slssteam_ops.py:554-606`) only writes `DlcData`, and only
+  above 64 DLC. `DlcData` feeds `DLC::getDlcCount` / `getDlcDataByIndex`
+  (`dlc.cpp:58-96`, hooks `GetDLCCount` `:886` and `GetDLCDataByIndex` `:910`):
+  the list of DLC a game enumerates, for games hit by Steam's 64-DLC limit
+  (`res/config.yaml:40-42`). It does not give ownership.
+- **Layer 3** (content of DLC with its own depot) is unchanged: whether Steam
+  downloads such a depot for a LumaDeck game is **not measured** (pending in
+  `assella-analysis.md` §18.10 (b)). V5 of `update-testing.md` measured a new
+  DLC depot of an added game reaching the user, which is a different case.
+
+Net: on DLC the gap is layer 3 (unmeasured) and layer 1 for DLC with content,
+not layer 2. The §6 B1 score and the §7.2 / §8.7 wording below were written on
+the old premise and are annotated, not re-scored.
 
 ---
 
@@ -546,7 +589,8 @@ and §2.5's shim inflation does not close the gap.
 
 Fully inventoried in §2.3 and §2.6. Summary of leads:
 
-- **DLC**: theirs, decisively (§2.6) — three layers to our one.
+- **DLC**: theirs, decisively (§2.6) — three layers to our one. *(2026-10-05:
+  overstated; stock SLSsteam already does layer 2, see the §2.6 correction.)*
 - **Acquisition breadth**: theirs — native *and* DepotDownloader, plus specific
   older builds and unowned DLC depots the native path cannot reach.
 - **Cloud saves**: parity in capability, theirs in redundancy (§2.5, two live
@@ -1326,7 +1370,7 @@ the weakest link in this document.
 | A3 Injection & boot coverage | 8% | **9.0** | 4.0 | §3.1. `steam.sh` vanilla vs a patch with a re-patch loop and three overlapping mechanisms. |
 | A4 Game updates & pinning | 7% | 6.0 | **8.0** | §3.10, §2.3. Theirs adds build archive, SteamDB history and rollback. |
 | A5 Failure modes & recovery | 10% | **7.5** | 6.5 | §3.4, §3.6. Ours: cross-component interlock, fail-closed resolution. Theirs: quarantine and plugin-layer self-heal, offset by zero tests (§4.1) and an endpoint that reports false success (§4.2). |
-| B1 Game features | 12% | 5.0 | **9.0** | §2.6, §3.8. DLC in three layers vs one; Workshop, artwork, backups, Denuvo. Ours: Goldberg, achievements. |
+| B1 Game features | 12% | 5.0 | **9.0** | §2.6, §3.8. DLC in three layers vs one *(2026-10-05: premise corrected in §2.6, not re-scored)*; Workshop, artwork, backups, Denuvo. Ours: Goldberg, achievements. |
 | B2 UX / Steam integration | 8% | 6.0 | **8.0** | §3.7. 366 RPCs vs 106; badges, store injection, gamebar. |
 | C1 User risk | 10% | **7.5** | 3.0 | §5.1, §5.2, §5.5, §5.7. Kernel module from a throwaway account, a third-party activation service transacted on the user's own accounts, a generic credential interceptor — against our unverified downloads and one third-party `extractall`. |
 | C2 Quality & maintainability | 8% | **7.0** | 5.0 | §4.1, §4.2, §3.11. Split by layer: their engine is better tested than ours, their plugin has no tests at all, and the plugin is where 32k of their lines live. |
@@ -1415,7 +1459,7 @@ moves a prologue they may be back before we are (§3.5).
 ### §7.2 "I want the features"
 
 **Theirs, and it is not close** — the largest single margin in the table. DLC in
-three layers (§2.6), specific older builds, unowned DLC depots (§2.3), Workshop,
+three layers (§2.6; corrected 2026-10-05: stock SLSsteam covers layer 2), specific older builds, unowned DLC depots (§2.3), Workshop,
 artwork, backups, and Denuvo. Nothing in our roadmap closes this in one step, and
 §8 marks only part of it as worth closing at all.
 
@@ -1505,7 +1549,9 @@ choices rather than a backlog.
 **Gaps where they lead — plugin layer:**
 
 7. DLC layers 2 and 3 (§2.6) — the clearest functional gap, and the one that
-   does not require adopting any of their risk surface.
+   does not require adopting any of their risk surface. *(2026-10-05: layer 2
+   is already done by stock SLSsteam; the open items are layer 3, unmeasured,
+   and client ownership of DLC with content — §2.6 correction.)*
 8. Direct-download acquisition as a fallback for what the native path cannot do:
    specific older builds, unowned DLC depots (§2.3).
 
