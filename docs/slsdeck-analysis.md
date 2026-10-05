@@ -300,13 +300,13 @@ mapping of our side was wrong on both layers:
   (`dlc.cpp:58-96`, hooks `GetDLCCount` `:886` and `GetDLCDataByIndex` `:910`):
   the list of DLC a game enumerates, for games hit by Steam's 64-DLC limit
   (`res/config.yaml:40-42`). It does not give ownership.
-- **Layer 3** (content of DLC with its own depot) is unchanged: whether Steam
-  downloads such a depot for a LumaDeck game is **not measured** (pending in
-  `assella-analysis.md` §18.10 (b)). V5 of `update-testing.md` measured a new
-  DLC depot of an added game reaching the user, which is a different case.
+- **Layer 3** (content of DLC with its own depot): **we have it, measured
+  2026-10-05** (RESEARCH §21): adding an owned game with LumaDeck downloads every
+  DLC depot of its `.lua` (package-0 licence + key), and the game uses them.
 
-Net: on DLC the gap is layer 3 (unmeasured) and layer 1 for DLC with content,
-not layer 2. The §6 B1 score and the §7.2 / §8.7 wording below were written on
+Net: on DLC we have layers 2 and 3; the remaining gap is layer 1 (Steam showing
+the DLC as owned), closed by putting the DLC AppIDs in `AdditionalApps` (RESEARCH §21, run E).
+The §6 B1 score and the §7.2 / §8.7 wording below were written on
 the old premise and are annotated, not re-scored.
 
 ---

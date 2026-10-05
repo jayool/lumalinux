@@ -2430,3 +2430,100 @@ an owned game), freeze every unpinned game to its installed build when it
 says `down` and release them when it says `up` again; explicit pins stay for
 Auto-update-off, LuaTools fixes and #43. Keys still only come from Hubcap
 zips; a new DLC depot still needs one. Not implemented at the time of writing.
+
+## 21. DLC of a game you own — what grants what (measured 2026-10-05)
+
+*Codespace SteamOS (`.devcontainer/steamos/`, user `deck`), stack installed by
+LumaDeck's Quick Install: SLSsteam `main@9c829a7` (release build), lumalinux
+and LumaDeck from `main`. Game: **Darkest Dungeon (262060), owned by the test
+account**. Its six DLC all have content depots; two are free and owned
+(Musketeer 445700 → depot 445702, The Butcher's Circus 1117860 → 1117862), four
+are paid and not owned (The Crimson Court 580100, The Shieldbreaker 702540,
+The Color of Madness 735730, The Fire's Edge 4964110; Linux depots 580102,
+702542, 735732, 4964111). Each DLC's Windows depot carries the same number as
+the DLC's AppID. The game keeps each DLC in `common/DarkestDungeon/dlc/<appid>_<name>`.
+Sources: `content_log.txt`, `~/.SLSsteam.log`, `~/.cache/lumalinux/lumalinux.log`,
+`keys.txt`, the `.acf`, the Steam DLC list and the game's "Activate DLC" screen.*
+
+### 21.1 Three questions, three answerers [read]
+
+| Question | Answered by | Needs |
+|---|---|---|
+| Is this app yours? (library, "Your stuff", Play) | SLSsteam `Apps::checkAppOwnership` (`src/feats/apps.cpp:93-136`) | the AppID in `AdditionalApps` |
+| May this depot be downloaded? | Steam's per-depot licence filter → **package 0** `AppIdVec` (§2.3), filled by lumalinux with every id in `keys.txt` (`key_store.cpp:246`, `load_package_hook.cpp:171-182`); then the key (`LoadDepotKey`) | the depot in `keys.txt` with its key — **not** `AdditionalApps` |
+| Does the running game have the DLC? | SLSsteam `DLC::shouldUnlockDlc` (`src/feats/dlc.cpp:8-27`), wired into `CheckAppOwnership`, `IsAppDlcInstalled`, `BIsDlcEnabled`, `IsUserSubscribedAppInTicket` | nothing: *yes* for any not-owned, not-excluded DLC while a game is running |
+
+The depot list of a DLC comes from the **base game's** appinfo (the DLC depots
+are listed under 262060 with `dlcappid`), so Steam needs no appinfo of the DLC
+AppID itself. `DlcData` is unrelated to all three: it feeds
+`GetDLCCount`/`GetDLCDataByIndex` (the list a game enumerates), only for games
+over Steam's 64-DLC limit (`res/config.yaml:40-42`).
+
+### 21.2 The runs [measured]
+
+| Run | State | Steam ("Your stuff") | Depot download | In game |
+|---|---|---|---|---|
+| Ref. | plain Steam, no stack | owned: the two free DLC | 4 depots: 262065, 262066, 445702, 1117862 | — |
+| A | stack loaded, nothing added (`AdditionalApps` empty) | same | same; nothing for 702540/702542 | no content (`dlc/` has only the two free DLC) |
+| B | `702540` hand-added to `AdditionalApps` (`Config reloaded!`) | **Shieldbreaker shown owned** | **none**, also after *Verify* (`finished update, 4 mounted depots`) | — |
+| C | B undone; Darkest Dungeon added with LumaDeck | Shieldbreaker **not** owned | **all four paid DLC** (see below) | **all DLC available** |
+| E | C, then `262060` removed from `AdditionalApps` and 580100, 702540, 735730, 4964110 added; Steam restarted | **all six DLC owned**, "Install" ticked | unchanged (8 depots), no `added`/`removed depots` | all DLC available; game launches; back to "Fully Installed" on exit |
+
+Run C in detail. The Hubcap `.lua` lists, per DLC, `addappid(<dlc>)` without
+a key plus one `addappid(<depot>, 1, "<key>")` + `setManifestid` per platform
+depot. `steamidra_lite` keeps only keyed lines (`:1462`), so `keys.txt` got
+`702540;262060;…`, `702541;…`, `702542;262060;4258374143576351227;40024569;4ede…`
+(the AppID-numbered line is the Windows depot), and `AdditionalApps` got only
+`262060` (`steamidra_lite.py:13-15`, `:1490-1497`). `add_game_dlcs` wrote
+nothing (6 DLC ≤ 64, `slssteam_ops.py:564`). Then:
+
+```
+13:35:29 LoadPackage[finder]: APPENDED 27 id(s) to PackageId=0 AppIdVec … + AppIdVec 702540 / 702541 / 702542 …
+13:37:28 AppID 262060 config changed : added depots 580102,702542,735732,4964111     (on game exit)
+13:38:17 Downloading 169 chunks for depot 702542 (4258374143576351227)
+13:38:17 LoadDepotKey: SERVED local key for depot 702542
+13:38:55 AppID 262060 finished update, 8 mounted depots …
+```
+
+Steam did not replan while the game was running; it did on exit, unprompted.
+`dlc/` then held `580100_crimson_court`, `702540_shieldbreaker`,
+`735730_color_of_madness`, `4964110_fires_edge`. The game's DLC screen lists
+more entries than Steam (Duelist, Runaway, Districts): they are sub-packs of
+Steam DLC (Districts under `dlc/580100_crimson_court/features/districts/`;
+Runaway and Duelist mostly in `dlc/4964110_fires_edge`), not extra DLC.
+
+Side notes: a *Verify* during B re-downloaded 1 KB (`Validation: read 1 files
+missing` in depot 262066) — the game's own `app.log`, which it rotates; not
+related. With `262060` (owned) in `AdditionalApps` (C) nothing broke: the game
+launched, no update loop. Keys were served for owned depots (445702, 1117862)
+without a crash, against the older "never serve keys for an owned depot" note
+(`steamidra_lite.py:153-159`); the newer comment at `:427-430` says the v1.0
+hook makes that harmless. One run, release build (no `Unlocked` lines: those
+are `LOG_ONCE`, debug only).
+
+### 21.3 What it means
+
+- **Flag DLC** (no depot): stock SLSsteam alone. [read; not measured — this
+  game has none]
+- **Depot DLC**: needs the base game added with LumaDeck (keys → package 0 →
+  download). Measured: works, and takes **every** DLC depot in the `.lua`.
+- Hand-adding the DLC to `AdditionalApps` (the usual community advice) only
+  makes it *look* owned; it does not download the content (B).
+- For an **owned** game the right shape is run E — the same as ASSella's
+  "DLC Mode" (`utils/dlc_helpers.py:325-480`: base game out of
+  `AdditionalApps`, DLC AppIDs in, keys only for DLC depots). Measured: DLC
+  shown owned, content kept, game plays.
+
+### 21.4 What LumaDeck does today with an owned game, and what is open
+
+Today (C): base game in `AdditionalApps` (not needed, and SLSsteam's own
+comment, `res/config.yaml:34-35`, warns it breaks downloads for
+family-shared apps); DLC AppIDs not added, so Steam shows them as not owned;
+`keys.txt` carries the base game's depots too, **with gids**: the add ran with
+`pin=True` because `pins.pin_new_installs()` returns `gmrc_state() != "up"`
+(`pins.py:316-319`) and the fresh codespace had no provider state yet. Whether
+that pin freezes an owned game when Valve ships a build is **not measured**.
+
+Open: (1) an "owned / DLC-only" add in LumaDeck following run E — needs a way
+to know the base game is owned (ASSella uses a manual toggle); (2) measure the
+pin on an owned game.

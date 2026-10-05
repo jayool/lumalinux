@@ -1958,8 +1958,8 @@ algún usuario reporta un bloqueo.
 | 7 | Recent Activity, Inheritance, tickets | read | Ideas menores / decisión del autor |
 | 8 | Logros: SLSsteam + `SlsAchievementUnblock` + `CrStatsFix` | read | `achievements.py` apagado: código muerto si se confirma |
 
-Pendiente de LumaDeck que sale de este repaso: (a) Workshop; (b) probar DLC de
-un juego comprado; (c) probar "Mover carpeta" de Steam; (d)
+Pendiente de LumaDeck que sale de este repaso: (a) Workshop; (b) ~~probar DLC de
+un juego comprado~~ medido 2026-10-05: funciona, y el "DLC Mode" de ASSella es la forma correcta para un juego comprado (RESEARCH §21); (c) probar "Mover carpeta" de Steam; (d)
 `_enrich_lua_with_linux_depot` (`downloads.py:708-787`) no mira si el lua ya
 trae el depot de Linux y le pone la primera clave que encuentra; como
 `steamidra_lite.py:1462` guarda las claves en un `dict`, gana la última línea
