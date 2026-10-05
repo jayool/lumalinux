@@ -1756,3 +1756,215 @@ shaders de Into the Breach~~ medido: no hay bucle (17.6); (c) ~~el `NameError` d
 T2/V3 con la versión actual de LumaDeck para que 17.8 quede medido hoy.
 
 El siguiente barrido de código arranca en `beta@3cf56bd` y `canary@22f2759`.
+
+## §18 — 2026-10-05: la interfaz de `canary`, pantalla a pantalla, frente a LumaDeck
+
+*Repaso de la interfaz de ASSella `canary@22f2759` en el codespace de §17, una
+pantalla tras otra, con cada elemento seguido hasta el código que lo implementa
+y comparado con LumaDeck (rama `claude/dazzling-ramanujan-23kyb4`) y lumalinux.
+SLSsteam de referencia: `main@9c829a7`. Etiquetas: [read] código leído;
+[measured] medido en §17; [inferred] deducido y sin medir. Las referencias de
+ASSella son a `canary` salvo que se diga otra cosa. Theme y WebUI no se
+revisaron (fuera de interés); Integrations es sólo Hubcap.*
+
+### 18.1 Pantalla principal [read]
+
+| ASSella | Qué es | LumaDeck | Para nosotros |
+|---|---|---|---|
+| Hubcap `API 3/25 · Single 0/1500` | Cuotas diarias (zips / manifests sueltos, §5.3), `main_window.py:2858` | En Ajustes, junto a la clave: "Today: {0}/{1} requests" (`i18n.ts:263`; sólo en y pt) | Ya está. Con descarga nativa apenas se gasta cuota |
+| SLSsteam / Steam: Online, Health: Good | Estado; Health abre su pestaña (`main_window.py:2146`) | Panel de componentes (SLSsteam, lumalinux, CloudRedirect) con "Repair" | Ya está |
+| Hubcap: Online (Direct) | Vía elegida para llegar a Hubcap (18.6) | Directo | No aplica |
+| Steam Updates: Blocked | Sólo lee `BootStrapperInhibitAll` en `steam.cfg` (`main_window.py:2373-2404`) | `steam_freeze.py` levanta el bloqueo de Headcrab y avisa cuando una versión nueva de Steam es compatible (`i18n.ts:315`) | Mejor resuelto |
+| ASSella: Latest | Su comprobación de versión | Aviso de actualización del plugin (`i18n.ts:319`) | Ya está |
+| Library: 0.6 GB (2 games) | Tamaño y número de juegos | Bibliotecas con espacio libre y número de juegos (`Settings.tsx:1285`) | Ya está |
+| Pending Updates | Actualizaciones de su descargador | Las hace Steam; un juego atascado sale como problema en el panel de estado (`SystemStatus.tsx:224`) y se arregla con "Fix Update" en su ficha (`GameDetail.tsx:1226`) | No aplica |
+| Recent Activity | Historial: "Handed off to Steam", tamaños, estado de logros/DRM | **No hay** | Única idea de esta pantalla: historial por juego para soporte, junto al *exportar diagnóstico* de §15.6 |
+
+### 18.2 Buscar: selector de depots, DLC Only, Workshop [read]
+
+- **Selector de depots.** Existe porque en el modo clásico descarga
+  DepotDownloader, que no sabe qué depots tocan. "Smart Select (Beta)" lee
+  `packageinfo.vdf` para adivinar los de Steam (`depotselection.py:670`,
+  `core/steam_package_info.py`); el ajuste "Smart Selection" reutiliza la
+  selección anterior si no aparece un depot nuevo (`library/actions.py:386`).
+  En LumaDeck no hay selector: todas las claves del zip van a `keys.txt`
+  (`steamidra_lite.py`, `write_lumalinux_keys`) y Steam elige plataforma e
+  idioma como con un juego comprado. Si no se añadió depot de Linux, LumaDeck
+  fuerza Proton (`downloads.py:1339-1345`, `set_compat_tool_for_app`).
+- **DLC Only** (DLC de un juego que ya tienes). LumaDeck no tiene modo propio.
+  `add_game_dlcs` sólo escribe `DlcData` con más de 64 DLC
+  (`slssteam_ops.py:564`, llamado en `downloads.py:1308`): desbloquea licencias,
+  no baja contenido. [inferred] Si añadir un juego comprado hace que Steam baje
+  los depots de DLC está **sin probar**; la V5 de `update-testing.md` mide otro
+  caso (DLC nuevo de un juego añadido).
+- **Workshop.** ASSella: `/generate/workshopmanifest/<id>` en Hubcap (500/día,
+  §5.3), DepotDownloader `-ugc`, y `appworkshop_<appid>.acf` escrito a mano
+  (`download_workshop_task.py:52/235/298`). LumaDeck: nada (grep vacío),
+  excluido en §8 F4. **Es el único hueco real** de toda la interfaz; pendiente
+  de evaluar (Steam no deja suscribirse al Workshop de un juego que no es tuyo).
+
+### 18.3 Ficha de juego [read]
+
+| ASSella | LumaDeck | Para nosotros |
+|---|---|---|
+| Rama/build, Up to date | Latest / Frozen, "Fix Update" | Ya está |
+| Verify Files (DepotDownloader) | El "Verificar" de Steam ([inferred] debería funcionar al ser nativo; sin probar) + "Repair Appmanifest" | Ya está |
+| Pin Build | Auto-update + "Change version" (últimas 10 builds de SteamDB, `game_versions.py:3`) | Ya está, más completo |
+| SLSonline / EOS Proxy | "Online": FakeAppId 480 + netsock + EOS, bloqueado con Denuvo (`fixes.py:837-847`) | Ya está, más completo |
+| Uninstall / Advanced | "Uninstall Game" con lista de lo que borra y opción de prefijo Proton | Ya está |
+| Open Folder | No hay en la interfaz (`steam_utils.py:380` `open_game_folder` existe pero nadie lo llama) | Menor en modo juego |
+| DLC Mode | No hay | Ver 18.2 |
+| Move to AT0-M / ASSella, Update-All: Include | — | No aplica: un solo modo |
+| GOLD (ProtonDB) | No | Adorno |
+
+### 18.4 Builds, Tools, Achievements, Tickets [read]
+
+- **Builds.** "Automated patch history requires the Byparr solver"
+  (`builds_tab.py:82`): Byparr resuelve el reto de Cloudflare de SteamDB; sin
+  él no hay historial. §15.3 ya recoge que con Byparr a veces lee 0 builds.
+  LumaDeck lee SteamDB con una vista oculta del CEF de Steam
+  (`steamdb_reader.py`, `cef_cdp.HiddenView`): navegador real, sin nada extra.
+- **Tools** de la ficha. Steamless Python y .NET (`steamless_task.py`): LumaDeck
+  lleva el CLI .NET dentro del plugin (`steamless.py:1-6`). Goldberg: LumaDeck
+  aplicar/quitar (`goldberg.py`). Depots: no aplica. Move Storage: LumaDeck no
+  tiene nada; [inferred] "Mover carpeta" de Steam debería valer, sin probar.
+  Fix Installation: Repair Appmanifest / Fix Update. Move DLC to DlcData:
+  automático con más de 64 DLC (18.2).
+- **Achievements.** Desbloqueo manual editando las estadísticas
+  (`shsah_reborn.py:288`, `set_achievement_unlocked`). LumaDeck no lo tiene; es
+  un *cheat* de nicho. Cómo funcionan los logros en LumaDeck: 18.8.
+- **Tickets.** Importar, verificar, exportar y borrar tickets de propiedad
+  (`tickets_tab.py`, `ticket_manager.py:49`, `encryptedTicket_<appid>.yaml`):
+  activar Denuvo con el ticket de otra cuenta. LumaDeck sólo lee `DenuvoGames`
+  para no romper esa activación con el Online (`slssteam_ops.py:267`).
+  Pendiente de decisión del autor.
+
+### 18.5 Ajustes → ASSella [read]
+
+| Ajuste | Qué hace | Para nosotros |
+|---|---|---|
+| Smart Selection | 18.2 | No aplica |
+| Check Updates on Boot | Comprueba actualizaciones de sus juegos al arrancar (`main_window.py:1771`) | Las hace Steam; nuestro pase de 30 min (`pins.py:90`) busca depots nuevos |
+| Enable EOSProxy by default | Aplica el proxy EOS al terminar el descargador clásico si el juego usa EOS (`task_manager.py:1308`) | En LumaDeck va dentro de Online, por juego |
+| Download Animation | Pac-Man, Sonic, Goku, Nyan Cat… | Adorno |
+| Hubcap Gateway + Health Check | 18.6 | — |
+| Update Check Interval | Slider 0-20 en pasos de 5 min (0-100). Por defecto **incoherente**: la pestaña muestra "Disabled" si no hay valor (`assela_tab.py:247`), el temporizador arranca cada 5 min (`main_window.py:1819`) hasta que se guardan los ajustes, y `settings.py:148` usa 45 | No aplica |
+| SteamAPI Provider | Auto / SteamPICS (Valve directo con su cliente) / SteamcmdAPI | Usamos `api.steamcmd.net`; PICS sólo como respaldo si cayera |
+| Uninstall ASSella | — | Decky + Ajustes → Components |
+
+### 18.6 Hubcap Gateway [read]
+
+Auto / Direct / DoH / Tor / Wire (`utils/isp_bypass.py`): directo, DNS cifrado
+si el operador bloquea el dominio, Tor, o "Wirecutter", un Cloudflare Worker de
+niwia al que se reenvían cabeceras y parámetros, clave de Hubcap incluida
+(`isp_bypass.py:440`; §14.4). Para LumaDeck sólo DoH tendría sentido, y sólo si
+algún usuario reporta un bloqueo.
+
+### 18.7 Ajustes → Downloads y Advanced [read]
+
+- **Downloads / General**: "Limit Downloads to Steam Libraries" (`library_mode`,
+  off), "Enable Lan Cache" (`use_lancache`, pasa `-use-lancache` a
+  DepotDownloader, `download_depots_task.py:1049`), ubicación por defecto,
+  "Concurrent Downloads" (1-30, 8). **Depot selection**: filtros de
+  visibilidad (macOS, Android, OST, Windows, Linux, artbooks, demos,
+  tools/SDK, lista negra de búsqueda) y "Show Hidden Depots section by
+  default". Todo es de su descargador y su selector: no aplica.
+- **Advanced**: "Skip single-choice selection" (salta el selector con un solo
+  depot, `task_manager.py:365-370`) y "Clear Update & Build ID Cache" (sus
+  cachés de estado/ramas/buildid, `advanced_tab.py:183`): no aplican (no hay
+  selector ni caché de buildids de juegos; la caché de `update_checks.py` es de
+  releases). Workshop: Steam integration, concurrencia (la pestaña usa 8, pero
+  `utils/settings.py` fija **4** en la primera ejecución) y Cell ID: van con
+  18.2. "Generate Achievements (Recommended Off)" (`task_manager.py:2653`): no
+  hace falta, 18.8. "Auto-apply Goldberg on Install (Experimental)"
+  (`task_manager.py:1177`): LumaDeck lo tiene manual y no conviene
+  automatizarlo; el propio ASSella avisa de que choca con jugar desde Steam.
+  (En `beta` es igual salvo textos y que `canary` fuerza
+  `prompt_steam_restart` a off.)
+
+### 18.8 Logros: cómo funcionan en LumaDeck [read]
+
+- **Los da SLSsteam**: cuando un juego que no tienes pide `GetUserStats`,
+  pide prestado el schema a un dueño que encuentra por las reseñas
+  (`feats/achievements.cpp`, hook en `hooks.cpp:258`, `MaxSchemaTries`), con
+  la caché offline como respaldo.
+- **lumalinux lo hace posible para nuestros juegos**: al instalar de forma
+  nativa Steam escribe una licencia local, `isSubscribed` da true y la guarda
+  "no tocar apps legítimas" de SLSsteam se saltaría el préstamo.
+  `SlsAchievementUnblock` (`sls_achievement_unblock.hpp`, `main.cpp:309-316`,
+  `LUMA_NO_SLS_ACH_UNBLOCK`) cambia esa comprobación por
+  `isSubscribed && !isAddedAppId`. `CrStatsFix` (`cr_stats_fix.hpp`) evita que
+  CloudRedirect ≤ 2.6.5 se trague el schema con su "up to date" de 2 bytes.
+- **LumaDeck no genera nada**: `achievements.py` (schema por la Web API, con
+  clave del usuario) está apagado. La autogeneración al instalar está comentada
+  como "TEMP (native-achievement test)" (`downloads.py:1327-1337`) y toda su
+  interfaz, oculta tras `ACHIEVEMENTS_ENABLED = false` (`features.ts:14`).
+  Sólo queda vivo `remove_achievement_files` al desinstalar
+  (`slssteam_ops.py:1066-1070`). Si los logros nativos están validados, ese
+  código sobra.
+
+### 18.9 Ajustes → SLS, at0-m, Health, Tools [read]
+
+- **SLS** (`settings_sls.py`). "SLSsteam API" (on): instala y desinstala por
+  `/tmp/SLSsteam.API`, que genera el ACF. LumaDeck no usa la pipe ni escribe
+  ACF: prepara manifests, claves, `config.vdf` y `AdditionalApps`, y Steam
+  instala y escribe su `appmanifest` en la biblioteca elegida
+  (`downloads.py:845-848`; el stub que sembraba lumalinux se retiró por el issue
+  #41 y `sweep_orphan_stubs`, `downloads.py:1529`, limpia los viejos). "All
+  games online (beta)": `FakeAppIds 0: 480` global (`settings_sls.py:286-298`;
+  §16.1); LumaDeck lo hace por juego. Updater de SLSsteam y botón que ejecuta
+  `curl -fsSL headcrab.pages.dev | bash` (`:227`): LumaDeck tiene su instalador
+  de componentes.
+- **at0-m** (`at0m_tab.py`). "Enable Lua Plugins" pone `Plugins: yes` y
+  despliega `download.lua` / `spliced-tickets.lua` desde su R2; LumaDeck pone
+  `Plugins: yes` e instala spliced-tickets (`installer.py:324`, condicionado a
+  SLSsteam ≥ `20260903114323`) y no necesita `download.lua` (GMRC).
+  "Disable updates (SLSsteam AdditionalApps)": marcado como "Recommended", lee
+  el config con `default=(proxy_active or True)` (`:141`) y **cada vez que se
+  guardan los Ajustes escribe su valor en `DisableUpdates`**
+  (`settings.py:877-890`; el valor guardado en QSettings manda sobre el del
+  config). Con `yes`, `shouldDisableUpdates` (`apps.cpp:449`) devuelve true para
+  `isAddedAppId || !isSubscribed` y el hook de `GetAppUpdateInfo`
+  (`hooks.cpp:865`) corta la actualización: los juegos añadidos no se
+  actualizan. LumaDeck fuerza `no` (`installer.py:216`). [inferred] El efecto
+  en un juego de ASSella con build nueva no está medido. "Default Download
+  Behavior" y "Start download with Steam": no aplican (un solo modo).
+- **Health** (`health_tab.py`). Tiles de binario, versión y proceso
+  (`:167-175`): LumaDeck, panel de componentes. "SLS Config → Check / Repair /
+  Resync / Restore Backup" (`utils/assfixer.py`): reescribe el `config.yaml`
+  entero en la estructura del `res/config.yaml` de AceSLS con copia `.bak`.
+  LumaDeck sólo **añade al final** las claves de primer nivel que falten
+  (`slssteam_schema.py:272/338`), sin tocar nada más y abortando si el original
+  no queda intacto; por eso no necesita restaurar. "Inheritance"
+  (`sls_inheritance.py:72`, "beta testing"): adopta entradas de
+  `AdditionalApps` que no son suyas; LumaDeck no tiene nada parecido (idea
+  menor). "Apply Recommended Settings" (`:355`): corrige sus propios valores
+  por defecto.
+- **Tools** (`tools_tab.py`). "Achievements" lanza
+  `deps/schema-grabber/login_helper.py` (login en Steam, método antiguo): no
+  aplica. Steamless Python / .NET: 18.4. Nivel y filtro de log: LumaDeck
+  escribe en el log de Decky; no hace falta.
+
+### 18.10 Balance
+
+| # | Qué | Fuente | Para nosotros |
+|---|---|---|---|
+| 1 | Dos descargadores conviviendo (DepotDownloader y at0-m) con ajustes para elegir entre ellos | read | Cada función existe dos veces o falla en un camino (el `NameError` de §17.9 es de uno de ellos). LumaDeck: un solo camino |
+| 2 | Ajustes duplicados por renombres (`vapor_*`, `at0m_*`, `native_steam_default_action`), forzados u ocultos | read | — |
+| 3 | `DisableUpdates: yes` recomendado y reescrito al guardar Ajustes | read (§17.9 #6 measured el valor) | LumaDeck `no`; efecto sin medir |
+| 4 | `FakeAppIds 0: 480` global | read | LumaDeck por juego, con guarda Denuvo |
+| 5 | ASSfixer reescribe el config entero | read | LumaDeck sólo añade claves |
+| 6 | Workshop | read | **Único hueco real**; pendiente de evaluar |
+| 7 | Recent Activity, Inheritance, tickets | read | Ideas menores / decisión del autor |
+| 8 | Logros: SLSsteam + `SlsAchievementUnblock` + `CrStatsFix` | read | `achievements.py` apagado: código muerto si se confirma |
+
+Pendiente de LumaDeck que sale de este repaso: (a) Workshop; (b) probar DLC de
+un juego comprado; (c) probar "Mover carpeta" de Steam; (d)
+`_enrich_lua_with_linux_depot` (`downloads.py:708-787`) no mira si el lua ya
+trae el depot de Linux y le pone la primera clave que encuentra; como
+`steamidra_lite.py:1462` guarda las claves en un `dict`, gana la última línea
+y podría sustituir una clave buena por la de otro depot. Sólo pasa si el
+manifest de Linux ya estaba en `depotcache`. [inferred] Sin medir; (e) decidir
+qué hacer con `achievements.py`; (f) [inferred] "A Short Hike" mostró "Content
+still encrypted" en ASSella: hipótesis, la clave de shaders de §17.6, sin
+comprobar.
