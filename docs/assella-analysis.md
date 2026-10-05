@@ -1531,3 +1531,215 @@ En el árbol de `beta` no hay `.cs` ni `.csproj`; sólo el DLL, `deps.json` y
   `beta`; la copia de R2 que usa `canary` está sin comprobar (16.2).
 
 El siguiente barrido arranca en `beta@3cf56bd` y `canary@22f2759`.
+
+## §17 — 2026-10-05: `canary` en el codespace, medido — instalar, desinstalar y reinstalar
+
+*Codespace SteamOS (`.devcontainer/steamos/`, usuario `deck`), Steam en Game
+Mode sobre `:1`/noVNC, Headcrab → SLSsteam `main@9c829a7` (release
+`20261001163836`), **sin lumalinux**. ASSella `canary@22f2759`
+(`3.0.0testing031026001`) desde el código fuente con Python 3.13 (`uv venv`),
+`DISPLAY=:1`, log en `/tmp/assella.log`. Las pruebas las hizo el autor en la
+interfaz; los logs (`/tmp/assella.log`, `~/.SLSsteam.log`, `content_log.txt`,
+`config.yaml`, `.acf`) se leyeron después de cada paso. Etiquetas: [measured]
+sale de esos logs; [read] del código; [inferred] no medido.*
+
+### 17.1 Arrancar ASSella `canary` desde el código [measured]
+
+- Con Python 3.11 no arranca: `SyntaxError` en `task_manager.py:3214`
+  (f-string de varias líneas, Python ≥ 3.12). Con 3.13, `requirements.txt` se
+  instala de una vez; los tres pasos de §13.1 ya no hacen falta.
+- PyQt6 necesita `libEGL` (en el contenedor viene con `mesa`) y, para la
+  plataforma `xcb`, `xcb-util-cursor`.
+- Al arrancar despliega `download.lua` (sha256 `84d6c23f…`, el de R2 de §15.1)
+  y `spliced-tickets.lua` en `plugins/`, y pone `API: yes` y `Plugins: yes`.
+  Se quedan cargados en Steam desde ese momento, haya descarga o no.
+
+### 17.2 Brotato (1942280) por AT0-M nativo — funciona [measured]
+
+Ruta `fetchmanifest` → "Native Steam" → "Start steam download", que es el
+**handoff** con `auto_install=True` (`fetchmanifest.py:1125-1185`), no la tarea
+rota del `NameError` (§16 y más abajo).
+
+| Hora | Qué | Fuente |
+|---|---|---|
+| 08:24:42 | Baja el zip de Hubcap (`force_update=True`): 4 depots con clave y gid | assella.log |
+| 08:24:43 | Parchea `AdditionalApps`, `AdditionalDepots` y `DecryptionKeys` en una escritura; el AppID queda fuera de las dos últimas | config.yaml |
+| 08:24:44 | `AppLicensesChanged callback invoked for 1942280` | ambos |
+| 08:24:46 | Copia los 4 `.manifest` del zip a `depotcache/` | assella.log |
+| 08:24:46 | `install\|1942280\|0` por el pipe → SLSsteam `Installed 1942280 to 0` | SLSsteam |
+| 08:24:47-57 | Steam baja 272 MB, `finished update … (BuildID 23429717)`, `Fully Installed` | content_log |
+| 08:24:51 | El `.acf` lo escribe Steam (`Steam created ACF manifest … attempt 1`); el ACF de respaldo de 0 bytes (§16) no llega a saltar | assella.log |
+
+Steam no pide código para el juego porque los manifests ya están en
+`depotcache/`. El depot de shaders (`1942280`, manifest
+`839658903313537823`) sí baja del CDN con código en la URL (`200 OK`): ese
+código lo da Valve, no wudrm (Brotato lleva Workshop;
+`shader_depot_hook.cpp:36-40`), y el log de SLSsteam no tiene ni una línea de
+`MRC`. Tras reiniciar Steam sigue instalado, y el juego arranca.
+
+Detalles del mismo paso: el respaldo `config.yaml.native_steam_backup` se crea
+y no se borra nunca (nadie lo restaura: sólo la tarea vigilada restaura la
+copia que ella misma crea); `DisableUpdates: yes` (default de SLSsteam,
+`config.cpp:189`; ASSella no lo cambia, LumaDeck sí, `installer.py:217`).
+
+### 17.3 Desinstalar [measured + read]
+
+- **Desde ASSella no se puede**: en juegos AT0-M, "Uninstall Game", "Verify
+  Game Files" y "Reset Depot Selection" están deshabilitados
+  (`actions.py:507-543`).
+- **Desde Steam**: el `.acf` desaparece. ASSella no registra nada en su log, y
+  `config.yaml` conserva `AdditionalApps`, `AdditionalDepots`,
+  `DecryptionKeys` y `AppTokens` de Brotato: el juego queda desbloqueado y "no
+  instalado" en la biblioteca.
+- **Los 4 manifests ya no están en `depotcache/`**. Es lo que LumaDeck tiene
+  documentado: Steam purga `depotcache/` al desinstalar (`pins.py:46`).
+
+### 17.4 Reinstalar desde Steam — "Unknown error" [measured]
+
+1. Licencia y claves bien: `AuthenticateDepotID (1942282) - Success!`,
+   `(2868390) - Success!`.
+2. Sin manifest local, Steam pide el código. `download.lua` va a su único
+   proveedor, cinco veces por manifest: `MRC server http://gmrc.wudrm.com/manifest/
+   failed` → `All MRC servers failed` → `Failed to get MRC for 2868390` / `1942282`.
+3. El CDN responde 401 en todos los servidores →
+   `update canceled : Failed downloading 2 manifests (Unspecified Error)` →
+   "Unknown error", `Update Paused`. Steam no lo reintenta.
+
+**Por qué falla wudrm.** `download.lua` l.265 llama
+`curl.downloadString(url, 2)` sin cabeceras, y SLSsteam ejecuta
+`/usr/bin/curl` tal cual (`curl.cpp:17-41`). Desde el codespace, misma IP y
+misma URL (`/manifest/4872816150142449642`):
+
+| User-Agent | Respuesta |
+|---|---|
+| el de `curl` | **403**, `Server: cloudflare`, `Cf-Mitigated: challenge`, cuerpo "Just a moment" |
+| navegador (Chrome 129) | **200** |
+
+Es el filtro por User-Agent que `gmrc_store.hpp:149-150` ya documenta
+("wudrm … Serves a Cloudflare JS challenge to the `curl` User-Agent, not to
+ours"), y que niwia esquivó con `curl-impersonate` entre el 26 y el 28-sep
+(§11) para quitarlo después (`6677a05`, §13.1). §13.1 decía que el 29-sep
+wudrm retaba a la IP del codespace "con cualquier UA"; hoy, con un UA de
+navegador, no se reproduce.
+
+[inferred] Afecta a cualquier usuario de `download.lua` `84d6c23f`, no sólo al
+codespace: lo que cambia la respuesta es el UA, no la IP. Falta medirlo desde
+una IP doméstica. En la práctica sólo aparece cuando Steam necesita un código:
+reinstalar desde Steam, actualizar (si alguien quita `DisableUpdates`),
+cambiar de build o rama, y shaders sin código de Valve. La primera instalación
+por ASSella no lo sufre porque lleva los manifests.
+
+### 17.5 Balatro (2379780) por el descargador clásico [measured]
+
+Elegido "ASSella (built-in)" en el diálogo: DepotDownloader baja `2379781`
+con las claves en `/tmp/mistwalker_keys.vdf`, y luego el registro "sin ACF
+propio" (`experimental_acf_independent`): `Wrote AppID 2379780 to SLS config`
+→ `install|2379780|0` → Steam crea el `.acf`.
+
+- Al config sólo va el AppID: ni `2379781` en `AdditionalDepots` ni su clave.
+- Steam: `has no changes, 0 active: 0 target` (no ve ningún depot del juego).
+- Shaders: `scheduler finished : … (result Missing decryption key)`,
+  `Update delayed for 300 secs`. "Content still encrypted" en la interfaz
+  durante ese rato [inferred: el texto de la UI no está en el log, la hora
+  coincide].
+- A los 5 min: `finished update, 0 mounted depots (BuildID 17459173)`,
+  `Fully Installed`. El `.acf` queda con `StateFlags 4`, `SizeOnDisk 0` e
+  **`InstalledDepots` vacío**.
+- El juego arranca y se juega (los ficheros los puso DepotDownloader). Steam no
+  sabe qué hay instalado: no podrá verificarlo ni actualizarlo.
+
+### 17.6 Into the Breach (590380) por AT0-M nativo — tira la clave de shaders [measured]
+
+Handoff normal: 3 depots con clave, 3 manifests a `depotcache/`,
+`install|590380|0`, `.acf` de Steam.
+
+- `09:22:29 update started : download 0/436713184` →
+  `09:22:33 update canceled : Shader Priority (Suspended)` → shaders →
+  `09:22:36 … (result Missing decryption key)`, `Update delayed for 300 secs`.
+  SLSsteam: `Missing decryptionkey for 590380`. "Content still encrypted" en la
+  interfaz.
+- El `.lua` del zip **trae la clave de shaders**:
+  `addappid(590380, 1, "198dd2b7…")` (l.11). En `DecryptionKeys` no está:
+  ASSella excluye el AppID a propósito ("AppIDs MUST NEVER be added",
+  `native_steam_handoff.py:289-291`, `native_steam_download_task.py:761-763`).
+  El aviso de Ace que recoge §14.4 era sobre AppIDs en `AdditionalDepots`, no
+  en `DecryptionKeys`; el depot de shaders tiene el id del AppID y su clave es
+  legítima (RESEARCH §13.8).
+- A los 5 min: `finished update, 1 mounted depots (BuildID 21601364) :
+  590383`, `Fully Installed`, sin shaders.
+
+[inferred] Con `590380` en `DecryptionKeys` habría instalado a la primera y con
+shaders, como Brotato. No medido. Pendiente: si Steam sigue reintentando los
+shaders cada ~5 min con el juego ya instalado (RESEARCH §13.8 lo vio con
+CrossCode y Blasphemous).
+
+### 17.7 Otros datos de la sesión [measured]
+
+- Health "Version: Unknown": `check_slssteam_binary_is_latest`
+  (`slssteam_integration.py:265`) devuelve `error` cuando encuentra el `.so`
+  pero falla la consulta a `api.github.com`. Los fallos no se guardan en caché.
+  Un `curl` a esa API dio 200 en el mismo rato; la causa concreta del fallo
+  quedó sin ver.
+- ASSella mantiene su propio cliente de Steam en Python
+  (`SteamClientWorker … logged on anonymously`) para consultar PICS.
+- `appmanifest_1628350.acf` (Steam Linux Runtime, por lanzar un juego) y el
+  aviso de `download.lua` `Missing decryptionkey for 1628351`: sin efecto.
+
+### 17.8 LumaDeck en el mismo caso: qué necesita Steam y qué deja LumaDeck [read + measured en septiembre]
+
+Para instalar o reinstalar, Steam necesita (RESEARCH §1-§6):
+
+| Necesita | LumaDeck + lumalinux | ¿Persiste tras desinstalar desde Steam? |
+|---|---|---|
+| Licencia | SLSsteam `AdditionalApps` | Sí (nadie lo quita) |
+| Saber qué depots hay | finder del paquete 0 a partir de `keys.txt` | Sí |
+| Clave de cada depot (y de shaders si existe) | hook DepotKey sirviendo `keys.txt` | Sí |
+| Manifest de cada depot | **código** por el hook GMRC: 20770407 → manifestdex → wudrm → steamrun, UA propio, validado contra el CDN (`gmrc_store.hpp:154-158`); **o** el `.manifest` en `depotcache/` | El de `depotcache/` no (Steam lo purga). LumaDeck guarda copia en `~/.local/share/lumadeck/manifests/<appid>/` y la repone |
+
+Cómo cubre LumaDeck la reinstalación (`pins.py:1-64`):
+
+- **Proveedor vivo** (`gmrc.json` "up"): Steam pide el código y lumalinux lo
+  sirve, como para un juego comprado.
+- **Ningún proveedor** ("down"): el pase local (cada 60 s, `LOCAL_INTERVAL`)
+  fija cada juego a su build instalada en `ManifestIds` y **repone desde el
+  archivo los manifests que falten en `depotcache/`** ("Steam purges depotcache
+  on uninstall, after commits and on re-plans", `pins.py:45-46`). Steam
+  planifica contra esos gids y no pide código.
+
+Medido en septiembre en este mismo codespace (`docs/update-testing.md`):
+
+- **T1** (15-sep): instalar desde Steam sin ningún manifest local → código por
+  manifestdex, `CDN accepted`, instalado.
+- **T2** (16-sep): **desinstalar e instalar Lethal Company desde Steam** →
+  contenido y shaders con códigos de 20770407, `shadercache/1966720/` lleno,
+  sin aviso.
+- **V3** (16-sep): proveedores caídos a propósito, **Balatro desinstalado e
+  instalado** → `gmrc.json` "down", juego fijado a su build, manifest repuesto
+  desde el archivo, **instalado sin ningún código** en el reintento de 30 s de
+  Steam.
+
+Es lo que el autor recuerda: con LumaDeck, desinstalar y reinstalar desde Steam
+funciona, con o sin proveedores. Las medidas son de hace tres semanas y no se
+han repetido hoy. Los dos huecos de ASSella de 17.4 (un proveedor, UA de
+`curl`, ningún archivo de manifests) y de 17.6 (clave de shaders tirada) no
+existen en lo nuestro: `ShaderDepot` deja correr los shaders si hay clave y
+proveedor, y los salta limpio si no (`shader_depot_hook.cpp:64-89`).
+
+### 17.9 Balance
+
+| # | Qué | Fuente | Para nosotros |
+|---|---|---|---|
+| 1 | AT0-M nativo instala bien la primera vez (manifests copiados) | measured | Mismo modelo que LumaDeck 0.8 |
+| 2 | Reinstalar desde Steam → "Unknown error" (wudrm reta al UA `curl`; un solo proveedor; sin archivo de manifests) | measured | Cubierto: T1/T2/V3 |
+| 3 | Clave de shaders descartada → "Content still encrypted", 5 min, sin shaders | measured | Cubierto: DepotKey + `ShaderDepot` |
+| 4 | Clásico + "ACF independiente": `InstalledDepots` vacío | measured | No aplica |
+| 5 | Sin desinstalar desde la app; Steam desinstala y el config queda | measured | — |
+| 6 | `DisableUpdates: yes` por defecto | measured | LumaDeck lo pone a `no` |
+| 7 | Plugins residentes desde que se abre ASSella | measured | Choque de §12 con quien tenga los dos |
+| 8 | `NameError` de la cola (`native_steam_download_task.py:182`) | read + pyflakes | Sin ejecutar: zip por línea de comandos + "Native Steam" + "Start steam download" |
+
+Pendiente: (a) el `curl` a wudrm desde una IP doméstica; (b) reintentos de
+shaders de Into the Breach ya instalado; (c) el `NameError` de 8; (d) repetir
+T2/V3 con la versión actual de LumaDeck para que 17.8 quede medido hoy.
+
+El siguiente barrido de código arranca en `beta@3cf56bd` y `canary@22f2759`.
