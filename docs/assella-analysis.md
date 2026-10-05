@@ -1749,10 +1749,10 @@ proveedor, y los salta limpio si no (`shader_depot_hook.cpp:64-89`).
 | 5 | Sin desinstalar desde la app; Steam desinstala y el config queda | measured | — |
 | 6 | `DisableUpdates: yes` por defecto | measured | LumaDeck lo pone a `no` |
 | 7 | Plugins residentes desde que se abre ASSella | measured | Choque de §12 con quien tenga los dos |
-| 8 | `NameError` de la cola (`native_steam_download_task.py:182`) | read + pyflakes | Sin ejecutar: zip por línea de comandos + "Native Steam" + "Start steam download" |
+| 8 | `NameError` de la cola (`native_steam_download_task.py:182`) | read + pyflakes | Poco alcance, sin probar: sólo zip arrastrado / línea de comandos / web UI, de un juego **no instalado** (uno instalado va al handoff o al descargador, `task_manager.py:597-746`), backend "preguntar" → "Native Steam" → "Start steam download". La búsqueda normal no pasa por aquí (`fetchmanifest.py`: handoff directo, o `download_backend: "assella"`). Como el juego no está instalado, la limpieza (`uninstall\|<appid>`, quitar de `AdditionalApps`) no toca nada real: un error y nada más |
 
 Pendiente: (a) el `curl` a wudrm desde una IP doméstica; (b) ~~reintentos de
-shaders de Into the Breach~~ medido: no hay bucle (17.6); (c) el `NameError` de 8; (d) repetir
+shaders de Into the Breach~~ medido: no hay bucle (17.6); (c) ~~el `NameError` de 8~~ descartado por poco alcance; (d) repetir
 T2/V3 con la versión actual de LumaDeck para que 17.8 quede medido hoy.
 
 El siguiente barrido de código arranca en `beta@3cf56bd` y `canary@22f2759`.
