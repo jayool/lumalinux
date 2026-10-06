@@ -330,3 +330,7 @@ actualización de Darkest Dungeon desde el add.
 | 14:51 | Uninstall owned (primera versión): `false` y clave quitada en el mismo segundo | `removed depots`, luego `Missing decryption key`, "Update required", reintento cada 5 min, archivos intactos |
 | 14:58 | Clave de vuelta (re-add) | el reintento borra 4242 archivos al instante |
 | 16:45 | Add owned instalado, ciclo lanzado en el mismo segundo que el reconcile | marca limpiada, nada añadido: el `true` llegó antes que la licencia |
+| 16:52 | `liblumalinux.so` copiado encima del que Steam tenía cargado | Steam vuelca (`assert_…dmp`) al pasar por el hook; la medida de ese minuto no vale. El `.so` solo se reemplaza con Steam parado |
+| 17:03 | `true` con la licencia asentada (18 min) | `added depots`, baja 861 MB |
+| 17:16 | Uninstall owned (versión final): `false`, claves retiradas | Steam pide la clave, lumalinux la sirve desde retired_keys.txt, borra los archivos, 4 depots |
+| 17:19 | Add owned instalado (versión final): ciclo tras el reconcile (`seq` avanzado + 1 s) | `added depots` un segundo después del reconcile, baja 861 MB |
