@@ -211,14 +211,29 @@ Pasos 1 a 4 iguales. Pero Steam no planifica solo, así que:
    (`take_owned_dlc_cycle`), para que dos páginas que sondean la misma
    descarga no ciclen dos veces.
 
-El ciclo solo vale **después** de que el cliente sepa de la licencia: a las
-16:45 el frontend cicló en el mismo segundo en que lumalinux inyectaba y
-reconciliaba, la marca se limpió y Steam no añadió nada, porque al mirar
-aún no había licencia. Por eso lumalinux escribe `reconcile.json` (contador
-y hora) tras cada reconcile, y el backend no entrega la lista
-(`take_owned_dlc_cycle` contesta `pending`) hasta que ese contador ha
-avanzado respecto al de antes del add, más un segundo de margen. Sin el
-archivo (lumalinux viejo, reconcile caído) o pasados 20 s la entrega igual.
+El ciclo solo vale **después** de que Steam haya procesado la licencia, y
+Steam deja constancia de cuándo lo hace. La secuencia medida (todos los adds
+del 2026-10-06):
+
+1. lumalinux inyecta los AppIDs en el paquete 0 y emite el reconcile
+   (`CUser::NotifyLicensesUpdated`, que **encola** `LicensesUpdated_t`).
+2. Entre 0 y 3 s después Steam ejecuta su manejador de licencias
+   (`compat_log.txt`: `OnAppLicensesChanged`) y pide al servidor la info de
+   las apps nuevas (`appinfo_log.txt`: `RequestAppInfoUpdate: AppIDs
+   580100,702540,735730,4964110`).
+3. ~1 s después llega la respuesta (`appinfo_log.txt`: `UpdatesJob: finished
+   OK`). A partir de aquí un plan ve los DLC como tuyos.
+
+Un `true` antes del paso 3 no hace nada (16:45: Steam ya había pedido la info
+en el mismo segundo, la respuesta llegó después del ciclo). Por eso el
+backend no entrega la lista (`take_owned_dlc_cycle` contesta `pending`)
+hasta ver en `appinfo_log.txt`, después de la posición en que estaba el log
+al empezar el add, una petición que nombre alguno de esos DLC seguida de
+`UpdatesJob: finished OK`. Si Steam no procesa el aviso (visto una vez, a las
+18:47, dos minutos después de arrancar: ni manejador ni petición), pasados
+20 s la entrega igual; el ciclo es inofensivo y el arranque de Steam planifica
+lo mismo. `reconcile.json`, que escribe lumalinux tras cada reconcile, queda
+solo como diagnóstico.
 
 Si la casilla no responde (Steam renombró la función, o el juego estaba en
 marcha y Steam aplazó el cambio), el add sigue siendo válido: reiniciar
@@ -333,4 +348,8 @@ actualización de Darkest Dungeon desde el add.
 | 16:52 | `liblumalinux.so` copiado encima del que Steam tenía cargado | Steam vuelca (`assert_…dmp`) al pasar por el hook; la medida de ese minuto no vale. El `.so` solo se reemplaza con Steam parado |
 | 17:03 | `true` con la licencia asentada (18 min) | `added depots`, baja 861 MB |
 | 17:16 | Uninstall owned (versión final): `false`, claves retiradas | Steam pide la clave, lumalinux la sirve desde retired_keys.txt, borra los archivos, 4 depots |
-| 17:19 | Add owned instalado (versión final): ciclo tras el reconcile (`seq` avanzado + 1 s) | `added depots` un segundo después del reconcile, baja 861 MB |
+| 17:19 | Add owned instalado: ciclo 1 s tras el reconcile | `added depots`, baja 861 MB |
+| 18:47 | Ciclo 26 ms tras el reconcile, Steam de 2 min | nada; Steam no procesó el aviso (sin `OnAppLicensesChanged`) |
+| 19:07 | Add tras reiniciar Steam; `reconcile.json` viejo hizo esperar los 20 s de tope | `added depots` a los 20 s, baja |
+| 19:25, 19:32, 19:37 | Uninstall owned (claves retiradas) | Steam borra en 2-7 s, 3/3 |
+| 19:28, 19:32, 19:37 | Add owned instalado, desde la principal, con el menú cerrado y desde la página del juego | `added depots` 1 s tras el reconcile, 3/3; `RequestAppInfoUpdate` + `UpdatesJob: finished OK` en ese segundo |
