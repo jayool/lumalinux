@@ -12,7 +12,9 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
      solo en esa copia sigue pidiendo el request code a Valve).
   2. Añade SOLO el AppID principal a AdditionalApps de
      ~/.config/SLSsteam/config.yaml (replica sff/app_injector/sls.py:add_ids;
-     meter los depots ahí confunde a Steam).
+     meter los depots ahí confunde a Steam). Con --dlc-of-owned (el juego
+     base ya es de la cuenta) añade en su lugar los AppIDs de DLC del .lua y
+     deja el base fuera: RESEARCH §21, prueba E.
   3. Escribe ~/.config/lumalinux/keys.txt:
        - Content depots → EXTENDED  (parent;gid;size;key)
        - Shared depots  → LEGACY    (solo depot;key, NO se inyectan)
@@ -1379,6 +1381,11 @@ def main():
                          "auto-actualiza vía el cliente nativo. Usa --pin para congelarlo "
                          "en la versión del zip (p.ej. juegos modeados a una versión concreta). "
                          "Ver docs/method.md §6.")
+    ap.add_argument("--dlc-of-owned", action="store_true",
+                    help="el juego base YA es de la cuenta: registra en AdditionalApps solo los "
+                         "AppIDs de DLC del .lua (líneas addappid(n) sin key) y deja el base fuera; "
+                         "no toca el .acf del juego. El .lua debe traer solo depots de DLC: "
+                         "LumaDeck lo filtra antes (RESEARCH §21, prueba E).")
     ap.add_argument("--token", action="append", default=[], metavar="APPID:HEX",
                     help="añadir un AppToken al config.yaml de SLSsteam. Puedes pasarlo varias veces.")
     ap.add_argument("--accela-mark", type=int, default=None, metavar="APPID",
@@ -1493,8 +1500,24 @@ def main():
     # confunde a Steam (los ve como "este depot es un app", contradicción).
     print(f"== Actualizando {args.sls_config} ==")
     tokens_dict = dict(parse_token_arg(t) for t in args.token) if args.token else None
-    n_apps, n_tokens = update_sls_yaml(args.sls_config, [app_id], tokens_dict)
-    print(f"  [+] {n_apps} appids nuevos en AdditionalApps (solo {app_id} — replicamos SteaMidra)")
+    shared_depots = parse_shared_depots(lua_text)
+    if args.dlc_of_owned:
+        # The account owns the base game: it must NOT go into AdditionalApps
+        # (SLSsteam's own template warns it breaks downloads for family-shared
+        # apps, and it is not needed: Steam already owns it). What makes the
+        # DLC show as owned is their AppIDs there (RESEARCH §21.2 run E, the
+        # shape ASSella's "DLC Mode" writes). DLC AppIDs are the keyless
+        # addappid(n) lines; shared redistributables are depots, not apps.
+        apps_for_sls = sorted(d for d in dlcs_no_key
+                              if d not in shared_depots and d not in _KNOWN_REDIST_DEPOTS)
+        if not apps_for_sls:
+            print(f"  [!] --dlc-of-owned: el .lua no trae AppIDs de DLC; AdditionalApps queda igual")
+        n_apps, n_tokens = update_sls_yaml(args.sls_config, apps_for_sls, tokens_dict)
+        print(f"  [+] {n_apps} appids nuevos en AdditionalApps (DLC de un juego de la cuenta: "
+              f"{apps_for_sls}; el base {app_id} se queda fuera)")
+    else:
+        n_apps, n_tokens = update_sls_yaml(args.sls_config, [app_id], tokens_dict)
+        print(f"  [+] {n_apps} appids nuevos en AdditionalApps (solo {app_id} — replicamos SteaMidra)")
     if tokens_dict:
         print(f"  [+] {n_tokens} tokens nuevos en AppTokens")
     print()
@@ -1504,7 +1527,6 @@ def main():
     # hookea la KeyValues accessor interna (como LumaCore), así que servir la key
     # de cualquier depot solo responde la query y no corrompe — sin lista
     # estática. shared_depots se reporta solo a título informativo.
-    shared_depots = parse_shared_depots(lua_text)
     if shared_depots:
         print(f"  [i] shared depots: {sorted(shared_depots)} (se sirven igual; el hook v1.0 lo maneja)")
 
@@ -1606,9 +1628,12 @@ def main():
     # install attempt — it's not a network issue, it's stale UpdateResult /
     # Bytes* fields in the .acf from a previous failure. Verbatim from
     # sff/lua/writer.py:113: "this is what causes 'NO INTERNET CONNECTION'".
-    print(f"== Reseteando error-state del .acf (paso que evita 'no internet') ==")
-    acf_result = patch_acf_error_state(args.steam_root, app_id)
-    print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
+    if args.dlc_of_owned:
+        print(f"== .acf: sin tocar (--dlc-of-owned: el juego base es de la cuenta y Steam lo gestiona) ==")
+    else:
+        print(f"== Reseteando error-state del .acf (paso que evita 'no internet') ==")
+        acf_result = patch_acf_error_state(args.steam_root, app_id)
+        print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
     print()
 
     # ── Ecosystem interop (stplug-in .lua + ACCELA markers) ────────────────
