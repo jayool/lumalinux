@@ -112,7 +112,13 @@ juego". En owned el lua solo lleva el base sin clave y los depots de DLC.
 zip, por si hay que reinstalar sin volver a pedirlos.
 
 **`pins.json`.** Por juego: `owned: true` cuando LumaDeck lo añadió como
-owned, y los pins de versión (solo para added).
+owned, y los pins de versión. `owned: true` no pinea nada: es solo la marca
+"este juego lo añadí como DLC-only", para que cualquier operación posterior
+(re-add, update, fix) mantenga esa forma. Los pins de versión (congelar un
+depot a un manifest) solo existen con el modelo gmrc "down", y solo sobre
+depots que están en keys.txt: en un juego added son todos; en un owned son
+solo los depots de DLC que añadimos. Los depots del juego base y los de los
+DLC que la cuenta tiene nunca se pinean, porque nunca están en keys.txt.
 
 **`steam_licenses.py`.** Lee `packageinfo.vdf` y responde "¿la cuenta tiene
 licencia de este AppID?". Es como LumaDeck decide owned/added al añadir
@@ -132,7 +138,7 @@ borrar los archivos de verdad; quitar la licencia no basta.
 | | lua | keys.txt | AdditionalApps | pins | depotcache | config.vdf claves | .acf | archivos | SetDLCEnabled |
 |---|---|---|---|---|---|---|---|---|---|
 | Add added | escribe | base+DLC | base | pin si "down" | escribe manifests | escribe | no (Steam al instalar) | no (Steam) | no |
-| Add owned | escribe (sin claves base) | solo DLC | solo DLC | owned:true | escribe manifests | escribe | no | no (Steam) | false+true si instalado |
+| Add owned | escribe (sin claves base) | solo DLC añadidos | solo DLC añadidos | owned:true (+pin de depots DLC si "down") | escribe manifests | escribe | no | no (Steam) | false+true si instalado |
 | Uninstall added | borra | borra | quita base | borra | borra manifests | borra | borra | borra carpeta | no |
 | Uninstall owned | borra | borra | quita DLC | borra | **no toca** | **no toca** | **no toca** | **no toca** (Steam) | false por DLC |
 
@@ -246,7 +252,7 @@ El base lo actualiza Steam con sus claves, sin nosotros. Los depots de DLC
 también los actualiza Steam, pero necesita la clave: si el DLC cambia de
 depot o aparece uno nuevo, LumaDeck en su pasada de updates pide el zip
 nuevo y renueva solo líneas de depots de DLC (`check_update` filtra por
-`dlcappid`). Nunca pin en owned. No medido todavía: no ha salido ninguna
+`dlcappid`). Un pin, si lo hay, solo toca esos depots de DLC. No medido todavía: no ha salido ninguna
 actualización de Darkest Dungeon desde el add.
 
 ---
