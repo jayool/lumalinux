@@ -2551,3 +2551,11 @@ pattern failed. (`pins.gmrc_state`, LumaDeck 2026-10-06.)
 Open: (1) an "owned / DLC-only" add in LumaDeck following run E — needs a way
 to know the base game is owned (ASSella uses a manual toggle); (2) measure the
 pin on an owned game.
+
+**2026-10-06 update.** (1) is done: LumaDeck decides "owned" from Steam's own
+package cache (`appcache/packageinfo.vdf`, `backend/steam_licenses.py`), adds
+only the DLC the account lacks, and uninstalls them through Steam's own DLC
+tick box. Every piece and every flow, with the day's measurements (what makes
+Steam plan an installed game's depots and what does not, why depotcache must
+stay, what `DisabledDLC` is), lives in [owned-games-guide.md](owned-games-guide.md).
+(2) is still open.

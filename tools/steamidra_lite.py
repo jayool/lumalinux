@@ -47,11 +47,6 @@ Uso:
   # también acepta un .lua + dir manifests si no tienes ZIP:
   python3 steamidra_lite.py game.lua --manifests-dir ./manifests/
 
-  # modo post-instalación: registra un juego YA descargado para que la app
-  # ACCELA standalone lo liste (lee el installdir real del .acf + el .lua de
-  # stplug-in). No instala nada. Pensado para invocarlo tras terminar el Install.
-  python3 steamidra_lite.py --accela-mark 2379780
-
   # modos sin-zip de pin/unpin para un juego YA desplegado (para LumaDeck).
   # Cortan al principio (no abren zip, solo editan keys.txt / leen el .acf):
   python3 steamidra_lite.py --pin-installed 2379780   # congela la versión instalada
@@ -146,6 +141,26 @@ def parse_lua_contents(contents, path):
 
 
 # ─── Fin verbatim de SteaMidra ────────────────────────────────────────────
+
+
+def parse_lua_contents_keyless(contents, path):
+    """Like parse_lua_contents but accepts a .lua with NO decryption keys —
+    the --dlc-of-owned shape for a game whose DLC carry no depots (flag-only
+    DLC: the content ships in the base game, the game just asks Steam whether
+    the DLC is owned, SLSsteam answers). LumaDeck dropped every keyed line
+    because they all belonged to the base game the account owns, so what is
+    left is addappid(base) + addappid(dlc)... — still a valid job: the DLC
+    AppIDs go to AdditionalApps. Returns None only without any addappid."""
+    parsed = parse_lua_contents(contents, path)
+    if parsed is not None:
+        return parsed
+    if not (any_addappid := _GENERAL_ADDAPPID_REGEX.search(contents)):
+        return None
+    app_id = any_addappid.group(1)
+    ids_with_no_key = _DEPOT_NO_KEY_REGEX.findall(contents)
+    depot_pairs = [DepotKeyPair(x, "") for x in ids_with_no_key]
+    manifest_overrides = dict(_SETMANIFESTID_REGEX.findall(contents))
+    return LuaParsedInfo(path, contents, app_id, depot_pairs, manifest_overrides)
 
 
 # Shared depots are redists (VC++, DirectX, etc.) that belong to ANOTHER app
@@ -794,7 +809,7 @@ def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=
     return "none (no .acf yet — Steam writes it on Install)"
 
 
-# ── Ecosystem interop (stplug-in / ACCELA) ────────────────────────────────────
+# ── Ecosystem interop (stplug-in) ────────────────────────────────────
 #
 # These helpers write breadcrumbs that other tools in the ecosystem look for to
 # decide a game is "managed". Functionally redundant with our keys.txt flow —
@@ -802,8 +817,10 @@ def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=
 # game visible to:
 #   - SteaMidra-style tools that scan <steam>/config/stplug-in/*.lua
 #   - DeckTools / LumaDeck (their has_lua_for_app check)
-#   - ACCELA / ASSella when used in Desktop Mode (markers inside the game
-#     folder + ~/.local/share/ACCELA/depots/<appid>.depot for update detection)
+# (The ACCELA/ASSella markers that used to be written here — .DepotDownloader
+# inside the game folder and ~/.local/share/ACCELA/depots/<appid>.depot — are
+# gone as of 2026-10-06: they made a game the account OWNS look like an ACCELA
+# install, and running both tools on one deck is unsupported anyway.)
 #
 # Each step is best-effort: it logs what it did and never aborts the run.
 
@@ -844,214 +861,9 @@ def install_lua_to_stplugin(steam_root, app_id, lua_contents, pin):
     return dest
 
 
-def _read_installdir_from_acf(steam_root, app_id):
-    """Read the REAL `installdir` Steam will use from appmanifest_<appid>.acf.
-
-    This is the single source of truth: Steam writes/normalises this field, and
-    it's the exact folder name under steamapps/common/ where the game lives.
-    Returns None if the .acf doesn't exist yet or has no installdir — which is
-    the normal case BEFORE the user has installed the game, since we no longer
-    seed a manifest of our own."""
-    acf_path = steam_root / "steamapps" / f"appmanifest_{app_id}.acf"
-    if not acf_path.exists():
-        return None
-    try:
-        data = _vdf_load_acf(acf_path)
-    except Exception:
-        return None
-    installdir = data.get("AppState", {}).get("installdir")
-    return installdir or None
-
-
-def _game_dir_has_content(game_dir):
-    """Mirror ASSella game_manager._has_game_content: True if the folder has at
-    least one entry that is NOT an ACCELA marker / OS-metadata file / dotfile.
-
-    ACCELA only lists games whose folder has real content, so this tells us
-    whether Steam has actually finished downloading the game yet (pre-download
-    the folder is empty except for our own marker, which is ignored)."""
-    ignore = {".accela", ".depotdownloader", "desktop.ini", "thumbs.db"}
-    try:
-        for entry in os.scandir(game_dir):
-            name = entry.name
-            if name.lower() in ignore or name.startswith("."):
-                continue
-            return True
-    except OSError:
-        return False
-    return False
-
-
-def mark_game_for_accela(steam_root, app_id, installdir):
-    """Create <steam>/steamapps/common/<installdir>/.DepotDownloader/ so
-    ACCELA / ASSella sees the game as one of theirs. ASSella's library
-    scanner looks for either '.ACCELA' or '.DepotDownloader' inside the
-    install dir to flag a game as 'is_accela_install' (see ASSella
-    game_manager.py:_get_accela_marker_path); we use .DepotDownloader since
-    that's what the modern ASSella creates itself.
-
-    Also drops the wrapper metadata json ASSella uses for selected-DLC
-    tracking (empty list — we don't preselect DLCs).
-
-    'installdir' comes from Steam's own manifest (we no longer write one), so
-    it is by definition the directory Steam uses. Returns the marker dir for
-    logging."""
-    game_dir = steam_root / "steamapps" / "common" / installdir
-    marker_dir = game_dir / ".DepotDownloader"
-    marker_dir.mkdir(parents=True, exist_ok=True)
-    metadata_file = marker_dir / "accela_wrapper_metadata.json"
-    if not metadata_file.exists():
-        with open(metadata_file, "w", encoding="ascii") as f:
-            json.dump({"selected_dlcs": []}, f, indent=2)
-    return marker_dir
-
-
-def write_accela_depot_marker(app_id, main_depot_id, manifest_id, app_token=""):
-    """Write ~/.local/share/ACCELA/depots/<appid>.depot — the file ASSella's
-    ManifestCheckTask reads to compare the saved manifest_id with the current
-    public manifest (Steam Web API) and surface 'update_available' badges
-    in its library UI.
-
-    Format (ACCELA task_manager._save_main_depot_info):
-        <main_depot_id>: <manifest_id>[: <app_token>]
-    The token field is optional and only needed for apps whose PICS appinfo
-    Valve gates behind a token. We pass it through if --token was supplied
-    for this appid, otherwise empty (still a valid 3-field line).
-
-    Creates ~/.local/share/ACCELA/depots/ if it doesn't exist yet, so the
-    file is ready the moment the user installs ACCELA / ASSella on this
-    deck. If ACCELA dir gets cleaned later by other means, the next run of
-    this script re-creates it."""
-    base_env = os.environ.get("XDG_DATA_HOME")
-    base_root = Path(base_env) if base_env else (Path.home() / ".local" / "share")
-    accela_base = base_root / "ACCELA"
-    depots_dir = accela_base / "depots"
-    depots_dir.mkdir(parents=True, exist_ok=True)
-    depot_file = depots_dir / f"{app_id}.depot"
-    if depot_file.exists():
-        shutil.copy2(depot_file, depot_file.with_suffix(".depot.bak"))
-    # Match ACCELA's exact on-disk format (task_manager._save_main_depot_info):
-    #   "<depot>: <manifest>"            when no token
-    #   "<depot>: <manifest>: <token>"   when token-gated
-    # ASSella's parser strips each field so spacing is cosmetic, but we mirror it
-    # byte-for-byte so a real ACCELA install and ours look identical on disk.
-    if app_token:
-        line = f"{main_depot_id}: {manifest_id}: {app_token}"
-    else:
-        line = f"{main_depot_id}: {manifest_id}"
-    with open(depot_file, "w", encoding="utf-8") as f:
-        f.write(line + "\n")
-    return depot_file
-
-
-def _pick_main_depot_for_accela(depot_keys, manifests, app_id):
-    """Pick a 'main depot' to write into the .depot tracker. ASSella checks
-    just one depot per app to decide if an update is available — typically
-    the game's primary content depot.
-
-    Heuristic: first depot_id with parent_app == app_id (= a depot whose key
-    we wrote with parent=app_id), gid != 0 (= the .lua actually pinned a
-    manifest for it), and that isn't the appid itself (= not the dummy
-    line). Returns (depot_id, manifest_id) or None if no candidate fits."""
-    for depot_id in sorted(depot_keys):
-        if depot_id == app_id:
-            continue
-        gid = manifests.get(depot_id, 0)
-        if gid:
-            return (depot_id, gid)
-    return None
-
-
-def _get_app_token_for(args, app_id):
-    """Extract the app token for `app_id` from --token arguments, if the
-    user passed one for this app. Empty string if not — write_accela_depot_marker
-    handles that cleanly."""
-    if not args.token:
-        return ""
-    for entry in args.token:
-        try:
-            tid, thex = parse_token_arg(entry)
-            if int(tid) == app_id:
-                return str(thex).strip()
-        except Exception:
-            continue
-    return ""
-
-
-def run_accela_mark(args):
-    """Post-install registration mode (no install). (Re)creates the ACCELA /
-    ASSella markers for a game Steam has ALREADY downloaded, so the standalone
-    ACCELA app lists it as one of its own.
-
-    Why a separate mode: in the LumaDeck flow steamidra_lite runs BEFORE the
-    download (it only sets up the Install button); Steam downloads later, in
-    Game Mode. At that earlier point the game folder is empty, so the in-game
-    `.DepotDownloader` marker can't take effect (ACCELA only lists folders with
-    real content). This mode is meant to run AFTER the install completes — e.g.
-    LumaDeck invoking `steamidra_lite --accela-mark <appid>` once Steam is done.
-
-    It reads the real installdir from appmanifest_<appid>.acf (single source of
-    truth) and recovers depot/manifest info by re-parsing the stplug-in .lua we
-    wrote during the install. Idempotent — safe to run repeatedly."""
-    app_id = int(args.accela_mark)
-    print(f"== Modo --accela-mark: registrando appid {app_id} para ACCELA/ASSella ==")
-
-    installdir = _read_installdir_from_acf(args.steam_root, app_id)
-    if not installdir:
-        sys.exit(
-            f"ERROR: no encuentro 'installdir' en "
-            f"{args.steam_root}/steamapps/appmanifest_{app_id}.acf. "
-            f"Sin .acf no sé en qué carpeta vive el juego — ¿se configuró/instaló "
-            f"vía Steam primero?")
-
-    game_dir = args.steam_root / "steamapps" / "common" / installdir
-    has_content = _game_dir_has_content(game_dir)
-    if not has_content:
-        print(f"  [!] {game_dir} aún sin contenido — ACCELA no lo listará hasta que "
-              f"Steam termine de descargar. Creo el marker igualmente (idempotente).")
-
-    try:
-        marker_dir = mark_game_for_accela(args.steam_root, app_id, installdir)
-        print(f"  [+] {marker_dir} (in-game marker, installdir='{installdir}', "
-              f"contenido={'sí' if has_content else 'todavía no'})")
-    except Exception as exc:
-        print(f"  [!] no pude crear el in-game marker: {exc}")
-
-    # .depot tracker: recover depot+manifest by re-parsing the stplug-in .lua
-    # we wrote during install. That file is the record of what this game is.
-    lua_path = args.steam_root / "config" / "stplug-in" / f"{app_id}.lua"
-    if not lua_path.exists():
-        print(f"  [-] no existe {lua_path} → sin depot/manifest, .depot tracker no escrito")
-        print("== Hecho (accela-mark) ==")
-        return
-
-    lua_text = lua_path.read_text(encoding="utf-8", errors="ignore")
-    parsed = parse_lua_contents(lua_text, lua_path)
-    if parsed is None:
-        print(f"  [-] no pude parsear {lua_path} → .depot tracker no escrito")
-        print("== Hecho (accela-mark) ==")
-        return
-
-    depot_keys = {int(p.depot_id): p.decryption_key for p in parsed.depots if p.decryption_key}
-    manifests = {int(d): g for d, g in parsed.manifest_overrides.items()}
-    main_depot = _pick_main_depot_for_accela(depot_keys, manifests, app_id)
-    if main_depot:
-        depot_id, manifest_id = main_depot
-        app_token = _get_app_token_for(args, app_id)
-        try:
-            depot_file = write_accela_depot_marker(app_id, depot_id, manifest_id, app_token)
-            print(f"  [+] {depot_file} (update tracking: depot {depot_id} → manifest {manifest_id})")
-        except Exception as exc:
-            print(f"  [!] no pude escribir el .depot de ACCELA: {exc}")
-    else:
-        print(f"  [-] el .lua no fija manifest (setManifestid) para ningún depot → "
-              f".depot tracker no escrito")
-    print("== Hecho (accela-mark) ==")
-
-
 # ── Modos sin-zip: pin/unpin de un juego YA desplegado (para LumaDeck) ─────────
 #
-# Cortan al principio de main() (como --accela-mark): NO abren zip, NO extraen,
+# Cortan al principio de main(): NO abren zip, NO extraen,
 # NO tocan config.vdf. Editan la sección ManifestIds del config.yaml de SLSsteam
 # (y leen el .acf/keys.txt para saber los depots en --pin-installed).
 
@@ -1356,7 +1168,7 @@ def main():
     )
     ap.add_argument("input", type=Path, nargs="?", default=None,
                     help="ruta al archivo de entrada: .zip Hubcap (default) o .lua si pasas "
-                         "--manifests-dir. Se omite si usas --accela-mark.")
+                         "--manifests-dir.")
     ap.add_argument("--manifests-dir", type=Path, default=None,
                     help="(modo legacy) directorio con .manifest si el input es un .lua suelto")
     ap.add_argument("--steam-root", type=Path, default=Path.home()/".local/share/Steam",
@@ -1388,12 +1200,6 @@ def main():
                          "LumaDeck lo filtra antes (RESEARCH §21, prueba E).")
     ap.add_argument("--token", action="append", default=[], metavar="APPID:HEX",
                     help="añadir un AppToken al config.yaml de SLSsteam. Puedes pasarlo varias veces.")
-    ap.add_argument("--accela-mark", type=int, default=None, metavar="APPID",
-                    help="modo post-instalación: NO instala nada. Solo (re)crea los markers de "
-                         "ACCELA/ASSella para un juego YA descargado por Steam, leyendo el "
-                         "installdir real de appmanifest_<APPID>.acf y los depots del .lua de "
-                         "stplug-in. Idempotente — pensado para que LumaDeck lo invoque cuando "
-                         "Steam termine de instalar el juego.")
     ap.add_argument("--pin-installed", type=int, default=None, metavar="APPID",
                     help="(modo sin-zip) Congela el juego en la versión INSTALADA: lee los gids "
                          "de appmanifest_<APPID>.acf:InstalledDepots y los escribe en ManifestIds "
@@ -1410,9 +1216,6 @@ def main():
                          "manifests en depotcache. Rechaza depots sin key en keys.txt.")
     args = ap.parse_args()
 
-    if args.accela_mark is not None:
-        run_accela_mark(args)
-        return
     if args.pin_installed is not None:
         run_pin_installed(args)
         return
@@ -1427,7 +1230,7 @@ def main():
         return
 
     if args.input is None:
-        sys.exit("ERROR: falta el archivo de entrada (.zip/.lua), o usa --accela-mark APPID")
+        sys.exit("ERROR: falta el archivo de entrada (.zip/.lua)")
     if not args.input.exists():
         sys.exit(f"ERROR: no existe: {args.input}")
 
@@ -1461,7 +1264,8 @@ def main():
     print()
 
     print(f"== Parseando .lua (parse_lua_contents verbatim de SteaMidra) ==")
-    parsed = parse_lua_contents(lua_text, args.input)
+    parsed = (parse_lua_contents_keyless(lua_text, args.input) if args.dlc_of_owned
+              else parse_lua_contents(lua_text, args.input))
     if parsed is None:
         sys.exit("ERROR: parse_lua_contents devolvió None (sin addappid o sin depot keys).")
     # Adapt LuaParsedInfo to the existing pipeline (script existente usa dicts).
@@ -1636,56 +1440,17 @@ def main():
         print(f"  [+] appmanifest_{app_id}.acf: {acf_result}")
     print()
 
-    # ── Ecosystem interop (stplug-in .lua + ACCELA markers) ────────────────
-    # None of this is needed for our flow to work (SLSsteam reads
-    # AdditionalApps, lumalinux serves keys from keys.txt). It's solely so
-    # other tools find the game: SteaMidra-style scanners that look at
-    # stplug-in, DeckTools / LumaDeck's has_lua_for_app check, and ACCELA /
-    # ASSella in Desktop Mode (in-game marker + ~/.local/share/ACCELA/depots/
-    # tracker for their update-detection UI). Each step is best-effort with
-    # its own log line so the user can see what landed.
+    # ── Ecosystem interop (stplug-in .lua) ─────────────────────────────────
+    # Not needed for our flow to work (SLSsteam reads AdditionalApps,
+    # lumalinux serves keys from keys.txt). It's solely so other tools find
+    # the game: SteaMidra-style scanners that look at stplug-in and
+    # DeckTools / LumaDeck's has_lua_for_app check. Best-effort, own log line.
     print(f"== Copiando .lua a stplug-in (interop SteaMidra / DeckTools) ==")
     try:
         lua_dest = install_lua_to_stplugin(args.steam_root, app_id, lua_text, args.pin)
         print(f"  [+] {lua_dest}")
     except Exception as exc:
         print(f"  [!] no pude escribir el .lua a stplug-in: {exc}")
-    print()
-
-    # In-game marker. The installdir MUST match the folder Steam actually
-    # downloads into, so we read it from the .acf — the single source of truth.
-    #
-    # Since we stopped seeding a manifest, on a fresh add there is no .acf yet
-    # and no folder to mark: we skip instead of guessing. Guessing str(app_id)
-    # would only create an empty steamapps/common/<appid>/ nobody ever reads.
-    # `--accela-mark <appid>` after the install places it correctly.
-    installdir_for_marker = _read_installdir_from_acf(args.steam_root, app_id)
-
-    print(f"== Creando markers para ACCELA/ASSella (interop Desktop Mode) ==")
-    if not installdir_for_marker:
-        print("  [-] sin .acf todavía (el juego aún no está instalado) — "
-              "marker omitido; usa --accela-mark tras instalar")
-    else:
-        try:
-            marker_dir = mark_game_for_accela(args.steam_root, app_id, installdir_for_marker)
-            has_content = _game_dir_has_content(
-                args.steam_root / "steamapps" / "common" / installdir_for_marker)
-            ready = "sí" if has_content else "todavía no — re-ejecuta --accela-mark tras instalar"
-            print(f"  [+] {marker_dir} (in-game marker, installdir='{installdir_for_marker}', contenido={ready})")
-        except Exception as exc:
-            print(f"  [!] no pude crear el in-game marker: {exc}")
-
-    main_depot = _pick_main_depot_for_accela(depot_keys, manifests, app_id)
-    if main_depot:
-        depot_id, manifest_id = main_depot
-        app_token = _get_app_token_for(args, app_id)
-        try:
-            depot_file = write_accela_depot_marker(app_id, depot_id, manifest_id, app_token)
-            print(f"  [+] {depot_file} (update tracking: depot {depot_id} → manifest {manifest_id})")
-        except Exception as exc:
-            print(f"  [!] no pude escribir el .depot de ACCELA: {exc}")
-    else:
-        print(f"  [-] sin depot principal con manifest_gid≠0 → .depot no escrito")
     print()
 
     print("== Hecho ==")

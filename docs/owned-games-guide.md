@@ -111,6 +111,12 @@ juego". En owned el lua solo lleva el base sin clave y los depots de DLC.
 **`~/.local/share/lumadeck/manifests/<appid>/`.** Copia de los manifests del
 zip, por si hay que reinstalar sin volver a pedirlos.
 
+**Markers de ACCELA.** Ya no existen. steamidra escribía `.DepotDownloader`
+dentro de la carpeta del juego y `~/.local/share/ACCELA/depots/<appid>.depot`
+para que ASSella listara los juegos como suyos; en un juego owned marcaban la
+carpeta de un juego legítimo, y usar las dos herramientas a la vez no está
+soportado. El uninstall limpia los que dejara una versión anterior.
+
 **`pins.json`.** Por juego: `owned: true` cuando LumaDeck lo añadió como
 owned, y los pins de versión. `owned: true` no pinea nada: es solo la marca
 "este juego lo añadí como DLC-only", para que cualquier operación posterior
@@ -176,32 +182,50 @@ Sin reinicio, sin `SetDLCEnabled`.
 
 Pasos 1 a 4 iguales. Pero Steam no planifica solo, así que:
 
-5. El frontend llama `SetDLCEnabled(base, dlc, false)` y luego `true` por
-   cada DLC añadido. El `false`→`true` es un cambio de configuración, Steam
-   planifica, ve la licencia y baja los DLC. Medido a las 12:48: `added
-   depots`, 861 MB. De paso, el `true` limpia cualquier `DisabledDLC` viejo
-   de esos DLC.
+5. Al terminar el add, el frontend llama `SetDLCEnabled(base, dlc, false)` y
+   luego `true` por cada DLC añadido **cuyos depots no estén ya montados**
+   (`downloads._owned_plan` los calcula del `.acf`; un `false` sobre un DLC
+   montado lo borraría). El `false`→`true` es un cambio de configuración,
+   Steam planifica, ve la licencia y baja los DLC. Medido a las 12:48:
+   `added depots`, 861 MB. De paso, el `true` limpia cualquier `DisabledDLC`
+   viejo de esos DLC. La lista se entrega una sola vez
+   (`take_owned_dlc_cycle`), para que dos páginas que sondean la misma
+   descarga no ciclen dos veces.
 
-Alternativa sin API: reiniciar Steam, que también planifica al arrancar
-(medido a las 12:20). El ciclo evita el reinicio.
+Si la casilla no responde (Steam renombró la función, o el juego estaba en
+marcha y Steam aplazó el cambio), el add sigue siendo válido: reiniciar
+Steam también planifica al arrancar (medido a las 12:20). El add de un
+owned se rechaza con el juego en marcha.
+
+Un DLC nuevo que llegue por la **pasada programada de updates** (backend, sin
+frontend) renueva keys.txt y AdditionalApps pero nadie hace el ciclo: ese DLC
+se baja en el siguiente arranque de Steam. Asumido, no corregido.
 
 ### D. Uninstall owned
 
-1. LumaDeck lee del lua los AppIDs de DLC que añadió.
-2. **Guarda**: por cada DLC mira packageinfo. Si la cuenta ya tiene licencia
-   real de ese DLC (lo compró después), ese DLC no se toca: solo se limpian
-   nuestras líneas, que sobran.
-3. El frontend llama `SetDLCEnabled(base, dlc, false)` por cada DLC nuestro.
-   Steam planifica: `removed depots`, borra los archivos con el manifest de
-   depotcache, reescribe el `.acf` (4242 archivos en 2 s, medido a las
-   12:26). Deja las carpetas vacías, como con cualquier DLC desmarcado.
-4. El backend borra lua, líneas de keys.txt, AppIDs de DLC de
-   AdditionalApps, y `owned` de pins.json. Nada más.
+1. El frontend pide al backend la lista (`owned_dlc_to_disable`): los
+   AppIDs de DLC del lua, si el juego está instalado y si está en marcha.
+2. **Guarda**: por cada DLC el backend mira packageinfo. Si la cuenta ya tiene
+   licencia real de ese DLC (lo compró después), ese DLC no va en la lista:
+   solo se limpian nuestras líneas, que sobran.
+3. El frontend llama `SetDLCEnabled(base, dlc, false)` por cada DLC de la
+   lista. Si Steam no acepta alguna, se para ahí con un aviso y **no se toca
+   nada**. Si acepta, Steam planifica: `removed depots`, borra los archivos
+   con el manifest de depotcache, reescribe el `.acf` (4242 archivos en 2 s,
+   medido a las 12:26). Deja las carpetas vacías, como con cualquier DLC
+   desmarcado.
+4. El frontend llama al backend con `steam_dlc_disabled=True`. Sin esa
+   confirmación, un owned instalado con DLC se rechaza. El backend borra
+   líneas de keys.txt, AppIDs de DLC de AdditionalApps, `owned` de pins.json,
+   y el lua **lo último**, para que un reintento tras un fallo a mitad
+   todavía sepa qué DLC eran. Nada más. Con el juego en marcha se rechaza.
 
 No hay espera: lo que borramos en 4 no lo necesita Steam para 3. Lo único
 que Steam necesita es que **no le hayamos borrado los manifests de
 depotcache**, que es lo que pasó el 2026-10-06 a las 10:01 y dejó 1 GB
-huérfano.
+huérfano. Por eso en owned no se toca depotcache, y config.vdf tampoco (es
+la caché de claves de Steam; la reescribe al salir, medido). Desde este día
+el uninstall no edita config.vdf para ningún juego: no servía de nada.
 
 Lo que queda después:
 - `DisabledDLC` con esos DLC en el `.acf`. Sin licencia no hace nada.

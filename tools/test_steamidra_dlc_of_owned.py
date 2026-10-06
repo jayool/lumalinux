@@ -34,7 +34,7 @@ setManifestid({DEP_B},"1111111111111111111",123)
 class DlcOfOwned(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        # The ACCELA interop marker writes under Path.home(); keep it in the sandbox.
+        # Keep anything that resolves Path.home() inside the sandbox.
         self._home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.tmp)
         self.root = self.tmp / "Steam"
@@ -88,6 +88,22 @@ class DlcOfOwned(unittest.TestCase):
         self.assertIn(f"{DEP_B};{APP};", keys)
         self.assertTrue(any(p.name.startswith(f"{DEP_A}_") for p in (self.root / "depotcache").iterdir()))
         self.assertEqual(self.acf.read_bytes(), self.acf_before, ".acf of the owned game must not be touched")
+
+    def test_owned_flag_only_dlc_writes_no_keys(self):
+        # A game whose DLC carry no depots (LumaDeck dropped every keyed line
+        # because they all belonged to the base game): AdditionalApps gets the
+        # DLC AppIDs, keys.txt gets no depot line, nothing lands in depotcache,
+        # and the run does not fail. Measured need: 2026-10-06 (flag-only DLC).
+        self.lua.write_text(f"addappid({APP})\naddappid({DLC_A})\naddappid({DLC_B})\n")
+        for p in self.mdir.iterdir():
+            p.unlink()
+        self.run_main("--dlc-of-owned")
+        self.assertEqual(self.additional_apps(), sorted([DLC_A, DLC_B]))
+        keys = self.keys.read_text() if self.keys.exists() else ""
+        self.assertNotIn(f"{DEP_A};", keys)
+        self.assertNotIn(f"{DEP_B};", keys)
+        self.assertEqual(list((self.root / "depotcache").iterdir()), [])
+        self.assertEqual(self.acf.read_bytes(), self.acf_before)
 
     def test_default_registers_base(self):
         self.run_main()
