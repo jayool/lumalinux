@@ -95,6 +95,18 @@ void RecordGmrc(bool providersUp) {
     std::fclose(f);
 }
 
+void RecordReconcile() {
+    static std::mutex m;
+    static unsigned long seq = 0;
+    std::lock_guard<std::mutex> lock(m);
+    std::string path = SiblingPath("reconcile.json");
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, "{\"seq\": %lu, \"at\": \"%s\", \"epoch\": %ld}\n",
+                 ++seq, IsoUtcNow().c_str(), static_cast<long>(std::time(nullptr)));
+    std::fclose(f);
+}
+
 void Write() {
     std::vector<HookRecord> snapshot;
     std::string blocked;

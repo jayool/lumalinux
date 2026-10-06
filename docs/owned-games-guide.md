@@ -211,6 +211,15 @@ Pasos 1 a 4 iguales. Pero Steam no planifica solo, así que:
    (`take_owned_dlc_cycle`), para que dos páginas que sondean la misma
    descarga no ciclen dos veces.
 
+El ciclo solo vale **después** de que el cliente sepa de la licencia: a las
+16:45 el frontend cicló en el mismo segundo en que lumalinux inyectaba y
+reconciliaba, la marca se limpió y Steam no añadió nada, porque al mirar
+aún no había licencia. Por eso lumalinux escribe `reconcile.json` (contador
+y hora) tras cada reconcile, y el backend no entrega la lista
+(`take_owned_dlc_cycle` contesta `pending`) hasta que ese contador ha
+avanzado respecto al de antes del add, más un segundo de margen. Sin el
+archivo (lumalinux viejo, reconcile caído) o pasados 20 s la entrega igual.
+
 Si la casilla no responde (Steam renombró la función, o el juego estaba en
 marcha y Steam aplazó el cambio), el add sigue siendo válido: reiniciar
 Steam también planifica al arrancar (medido a las 12:20). El add de un
@@ -320,3 +329,4 @@ actualización de Darkest Dungeon desde el add.
 | 12:48 | `false` + `true` con licencia en caliente | `added depots`, baja 861 MB |
 | 14:51 | Uninstall owned (primera versión): `false` y clave quitada en el mismo segundo | `removed depots`, luego `Missing decryption key`, "Update required", reintento cada 5 min, archivos intactos |
 | 14:58 | Clave de vuelta (re-add) | el reintento borra 4242 archivos al instante |
+| 16:45 | Add owned instalado, ciclo lanzado en el mismo segundo que el reconcile | marca limpiada, nada añadido: el `true` llegó antes que la licencia |

@@ -36,4 +36,14 @@ void Write();
 // startup-only meaning. Best-effort, cheap (a ~60-byte write per lookup).
 void RecordGmrc(bool providersUp);
 
+// A licence reconcile just went out (LicenseReconcile::Reconcile broadcast
+// LicensesUpdated_t after a keys.txt change). Written to reconcile.json next
+// to status.json: {"seq": <count this session>, "at": "<ISO-8601 UTC>",
+// "epoch": <unix seconds>}. LumaDeck reads it to act on Steam only AFTER the
+// client has been told about a licence it just injected: an owned game's new
+// DLC are fetched by re-ticking them in Steam's DLC list, and a re-tick that
+// lands before this broadcast finds no licence and does nothing (measured
+// 2026-10-06 16:45). Best-effort, one tiny write per reconcile.
+void RecordReconcile();
+
 } // namespace Status
