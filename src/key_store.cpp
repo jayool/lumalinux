@@ -36,6 +36,18 @@ auto& Keys() {
     return instance;
 }
 
+// Retired keys: depots whose licence LumaDeck withdrew (an owned game's DLC
+// after uninstall) but whose key Steam may still ask for — it needs it to
+// delete the DLC's files, because depotcache manifests carry their file
+// names encrypted with it (measured 2026-10-06: "Missing decryption key",
+// nothing deleted, when the key went with the licence). Served by Lookup()
+// only; never injected as a licence, never part of GetAllDepotIds() or
+// GetDepotsForApp(). Steam itself keeps every depot key it ever saw.
+auto& Retired() {
+    static std::map<uint32_t, KeyStore::DepotInfo> instance;
+    return instance;
+}
+
 auto& Mtx() {
     static std::mutex instance;
     return instance;
@@ -119,7 +131,45 @@ std::string DefaultPath() {
     return std::string(home) + "/.config/lumalinux/keys.txt";
 }
 
+std::string RetiredPathFor(const std::string& keys_path) {
+    auto slash = keys_path.find_last_of('/');
+    std::string dir = (slash == std::string::npos) ? "." : keys_path.substr(0, slash);
+    return dir + "/" + kRetiredBasename;
+}
+
+namespace {
+
+// Same line format as keys.txt. A missing file is the normal case.
+void LoadRetiredFromFile(const std::string& path) {
+    std::lock_guard<std::mutex> lock(Mtx());
+    auto& retired = Retired();
+    retired.clear();
+    std::ifstream f(path);
+    if (!f.is_open()) return;
+    size_t lineNo = 0, loaded = 0;
+    std::string line;
+    while (std::getline(f, line)) {
+        lineNo++;
+        size_t firstNonWs = line.find_first_not_of(" \t");
+        if (firstNonWs == std::string::npos || line[firstNonWs] == '#') continue;
+        KeyStore::DepotInfo info;
+        if (!ParseLine(line, info)) {
+            Log::Warn("KeyStore: skipping malformed retired line %zu", lineNo);
+            continue;
+        }
+        if (!info.has_key) continue;  // a retired entry without a key is nothing
+        retired[info.depot_id] = info;
+        loaded++;
+    }
+    if (loaded) Log::Info("KeyStore: loaded %zu retired key(s) from %s (served, not licensed)",
+                          loaded, path.c_str());
+}
+
+} // namespace
+
 bool LoadFromFile(const std::string& path) {
+    LoadRetiredFromFile(RetiredPathFor(path));
+
     std::ifstream f(path);
     if (!f.is_open()) {
         Log::Warn("KeyStore: cannot open %s", path.c_str());
@@ -186,8 +236,8 @@ void StartWatcher(const std::string& path) {
             close(fd);
             return;
         }
-        Log::Info("KeyStore watcher: watching %s for changes to %s",
-                  dir.c_str(), base.c_str());
+        Log::Info("KeyStore watcher: watching %s for changes to %s (and %s)",
+                  dir.c_str(), base.c_str(), kRetiredBasename);
 
         alignas(struct inotify_event) char buf[4096];
         for (;;) {
@@ -201,7 +251,7 @@ void StartWatcher(const std::string& path) {
             bool hit = false;
             for (char* p = buf; p < buf + n; ) {
                 auto* ev = reinterpret_cast<const struct inotify_event*>(p);
-                if (ev->len > 0 && base == ev->name) hit = true;
+                if (ev->len > 0 && (base == ev->name || kRetiredBasename == ev->name)) hit = true;
                 p += sizeof(struct inotify_event) + ev->len;
             }
             if (hit) {
@@ -221,7 +271,14 @@ void StartWatcher(const std::string& path) {
 std::optional<DepotKey> Lookup(uint32_t depot_id) {
     std::lock_guard<std::mutex> lock(Mtx());
     auto it = Keys().find(depot_id);
-    if (it == Keys().end()) return std::nullopt;
+    if (it == Keys().end()) {
+        // Not ours any more, but maybe retired: Steam still gets the key
+        // (to delete the depot's files, or whatever else it needs it for),
+        // just no licence with it.
+        auto rt = Retired().find(depot_id);
+        if (rt == Retired().end()) return std::nullopt;
+        return rt->second.key;
+    }
     // Presence-only entries (no key in the .lua): tell the caller "not found"
     // so the DepotKey hook falls through to Steam's original implementation
     // instead of serving zeros. Mirrors LumaCore (DepotKeys.cpp:14): if the

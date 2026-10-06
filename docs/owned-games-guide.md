@@ -51,9 +51,19 @@ borra nada (medido: `0 deleted files`). Steam nunca limpia los manifests
 viejos; se quedan ahí.
 
 **Claves de depot en `config/config.vdf`.** Steam cachea en `DecryptionKeys`
-la clave de cada depot que ha visto. Las tiene en memoria y las vuelve a
-escribir al cerrar, así que editarlas con Steam abierto no sirve (medido).
-Sin clave: "Missing decryption key" y el update se cancela.
+la clave de cada depot que ha visto. steamidra escribe ahí las nuestras al
+añadir, pero Steam no relee el archivo mientras corre, y lo que tiene en
+memoria no es de fiar en ningún sentido (a las 10:14 las claves volvieron
+tras un reinicio; a las 14:51 no estaban ni en disco ni en memoria). Desde
+el 2026-10-06 LumaDeck no edita este archivo al desinstalar. Sin clave:
+"Missing decryption key" y el update se cancela.
+
+**La clave hace falta para borrar.** Los manifests de depotcache llevan los
+nombres de archivo cifrados con la clave del depot. Quien borre los archivos
+de un DLC, Steam o quien sea, necesita la clave en ese momento (medido a las
+14:51: Steam desmarcó el DLC, fue a borrar, la clave ya no estaba, y dejó el
+juego en "Update required" reintentando cada 5 minutos; en cuanto la clave
+volvió, borró los 4242 archivos al instante).
 
 **Los archivos del juego** en `steamapps/common/<juego>/`. Steam los crea y
 los borra siguiendo sus manifests. Un archivo que no está en ningún manifest
@@ -88,6 +98,15 @@ licencia, nada si no la hay. **Solo planifica si cambia algo**: un `true`
 sobre un DLC que no estaba desmarcado no hace nada (medido a las 12:43).
 
 ### 1.2 Lado nuestro
+
+**`~/.config/lumalinux/retired_keys.txt`.** Mismo formato que keys.txt.
+Claves que lumalinux **sirve** si Steam las pide pero que **no** cuentan como
+licencia (no se inyectan en el paquete 0, no se listan como nuestras). Es lo
+que hace Steam con sus propias claves: guardarlas para siempre. LumaDeck
+mueve aquí las líneas de los DLC de un owned al desinstalar, y las quita
+cuando el DLC se vuelve a añadir y la línea regresa a keys.txt. Solo
+`KeyStore::Lookup` lo lee; se carga con keys.txt y en cada cambio de
+cualquiera de los dos.
 
 **`~/.config/lumalinux/keys.txt`.** Una línea por depot:
 `depot;parent;gid;tamaño;clave`. lumalinux hace dos cosas con ella: sirve la
@@ -215,17 +234,20 @@ se baja en el siguiente arranque de Steam. Asumido, no corregido.
    medido a las 12:26). Deja las carpetas vacías, como con cualquier DLC
    desmarcado.
 4. El frontend llama al backend con `steam_dlc_disabled=True`. Sin esa
-   confirmación, un owned instalado con DLC se rechaza. El backend borra
-   líneas de keys.txt, AppIDs de DLC de AdditionalApps, `owned` de pins.json,
-   y el lua **lo último**, para que un reintento tras un fallo a mitad
-   todavía sepa qué DLC eran. Nada más. Con el juego en marcha se rechaza.
+   confirmación, un owned instalado con DLC se rechaza. El backend **retira**
+   las líneas de keys.txt (las mueve a retired_keys.txt: la clave sigue
+   disponible, la licencia no), quita los AppIDs de DLC de AdditionalApps y
+   `owned` de pins.json, y borra el lua **lo último**, para que un reintento
+   tras un fallo a mitad todavía sepa qué DLC eran. Nada más. Con el juego
+   en marcha se rechaza.
 
-No hay espera: lo que borramos en 4 no lo necesita Steam para 3. Lo único
-que Steam necesita es que **no le hayamos borrado los manifests de
-depotcache**, que es lo que pasó el 2026-10-06 a las 10:01 y dejó 1 GB
-huérfano. Por eso en owned no se toca depotcache, y config.vdf tampoco (es
-la caché de claves de Steam; la reescribe al salir, medido). Desde este día
-el uninstall no edita config.vdf para ningún juego: no servía de nada.
+No hay espera, y Steam puede ejecutar el borrado cuando quiera (un segundo
+después, cinco minutos después, tras un reinicio): la clave está en
+retired_keys.txt. Lo que Steam necesita de nosotros para ese borrado son dos
+cosas, y las dos se quedan: **los manifests de depotcache** (borrarlos antes
+fue lo que dejó 1 GB huérfano a las 10:01) y **la clave** (quitarla con la
+licencia fue lo que dejó el juego en "Update required" a las 14:51).
+config.vdf no se toca para ningún juego: no servía de nada.
 
 Lo que queda después:
 - `DisabledDLC` con esos DLC en el `.acf`. Sin licencia no hace nada.
@@ -296,3 +318,5 @@ actualización de Darkest Dungeon desde el add.
 | 12:31 | `SetDLCEnabled(true)` con licencia inyectada rancia y marca puesta | `added depots` al instante |
 | 12:43 | Add owned en caliente + `true` sin marca | nada (no cambió config) |
 | 12:48 | `false` + `true` con licencia en caliente | `added depots`, baja 861 MB |
+| 14:51 | Uninstall owned (primera versión): `false` y clave quitada en el mismo segundo | `removed depots`, luego `Missing decryption key`, "Update required", reintento cada 5 min, archivos intactos |
+| 14:58 | Clave de vuelta (re-add) | el reintento borra 4242 archivos al instante |

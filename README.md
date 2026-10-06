@@ -82,7 +82,10 @@ other Arch-based distros (Bazzite, CachyOS, etc.) should work but are untested.
 Inside `steamclient.so`, lumalinux supplies what Steam's native install needs for a
 game you configured locally:
 
-- **depot keys** from a local `keys.txt` (DepotKey hook)
+- **depot keys** from a local `keys.txt` (DepotKey hook); keys in
+  `retired_keys.txt` next to it are served too but carry no licence (an
+  owned game's DLC after LumaDeck uninstalls them — Steam still needs the
+  key to delete their files)
 - **manifest pinning** to the right version per depot (SLSsteam `config.yaml`
   `ManifestIds`; lumalinux's BuildDep hook is disabled by default)
 - a per-game **shader-cache skip** (ShaderDepot hook): keyless games always,

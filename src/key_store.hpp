@@ -61,8 +61,21 @@ void StartWatcher(const std::string& path);
 // Lookup just the 32-byte key for a depot. Used by depot_key_hook.
 // Returns nullopt if the depot is not in the store OR if its entry is
 // presence-only (has_key=false) — in the latter case the hook should
-// passthrough to the original LoadDepotDecryptionKey.
+// passthrough to the original LoadDepotDecryptionKey. A depot that is not
+// in keys.txt but is in retired_keys.txt (see kRetiredBasename) is served
+// too: key only, no licence.
 std::optional<DepotKey> Lookup(uint32_t depot_id);
+
+// Retired keys: `retired_keys.txt` next to keys.txt, same line format. The
+// keys of depots whose licence was withdrawn — LumaDeck moves an owned
+// game's DLC lines here on uninstall — kept because Steam still needs the
+// key to delete the depot's files (depotcache manifests carry encrypted
+// file names) and may ask for it later than the uninstall, after a restart
+// included. Loaded with keys.txt and on any change to either file. Only
+// Lookup() reads it: nothing here is injected into PackageId 0, listed by
+// GetAllDepotIds()/GetDepotsForApp(), or answered for manifests.
+inline constexpr const char* kRetiredBasename = "retired_keys.txt";
+std::string RetiredPathFor(const std::string& keys_path);
 
 // All depots whose parent_app_id == app_id AND have manifest_gid set.
 // Used by depot_dependency_hook to know what gid/size to patch. Empty if none.
