@@ -29,6 +29,7 @@ namespace
 	//   CURLOPT_TIMEOUT        = CURLOPTTYPE_LONG        + 13  = 13
 	//   CURLOPT_FOLLOWLOCATION = CURLOPTTYPE_LONG        + 52  = 52
 	//   CURLOPT_CONNECTTIMEOUT = CURLOPTTYPE_LONG        + 78  = 78
+	//   CURLOPT_NOSIGNAL       = CURLOPTTYPE_LONG        + 99  = 99
 	//   CURLOPT_RANGE          = CURLOPTTYPE_OBJECTPOINT + 7   = 10007
 	//   CURLOPT_WRITEDATA      = CURLOPTTYPE_OBJECTPOINT + 1   = 10001
 	//   CURLOPT_URL            = CURLOPTTYPE_OBJECTPOINT + 2   = 10002
@@ -37,6 +38,7 @@ namespace
 	constexpr int kCurloptTimeout        = 13;
 	constexpr int kCurloptFollowlocation = 52;
 	constexpr int kCurloptConnecttimeout = 78;
+	constexpr int kCurloptNosignal       = 99;
 	constexpr int kCurloptRange          = 10007;
 	constexpr int kCurloptWritedata      = 10001;
 	constexpr int kCurloptUrl            = 10002;
@@ -104,6 +106,18 @@ int Curl::getString(const char* url, std::string& out, const char* userAgent,
 	easySetopt(curl, kCurloptFollowlocation, (long)1);
 	easySetopt(curl, kCurloptConnecttimeout, (long)connectTimeoutSec);
 	easySetopt(curl, kCurloptTimeout,        (long)totalTimeoutSec);
+	// No signals. A libcurl built with the synchronous resolver (the Steam
+	// Runtime's 7.22 is one) enforces CURLOPT_TIMEOUT with alarm() and a
+	// siglongjmp from the SIGALRM handler. Inside Steam, a process with dozens
+	// of threads, the signal lands on whichever thread is running, not on the
+	// one that armed it; glibc's __longjmp_chk then sees a frame from another
+	// stack and aborts the whole client (seen on 2026-10-02: three cores in one
+	// hour, main thread in steamui, handler in libcurl.so.4). The system libcurl
+	// we pin to has the threaded resolver and never takes that path, so this is
+	// a no-op there and a crash-to-slow-DNS trade on the Runtime copy, where the
+	// name lookup is then bounded by the resolver's own timeout instead of ours.
+	// libcurl's documented requirement for any multi-threaded program.
+	easySetopt(curl, kCurloptNosignal,       (long)1);
 	if (userAgent)
 		easySetopt(curl, kCurloptUseragent, userAgent);
 	if (byteRange)
