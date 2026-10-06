@@ -1751,7 +1751,10 @@ proveedor, y los salta limpio si no (`shader_depot_hook.cpp:64-89`).
 | 7 | Plugins residentes desde que se abre ASSella | measured | Choque de §12 con quien tenga los dos |
 | 8 | `NameError` de la cola (`native_steam_download_task.py:182`) | read + pyflakes | Poco alcance, sin probar: sólo zip arrastrado / línea de comandos / web UI, de un juego **no instalado** (uno instalado va al handoff o al descargador, `task_manager.py:597-746`), backend "preguntar" → "Native Steam" → "Start steam download". La búsqueda normal no pasa por aquí (`fetchmanifest.py`: handoff directo, o `download_backend: "assella"`). Como el juego no está instalado, la limpieza (`uninstall\|<appid>`, quitar de `AdditionalApps`) no toca nada real: un error y nada más |
 
-Pendiente: (a) el `curl` a wudrm desde una IP doméstica; (b) ~~reintentos de
+Pendiente: (a) ~~el `curl` a wudrm desde una IP doméstica~~ medido 2026-10-05
+por un usuario desde su casa (§19.1: siete manifests, todos `MRC server
+http://gmrc.wudrm.com/manifest/ failed`, mientras Ace, sin ese UA, lo tenía
+"working fine"); (b) ~~reintentos de
 shaders de Into the Breach~~ medido: no hay bucle (17.6); (c) ~~el `NameError` de 8~~ descartado por poco alcance; (d) repetir
 T2/V3 con la versión actual de LumaDeck para que 17.8 quede medido hoy.
 
@@ -1968,3 +1971,103 @@ manifest de Linux ya estaba en `depotcache`. [inferred] Sin medir; (e) decidir
 qué hacer con `achievements.py`; (f) [inferred] "A Short Hike" mostró "Content
 still encrypted" en ASSella: hipótesis, la clave de shaders de §17.6, sin
 comprobar.
+
+## §19 Delta — 2026-10-06: el Workshop de dizzy en el Discord de ASSella, tres commits de `canary` y el lua 1.4
+
+*Fuentes: el hilo de soporte de ASSella del 5-oct (usuario *dizzy*, Ravenfield
+636480 y su Workshop; Ace y niwia respondiendo; el `~/.SLSsteam.log` y el
+`config.yaml` que dizzy pegó), `canary` `22f2759` → `b9c31c9` (9 commits, 5 y
+6-oct), y el `download.lua 1.4.0-spacetest` que niwia distribuyó por Discord
+("staged test build, not deployed"). Etiquetas como en §17.*
+
+### 19.1 El hilo, contrastado con §17 [read: el hilo; measured: §17]
+
+| Qué pasó en el hilo | Lo que ya teníamos |
+|---|---|
+| El Workshop de Ravenfield no funcionaba. Ace, con el config de dizzy delante: faltaba la clave del AppID `636480` en `DecryptionKeys` (estaban las de 636481-636484). Niwia: *"why im not injecting keys for main game... it filtered with the not adding to additionaldepots"*. Ace lo confirma con `content_log`: `AppID 636480 scheduler finished : removed from schedule (result Missing decryption key, state 0xc)` | §17.6, Into the Breach, un día antes: la regla "AppIDs MUST NEVER be added" aplicada también a `DecryptionKeys`. El Workshop y los shaders viven en el depot con el id del juego |
+| Niwia: *"this game was working without plugins too"*. Ace: la clave se había persistido en `~/.steam/steam/config/config.vdf` desde una instalación anterior con su SLS privado; Steam la busca ahí primero | G2 de §5: LumaDeck escribe las claves en `config.vdf` a propósito para que Steam las reutilice |
+| Los mods no bajaban: "Unknown error" / "no internet connection". El log de dizzy: `MRC server http://gmrc.wudrm.com/manifest/ failed` para los siete manifests, cinco intentos cada uno. Ace, al mismo tiempo, con su SLS privado: *"wudrm working fine rn"* | §17.4: el plugin llama a wudrm con el User-Agent de `curl` y Cloudflare contesta 403 con el reto. Dizzy estaba en casa; Ace no usa ese UA. Es el UA, no la IP: el pendiente (a) de §17.9 queda medido |
+| Steam se le cayó a dizzy una vez. Ace a niwia: *"didn't you modify the MRC code? if you stall the engine thread for 30 seconds steam dies"*, *"lua hooks do not run in protected mode by default"*. Niwia: *"my shenanigans fucked the lua so i reverted back to the etw one"* | §12 (hooks de Lua sin modo protegido) y `cloudredirect.md` (`BMainLoop stalled`). Niwia estaba sirviendo por R2 un lua a medio modificar |
+| Niwia: *"deploy lua plugin, it should fetch the fixed one"*. Dizzy: *"said it was already up to date"*. Niwia: *"yeah i forgot to put hey its updated lol"* | §15.2 y §16.5, la caché del manifest de plugins que nunca se refresca, vista en directo con un usuario |
+| Desenlace, 36 horas después: los mods funcionan por el descargador clásico de ASSella (DepotDownloader `-ugc`, §18.2); por Steam nativo sigue "no internet connection". Niwia *"tried to replicate the issue... all working fine"* | — |
+| Ace sobre manifestdex: *"dev seems like a scumbag... to download ets2 one time you have to pay about 5$... but you can use their MRC endpoint for free"* | RESEARCH §20.2, nota añadida hoy |
+
+Dato nuevo para nosotros, no para ellos: dizzy's Steam **intentó bajar los
+items del Workshop por sí mismo** ("it's trying to download the workshop mods
+now") y falló sólo por los códigos. O sea, con el juego desbloqueado por
+SLSsteam la suscripción entró y Steam trató los items como depots normales:
+código más clave del AppID. Las dos cosas las tenemos (cascada GMRC,
+`keys.txt` conserva la clave del AppID). [inferred] El Workshop nativo podría
+funcionarnos sin cambios en los juegos cuyo Workshop admite la suscripción sin
+comprobar la compra; pendiente de medir antes de dar §18.2 #6 por hueco.
+
+### 19.2 `canary` `22f2759` → `b9c31c9` [read]
+
+- `dae9d9f` (6-oct), *"preserve root game AppID key in DecryptionKeys during
+  batch sync"*: el arreglo de Ace. `native_steam_handoff.py:298` ahora dice
+  "DecryptionKeys keeps depot keys AND the root AppID key". Cierra §17.6 en
+  `canary`.
+- `a4a38ad` (6-oct), *"manifest provider race, manual lua plugin controls,
+  and DLC-only handoff"*: el modelo de proveedores del lua 1.4 (19.3), botones
+  por plugin con estado "custom or outdated", y **la sincronización al
+  arrancar queda desactivada**: `sync_plugins_if_enabled` ahora sólo registra
+  *"Startup plugin auto-sync is disabled to preserve custom user plugins"*. La
+  caché congelada de §16.5 no se arregla; se deja de llamar.
+- `b9c31c9` (6-oct): checkbox *"I'm using custom plugins (Advanced)"*
+  (`custom_plugins_advanced`) que salta la comprobación de presencia de
+  plugins (`is_plugin_check_bypassed`, `are_all_plugins_installed`).
+- `139c754`, `d534449`, `905baab`, `9e727fc`, `d552abb`, `dc77ce0` (5-oct):
+  selección de biblioteca al descargar, `StateFlags=6` al transferir, 0
+  `steam://`, ajustes con barra lateral traídos de `beta`, versión
+  `3.0.0testing051026002`, y arreglos de hilos en la búsqueda. Por título.
+
+### 19.3 `download.lua 1.4.0-spacetest` [read, contra la API de SLSsteam `main@9c829a7`]
+
+Lo que mejora respecto al `84d6c23f` de R2: cada hook entero dentro de
+`pcall` con el mutex garantizado (`runInHook`), nil-check tras `patternScan`
+y `getJmpTarget`, validación estricta de claves (64 hex) y de cuerpos de
+respuesta (sólo dígitos, no cero, ≤ 20), depots deduplicados, `snprintf` para
+uint64, caché negativa con TTL, y un segundo proveedor (manifestdex, con el
+UA `ManifestDeX/1.0`, el mismo de `gmrc_store.hpp`).
+
+Lo que no:
+
+1. **Timeouts en la unidad equivocada.** `MRC_TUNING.FULL_MS = 2000` y
+   `PROBE_MS = 700` se pasan tal cual a `curl.downloadString(url, timeout)`.
+   La API es un entero que SLSsteam convierte en `curl --connect-timeout N`
+   (`curl.cpp:31`), en **segundos**. El 1.2.x pasaba `2`. Toda la máquina de
+   salud (EWMA, "healthy < 800 ms", "probe timeouts") mide contra límites de
+   33 y 11 minutos, y sigue sin `--max-time`.
+2. **La "autoridad" es wudrm sin cabeceras**, o sea con el UA de `curl`: el
+   proveedor que les da 403 (§17.4, 19.1). `validateMRC` rechaza el HTML
+   (bien), wudrm "falla" siempre, se marca caído tras dos intentos y todo lo
+   sirve manifestdex como "provisional", con un `warn` por manifest y un
+   reintento a wudrm cada 5 min.
+3. **Caché "para siempre"** de los códigos de la autoridad. Un código caduca
+   (RESEARCH §20.2: ≥ 58 min, no infinito); el cacheado se devuelve sin mirar
+   la edad, el CDN da 401 y Steam reintenta con el mismo código hasta
+   reiniciar. La caché negativa no entra porque el acierto retorna antes.
+4. **El modelo parte de una premisa falsa.** El comentario dice que un MRC es
+   "a content-server routing decision" y que como wudrm y manifestdex
+   "discrepan" en un manifest no se puede arbitrar. Un código es un token que
+   Valve firma por petición (§20.1); dos códigos distintos para el mismo
+   manifest son válidos los dos, y que cada frontal cachee el suyo es lo
+   medido en §20.2. Lo que valida un código es el CDN (200/401), que es lo que
+   hace nuestra cascada y lo que el lua no hace en ningún punto.
+5. Menores: `luaReload` dice restaurar la lista original de depots y escribe
+   la fusionada (`writeDepotIds`); `#Downloader.DecryptionKeys` sobre una
+   tabla por depot da 0; `PackageDepotIds` no se limpia en `resetSettings`;
+   "2 s of blocked Steam main thread" (el hook de GMRC corre en hilos de
+   descarga).
+
+### 19.4 Balance
+
+| # | Qué | Para nosotros |
+|---|---|---|
+| 1 | Clave del AppID descartada: confirmada por Ace y arreglada en `canary` | §17.6 cerrado; nuestro `keys.txt` siempre la tuvo |
+| 2 | wudrm 403 al UA de `curl`, desde una IP doméstica | §17.9 (a) medido; nuestra cascada lleva UA propio |
+| 3 | Sincronización de plugins al arrancar desactivada en vez de refrescar la caché | §16.5 vigente por decisión |
+| 4 | lua 1.4: timeouts ×1000, autoridad sin UA, caché sin caducidad | Si lo promocionan, el punto 1 es el que estalla |
+| 5 | Steam intentó bajar Workshop por sí mismo con el juego desbloqueado | **Medir el Workshop nativo con nuestra pila** antes de construir nada (§18.2 #6) |
+
+El siguiente barrido arranca en `canary@b9c31c9` y `beta@3cf56bd`.

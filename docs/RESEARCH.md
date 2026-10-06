@@ -2358,6 +2358,16 @@ huanyuejue's fork made 20770407 the default and, when it went down on 09-15,
 added manifestdex and switched the default to wudrm (`a730c12`, `b754d13`) —
 which is how we learned wudrm was back.
 
+**manifestdex, a note on dependence (2026-10-05).** In the ASSella Discord
+Ace described its operator as selling manifests ("to download ETS2 one time
+you have to pay manifestdex about 5$", "costs like 1 cent per manifest") while
+handing out the MRC endpoint for free, and warned not to depend on it. That
+matches the table above (free endpoint of a paid catalogue). The cascade keeps
+it second; it is one of four and the CDN check rejects anything wrong it might
+return, so if it closes or starts charging the cascade falls through to wudrm
+and steam.run (the same backend) and 20770407. Nothing to change; worth knowing
+which of the four has a commercial reason to disappear.
+
 ### 20.3 What the cascade does with that (v0.21.0)
 
 - Order: 20770407 (the only one whose "no" is honest) → manifestdex (fastest
@@ -2519,10 +2529,24 @@ are `LOG_ONCE`, debug only).
 Today (C): base game in `AdditionalApps` (not needed, and SLSsteam's own
 comment, `res/config.yaml:34-35`, warns it breaks downloads for
 family-shared apps); DLC AppIDs not added, so Steam shows them as not owned;
-`keys.txt` carries the base game's depots too, **with gids**: the add ran with
+and the base game's content depots got **pinned**: the add ran with
 `pin=True` because `pins.pin_new_installs()` returns `gmrc_state() != "up"`
-(`pins.py:316-319`) and the fresh codespace had no provider state yet. Whether
-that pin freezes an owned game when Valve ships a build is **not measured**.
+(`pins.py:316-319`) and the fresh codespace had no `gmrc.json` yet. The pin
+that does this is SLSsteam's `ManifestIds` (depot → gid), written by
+`steamidra_lite --pin`; the gids that also land in `keys.txt` are inert since
+the BuildDep hook is off by default (v0.16.10, §3). Whether that pin freezes an
+owned game when Valve ships a build is **not measured**, but nothing in the
+path would let the update through: Steam plans against the pinned gids.
+
+Why the file was missing: lumalinux writes `gmrc.json` only after Steam's
+first manifest-request-code lookup (`status.cpp:87`, `RecordGmrc`). On a
+device where Steam asks for a code at startup (every managed game's update
+check) the window is seconds; on a fresh install with nothing to update it
+lasts until the first add. LumaDeck now reads that window as "up" when
+`status.json` reports the GMRC hook installed (the hook will answer the first
+request like any other), so nothing is pinned and `Add Game` runs native;
+"absent" only remains for an older lumalinux or a build where the GMRC
+pattern failed. (`pins.gmrc_state`, LumaDeck 2026-10-06.)
 
 Open: (1) an "owned / DLC-only" add in LumaDeck following run E — needs a way
 to know the base game is owned (ASSella uses a manual toggle); (2) measure the
