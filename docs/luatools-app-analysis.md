@@ -142,10 +142,14 @@ Nuevo en la app, que LumaDeck no usa:
   Hubcap/Morrenus source"*, la app sintetiza esa fila y baja Hubcap **directo
   con la clave del usuario**, sin pasar por lua.tools. Lo propio de lua.tools
   son los fixes de Denuvo, el generador de luas de DLC y el manifest suelto.
-  Para LumaDeck, que ya va directo a Hubcap (clave) y a Ryuu (cookie), una
-  entrada lua.tools en `api.json` solo añadiría `Skyflare` (fuente sin
-  identificar) y un camino alternativo a Ryuu. Poco valor; apuntado, no
-  propuesto.
+  **Medido 2026-10-07** (`check_apis?appid=1942280`, UA `secretgoonpoon`):
+  `{"Luie":"available","Ryuu":"available"}`. **`Luie` es una fuente nueva**
+  que no existe en la tabla de la app 1.3.2 (dada de alta en el backend
+  después del 25-sep; qué hay detrás no se ve desde fuera), y para ese juego
+  no aparecen TwentyTwo Cloud, Sushi ni Skyflare. Para LumaDeck, que ya va
+  directo a Hubcap (clave) y a Ryuu (cookie), una entrada lua.tools en
+  `api.json` solo añadiría `Luie`/`Skyflare` y un camino alternativo a Ryuu.
+  Poco valor; apuntado, no propuesto.
 - `GET /api/me/supporter-status`: si el usuario es "supporter". Cosmético.
 - `/api/dlc/info` y `/api/dlc/generate` (DLC unlock lua generado por lua.tools)
   y `/api/manifest/download?appid=&source=` (zip de juego por fuente nombrada)
@@ -329,7 +333,10 @@ nuestras, para ver dónde coinciden y dónde no.
    acción; el ancla por `data.steam_appid` queda como receta si reaparece.
 2. **Candidato**: `givemethemanifestpunk` como eslabón de `manifests.py`
    para usuarios con sesión de lua.tools, entre luastools y el suelto de
-   Hubcap. Antes, medir qué gids sirve.
+   Hubcap. Antes, medir qué gids sirve. Intento 2026-10-07: sin sesión de
+   lua.tools en el codespace (401); los dos gids de Brotato están también en
+   luastools, así que el caso de prueba tiene que ser un gid que luastools
+   no tenga. Pendiente de un login.
 3. **Referencia**: si se desaparca el parser de `appinfo.vdf`, partir del
    layout y los dos detalles de `AppInfoFile.cs` (§4b). Solo lectura.
 4. Nada en lumalinux.
