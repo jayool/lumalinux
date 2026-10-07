@@ -1133,3 +1133,55 @@ a Chrome UA + JSON Accept, and with curl's default — not a UA filter; region
 rotated since the morning, as request codes do.)
 
 **Actionable:** nothing.
+
+## Delta — 2026-10-07: BST silent since v1.0.4; huanyuejue 1.5.2.1 fixes its friends-status rewrite; both pattern feeds still frozen
+
+*Swept 2026-10-07 on the clones (`madoiscool/BetterSteamTools` all branches
+and `updates`; `huanyuejue/OpenSteamTool` `main` and tags;
+`OpenSteam001/steam-monitor`). Baselines from the 09-28/09-29 deltas:
+BST `main` `4747385`, `updates` `bfa812e`, huanyuejue `a35262b`.*
+
+**BetterSteamTools: nothing.** `main` is still `4747385` (09-21, v1.0.4,
+read in the 09-22 delta); `beta-client-support` is the same commit; every
+other branch is May–June. `updates` is still `bfa812e` (v1.0.4 payload +
+sha256); the feed carries `opensteamtool/v1.0.0 … v1.0.4` and `latest.toml`,
+which is what the LuaTools desktop app (`UnlockerService`, see
+`luatools-app-analysis.md` §4b) resolves its BST build from. Sixteen days
+without a commit is consistent with no new Steam stable (moon's tracker:
+desktop stable `1788652215` since 09-05, Deck `1788291500` since 09-02).
+
+**OpenSteam001/steam-monitor:** still `134c9b1` (09-06, patterns for stable
+1788652215). Thirty-one days silent; the upstream feed note of the 09-22
+delta stands.
+
+**huanyuejue/OpenSteamTool: two commits, two tags.** Tag `1.5.2` is
+`a35262b` (09-29, the failover between manifest sources, already read).
+Tag `1.5.2.1` is `fa1dcd3` (10-03): README swap only (the Chinese README
+becomes the default, English moves to `README_EN.md`, the ES link fixed).
+The one code commit between them:
+
+- **`d61d98d` (09-30) "fix: friends playing-status broadcast stopped
+  working"** [read]. In `Hooks_NetPacket.cpp`, the outbound
+  `CMsgClientGamesPlayed` rewrite had two jobs sharing one flag: the
+  family-sharing concurrency trick (mask a borrowed game's `owner_id` → 1
+  so Valve does not lock the lender's library; mechanism noted in the 09-22
+  delta) set `patched = true`, and the friends-broadcast rewrite was gated
+  on `!patched`, so a game reported with an owner id never got its
+  broadcast entry rewritten and friends saw no status. Now a separate
+  `didBroadcastRewrite` flag and the index of the rewritten entry: the
+  rewritten top entry gets `clear_owner_id()` ("mimic a non-Steam game
+  report, which serves both the server broadcast and the lender unlock"),
+  the other entries keep the owner mask, and `SpawnProcess` logs every hit
+  with the command line to tell "hook not fired" from "launch args
+  missing". **Windows-only layer** (FakeAppId / online-fix presence and
+  family-sharing), owned by SLSsteam on Linux, not by lumalinux. One
+  observation for LumaDeck's Online (480) feature: upstream OST rewrites the
+  presence so friends see the real game while it runs as 480; SLSsteam does
+  not, friends see Spacewar. Known, not new.
+
+`pattern/` and `tools/resolve_patterns.py` unchanged since 09-28: the
+fork's own pattern resolution (09-29 delta) has not needed a new Steam
+build either.
+
+**Actionable: nothing.** Next sweep from BST `main` `4747385` / `updates`
+`bfa812e`, huanyuejue `fa1dcd3`, steam-monitor `134c9b1`.
