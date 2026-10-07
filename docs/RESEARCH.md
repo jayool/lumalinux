@@ -2231,7 +2231,19 @@ build-pinned probes, off by default; nothing of it is in main.
   keep a partial history. Files are a 10-byte header + raw deflate of a normal
   manifest (`tools/smc_fresh.py` inflates and verifies a chunk on the CDN: 22/22
   OK). No keys. Raw URL, no API, no auth.
-- **`api.993499094.xyz/depotkeys.json`**: 221,727 depot keys (unverified use).
+- **`api.993499094.xyz/depotkeys.json`**: a flat `{depot: hexkey}` dump from
+  the Fluent-Steam-Lua / OpenSteamTool-fork ecosystem (same host family as
+  the SDM request-code front). Measured 2026-10-07 on the codespace: 240,103
+  keys (221,727 when first noted), 18 MB, `last-modified` the same day, ids
+  up to 5.3 M (218 above 5 M, 3,136 in 4.5-5 M); every one of the 32 depots
+  in LumaDeck's cached Hubcap luas present with the right key (two stored
+  upper-case). NOT day-one: STAR WARS: Galactic Racer (4078430, released
+  2026-10-06) had neither its base depot 4078431 nor its DLC depot 4554460.
+  So it cannot replace the Hubcap zip for a new DLC's key, but could fill
+  the "zip is stale or lacks the new depots" gap some days later. Same
+  verdict as KoriaPolis' base (`lumacore-findings.md`): noted, not wired in
+  until a real log shows that message. A wrong key cannot harm (Steam just
+  fails to decrypt); the risks are the dump vanishing and its lag.
 - LuaTools version "manifests" are bare luas (keys + `setManifestid`), no
   `.manifest` files.
 
