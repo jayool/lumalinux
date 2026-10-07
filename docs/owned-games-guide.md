@@ -342,3 +342,6 @@ actualización de Darkest Dungeon desde el add.
 | 20:53 | Steam de 5 min, add sin tocar el juego, luego abrir la página y ciclar | sin página: nada; con página: `added depots` |
 | 20:55, 21:00, 21:04 | Arranques con el juego en el inicio | Steam carga sus stats a los 3-7 s: "despierto" |
 | 2026-10-07 06:10 | Licencia inyectada, lanzar el juego | `App Running` sin plan; sin DLC |
+| 2026-10-07 06:39 | Add owned en juego instalado, código final (licencia + `true` suelto) | marca limpia, Steam sin tocar nada |
+| 2026-10-07 06:42 | Reinicio de Steam | `config changed: added depots`, 861 MB a los pocos segundos del arranque |
+| 2026-10-07 06:45 | Uninstall owned, código final | `removed depots`, borrado con la clave retirada en 5 s, 4 depots |
