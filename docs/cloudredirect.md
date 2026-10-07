@@ -647,7 +647,10 @@ aparecen cerradas por commit.*
    2 referencias); `CR_GetVersion` sigue exportado porque lleva
    `visibility("default")` explícito. Efecto en `cr_stats_fix`: la
    comprobación 1 (`dlsym(RTLD_DEFAULT, símbolo)`) no lo encuentra → log
-   `CR-stats: cloud_redirect.so not loaded (or it no longer defines …)`,
+   `CR-stats: CloudRedirect 2.6.6+… loaded; HandleGetUserStats is not
+   exported (hidden since 2.6.6, …) — patch not needed` (hasta v0.22.1 decía
+   `cloud_redirect.so not loaded (or it no longer defines …)`, sin distinguir;
+   medido en la Deck 2026-10-07 22:16 con el `.so` mapeado 6 veces),
    `status.json` → `CrStatsFix: disabled`, el stub reenvía sin mirar. Y aunque
    lo encontrara daría igual: con visibilidad oculta la llamada interna de CR
    ya no pasa por la PLT y no es interponible. **Sin daño**, porque:
@@ -708,9 +711,12 @@ aparecen cerradas por commit.*
   la coge como "latest". Al aplicarla, comprobar en el codespace: log de CR
   con `Linked libcurl … (static, OpenSSL)` y sin `curl failed: 60`; un juego a
   cero logros con `store returned empty -> passthrough` y logros que saltan;
-  log de lumalinux con `CR-stats: cloud_redirect.so not loaded (or it no
-  longer defines …)` y `CrStatsFix: disabled` en `status.json`, que ahora es
-  lo esperado.
+  log de lumalinux con `CR-stats: CloudRedirect 2.6.6+… loaded; … patch not
+  needed` (v0.22.1: `cloud_redirect.so not loaded (or it no longer defines
+  …)`) y `CrStatsFix: disabled` en `status.json`, que ahora es lo esperado.
+  **Hecho en la Deck 2026-10-07 22:16**: update desde LumaDeck (setup.sh),
+  `.so` y última línea de `cr_debug.log` en `2.6.6+3434d9d`, `DoInit:
+  SUCCESS`, lumalinux v0.22.1 con `CR-stats: … nothing to interpose`.
 - **lumalinux, pequeño y opcional**: `cr_stats_fix` ya lee `CR_GetVersion`
   (`kVersionSymbol`); con CR ≥ 2.6.6 puede decir "no hace falta, arreglado en
   upstream" y marcar `not needed` en vez de `disabled` con un mensaje que

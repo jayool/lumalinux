@@ -198,8 +198,29 @@ Result Init() {
                       "cloud_redirect.so before liblumalinux.so in LD_PRELOAD?)", where);
             return Result::Failed;
         }
-        Log::Info("CR-stats: cloud_redirect.so not loaded (or it no longer defines "
-                  "HandleGetUserStats) — nothing to interpose");
+        // Tell the two cases apart: CloudRedirect ≥ 2.6.6 builds with hidden
+        // visibility, so the symbol is gone while the .so is mapped (and the
+        // empty-store bug is fixed upstream, e507ba4) — nothing to patch. Only
+        // a missing mapping is "not loaded".
+        bool mapped = false;
+        dl_iterate_phdr([](struct dl_phdr_info* info, size_t, void* data) -> int {
+            if (info->dlpi_name && std::strstr(info->dlpi_name, "cloud_redirect")) {
+                *static_cast<bool*>(data) = true;
+                return 1;
+            }
+            return 0;
+        }, &mapped);
+        if (mapped) {
+            const char* ver = "?";
+            if (auto fn = reinterpret_cast<const char* (*)()>(dlsym(RTLD_DEFAULT, kVersionSymbol))) {
+                if (const char* s = fn()) ver = s;
+            }
+            Log::Info("CR-stats: CloudRedirect %s loaded; HandleGetUserStats is not exported "
+                      "(hidden since 2.6.6, empty-store fix is upstream) — patch not needed",
+                      ver);
+            return Result::Disabled;
+        }
+        Log::Info("CR-stats: cloud_redirect.so not loaded — nothing to interpose");
         return Result::Disabled;
     }
 
