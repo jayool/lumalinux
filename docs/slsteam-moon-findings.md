@@ -2045,8 +2045,10 @@ vuelve a la misma forma por otro motivo. **Sin acción**: no es nuestra capa.
   `_SLS_CHANNEL`, `_PLUGIN_CHANNEL`, `_LUMEN_CHANNEL` (canal stable/beta por
   componente). Instalador, no runtime. Nada.
 - **`lumen`, `cloudredirect-moon`, `steam-monitor`**: sin commits. El tracker
-  lleva diez días sin build nuevo de Steam, igual que el 07-10 en
-  `slssteam-analysis.md` §7.14.3.
+  está **parado desde el 27-sep**, no Steam: el feed de MigoReleases
+  (`lumacore-findings.md`, re-sweep 07-10) registra betas de escritorio el
+  30-sep, el 2-oct y el 6-oct que steam-monitor no tiene. Refuerza el punto 2
+  del balance del 1-oct: ese tracker no es una fuente en la que apoyarse.
 
 ### Balance del delta
 

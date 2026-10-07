@@ -710,3 +710,103 @@ install` para reinyectar, y reescribir el config con `SafeMode: no` y
 `WarnHashMissmatch: no`. O sea, **sujeta el cliente y apaga la puerta del
 hash** en vez de conseguir patrones nuevos. Lo contrario de nuestro modelo
 (feed RVA + derivación + rescate por capas sobre el cliente que Valve sirva).
+
+## Re-sweep 2026-10-07 — LumaCore tiene repo propio (`drappula/LumaCore`, V37) y su feed de patrones vuelve a vivir
+
+*El subárbol `LumaCore/` salió de `drappula/SFF` el 3-oct (`e4c6b65`,
+`da3108e`; `steamidra-linux-analysis.md` §13). Clon de `drappula/LumaCore`
+hecho hoy en `drappula/lumacore`: 35 commits, historia extraída (las
+releases de Midrag de v6.3.2 a v6.6.6, el fix de `FileExists` de
+wtfseanscool del 4-sep que ya estaba en `8eaf238`), más dos cosas nuevas:
+el PR de michelegoku3 (`c0d0537`, 30-sep, el mismo `8aaf3c5` de SFF) y una CI
+de releases (siete commits de mallusrgreat el 3-oct). Tag `V37` (3-oct).
+Baseline anterior: `drappula/SFF@8eaf238`, subárbol `LumaCore/`.*
+
+### Qué cambia en el repo
+
+- **CI de releases** (`release.yml`): en cada push a `main`, Windows runner,
+  CMake 3.31 + Ninja Multi-Config, compila `LumaCore.dll`,
+  `LumaCorePayload.dll`, `dwmapi.dll`, `xinput1_4.dll`, los empaqueta en
+  `Release.zip` y `Debug.zip` y crea la release con el **siguiente `V<n>`**
+  (lee la última con `gh release list` y suma uno; "SteaMidra trata cualquier
+  tag distinto como actualizable, así que la numeración sigue por encima del
+  V36 de KoriaPolis"). SteaMidra 6.9.0 descarga de ahí (`75829ee`).
+- **La DLL precompilada sale de git**: `source/LumaCore_source.dll` (1,4 MB)
+  borrada, `.gitignore` nuevo. Ahora el binario solo existe como asset de
+  release. Mejora para quien lo audite: lo que se instala es lo que la CI
+  compila del fuente.
+
+### El PR de michelegoku3 (`c0d0537`), leído entero esta vez
+
+Todo Windows; lo que importa es de dónde vienen las técnicas: el autor es el
+de **Aether** (`michelegoku3/aether`, nuestro clon) y cada cambio cita el
+sitio de Aether del que se porta.
+
+1. **Reconcile del paquete 0 contra el conjunto completo** (`RuntimeCapture.cpp`,
+   "Phase 1b"): el hot-reload de luas ya no añade solo el delta sino que
+   reconcilia el vector del paquete 0 con **todo** el conjunto actual de luas
+   ("Aether parity, `LicenseManager::NotifyLicenseChanged`: los editores y
+   el antivirus disparan eventos repetidos y parciales, un delta puro deja el
+   paquete corto o duplica"), con `EnsurePackageContains` idempotente. Es
+   **exactamente** lo que hicimos el 07-10 en lumalinux (`RetireDepots` +
+   `InjectDepots` en cada pasada del finder, `4f8579c`): la misma conclusión,
+   el mismo día, por el mismo motivo. Convergencia medida.
+2. **Flag "licencias cambiadas" forzado** (`PackagePatch.cpp`, de
+   `OwnershipHooks::h_SendCallbackToPipe` de Aether): sin él, un arranque que
+   pierde la ventana única de `LoadPackage`/`GetPackageInfo` nunca captura
+   el package manager. Equivalente a nuestro `LicensesUpdated_t`; nosotros no
+   dependemos de una ventana única.
+3. **Fin del "diversion"**: ya no se copia `steamclient64.dll` a un segundo
+   fichero ni se redirige SteamUI a esa copia; se carga el original por ruta
+   absoluta y se engancha ese HMODULE, con **aserción de identidad** (de
+   `Diversion::LiveSteamclientMapped` de Aether: comparar la ruta del módulo
+   mapeado con la del Steam root; `status.json` dice
+   `hook_target="steamclient64-MISMATCH"` si no coincide). `lcoverlay.dll`
+   desaparece; la espera de 20×300 ms de SteamUI también (`SteamUI.cpp`), y
+   `LoadModuleWithPath` compara por basename porque Steam pasa a veces la
+   ruta completa. Nuestro mundo no tiene diversion (LD_PRELOAD sobre el
+   proceso real), así que no aplica, pero cierra una fuente de fallos que
+   anotamos en el primer análisis (Finding 2, "copied image").
+4. **Layout de `CNetPacket` detectado en runtime** (`NetPacketLayout.h`,
+   `NetPacket.cpp`): la beta de escritorio (`steamclient64 d2d085e7+`) metió
+   dos sellos `uint32` tras `m_hConnection` y corrió `m_pubData`/`m_cubData`
+   de +0x08/+0x10 a +0x10/+0x18. Sonda sobre un paquete vivo (memoria
+   legible, cabecera protobuf con `eMsg` entre 1 y 0xFFFF, tamaño ≤ 1 MiB),
+   se fija solo cuando un único candidato gana dos paquetes seguidos; antes
+   de fijarse, `RichPresence` se niega a tocar campos. BST lo resolvió el
+   20-sep (`0b776c5`). En Linux el `CNetPacket` de 32 bits es cosa de
+   SLSsteam (`sdk/CNetPacket`), no nuestra.
+5. **Los proxies cargan el core desde un hilo**, nunca desde `DllMain`
+   (loader lock), y solo si el host es `steam.exe` y el proxy está a su lado
+   (de Aether `14a6359`). Windows.
+6. **El feed de patrones cambia de repo**: `PatternFetcher.cpp` e
+   `IpcMethodLoader.cpp` pasan de `KoriaPolis/Steam-Auto-PT` (parado desde
+   el 19-ago) a **`michelegoku3/MigoReleases` rama `pattern`**, en raw y en
+   jsDelivr. Es el repo que el lanzador Python ya precalentaba desde el 8-sep
+   (re-sweep 28-sep); ahora la DLL también lo lee directamente.
+
+### El feed de MigoReleases, refrescado [measured]
+
+Clon `michelegoku3/migoreleases` actualizado hoy: **27 ficheros**, con
+`state/stable.txt = 1788652215` y `state/beta.txt = 1791249696`. Desde el
+28-sep el bot ha publicado patrones para **cuatro betas de escritorio**:
+`1790545198` (29-sep), `1790721607` (30-sep), `1790904859` (2-oct) y
+`1791249696` (6-oct), cada una con su `steamclient`, `steamclientipc` y
+`steamui` por sha. Dos consecuencias:
+
+- **Corrige los barridos de hoy de SLSsteam (§7.14.3) y slsteam-moon**: el
+  tracker de moon no ve nada desde el 27-sep porque **está parado**, no
+  porque Steam no publique. Steam ha sacado tres betas en octubre. Corregido
+  en los dos documentos.
+- Para Windows, LumaCore vuelve a tener patrones frescos sin depender del
+  feed muerto de KoriaPolis; para nosotros no cambia nada (el feed RVA de
+  lumalinux es propio y sigue solo stables).
+
+### Balance
+
+Nada accionable. Lo que queda apuntado: la convergencia del punto 1 (dos
+proyectos, el mismo reconcile completo del paquete 0 el mismo día), y que el
+feed de MigoReleases es hoy la mejor señal de "ha salido una beta de
+escritorio" de todo el ecosistema, mejor que steam-monitor. El próximo
+barrido arranca en `drappula/LumaCore@33c36e9` (V37) y
+`michelegoku3/MigoReleases@f805ab7` (`pattern`).

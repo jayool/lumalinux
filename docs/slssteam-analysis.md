@@ -4292,10 +4292,13 @@ rompe nada:
 
 `res/updates.yaml` de upstream sin cambios (`main@71021ad` sigue siendo su
 último commit). Tracker de moon: dos betas de escritorio más, `1790534246` y
-`1790545198` (27-sep), y **nada desde el 27 de septiembre**: diez días sin
-build nuevo o tracker parado, no se puede distinguir desde aquí. Stable de
-escritorio y Deck sin cambio conocido (`bc54101b…`, 2-sep). `watch-steam.yml`
-nuestro sin novedad, coherente.
+`1790545198` (27-sep), y nada después. **Resuelto el mismo día** con el feed
+de patrones de MigoReleases (`lumacore-findings.md`, re-sweep 07-10): Steam
+sí publicó betas de escritorio el 30-sep (`1790721607`), el 2-oct
+(`1790904859`) y el 6-oct (`1791249696`); es el tracker de moon el que está
+parado desde el 27-sep. Stable de escritorio sin cambio (`1788652215`) y Deck
+sin cambio conocido (`bc54101b…`, 2-sep). `watch-steam.yml` nuestro sin
+novedad, coherente (no sigue betas por decisión).
 
 #### 7.14.4 Balance y accionables
 
