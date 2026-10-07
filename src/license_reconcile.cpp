@@ -3,7 +3,6 @@
 #include "reconcile_anchor.hpp"
 #include "rva_feed.hpp"
 #include "log.hpp"
-#include "status.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -148,7 +147,6 @@ void Reconcile() {
     reinterpret_cast<NotifyFn>(addr)(user);
     Log::Info("Reconcile: broadcast LicensesUpdated_t (CUser=%p) — "
               "appinfo/ownership refresh, no restart", user);
-    Status::RecordReconcile();
 }
 
 }  // namespace LicenseReconcile

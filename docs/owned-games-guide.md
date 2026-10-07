@@ -199,50 +199,34 @@ Sin reinicio, sin `SetDLCEnabled`.
 
 ### C. Add owned, juego YA instalado
 
-Pasos 1 a 4 iguales. Pero Steam no planifica solo, así que:
+Pasos 1 a 4 iguales. Pero Steam no planifica un juego instalado mientras
+corre por una licencia que no le llega del servidor:
 
-5. Al terminar el add, el frontend llama `SetDLCEnabled(base, dlc, false)` y
-   luego `true` por cada DLC añadido **cuyos depots no estén ya montados**
-   (`downloads._owned_plan` los calcula del `.acf`; un `false` sobre un DLC
-   montado lo borraría). El `false`→`true` es un cambio de configuración,
-   Steam planifica, ve la licencia y baja los DLC. Medido a las 12:48:
-   `added depots`, 861 MB. De paso, el `true` limpia cualquier `DisabledDLC`
-   viejo de esos DLC. La lista se entrega una sola vez
-   (`take_owned_dlc_cycle`), para que dos páginas que sondean la misma
-   descarga no ciclen dos veces.
+- Licencia inyectada + reconcile, en caliente: nada (12:12, 12:43).
+- Lanzar el juego: nada (2026-10-07 06:10: `App Running`, sin plan, sin DLC).
+- Abrir su página: nada.
+- **Arrancar Steam**: planifica todos los instalados contra sus licencias y
+  baja los DLC solos (12:20, `config changed: added depots`, 861 MB).
 
-El ciclo solo vale **después** de que Steam haya procesado la licencia, y
-Steam deja constancia de cuándo lo hace. La secuencia medida (todos los adds
-del 2026-10-06):
+Así que la regla es una: **los DLC se instalan la próxima vez que arranque
+Steam**. La tarjeta lo dice al terminar el add. Lo único que LumaDeck hace
+además es marcar una vez la casilla de cada DLC (`SetDLCEnabled(true)`, sin
+esperar nada): si un uninstall anterior los dejó desmarcados
+(`DisabledDLC`), el plan de arranque los respetaría y no bajaría nada
+(16:53). Si el usuario los quiere antes, Propiedades → DLC del juego y
+marcar: con la licencia puesta baja al momento.
 
-1. lumalinux inyecta los AppIDs en el paquete 0 y emite el reconcile
-   (`CUser::NotifyLicensesUpdated`, que **encola** `LicensesUpdated_t`).
-2. Entre 0 y 3 s después Steam ejecuta su manejador de licencias
-   (`compat_log.txt`: `OnAppLicensesChanged`) y pide al servidor la info de
-   las apps nuevas (`appinfo_log.txt`: `RequestAppInfoUpdate: AppIDs
-   580100,702540,735730,4964110`).
-3. ~1 s después llega la respuesta (`appinfo_log.txt`: `UpdatesJob: finished
-   OK`). A partir de aquí un plan ve los DLC como tuyos.
-
-Un `true` antes del paso 3 no hace nada (16:45: Steam ya había pedido la info
-en el mismo segundo, la respuesta llegó después del ciclo). Por eso el
-backend no entrega la lista (`take_owned_dlc_cycle` contesta `pending`)
-hasta ver en `appinfo_log.txt`, después de la posición en que estaba el log
-al empezar el add, una petición que nombre alguno de esos DLC seguida de
-`UpdatesJob: finished OK`. Si Steam no procesa el aviso (visto una vez, a las
-18:47, dos minutos después de arrancar: ni manejador ni petición), pasados
-20 s la entrega igual; el ciclo es inofensivo y el arranque de Steam planifica
-lo mismo. `reconcile.json`, que escribe lumalinux tras cada reconcile, queda
-solo como diagnóstico.
-
-Si la casilla no responde (Steam renombró la función, o el juego estaba en
-marcha y Steam aplazó el cambio), el add sigue siendo válido: reiniciar
-Steam también planifica al arrancar (medido a las 12:20). El add de un
-owned se rechaza con el juego en marcha.
-
-Un DLC nuevo que llegue por la **pasada programada de updates** (backend, sin
-frontend) renueva keys.txt y AdditionalApps pero nadie hace el ciclo: ese DLC
-se baja en el siguiente arranque de Steam. Asumido, no corregido.
+**Lo que se probó y se quitó** (2026-10-06, commits `9001216`…`beff30b`):
+forzar la descarga sin reiniciar con el ciclo `false`→`true` de la casilla,
+que replanifica. Funcionó 5 de 5 cuando el juego estaba "despierto" y Steam
+había digerido la licencia (señal: `RequestAppInfoUpdate` de los DLC +
+`UpdatesJob: finished OK` en `appinfo_log.txt`), y falló cuando el add caía
+en los primeros segundos tras arrancar Steam, antes de que el inicio hubiera
+pintado el juego (20:29: la casilla cambió, Steam no escribió ni `user
+config changed`; abrir la página y repetir el ciclo a las 20:36 sí bajó), y
+una vez en que Steam ignoró el aviso (18:47). Cada condición era otra capa
+(señal, despertar con `RegisterForAppDetails`, reintentos) sobre un camino
+que Steam no ofrece. Se dejó la regla del arranque, que es determinista.
 
 ### D. Uninstall owned
 
@@ -353,3 +337,8 @@ actualización de Darkest Dungeon desde el add.
 | 19:07 | Add tras reiniciar Steam; `reconcile.json` viejo hizo esperar los 20 s de tope | `added depots` a los 20 s, baja |
 | 19:25, 19:32, 19:37 | Uninstall owned (claves retiradas) | Steam borra en 2-7 s, 3/3 |
 | 19:28, 19:32, 19:37 | Add owned instalado, desde la principal, con el menú cerrado y desde la página del juego | `added depots` 1 s tras el reconcile, 3/3; `RequestAppInfoUpdate` + `UpdatesJob: finished OK` en ese segundo |
+| 20:25 | Add owned instalado, ciclo tras la señal de `appinfo_log` | `added depots` 1 s después |
+| 20:29 | Add 42 s tras arrancar Steam, juego sin pintar en el inicio | casilla cambiada, Steam sin plan; a las 20:36 tras abrir la página, el mismo ciclo baja |
+| 20:53 | Steam de 5 min, add sin tocar el juego, luego abrir la página y ciclar | sin página: nada; con página: `added depots` |
+| 20:55, 21:00, 21:04 | Arranques con el juego en el inicio | Steam carga sus stats a los 3-7 s: "despierto" |
+| 2026-10-07 06:10 | Licencia inyectada, lanzar el juego | `App Running` sin plan; sin DLC |
