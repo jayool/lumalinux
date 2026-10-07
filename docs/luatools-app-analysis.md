@@ -232,6 +232,79 @@ Nuevo en la app, que LumaDeck no usa:
 - `manifest.luastools.xyz` no aparece en la app: su manifest suelto va por
   `givemethemanifestpunk` autenticado.
 
+### 4b. Segunda pasada, fichero a fichero, en lo que se solapa con nosotros [read]
+
+La primera pasada fue por mensajes de commit, inventario de endpoints y
+cabeceras. Esto es lectura de los servicios que hacen lo mismo que piezas
+nuestras, para ver dónde coinciden y dónde no.
+
+- **`LuaInstaller.cs` / `LuaFileParser.cs` (lo que hace steamidra_lite).**
+  Lua → `config\stplug-in\<appid>.lua`, manifests → `<Steam>\depotcache`
+  (comentario textual: *"stplug-in is under config (it is SteamTools'),
+  depotcache is not"*). Con el ajuste **"Auto Update Apps" (por defecto
+  activado) comenta todas las líneas `setManifestid`** al instalar: el juego
+  queda sin pin y Steam lo actualiza solo. Los fixes de Denuvo se instalan con
+  `forceLocked` y conservan el pin. Su parser distingue `addappid(id)` a secas
+  (DLC, "entitlement") de `addappid(id, 1, "key")` (depot de contenido), y un
+  `setManifestid` comentado significa *"Steam keeps this updated"*, no
+  "pineado a este manifest". **Es exactamente nuestro modelo 0.9**: nativo sin
+  pin por defecto, pin solo para fixes de versión y DLC flag sin clave. Dos
+  implementaciones independientes llegan al mismo sitio.
+- **`AppInfo/BinaryVdf.cs` + `AppInfoFile.cs` (~450 líneas): lector y
+  escritor de `appcache\appinfo.vdf`, v27/28/29.** Layout documentado en el
+  fuente: `magic u32 | universe u32 | [v29] offset i64 de la tabla de
+  strings`; por app `appid u32 | size u32 | meta (60 bytes en v28+: infoState,
+  lastUpdated, picsToken, sha1_text, changeNumber, sha1_binary) | blob`;
+  tabla de strings al final (`count u32` + cadenas NUL). Índice
+  `appid → offset` en memoria (1,4 MB para 177k apps), lectura bajo demanda.
+  Detalles que ellos pisaron: una misma clave puede repetirse en un objeto
+  (15 apps de 176.869; un diccionario la colapsa y corrompe el blob), y la
+  tabla de strings tiene entradas que no son UTF-8 válido (hay que guardar
+  los bytes crudos). **Es la referencia para nuestro parser aparcado**, si
+  algún día lo hacemos: solo lectura, y con esos dos detalles.
+- **`LaunchOptionsService.cs` / `LaunchModStore.cs`: escriben en
+  `appinfo.vdf`** (editan `config.launch` de un juego: opciones de lanzamiento
+  mod). Solo con Steam cerrado, porque *"Steam holds the file and rewrites it
+  from its own in-memory state"*; copia de seguridad, escritura a temporal y
+  swap, y detección de "drift" cuando Steam lo sobreescribe tras una
+  actualización de la app. Confirma lo que asumimos: **`appinfo.vdf` nunca se
+  escribe con Steam abierto**, y Steam lo regenera de PICS si falta.
+- **`DepotDownloaderService.cs`**: sesión **anónima** de SteamKit (nunca
+  `-username`), por eso necesita las dos entradas: clave (`-depotkeys`, del
+  lua o de `config.vdf` del usuario) y manifest (`-manifestfile`, de
+  depotcache o de `givemethemanifestpunk`). Un proceso por depot (el flag de
+  manifest es único), `-validate` obligatorio al reanudar (si no, da éxito
+  sobre un fichero a medias), serializado porque dos sesiones anónimas
+  comparten LoginID y se desconectan. Es el modelo ASSella, con los mismos
+  bordes que anotamos en `assella-analysis.md` §3.3.
+- **`SteamDepotInfo.cs`**: lista de depots de `api.steamcmd.net` (*"same data
+  SteamDB shows"*), con `depotfromapp` para redistribuibles compartidos (en el
+  appinfo del juego van como stub sin manifests, la gid vive en la app dueña)
+  y `extended.listofdlc` con la nota *"Many have no depot (store-only
+  entitlements)"*. Lo mismo que nuestro `steamcmd_app_info` (incluido
+  `fromapp`) y nuestra conclusión de DLC flag.
+- **`HttpServerService.cs`**: servidor local en `127.0.0.1:6767` para el
+  botón "Add via LuaTools" que el plugin inyecta en las páginas de la tienda
+  de Steam. Rutas: `/add-status/<id>`, `/has/<id>`, `/open-url`,
+  `/restart-steam`, `/check-updates`, `/loaded-apps`, `/api-list`, `/icon`.
+  LumaDeck no tiene botón en la tienda; todo va por Decky.
+- **`UnlockerService.cs`**: instala y verifica por sha256 `dwmapi.dll`,
+  `xinput1_4.dll` y `OpenSteamTool.dll` en la raíz de Steam, desde su
+  `OST-Nightly` (upstream compilado de `main`) o desde BetterSteamTools; para
+  BST la versión y el hash salen de
+  `madoiscool/BetterSteamTools@updates/opensteamtool/latest.toml`, **la misma
+  rama `updates` cuyo feed de patrones seguimos en
+  `bettersteamtools-findings.md`**. Y registra `config/stplug-in` en el
+  `[lua] paths` de `opensteamtool.toml` para que los luas se recarguen en
+  caliente.
+- **`check_apis` en Ryuu**: sin auth, solo User-Agent fijo
+  (`secretgoonpoon`): cualquiera puede preguntar qué fuentes tienen un juego.
+  **Hubcap `/status/{app}`** antes de gastar un zip, igual que el plugin
+  8.0.4 (nosotros lo descartamos, F2 de `assella-analysis.md`).
+- **`DonateKeysService.cs`**: solo validación de pares `(depot, key)` del
+  `config.vdf` y `POST` a Ryuu; dedupe permanente por IP en el servidor;
+  reintenta lo que no devolvió 200. No lee del pool.
+
 ### 5. Accionables
 
 1. ~~Medir el formato de `appdetails`~~ Medido, no se reproduce (§3). Sin
@@ -239,6 +312,8 @@ Nuevo en la app, que LumaDeck no usa:
 2. **Candidato**: `givemethemanifestpunk` como eslabón de `manifests.py`
    para usuarios con sesión de lua.tools, entre luastools y el suelto de
    Hubcap. Antes, medir qué gids sirve.
-3. Nada en lumalinux.
+3. **Referencia**: si se desaparca el parser de `appinfo.vdf`, partir del
+   layout y los dos detalles de `AppInfoFile.cs` (§4b). Solo lectura.
+4. Nada en lumalinux.
 
 Próximo barrido desde `9461259` / v1.3.2.
