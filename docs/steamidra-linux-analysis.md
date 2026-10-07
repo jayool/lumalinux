@@ -507,3 +507,89 @@ tiene abiertas). El `CHANGELOG.md` lleva un bloque "Unreleased" posterior a
 6.8.0 ya cubierto en §11 (depot picker, chunks ZIP, `InstalledDepots {}`,
 manifests con LuasTools primero, `Remove Key`, menos RAM). Nada que añadir; el
 próximo barrido arranca en `8eaf238`.*
+
+## §13 Delta — 2026-10-07 (`8eaf238` → `4159300`, release v6.9.0)
+
+*`drappula/SFF` `main`: 12 commits entre el 30-sep y el 3-oct (mallusrgreat,
+michelegoku3 por PR #6, drappula como merge), tag `v6.9.0` (`c83f4b5`, 3-oct).
+Diff leído entero en `sff/`, `Main_gui.py`, CI y notas; el PR de LumaCore
+(`8aaf3c5`, 842 líneas) leído por cabeceras y comentarios. `Midrags/SFF`
+(upstream original) sigue en `fa44fc9` (21-ago), muerto.*
+
+### 13.1 LumaCore sale del repo y pasa a `drappula/LumaCore` (V37+)
+
+`e4c6b65` lo convierte en submódulo, `da3108e` quita el submódulo y enlaza el
+repo nuevo, `75829ee` cambia `_LUMACORE_GITHUB_REPO` de `KoriaPolis/LumaCore`
+a `drappula/LumaCore` ("the inactive upstream"; las releases siguen numeradas
+por encima de V36 para que las instalaciones existentes actualicen hacia
+delante), `3452345` apunta la documentación. **Para nosotros**: el barrido de
+LumaCore (`lumacore-findings.md`, baseline `Midrags/SFF@6d2fb30`) tiene que
+pasar a `drappula/LumaCore`; clon hecho hoy en `drappula/lumacore` para el
+próximo barrido de ese doc. Antes de salir, el PR #6 de michelegoku3
+(`8aaf3c5`, 30-sep, "injection, build, gitignore, diversion, pattern,
+netpacket, hot reload") dejó en el kernel Windows, por cabeceras:
+
+- `steam/NetPacketLayout.h` + `NetPacket.cpp` (+225): **detección en runtime
+  del layout de `CNetPacket`**, porque la beta de escritorio
+  (`steamclient64 d2d085e7+`) insertó dos sellos de versión `uint32` tras
+  `m_hConnection` y desplazó `m_pubData`/`m_cubData` 8 bytes (+0x08 → +0x10,
+  +0x10 → +0x18). El offset se identifica sondeando un paquete vivo
+  (validación de memoria legible, cabecera protobuf con `eMsg` plausible,
+  tamaño acotado a 1 MiB) y solo se fija cuando un único candidato gana dos
+  paquetes seguidos; un fallo cuesta un paquete sin tocar, un acierto falso
+  "una escritura salvaje en un objeto vivo de Steam". Es el mismo cambio de
+  layout que BST resolvió el 20-sep (`0b776c5`, "update CNetPacket layout",
+  `bettersteamtools-findings.md` 09-22). Windows, sin efecto en Linux.
+- `PackagePatch.cpp` (+8): "portado de Aether (`OwnershipHooks::
+  h_SendCallbackToPipe`)": fuerza el flag "licenses changed" en el callback
+  para que Steam relea la propiedad; sin esto, un arranque que pierde las
+  ventanas únicas de `LoadPackage` / `GetPackageInfo` (build fresco, patrones
+  descargados tarde, timing de la beta) se queda sin capturar el package
+  manager y Steam nunca vuelve a preguntar. Es la misma necesidad que cubre
+  nuestro `LicenseReconcile` (`LicensesUpdated_t`) y el `AppLicensesChanged_t`
+  de SLSsteam, resuelta en Windows marcando el flag del callback. Técnica
+  anotada; no aplica (nuestro finder reinyecta en cada pasada y no depende de
+  una ventana única).
+- `entry.cpp`: carga `steamclient64.dll` por ruta absoluta y aserción de
+  identidad del módulo ("portado de Aether `Diversion::LiveSteamclientMapped`":
+  comprobar que el HMODULE enganchado es el que Steam usa, no una copia con el
+  mismo nombre), publicado en `status.json`. Windows.
+- Proxies `LcDwmProxy` / `LcXInputProxy`, `RichPresence`, `SteamUI`,
+  `RuntimeCapture`, build con `LcFetchCache`/`LcLua`: Windows.
+
+Aether (michelegoku3) es, pues, la fuente de las técnicas que entran en
+LumaCore; lo que leímos de Aether en `luatools-app-analysis.md` (preferencia
+`Luie` primero) es el mismo autor.
+
+### 13.2 Lo que cambia en Linux (v6.9.0) [read]
+
+- `0bf7b83`: el chequeo de arranque lanzaba el instalador de **headcrab** en
+  el hilo de la GUI con stdin heredado: minutos de ventana congelada, y un
+  `sudo` sin responder la colgaba para siempre. Ahora en un hilo y con stdin
+  a `DEVNULL` salvo desde terminal. Confirma lo que anotamos en §3: SteaMidra
+  instala SLSsteam por headcrab (`curl | bash` con sudo) en el arranque.
+- `02976bf`: el botón **"Patch Gaming Mode"** ("inyectar SLSsteam en
+  `/usr/bin/steam-jupiter` para que en Gaming Mode salga Play y no Purchase;
+  repetir tras cada actualización de SteamOS") deja de esconderse fuera de
+  SteamOS: ahora sale en CachyOS, ROG Ally y cualquier Linux. Para el port a
+  CachyOS (`cachyos-port.md`): es su respuesta al mismo problema que nuestro
+  wrapper de `steam-jupiter`, aplicada como parche al binario del sistema.
+- `c853985`: el chequeo de actualizaciones (API de GitHub) también sale del
+  hilo de la GUI.
+- CI (`5926f31`, `4159300`): la release publica **AppImage** de Linux
+  (`SteaMidra-*-x86_64.AppImage`) además del zip, y etiqueta los assets por
+  plataforma.
+- Las notas de 6.9.0 repiten lo de §11 ("Unreleased" entonces): depots sin
+  nombre, chunks ZIP, **manifests por LuasTools primero y los espejos de
+  GitHub después, Hubcap al final** ("funciona sin clave de Hubcap"), botón
+  "Remove Key", `InstalledDepots` en el ACF para que Celeste no salga
+  "Content still encrypted", 650 MB de RAM en reposo. Nada nuevo respecto a
+  §11.
+
+### 13.3 Balance
+
+Nada accionable para lumalinux ni LumaDeck. Dos notas de seguimiento:
+`lumacore-findings.md` cambia de repo (`drappula/LumaCore`, V37+); y el
+"Patch Gaming Mode" para todo Linux es el equivalente de SteaMidra al wrapper
+nuestro, a comparar cuando el port a CachyOS lo necesite. El próximo barrido
+arranca en `drappula/SFF@4159300`.
