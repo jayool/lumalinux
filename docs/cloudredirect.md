@@ -292,7 +292,14 @@ segunda ronda, kill switch, CR delante en `LD_PRELOAD`, log una vez por app).
 
 ### Verificar en la Deck
 
-1. `"sync_achievements": true` en `~/.config/CloudRedirect/config.json`, reiniciar Steam.
+0. **Dos logs**: `~/.config/CloudRedirect/cr_debug.log` solo lleva las líneas
+   `[CR] DoInit …` (versión, SUCCESS). Todo lo demás, incluido el estado del
+   sync y las líneas `[Stats]`, está en `~/.config/CloudRedirect/cloud_redirect.log`.
+   En Windows el log es `<Steam>\cloud_redirect.log`, junto a `steam.exe`.
+1. `"stats_sync_enabled": true` en `~/.config/CloudRedirect/config.json` (es el
+   interruptor maestro del `.so` de Linux; con `false` ni instala los hooks y
+   `sync_achievements` no cuenta) y reiniciar Steam. En Windows no existe esa
+   clave: manda `sync_achievements`.
 2. Log de lumalinux: `CR-stats: armed — CloudRedirect 2.6.5, …`. Si sale
    `CR-stats: FAILED — …`, la línea dice qué comprobación falló.
 3. Lanzar un juego a cero (schema o no). Log de CR:
@@ -300,6 +307,18 @@ segunda ronda, kill switch, CR delante en `LD_PRELOAD`, log una vez por app).
    `crc-only no-op`; log de lumalinux: `CR-stats: app=N — … cleared …` (una vez).
    Desbloquear un logro: tiene que saltar.
 4. Lanzar un juego con base llena: sigue `Sending schema … Returning N stats`.
+
+**Medido 2026-10-07 22:52–23:06, CloudRedirect 2.6.6 en Deck y PC, sync
+activo en los dos, proveedor gdrive**: Deck, Balatro (2379780) a cero logros,
+uno desbloqueado jugando; `cloud_redirect.log`: `ExportNativeStats
+app=2379780: wrote 79 bytes (1 stats, 1 ach blocks)`, `Cloud blob refreshed:
+7 app(s)`; al relanzar, `GetUserStats app=2379780 … handled locally (5
+bytes)` y la página de logros de Steam muestra el logro. El bug de la 2.6.5
+(página en blanco con el sync activo) no se reproduce. PC: el logro no
+aparecía hasta **reiniciar Steam** allí, porque el blob de la nube se
+descarga una vez al arrancar (`SeedApps`); tras reiniciar y abrir Balatro,
+el logro está. Partidas por Steam Cloud redirigido, logros por el blob de
+Drive: dos canales distintos.
 
 ### Parche upstream (propuesto a Selectively11)
 
