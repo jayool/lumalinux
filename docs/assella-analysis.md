@@ -2071,3 +2071,136 @@ Lo que no:
 | 5 | Steam intentó bajar Workshop por sí mismo con el juego desbloqueado | **Medir el Workshop nativo con nuestra pila** antes de construir nada (§18.2 #6) |
 
 El siguiente barrido arranca en `canary@b9c31c9` y `beta@3cf56bd`.
+
+## §20 Delta — 2026-10-07: `canary` reescribe el mapeo de depots y claves, mete un config de MRC para el lua SpaceTest y cierra el web server abierto
+
+*Barrido el 2026-10-07 sobre el clon (`beta`, `canary`, `main`, tags).
+`canary`: **25 commits de niwia en dos días** (6 y 7 de octubre), 58 ficheros,
++6.433/−2.246, de los que 4.136 líneas son `src/ui` (una pestaña "Depots"
+nueva y rediseño de ajustes). `beta`: dos commits del 7-oct (workshop). Tags
+nuevas desde §19: `v2.7.0beta` (1-oct), `v2.7.1beta` (3-oct) y `arch-repo`
+(3-oct), las tres sobre `beta` y anteriores al baseline `3cf56bd`, así que su
+código ya estaba leído. Leídos como diff: los commits que tocan config de
+SLSsteam, MRC, handoff nativo, web server y DepotDownloader; la UI solo por
+mensaje de commit.*
+
+### 20.1 Mapeo AppID → depots → claves, y las reglas del modo DLC-only [read]
+
+Nuevo documento en el repo, `depotmapping.md` (268 líneas, "Smart Depot &
+Decryption Key Mapping Specification"): el mismo problema que resolvimos
+en RESEARCH §21 y en `owned-games-guide.md`, planteado igual (los depots base
+no declaran `dlcappid`; algunos DLC comparten id con su depot; "license-only
+DLCs" sin depot que van a `AdditionalApps` y a nada más; las claves van por
+depot, no por app). Su solución es un "pipeline heurístico de 7 niveles"
+(`_build_app_to_depots_map`, en `depots_tab.py`) que deduce el mapa desde los
+comentarios del lua, el appinfo y los nombres; la nuestra lee `dlcappid` de
+steamcmd.net y lo guarda en pins.json (`depot_apps`). Las reglas que fijan:
+
+- `bee1e15`: en DLC-only mode el **AppID padre puede quedarse en
+  `AdditionalApps`** si el usuario lo marca ("para desbloquear funciones
+  base, familia compartida o preferencia manual"), pero **nunca va a
+  `AdditionalDepots`**, los depots base (binarios Windows/Linux/Mac) tampoco,
+  y la clave raíz solo se conserva si el padre está marcado. Es la respuesta
+  al aviso de Ace que anotamos en §6.2 ("only actual depots in
+  AdditionalDepots, appIds break SLSsteam"): ahora lo prohíben en código.
+  Nosotros nunca metemos el base de un juego owned en AdditionalApps (flujo
+  C de la guía); ellos lo permiten como opción.
+- `d0263da`: `DecryptionKeys` acotado a los depots de DLC seleccionados,
+  purgando la clave del base; `resolve_dlc_mapping_for_selection()` como
+  implementación de referencia.
+- `2d37ed9`: redistribuibles compartidos (`228980`, `228981`…`229032` más
+  su `DEPOT_BLACKLIST`) **protegidos**: se añaden solos a `AdditionalDepots`
+  con `# Steamworks Shared`, se ocultan de la tabla, y `is_depot_shared_with_
+  other_games` impide quitar un depot que otro juego registrado también use.
+  Nuestro equivalente es `REDIST_DEPOTS` en `pins.py` (nunca se pinean ni
+  se cuentan como nuestros).
+- `3b73a63`: la sincronización de biblioteca **ya no salta los juegos owned
+  gestionados en AT0-M/DLC mode**; antes `if appid in owned_appids: skip`
+  los dejaba fuera. Su flujo F/G, resuelto el mismo día que el nuestro.
+
+Conclusión: convergencia. Dos semanas después de nuestro §21 llegan al mismo
+modelo (base nunca nuestro, DLC por appid, redists intocables), con la
+diferencia de método (heurística sobre texto frente a `dlcappid` de PICS).
+Nada que copiar; la única idea que no tenemos es el guard "este depot lo usa
+otro juego" al quitar, que en nuestro caso cubre `_retire_key_lines` por
+depot y el hecho de que keys.txt es por línea.
+
+### 20.2 MRC: un config para el lua SpaceTest, Hubcap fuera de esa ruta [read]
+
+`8ddd248`: `src/managers/mrc_config_manager.py` (143 líneas) escribe
+`~/.config/SLSsteam/mrc_config.lua` y `.json` con la jerarquía de códigos de
+petición para el plugin lua: `authority: wudrm`, `rescue: manifestdex`,
+`full_timeout_ms 2000`, `probe_timeout_ms 700`, `probe_timeouts_to_mark_down
+2`. Solo dos proveedores, wudrm y manifestdex (con su UA); ni 20770407 ni
+steam.run. `1a4767b` tapa esos ajustes con una "MRC Configuration Guard" si
+el plugin activo no es `download-1.4.0-spacetest.lua` / "SpaceBunny".
+**Lo que no está**: ningún lua del repo lee `mrc_config` (grep en `src/res`
+vacío); el lector tendría que vivir en el lua que at0m sirve desde su R2
+(§19.3 leyó la 1.4.0-spacetest del repo, no esa). Escrito el escritor, no
+visto el lector. `at0m.py` (su motor "Vapor" de descarga directa) sigue con
+`base_url = "https://gmrc.wudrm.com/manifest/"` y `manifest.manifestdex.com`.
+Comparado con lumalinux: nuestra cascada es 20770407 → manifestdex → wudrm →
+steam.run, con 120 s de caché y probe; la suya para el lua, wudrm → manifestdex
+con carrera de 700 ms. Sin acción.
+
+### 20.3 Handoff nativo a Steam: ahora se abastece solo de Hubcap [read]
+
+`1a4767b`, `native_steam_handoff.py`: `perform_steam_handoff` resuelve lua y
+claves de Hubcap (`_fetch_hubcap_keys`) si no están cacheados, antes de
+escribir el config y mandar `install|appid|0` por el pipe; si falla, aborta
+con "Missing Lua metadata and Hubcap API resolution failed". Es su modo
+"Steam descarga" (§3.4 experimental), que ya no depende de haber pasado antes
+por DepotDownloader. Cada vez más parecido a lo nuestro, con el pipe de
+SLSsteam en vez de nuestro `steam -shutdown`.
+
+### 20.4 DepotDownloader: binario "Mod" 3.4.0 experimental y sonda de CDN [read]
+
+`a090c63`: flag `-probe-cdn` ("Probe CDN edge servers for fastest route",
+ajuste `probe_cdn`) para su DepotDownloader; `src/deps/` gana
+`DepotDownloaderMod.dll` 3.4.0 (185 KB) junto al `DepotDownloader.dll`
+actualizado; `d4cfe1a` lo pone tras un toggle "Experimental DepotDownloader"
+con protección mientras haya descargas activas; `939945e` lo actualiza con
+"ccf45f8 progress fix". Sigue siendo descarga fuera de Steam; no nos toca.
+
+### 20.5 Web server: cierra el hallazgo de §6.2 [read]
+
+`9160eeb` (+modularización de `main_window`, "harden updater & web server,
+align canary channel isolation"): `DEFAULT_HOST = "127.0.0.1"` (antes
+`0.0.0.0`), token de sesión obligatorio por cabecera `X-ASSella-Token` o
+`?token=` en la URL de navegación, comparación en tiempo constante
+(`hmac.compare_digest`), 401 JSON al resto; el shell HTML es público y lleva
+el token inyectado para sus propias llamadas. El punto "Web en la LAN sin
+auth" de nuestra tabla §6.2 queda cerrado por ellos. El endurecimiento del
+updater y el aislamiento del canal canary no los he leído en detalle.
+
+### 20.6 Lo demás
+
+- `c6a9e09`, `65faf97`, `8ddd248`: proxy personalizado con barra de URL y
+  prueba/aplicación en tres botones; botón **"Install Byparr (Cloudflare
+  Solver)"** que ejecuta `curl … niwia/ASSella/c447a8a/scripts/setup_byparr.sh
+  | bash` en una terminal (otro `curl | bash` a su propio repo, como el de
+  Headcrab que anotamos en §6.1); salud de Hubcap vía proxy. Wirecutter sigue
+  (`use_wirecutter`), su URL ya no se edita en la UI.
+- `.github/workflows`: lint con ruff (`ruff.toml` nuevo), suite de
+  pre-release solo bajo petición y saltada en `canary`; `.agents/AGENTS.md`
+  (el repo se desarrolla con agentes) ahora admite `BatchConfigEditor` /
+  `_atomic_write` además de la escritura in-place para no romper el inotify
+  de SLSsteam.
+- UI: pestaña Depots con indicadores, claves AES de 15 caracteres visibles,
+  "Select All/None", cascada dinámica al desmarcar un AppID, modo de
+  exclusión de depots; rediseño de la tarjeta de despliegue y de at0-m.
+- `beta` `4c67436`, `d581473`: workshop por Vapor solo si hay clave de depot
+  cacheada (antes saltaba el ítem o iba a la CDN sin clave); resolución
+  automática de la clave desde la caché. Workshop, no nos toca.
+- Tag `arch-repo` (3-oct, `c6622fb`): empaquetado para un repo de Arch.
+
+### 20.7 Balance
+
+Nada accionable. Dos confirmaciones: el modelo de "base nunca nuestro, DLC
+por appid, redists intocables" al que llegamos por medición es al que llega
+ASSella por otro camino, y su "Steam descarga" se parece cada vez más al
+nuestro. Dos cosas a vigilar: si aparece el lua que lee `mrc_config` (su
+cascada de códigos saldría del repo), y el DepotDownloaderMod 3.4.0 si
+alguna vez miramos descarga fuera de Steam para CachyOS.
+
+El siguiente barrido arranca en `canary@939945e` y `beta@d581473`.
