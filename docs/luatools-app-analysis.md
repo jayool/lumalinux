@@ -359,6 +359,17 @@ nuestras, para ver dónde coinciden y dónde no.
    Decky no tiene CA bundle (`CERTIFICATE_VERIFY_FAILED`); ahora usa el
    contexto de `http_client` (certifi). Ryuu sigue siendo la fuente de zips
    de LumaDeck; Luie/lua.tools no hace falta.
+   **Formato del lua de Ryuu (medido 19:47 con Balatro 2379780)**: pone la
+   línea del juego `addappid(2379780)` al FINAL; Hubcap la pone primero.
+   steamidra_lite (SteaMidra verbatim) toma el primer `addappid` como AppID
+   del juego, así que con el zip de Ryuu registró el depot 2379781 como
+   juego (claves con padre 2379781, AdditionalApps y stplug-in con 2379781)
+   y el post-check de LumaDeck abortó. Arreglado en LumaDeck (`fcef4f7`):
+   reordena el lua para que la primera línea sea el app antes de llamar a
+   steamidra. Reintento 19:56: appid 2379780, 2 claves con padre 2379780,
+   post-check OK. Con Hubcap sin clave, LumaDeck funciona entero con Ryuu:
+   añadir, descargar, pasada de actualizaciones; la búsqueda por nombre
+   pasó a la tienda de Steam (sin credencial) el mismo día.
 3. **Referencia**: si se desaparca el parser de `appinfo.vdf`, partir del
    layout y los dos detalles de `AppInfoFile.cs` (§4b). Solo lectura.
 4. Nada en lumalinux.
