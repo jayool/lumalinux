@@ -184,6 +184,12 @@ missing `.so`; see `maintenance.md` case B.)
 
 ## Stats sync: el arranque en frío deja los juegos a cero logros (fix en lumalinux v0.21.1, 2026-09-20)
 
+> **2026-10-07:** upstream lo arregla en **v2.6.6** (`e507ba4`): sin schema en
+> la base, `HandleGetUserStats` devuelve cuerpo vacío antes de comparar crcs, es
+> decir el parche propuesto abajo en forma más amplia. Con la 2.6.6 el interposer
+> de lumalinux queda además ciego porque el símbolo ya no se exporta; ver el
+> re-barrido del 07-10 al final.
+
 ### Qué hace CloudRedirect con `stats_sync_enabled`
 
 Para cada juego añadido por lua, CR mantiene una **base propia** de stats y logros
@@ -607,3 +613,110 @@ CloudRedirect. **Sin acción**; comprobar en el codespace que `cr_debug.log` no
 tiene `curl failed: 60` y que el log de lumalinux muestra el pin activo.
 
 Próximo barrido desde `bc5e38a` / v2.6.5, issues #203 y #193.
+
+
+## Re-barrido 2026-10-07 — v2.6.6: la libcurl va dentro, el bug de stats arreglado arriba, y nuestro interposer queda ciego sin daño
+
+*`Selectively11/CloudRedirect` `master`: de `bc5e38a` (v2.6.5, 18-ago) a
+`00969da`, **25 commits entre el 27-sep y el 3-oct**, todos del autor, y
+**release v2.6.6** (tag del 3-oct sobre el commit "Bump version to 2.6.6") que
+**sí publica `cloud_redirect.so`** (7,5 MB, antes ~2 MB; 32 bits; `strings` →
+`version=2.6.6+3434d9d`). Leídos como diff completo. El fork de moon sigue en
+`19da055` (19-sep), muerto. Issues: la página pública da 403 hoy; #203 y #193
+aparecen cerradas por commit.*
+
+### Lo que nos toca, verificado sobre el binario publicado
+
+1. **libcurl y OpenSSL van dentro del `.so`, estáticos** (`25df01a`, "fixes
+   #203"; `171ea53` era el paso intermedio del mismo día: rutas absolutas a la
+   libcurl del sistema antes del soname). `readelf -d` del binario: **sin
+   `NEEDED libcurl`**; `strings`: `[HTTP] Linked libcurl %s (static, OpenSSL)`,
+   `OpenSSL 3.3.2 3 Sep 2024`. CA: `ProbeSystemCaBundle` prueba
+   `/etc/ssl/certs/ca-certificates.crt`, el `tls-ca-bundle.pem` de p11-kit de
+   Arch y `/etc/ssl/certs` como directorio; `CURLOPT_CAINFO` solo con
+   `ca_cert_path` del proveedor. Consecuencia para lumalinux: **el pin de
+   libcurl (`src/libcurl_pin.cpp`) queda inerte para CloudRedirect**, porque
+   CR ya no hace `dlopen("libcurl")`; sigue haciendo falta para nuestras
+   propias descargas (SafeMode, GMRC). Nada que quitar. El "CloudRedirect en
+   Linux lleva semanas roto" del 29-sep queda cerrado por upstream para todos,
+   no solo para quien lleva lumalinux.
+2. **Símbolos ocultos** (`e16c4bc` `-fvisibility=hidden`; `197def9`
+   `-Wl,--exclude-libs,ALL` para que nadie interponga su curl/OpenSSL
+   estáticos, pensado contra el runtime de Steam). Medido en el binario:
+   `.dynsym` tiene 691 funciones y **0 `HandleGetUserStats`** (la 2.6.5 tenía
+   2 referencias); `CR_GetVersion` sigue exportado porque lleva
+   `visibility("default")` explícito. Efecto en `cr_stats_fix`: la
+   comprobación 1 (`dlsym(RTLD_DEFAULT, símbolo)`) no lo encuentra → log
+   `CR-stats: cloud_redirect.so not loaded (or it no longer defines …)`,
+   `status.json` → `CrStatsFix: disabled`, el stub reenvía sin mirar. Y aunque
+   lo encontrara daría igual: con visibilidad oculta la llamada interna de CR
+   ya no pasa por la PLT y no es interponible. **Sin daño**, porque:
+3. **El bug de stats está arreglado arriba** (`e507ba4`, "Pass GetUserStats
+   through when the store has no schema"): `if (stats.schema.empty()) return
+   RpcResult();` **antes** de comparar crcs. Una base vacía no tiene schema →
+   cuerpo de 0 bytes → `TryHandleGetUserStats` hace passthrough → la petición
+   llega a SLSsteam y a Valve, que es lo que forzaba nuestro stub. Es el parche
+   que propusimos (sobre `crcStats == 0`) en forma más amplia: también quita
+   la rama "stats sin schema → crc-only". El log de CR con la 2.6.6 debe decir
+   `store returned empty -> passthrough` en un juego a cero, sin lumalinux de
+   por medio.
+4. **Todo el camino de stats se condiciona a `syncAchievements` /
+   `syncPlaytime`** (`7914b02`): sin `sync_achievements`, no se piden schemas,
+   no se fusionan logros ni stats, **no se escriben los `.bin` nativos** (el
+   fallback `NO_CONNECTION` de SLSsteam) y sin `sync_playtime` no se cierra
+   sesión de tiempo. Antes parte de eso corría igual. Para nosotros: el
+   comportamiento con `sync_achievements: true` (el caso de la Deck) no cambia.
+5. **Fallos TLS no se reintentan** (`43c0b19`): códigos 35/58/59/60/64/66/77/
+   83/90/91 de curl cortan el bucle de reintentos. Es la otra mitad de #203:
+   el "Steam extremely slow" venía de gastar el presupuesto de 12 s en
+   reintentos de un error 60 que iba a repetirse. Con libcurl estática ya no
+   debería darse, pero si un día falla la CA, falla rápido.
+6. **`#193` (proveedor `folder` en Linux)** (`2b732d8`): se inicializaba con una
+   ruta de token en vez de `sync_path`; arreglado. No usamos `folder`.
+7. **Marcador de subida interrumpida** (`a066345`, `391115e`): un journal de
+   operaciones pendientes (`pending_ops_journal`) marca `UploadInProgress` /
+   `UploadPending`; mientras exista, el estado de la nube no puede pisar los
+   guardados locales. Es protección de datos tras un corte a mitad de lote;
+   **no es** ninguna de nuestras cuatro peticiones de "Cloud sync" (yield
+   hook, publicación diferida que sobreviva a la sesión, exclusión por app, bug
+   de stats): la 4 la cierra el punto 3; las otras tres siguen sin atender
+   (`cloud_hooks.cpp` sigue sin yield hook en Linux; sin exclusión por app en
+   la config).
+8. Lo demás: `e340183` distingue "listado remoto fallido" de "cuenta vacía";
+   `0e6be0d` rechaza account IDs de R2 malformados; `032ddf2`, `e05c315`,
+   `521dff2` más log (S3 con status inesperado, log en ejecuciones CLI, stderr
+   de la migración); `b23c1c2` deja de repetir un log por poll; `4fd0262` CLI
+   en UTF-8 (CP936); `0e032ac`, `049823f` UI Qt; `3a92a9c` build sin binarios
+   cloud760; `d42e6dc`, `c944155`, `3bc345c` flatpak; `1d85880` `dwrite.dll`
+   como proxy válido (Windows); `5490270` quita el popup "Incompatible Steam
+   Update" del hook de vtable (**solo Windows**, `platform/win/`).
+
+### Lo que la 2.6.6 NO trae: los dos defectos de moon siguen
+
+- `vtable_hook.cpp` sigue con **`g_readableRanges[64]`** y `g_readableCount <
+  64` (defecto 1, el de "transport vtable not found"; teórico para nuestra
+  pila según la medición del 28-sep: 22 rangos).
+- `init.cpp:542` sigue con **`for (int i = 0; i < 20; i++)` / 10 s** de espera a
+  `steamclient.so` (defecto 2). Sigue siendo requisito del port a CachyOS
+  (`cachyos-port.md`); el camino B (build propio) sigue siendo la única salida
+  para eso.
+
+### Qué hacer
+
+- **Actualizar a la 2.6.6.** LumaDeck la va a ofrecer sola
+  (`get_latest_release_with_asset`: la release publica el `.so`) y `setup.sh`
+  la coge como "latest". Al aplicarla, comprobar en el codespace: log de CR
+  con `Linked libcurl … (static, OpenSSL)` y sin `curl failed: 60`; un juego a
+  cero logros con `store returned empty -> passthrough` y logros que saltan;
+  log de lumalinux con `CR-stats: cloud_redirect.so not loaded (or it no
+  longer defines …)` y `CrStatsFix: disabled` en `status.json`, que ahora es
+  lo esperado.
+- **lumalinux, pequeño y opcional**: `cr_stats_fix` ya lee `CR_GetVersion`
+  (`kVersionSymbol`); con CR ≥ 2.6.6 puede decir "no hace falta, arreglado en
+  upstream" y marcar `not needed` en vez de `disabled` con un mensaje que
+  suena a fallo. Sin prisa: no cambia el comportamiento.
+- `libcurl_pin.cpp`: sin cambios; actualizar su comentario de cabecera ("ni
+  CloudRedirect ni lumalinux enlazan libcurl") cuando se toque por otra cosa.
+
+Próximo barrido desde `00969da` / v2.6.6 y moon `19da055`; vigilar si llega
+el yield hook en Linux o la exclusión por app.
