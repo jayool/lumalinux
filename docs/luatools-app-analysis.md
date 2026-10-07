@@ -336,7 +336,12 @@ nuestras, para ver dónde coinciden y dónde no.
    Hubcap. Antes, medir qué gids sirve. Intento 2026-10-07: sin sesión de
    lua.tools en el codespace (401); los dos gids de Brotato están también en
    luastools, así que el caso de prueba tiene que ser un gid que luastools
-   no tenga. Pendiente de un login.
+   no tenga. **Descartado 2026-10-07 por el usuario**: exige login en
+   lua.tools, y eso le quita el interés. Dato del Discord de LuaTools el
+   mismo día: a los usuarios Ryuu les da 404 y recomiendan `Luie`, que solo
+   se sirve a través de lua.tools. Si Ryuu falla también para LumaDeck, la
+   única opción con Luie sería lua.tools como fuente de zips para quien ya
+   tenga login (los usuarios de fixes de Denuvo). Pendiente de medir Ryuu.
 3. **Referencia**: si se desaparca el parser de `appinfo.vdf`, partir del
    layout y los dos detalles de `AppInfoFile.cs` (§4b). Solo lectura.
 4. Nada en lumalinux.
