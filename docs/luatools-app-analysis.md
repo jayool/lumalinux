@@ -347,7 +347,18 @@ nuestras, para ver dónde coinciden y dónde no.
    mismo día: a los usuarios Ryuu les da 404 y recomiendan `Luie`, que solo
    se sirve a través de lua.tools. Si Ryuu falla también para LumaDeck, la
    única opción con Luie sería lua.tools como fuente de zips para quien ya
-   tenga login (los usuarios de fixes de Denuvo). Pendiente de medir Ryuu.
+   tenga login (los usuarios de fixes de Denuvo). **Ryuu medido 2026-10-07
+   18:25 (codespace)**: con una sesión de Discord real, `/download?appid=
+   1942280&file_type=manifest` responde `200 application/zip` (42 KB, lua +
+   manifests de Brotato); el 404 del Discord no se reproduce. El 403 de la
+   mañana era la cookie anónima que Ryuu pone antes del login (LumaDeck la
+   capturaba tal cual; arreglado en `ryuu_cookie.py`, que ahora solo guarda
+   la sesión cuya home lleva `data-user-id="<id Discord>"`, marcador
+   confirmado en la página logueada). Segundo fallo encontrado en la misma
+   prueba: la comprobación hacía `urlopen` sin contexto SSL y el Python de
+   Decky no tiene CA bundle (`CERTIFICATE_VERIFY_FAILED`); ahora usa el
+   contexto de `http_client` (certifi). Ryuu sigue siendo la fuente de zips
+   de LumaDeck; Luie/lua.tools no hace falta.
 3. **Referencia**: si se desaparca el parser de `appinfo.vdf`, partir del
    layout y los dos detalles de `AppInfoFile.cs` (§4b). Solo lectura.
 4. Nada en lumalinux.
