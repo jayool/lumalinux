@@ -143,10 +143,16 @@ Nuevo en la app, que LumaDeck no usa:
   con la clave del usuario**, sin pasar por lua.tools. Lo propio de lua.tools
   son los fixes de Denuvo, el generador de luas de DLC y el manifest suelto.
   **Medido 2026-10-07** (`check_apis?appid=1942280`, UA `secretgoonpoon`):
-  `{"Luie":"available","Ryuu":"available"}`. **`Luie` es una fuente nueva**
-  que no existe en la tabla de la app 1.3.2 (dada de alta en el backend
-  después del 25-sep; qué hay detrás no se ve desde fuera), y para ese juego
-  no aparecen TwentyTwo Cloud, Sushi ni Skyflare. Para LumaDeck, que ya va
+  `{"Luie":"available","Ryuu":"available"}`. **`Luie` es el generador de luas
+  propio de lua.tools**, la "fuente oficial": lo dice un test de la app
+  (`LuaVaultTests.cs`: *"re-adding a game from a different generator (Luie vs
+  Hubcap)"*), el port de moon lo define como `managed` con URL vacía,
+  bloqueado hasta el login y colocado justo debajo de Hubcap (`668b493`,
+  27-ago), Aether lo prefiere el primero, y `steamflipper-analysis.md` §10.1
+  ya lo listaba el 8-sep (corrección: en la primera versión de esta nota lo
+  di por nuevo). Solo se sirve por `lua.tools/api/manifest/download?source=
+  Luie` con sesión; cómo genera no se ve desde fuera. Para ese juego no
+  aparecen TwentyTwo Cloud, Sushi ni Skyflare. Para LumaDeck, que ya va
   directo a Hubcap (clave) y a Ryuu (cookie), una entrada lua.tools en
   `api.json` solo añadiría `Luie`/`Skyflare` y un camino alternativo a Ryuu.
   Poco valor; apuntado, no propuesto.
