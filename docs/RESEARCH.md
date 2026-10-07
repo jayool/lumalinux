@@ -2245,6 +2245,10 @@ repo tag → luastools → Hubcap zip (current build only, once a day per app).
 > The single manifest is the only online source left for an OLD build, which
 > is what moving a pin needs for the installed build's manifests. This was
 > F1 of `assella-analysis.md` §8, whose trigger ("P-ToyStore 404") has fired.
+> Measured 2026-10-07 10:54 (codespace, user key): `GET /generate/manifest?
+> depot_id=1942280&manifest_id=2046527723717816735` → 200,
+> `application/octet-stream`, 271 bytes, byte-identical to the file Steam had
+> in depotcache/.
 
 > **2026-09-14, measured:** the "Free Providers" chain that SteaMidra's live
 > fork (`drappula/SFF`) added on 09-10 brings no live source. Its key DB
