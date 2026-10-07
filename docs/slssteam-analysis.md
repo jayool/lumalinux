@@ -4234,3 +4234,83 @@ sin stable nuevo no hay hash que validar, y las betas no entran por decisión
 **Accionable: uno, pequeño.** `slssteam_schema.py` → `res/config.yaml` como
 fuente del esquema (arriba). El resto de la coexistencia (§5) no cambia. El
 próximo barrido arranca en `dev@1c2cc92` y `main@71021ad`.
+
+### 7.14 Ventana 2026-09-28 → 2026-10-07 — `dev` entra en `main`, dos releases con la versión sin subir, y un endpoint con fecha de caducidad
+
+*Barrido el 2026-10-07 sobre el clon de `AceSLS/SLSsteam` (`main`, `dev`, tags)
+y el tracker de moon (`swwayps/steam-monitor`). Las issues no: la página pública
+devuelve 403 hoy. `main`: `71021ad` → `049bbdd`; **`dev` se fusionó en `main`**,
+así que todo lo leído en §7.10–§7.13 (`faeaf9b` … `1c2cc92`) está publicado.
+Dos releases: **`20260930144343`** (tag en `39822da`, 28-sep) y
+**`20261001163836`** (`42568f0`, 1-oct; la que registra `.slssteam.version` en
+el codespace). `dev`: 11 commits después del merge, del 2 al 6 de octubre,
+todos de Ace, sin publicar. Leídos como diff completo.*
+
+#### 7.14.1 `main` desde `1c2cc92` (publicado)
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `779178c` (28-sep) | `IClientUser::GetSteamID` pasa a ser un VFT hook normal (índice `GetSteamID`) y deja de interceptarse por hash de función (`0xD6FC3200`) dentro de `hkSteamEngine_ProcessIPCFrame`; `g_currentSteamId` se captura en el hook; el SDK gana `IClientUser::getSteamId()`. Mensaje: "Thanks 3vil3vo for explaining what the hell is going on in this function". | No. Capa tickets/steamId, disjunta (§5). `ProcessIPCFrame` hace menos por frame. |
+| `39822da` (28-sep) | `Ticket::getEncryptedAppTicket` solo spoofea el steamId si `SmartTickets` incluye Denuvo (`k_ESmartTicketsDenuvo`). | No. Tickets. |
+| `42568f0` (1-oct) | `SLSAPI::parseCmd`: `strsplit(cmd, "\\|")`. Desde `2a538fd` (20-sep, `strsplit` por regex) el `"|"` era una alternancia vacía y **los comandos del pipe `/tmp/SLSsteam.API` no se partían**: la API estuvo rota en la release `20260930144343` y se arregló en `20261001163836`, al día siguiente; probablemente el motivo de esa segunda release. | No. LumaDeck no usa la API (§8 F3, "no aplica"). Confirma que la API se usa lo bastante poco como para salir rota en una release. |
+| `5774941`, `9c829a7` | PKGBUILDs. | No. |
+| `cd83d69`, `9e19510` (DeveloperMikey) | Nix: hash de commit en los logs, shebangs. | No. |
+| `e84bbb8` | Docker: `git` como dependencia (lo necesita `embed-version.sh`). | No. |
+| `049bbdd` (6-oct) | README: quita "ADS" de los créditos. Mensaje literal: *"They asked for collab, yet didn't add proper support. They also supposedly collect HWIDs of their users which is a huge nogo"*. | No. Contexto. |
+
+**Las dos releases llevan `res/version.txt = 20260903114323`.** No subieron la
+versión (`git show 20261001163836:res/version.txt`). Tres consecuencias, ninguna
+rompe nada:
+
+1. **SafeMode.** `verifySafeModeHash` busca `clientHashMap[VERSION]` con la
+   VERSION embebida, o sea la entrada `20260903114323` de `res/updates.yaml`
+   (`bc54101b…` del 2-sep, `237495b4…` del 3-sep). El fichero no ha cambiado
+   desde `71021ad` (sin clave nueva, y no hace falta). Nos da igual además:
+   LumaDeck pone `SafeMode: no` (`installer.py:164`).
+2. **`derive_version_floor` de LumaDeck**: el binario dice `20260903114323`, el
+   suelo se queda corto, que es el sentido permitido por diseño ("solo puede
+   subestimar"). El registro `.slssteam.version` lleva el tag de la
+   instalación (`20261001163836`), correcto.
+3. **Novedad útil**: con `ae5cbf1` publicado, `~/.SLSsteam.log` arranca con
+   `SLSsteam (main -> 42568f0) loading in <proceso>`: el commit exacto del
+   build instalado, cosa que `version.txt` ya no garantiza. LumaDeck ya lee ese
+   log (`paths._slssteam_log_path`). Candidato pequeño: identificar el build por
+   esa línea. Sin prisa.
+
+#### 7.14.2 `dev` después del merge (sin publicar)
+
+| commit | qué hace | nos afecta |
+|---|---|---|
+| `07dc57e`, `3d9ee15`, `4f3f2ef` (2-oct) | **Offsets de miembros por RTTI.** `MemHlp::searchOffsetByTypeName(obj, "15CUserAppManager")` recorre el objeto hasta 0x10000 bytes y devuelve el offset del primer puntero a un objeto cuyo vtable → typeinfo → nombre coincide (con comprobación de que vtable, typeinfo y nombre caen en segmentos legibles de un módulo cargado). Sustituye **tres patrones de bytes** (`CUser::m_OffsetUserAppManager`, `m_OffsetUserAppInfo`, `m_OffsetClientUser`, borrados de `patterns.cpp`) y el global `g_pClientCompat` (ahora `CUser::getClientCompat`). | No en código. **Es la técnica RTTI de lumalinux (§15) aplicada a offsets de miembros**: tres patrones menos en la cinta de correr de §7.7. Coste: lineal hasta 64 KB con `getTypeName` por offset; por eso `b92dd53` mide y loguea los ms. |
+| `51724f5` (3-oct) | Logros nativos: `getReviewUrl` pasa de `store.steampowered.com/appreviews/<app>?json=1…` a `api.steampowered.com/IUserReviewsService/GetAppReviews/v1/?appid=…&filter=1&languages[0]=all&review_type=0&purchase_type=1…`. Mensaje: *"Store endpoint gets deprecated on 2026.10.22"*. Lo que hace ese endpoint en SLSsteam: `getReviewersForGame` saca steamids de reseñadores recientes como "dueños" a los que pedir el schema de stats (`maxSchemaTries`). | **Sí, con fecha.** LumaDeck tiene desactivado su propio auto-gen de schema al instalar (`downloads.py`, "TEMP native-achievement test") para probar los logros nativos de SLSsteam. Si Valve retira el endpoint el 22-10 como dice Ace (no verificado por nosotros), la release instalada (`20261001163836`, **sin** este fix) deja de encontrar reseñadores y un juego nuevo se queda sin schema nativo hasta que Ace publique. El generador propio (`achievements.py`, Web API `GetSchemaForGame` con clave del usuario) no depende de reseñas y sigue funcionando a mano desde la página del juego. |
+| `71e3eb3` (2-oct) | `memhlp`: los "pattern found N times", "unable to find signature", "failed to disassemble" pasan de DEBUG a WARN/ERROR. | Casi no. Más líneas ERROR en `~/.SLSsteam.log` cuando se publique; revisar que `paths._slssteam_log_abort_cause` no las confunda con un abort. |
+| `b92dd53`, `f64b2ab`, `b10181d` | Tiempo de búsqueda en el log, `lm_segment_t{}` inicializado, `unused`. | No. |
+| `10b5cf1` (3-oct) | `__attribute__((hot))` en `hkSteamEngine_ProcessIPCFrame`. | No. |
+| `0f21f31`, `993f691` | Merges de `main`. | No. |
+
+#### 7.14.3 Hashes y tracker
+
+`res/updates.yaml` de upstream sin cambios (`main@71021ad` sigue siendo su
+último commit). Tracker de moon: dos betas de escritorio más, `1790534246` y
+`1790545198` (27-sep), y **nada desde el 27 de septiembre**: diez días sin
+build nuevo o tracker parado, no se puede distinguir desde aquí. Stable de
+escritorio y Deck sin cambio conocido (`bc54101b…`, 2-sep). `watch-steam.yml`
+nuestro sin novedad, coherente.
+
+#### 7.14.4 Balance y accionables
+
+- **Con fecha, 22-10: logros nativos.** Antes de ese día, decidir: reactivar el
+  auto-gen propio de LumaDeck al añadir (descomentar el bloque de
+  `downloads.py`) o esperar la release de Ace con `51724f5`. Si no se hace
+  nada, desde el 22-10 los juegos nuevos no tendrán schema hasta que el
+  usuario lo genere a mano o Ace publique.
+- **Pequeño, opcional**: build instalado por la línea `SLSsteam (main -> <hash>)`
+  del log, ahora que `version.txt` se queda atrás en las releases.
+- **Nada para lumalinux.** El hook nuevo (`GetSteamID` por VFT) y el resto están
+  en la capa de tickets/SDK; la tabla de coexistencia de §5 no cambia. Los
+  offsets por RTTI de `dev` van en la misma dirección que nuestro §15.
+- `slssteam_schema.py` ya lee `res/config.yaml` (el accionable de §7.13 está
+  hecho); `src/config_default.hpp` da 404 en `main` desde el merge, como se
+  previó.
+
+El próximo barrido arranca en `main@049bbdd` y `dev@993f691`.
