@@ -284,7 +284,8 @@ solo para las apps **nuevas** en el diff de su config (`146e28f`, ver
 `slssteam-analysis.md` §7.7.7); al quitar no emite nada, y el
 `LicensesUpdated_t` de lumalinux (que sí se emite: `- AppIdVec` ×5,
 `Reconcile: broadcast`) no hace que la interfaz suelte la entrada. Es la
-capa de SLSsteam; LumaDeck no tiene forma de forzar esa lista.
+capa de SLSsteam; LumaDeck no tiene forma de forzar esa lista. Al reiniciar
+Steam desaparece (medido).
 
 ### F. Compras el juego que tenías added
 
@@ -364,4 +365,4 @@ actualización de Darkest Dungeon desde el add.
 | 2026-10-07 07:36 | Add owned en juego instalado + verify desde la página | el verify planifica con la licencia y baja los DLC |
 | 2026-10-07 07:47 | Arranque con marca puesta, sin licencia, claves retiradas (uninstall "dormido" simulado) | `config changed: removed depots`, borra con la clave retirada: el fallback del uninstall es el siguiente arranque |
 | 2026-10-07 08:10 | Uninstall con el `erase` del vector (`4f8579c`) y verify después | `- AppIdVec` ×12, reconcile; verify: `4 target`, nada baja. "Your stuff" sigue hasta reiniciar |
-| 2026-10-07 09:59 | Uninstall added (Brotato) sin reiniciar | lumalinux: watcher, `- AppIdVec` ×5, `Reconcile: broadcast`; SLSsteam: "Config reloaded!" ×6 sin callback (solo lo emite para apps nuevas). Fuera: carpeta, `.acf`, lua, claves, AdditionalApps. Quedan: compatdata (sin marcar), shadercache (ahora se borra), archivo y zip propios (por diseño), librarycache (de Steam). El juego sigue en la biblioteca |
+| 2026-10-07 09:59 | Uninstall added (Brotato) sin reiniciar | lumalinux: watcher, `- AppIdVec` ×5, `Reconcile: broadcast`; SLSsteam: "Config reloaded!" ×6 sin callback (solo lo emite para apps nuevas). Fuera: carpeta, `.acf`, lua, claves, AdditionalApps. Quedan: compatdata (sin marcar), shadercache (ahora se borra), archivo y zip propios (por diseño), librarycache (de Steam). El juego sigue en la biblioteca; tras reiniciar Steam, desaparece |
