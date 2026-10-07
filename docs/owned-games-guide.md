@@ -113,9 +113,13 @@ cualquiera de los dos.
 clave a Steam cuando la pide, y mete los AppIDs en el vector de apps del
 paquete 0 del cliente, que es como el cliente ve "tengo licencia de esto".
 Al añadir una línea lo inyecta en caliente y dispara un *reconcile*
-(aviso de licencias cambiadas). Al quitar una línea **no quita nada del
-vector**: la licencia inyectada sigue viva hasta que Steam reconstruye el
-paquete 0, es decir, hasta reiniciar Steam. Hoy solo añade.
+(aviso de licencias cambiadas). Al quitar una línea, desde el 2026-10-07
+(`4f8579c`), **quita del vector** los ids que él mismo metió y lanza el
+mismo reconcile: el planificador de Steam deja de ver la licencia al
+momento (medido: un verify tras el uninstall ya no baja nada; antes volvía
+a bajar los DLC enteros). Lo que no se actualiza es la caché de propiedad
+de la interfaz: "Your stuff" sigue listando los DLC hasta reiniciar Steam.
+Cosmético.
 
 **`AdditionalApps` en `~/.config/SLSsteam/config.yaml`.** Las apps que
 SLSsteam declara como propiedad de la cuenta en el cliente (launch, "Your
@@ -209,7 +213,8 @@ corre por una licencia que no le llega del servidor:
   baja los DLC solos (12:20, `config changed: added depots`, 861 MB).
 
 Así que la regla es una: **los DLC se instalan la próxima vez que arranque
-Steam**. La tarjeta lo dice al terminar el add. Lo único que LumaDeck hace
+Steam**, o antes si el usuario verifica los archivos del juego desde su
+página (medido 07:36: el verify planifica con la licencia y los baja). La tarjeta lo dice al terminar el add. Lo único que LumaDeck hace
 además es marcar una vez la casilla de cada DLC (`SetDLCEnabled(true)`, sin
 esperar nada): si un uninstall anterior los dejó desmarcados
 (`DisabledDLC`), el plan de arranque los respetaría y no bajaría nada
@@ -262,9 +267,9 @@ Lo que queda después:
   Desaparece sola en el siguiente add owned (paso C.5) o si el usuario
   compra el DLC y lo marca. Para que no quedara ni eso, lumalinux tendría
   que quitar la licencia del vector en caliente; hoy no lo hace.
-- La licencia inyectada sigue en el cliente hasta reiniciar Steam ("Your
-  stuff" la muestra hasta entonces). No afecta a nada: no hay archivos ni
-  depots, y el juego, por SLSsteam, no verá el DLC porque no hay archivos.
+- "Your stuff" sigue listando los DLC hasta reiniciar Steam (caché de la
+  interfaz). El planificador ya no los ve como tuyos: un verify o marcar la
+  casilla no baja nada (medido 2026-10-07 08:10).
 
 ### E. Uninstall added (sin cambios)
 
@@ -345,3 +350,7 @@ actualización de Darkest Dungeon desde el add.
 | 2026-10-07 06:39 | Add owned en juego instalado, código final (licencia + `true` suelto) | marca limpia, Steam sin tocar nada |
 | 2026-10-07 06:42 | Reinicio de Steam | `config changed: added depots`, 861 MB a los pocos segundos del arranque |
 | 2026-10-07 06:45 | Uninstall owned, código final | `removed depots`, borrado con la clave retirada en 5 s, 4 depots |
+| 2026-10-07 07:20 | `true` tras un uninstall, sin reiniciar, vector append-only | Steam vuelve a bajar los DLC enteros (licencia rancia en el vector, manifests en depotcache, clave retirada) |
+| 2026-10-07 07:36 | Add owned en juego instalado + verify desde la página | el verify planifica con la licencia y baja los DLC |
+| 2026-10-07 07:47 | Arranque con marca puesta, sin licencia, claves retiradas (uninstall "dormido" simulado) | `config changed: removed depots`, borra con la clave retirada: el fallback del uninstall es el siguiente arranque |
+| 2026-10-07 08:10 | Uninstall con el `erase` del vector (`4f8579c`) y verify después | `- AppIdVec` ×12, reconcile; verify: `4 target`, nada baja. "Your stuff" sigue hasta reiniciar |
