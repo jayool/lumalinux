@@ -127,8 +127,12 @@ Nuevo en la app, que LumaDeck no usa:
   para más de 64 DLC). Si el cambio es real, en juegos con DLC o banda sonora
   esos tres devuelven vacío en silencio. Contradato nuestro: el 07-10 a las
   ~10:50 `appids=1942280` (Brotato, con DLC) respondió bajo `1942280`. Puede
-  depender del tipo de hijo o de la región (`cc`). **Hay que medirlo** con
-  los appids que ellos citan antes de tocar nada.
+  depender del tipo de hijo o de la región (`cc`). **Medido 2026-10-07
+  ~13:40 desde el codespace (red de España)**: `appids=500`, `730`,
+  `1091500` y `1942280` responden los cuatro bajo su propia clave, con
+  `data.steam_appid` igual al pedido. **No se reproduce.** Temporal, por
+  región, o ya revertido por Valve. Nada que cambiar; si algún día un juego
+  con DLC se queda sin nombre, sin avisos o con "No DLCs found", volver aquí.
 
 ### 4. Lo que no cambia
 
@@ -141,10 +145,8 @@ Nuevo en la app, que LumaDeck no usa:
 
 ### 5. Accionables
 
-1. **Medir el formato de `appdetails`** con los appids del commit (500, 730,
-   1091500) y los nuestros. Si se reproduce, LumaDeck necesita el mismo ancla
-   (`data.steam_appid`) en sus tres parsers; ~15 líneas y test. Hasta medir,
-   nada.
+1. ~~Medir el formato de `appdetails`~~ Medido, no se reproduce (§3). Sin
+   acción; el ancla por `data.steam_appid` queda como receta si reaparece.
 2. **Candidato**: `givemethemanifestpunk` como eslabón de `manifests.py`
    para usuarios con sesión de lua.tools, entre luastools y el suelto de
    Hubcap. Antes, medir qué gids sirve.
