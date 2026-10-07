@@ -131,6 +131,21 @@ Nuevo en la app, que LumaDeck no usa:
   07-10, y con otra cuota. Sin medir: no sabemos si sirve cualquier gid o solo
   lo que tengan archivado (probablemente el mismo archivo que
   `manifest.luastools.xyz`, que la app no usa por su nombre público).
+- **lua.tools es un frontal de fuentes, no un generador de luas** [read:
+  `SourceMeta`, `DownloadViewModel`, `HttpServerService`]. La lista de fuentes
+  disponibles para un juego la da el backend de Ryuu (`check_apis`, solo
+  User-Agent) con cinco nombres: `Ryuu`, `TwentyTwo Cloud`, `Sushi`,
+  `Skyflare` y `Sadie (Morrenus)` = Hubcap. Al elegir una, la app llama a
+  `lua.tools/api/manifest/download?appid=&source=<nombre>` con la cuenta de
+  lua.tools, y lua.tools va a por el zip a esa fuente: eso es lo que consume
+  los 25 al día. Excepción: como *"the manifest backend no longer reports the
+  Hubcap/Morrenus source"*, la app sintetiza esa fila y baja Hubcap **directo
+  con la clave del usuario**, sin pasar por lua.tools. Lo propio de lua.tools
+  son los fixes de Denuvo, el generador de luas de DLC y el manifest suelto.
+  Para LumaDeck, que ya va directo a Hubcap (clave) y a Ryuu (cookie), una
+  entrada lua.tools en `api.json` solo añadiría `Skyflare` (fuente sin
+  identificar) y un camino alternativo a Ryuu. Poco valor; apuntado, no
+  propuesto.
 - `GET /api/me/supporter-status`: si el usuario es "supporter". Cosmético.
 - `/api/dlc/info` y `/api/dlc/generate` (DLC unlock lua generado por lua.tools)
   y `/api/manifest/download?appid=&source=` (zip de juego por fuente nombrada)
