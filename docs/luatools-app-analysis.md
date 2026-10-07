@@ -220,8 +220,11 @@ Nuevo en la app, que LumaDeck no usa:
   ~13:40 desde el codespace (red de España)**: `appids=500`, `730`,
   `1091500` y `1942280` responden los cuatro bajo su propia clave, con
   `data.steam_appid` igual al pedido. **No se reproduce.** Temporal, por
-  región, o ya revertido por Valve. Nada que cambiar; si algún día un juego
-  con DLC se queda sin nombre, sin avisos o con "No DLCs found", volver aquí.
+  región, o ya revertido por Valve. Dato del Discord de LuaTools, 25-sep 9:11
+  (ifuckingHATErafie): *"Steam updated the appdetails api so will need to
+  push an app update"*: fue real ese día y forzó la 1.3.2. Nada que cambiar
+  hoy; si algún día un juego con DLC se queda sin nombre, sin avisos o con
+  "No DLCs found", volver aquí.
 
 ### 4. Lo que no cambia
 
