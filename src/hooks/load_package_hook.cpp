@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <set>
 #include <vector>
 
 namespace {
@@ -75,7 +76,8 @@ namespace Hooks::LoadPackage {
 // if something was actually written.
 static bool AppendIdsToVec(CUtlVector<uint32_t>* vec,
                            const std::vector<uint32_t>& ids,
-                           const char* source, const char* label) {
+                           const char* source, const char* label,
+                           std::vector<uint32_t>* added = nullptr) {
     if (!vec || ids.empty()) return false;
 
     uint32_t oldSize = vec->m_Size;
@@ -166,7 +168,16 @@ static bool AppendIdsToVec(CUtlVector<uint32_t>* vec,
     for (uint32_t a : toAdd) {
         Log::Info("LoadPackage[%s]:   + %s %u", source, label, a);
     }
+    if (added) *added = toAdd;
     return true;
+}
+
+// The ids lumalinux itself put into PackageId=0's AppIdVec (and not the ones
+// Steam had there already): the only ids RetireDepots may ever take out.
+// Only the finder thread touches this, like the vector itself.
+static std::set<uint32_t>& Injected() {
+    static std::set<uint32_t> instance;
+    return instance;
 }
 
 bool InjectDepots(void* pInfo, const char* source) {
@@ -179,7 +190,64 @@ bool InjectDepots(void* pInfo, const char* source) {
     // reads it (RESEARCH.md §"PackageId 0"). (The DepotIdVec experiment was
     // removed: it did nothing without a license reconcile, which is the actual
     // no-restart mechanism — see the reconcile path.)
-    return AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec");
+    std::vector<uint32_t> added;
+    bool wrote = AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec", &added);
+    for (uint32_t a : added) Injected().insert(a);
+    return wrote;
+}
+
+bool RetireDepots(void* pInfo, const char* source) {
+    if (!pInfo) return false;
+    auto& injected = Injected();
+    if (injected.empty()) return false;
+
+    // What keys.txt still carries. Anything we injected that is gone from it
+    // (LumaDeck uninstalled the game, or retired an owned game's DLC) leaves
+    // the vector now, instead of at Steam's next start.
+    std::set<uint32_t> current;
+    for (uint32_t d : KeyStore::GetAllDepotIds()) current.insert(d);
+    std::vector<uint32_t> stale;
+    for (uint32_t a : injected) {
+        if (!current.count(a)) stale.push_back(a);
+    }
+    if (stale.empty()) return false;
+
+    auto* vec = AppIdVec(pInfo);
+    uint32_t oldSize = vec ? vec->m_Size : 0;
+    if (!vec || !vec->m_pMemory || oldSize > 4096) {
+        Log::Warn("LoadPackage[%s]: AppIdVec unusable for retire (mem=%p size=%u) — skipping",
+                  source, vec ? (void*)vec->m_pMemory : nullptr, oldSize);
+        return false;
+    }
+
+    // Compact in place: keep every entry that is not stale. Same single
+    // writer as the append; the size shrinks only after the kept entries are
+    // in place, so a concurrent reader never sees a hole.
+    uint32_t w = 0;
+    std::vector<uint32_t> removed;
+    for (uint32_t r = 0; r < oldSize; ++r) {
+        uint32_t a = vec->m_pMemory[r];
+        bool isStale = false;
+        for (uint32_t sId : stale) { if (sId == a) { isStale = true; break; } }
+        if (isStale) { removed.push_back(a); continue; }
+        if (w != r) vec->m_pMemory[w] = a;
+        ++w;
+    }
+    vec->m_Size = w;
+    // Stale ids that were not in the vector any more (Steam rebuilt the
+    // package since) are simply forgotten too.
+    for (uint32_t sId : stale) injected.erase(sId);
+    if (removed.empty()) {
+        Log::Debug("LoadPackage[%s]: %zu retired id(s) were already gone from AppIdVec",
+                   source, stale.size());
+        return false;
+    }
+    Log::Info("LoadPackage[%s]: REMOVED %zu id(s) from PackageId=0 AppIdVec (size %u -> %u)",
+              source, removed.size(), oldSize, w);
+    for (uint32_t a : removed) {
+        Log::Info("LoadPackage[%s]:   - AppIdVec %u", source, a);
+    }
+    return true;
 }
 
 bool Install() {

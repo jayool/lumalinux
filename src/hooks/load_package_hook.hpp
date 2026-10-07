@@ -74,4 +74,15 @@ inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
 // flag needed.
 bool InjectDepots(void* pInfo, const char* source);
 
+// The other direction: take out of AppIdVec the ids lumalinux injected that
+// are no longer in keys.txt (the game was uninstalled, or an owned game's DLC
+// keys were retired). Only ids this process put there are ever removed —
+// Steam's own package-0 entries are never touched. Without this the client
+// kept believing it owned the DLC until its next start (measured 2026-10-07
+// 07:20: a re-tick after an uninstall re-downloaded them). The finder calls
+// it before InjectDepots on every pass; the keys.txt watcher already arms
+// the reconcile for the removal, so Steam re-reads ownership right after.
+// Returns true if anything was removed.
+bool RetireDepots(void* pInfo, const char* source);
+
 } // namespace Hooks::LoadPackage

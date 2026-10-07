@@ -802,7 +802,10 @@ void Run() {
                     // finder is the SOLE injector (the LoadPackage hook no longer
                     // injects), so only this one thread mutates AppIdVec — no
                     // cross-thread race, no lock needed.
-                    if (inject) Hooks::LoadPackage::InjectDepots(pkg, "finder");
+                    if (inject) {
+                        Hooks::LoadPackage::RetireDepots(pkg, "finder");
+                        Hooks::LoadPackage::InjectDepots(pkg, "finder");
+                    }
 
                     // no-restart experiment: if a game was just added (keys.txt
                     // changed), fire the license reconcile HERE — on this thread,
