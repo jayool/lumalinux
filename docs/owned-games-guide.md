@@ -303,14 +303,20 @@ la inyección en memoria de lumalinux (medido 06-10), y si no se puede leer
 vale "sin licencia", el camino de siempre.
 
 Lo que queda puesto y no hace daño: el appid en AdditionalApps (SLSsteam lo
-reescribe con los mismos valores) y las claves de los depots base en
-keys.txt (la misma clave que ya tiene Steam). Lo que sí muerde, pendiente
-("limpieza de F"): esas claves hacen que la pasada local, en modo "down"
-(providers caídos), pinee los depots base de un juego ya legítimo mientras
-dure la caída. La limpieza sería: al detectar licencia real sin registro,
-retirar las claves de los depots base, su pin y sus líneas del lua, y sacar
-el base de AdditionalApps. Sin medir hasta que alguien compre un juego que
-tenía added.
+reescribe con los mismos valores), las claves de los depots base en
+keys.txt (la misma clave que ya tiene Steam) y el lua. Se limpian en el
+uninstall, que ya va por el camino owned.
+
+Lo que sí mordía, las claves en keys.txt: los dos sitios que pinean
+("todo depot con clave") habrían pineado los depots base de un juego ya
+legítimo en modo "down". Resuelto sin tocar ficheros: la pasada de red
+guarda en pins.json de qué app es cada depot (`depot_apps`, del appinfo de
+steamcmd.net), y `ensure_pinned` salta todo depot cuya app tenga licencia
+real y libera el pin que ya tuviera, dejando pineado lo nuestro. Vale igual
+para un DLC comprado (flujo G): su depot apunta al appid del DLC. Un depot
+que el mapa no conoce cuenta como del base. Si se pierde la licencia
+(reembolso), el depot vuelve a ser nuestro y se pinea otra vez. Sin medir
+con una compra real; cubierto por tests con la licencia simulada.
 
 ### G. Compras un DLC que tenías added (juego owned)
 
