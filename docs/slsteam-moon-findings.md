@@ -1991,3 +1991,72 @@ actual, así que no se puede confirmar.
 El próximo barrido arranca en los mismos refs del delta anterior
 (`slsteam-moon`, `luatools-moon`, `lumen`, `cloudredirect-moon`, `jsdelivr`)
 y `58c784a` (`steam-monitor`, sin cambio).
+
+## Delta — 2026-10-07 (desde el delta del 2026-10-01)
+
+*Barrido el 2026-10-07 sobre los clones. `slsteam-moon`: un commit nuevo
+(`f50f28e`, 29-sep), leído como diff. `beta` sigue en `62767b3` (4-sep),
+`millennium` en `499b50e` (22-jul). Satélites: `luatools-moon` un merge
+(`2c739b5`, 28-sep), `jsdelivr` tres commits de mantenimiento, `lumen`
+(`52475c3`), `cloudredirect-moon` (`19da055`) y `steam-monitor` (`58c784a`)
+sin cambio. Issues y releases siguen sin poder leerse desde aquí (GitHub da
+403 a la página pública).*
+
+### D29 — `f50f28e`: revierte D26, el "gate de app activa" vuelve a los checks de DLC
+
+El 22-sep (`43f5b6d`, D26) moon quitó de `DLC::shouldUnlockDlc` la condición
+`getAppId() != 0` para que la biblioteca y la tienda, que hablan por el pipe
+del cliente (sin app activa), supieran que un DLC gestionado es "tuyo" sin
+reiniciar: el síntoma era que un juego añadido con Steam abierto listaba sus
+DLC como no poseídos hasta el siguiente arranque. Siete días después lo
+revierten entero (20 líneas de `dlc.cpp`, 17 del test `test_dlc_scope.cpp`):
+`if (!g_pClientUtils || !g_pClientUtils->getAppId()) return false;` otra
+vez, y el test pasa a afirmar *"no DLC is unlocked outside an active app
+context"*. Motivo, literal: *"The runtime package refresh already surfaces
+DLC for games added while Steam runs; answering on the client pipe only
+duplicated it and logged every managed DLC at login."*
+
+Lectura: lo que hace visible el DLC de un juego añadido en caliente no es el
+hook de DLC sino **su refresco del paquete en runtime** (su inyección de
+licencias más la notificación, el equivalente de nuestro paquete 0 +
+`LicensesUpdated_t`), y la respuesta en el pipe del cliente solo duplicaba y
+llenaba el log con cada DLC gestionado en cada login. Coincide con lo que
+medimos el 07-10 (owned-games-guide.md, 08:10 y 09:59): la inyección más el
+reconcile hacen **aparecer** lo añadido sin reiniciar; lo que no hace ninguno
+de los dos es **retirar** de la interfaz lo quitado hasta reiniciar. Moon no
+dice nada de ese sentido. Upstream (AceSLS `main@049bbdd`, §7.14 de
+`slssteam-analysis.md`) mantiene el gate de app activa desde siempre; moon
+vuelve a la misma forma por otro motivo. **Sin acción**: no es nuestra capa.
+
+### Satélites
+
+- **`jsdelivr`** (`5c0442a`, `b0ea719`, 29-sep; `7ca1854`, 1-oct keepalive):
+  el asset `slsteam-moon-linux-2.9-lumen.zip` se **reemplazó** por otro de
+  5.021.186 bytes (antes 5.021.178) con nuevo sha256, bajo el mismo nombre
+  de versión 2.9; el tag `v2.9` sigue en `668a646` (19-sep) y `f50f28e` es
+  posterior. [inferred] el zip "2.9" del espejo lleva el revert sin subir la
+  versión; quien instale "2.9" hoy no lleva lo mismo que quien la instaló el
+  19-sep. Para nosotros nada (no instalamos moon), pero es la razón por la que
+  nuestro `slssteam_version.py` no se fía de un nombre de versión.
+- **`luatools-moon`** (`2c739b5`, PR #14 de yofukashino): `install.sh` y
+  `uninstall.sh` ganan traducciones, soporte de desinstalación,
+  `--keep-millennium` (no borra la config de Millennium) y variables de
+  entorno `LUATOOLS_MOON_NOPLUGIN`, `_NOLAUNCH`, `_KEEP_MILLENNIUM`,
+  `_SLS_CHANNEL`, `_PLUGIN_CHANNEL`, `_LUMEN_CHANNEL` (canal stable/beta por
+  componente). Instalador, no runtime. Nada.
+- **`lumen`, `cloudredirect-moon`, `steam-monitor`**: sin commits. El tracker
+  lleva diez días sin build nuevo de Steam, igual que el 07-10 en
+  `slssteam-analysis.md` §7.14.3.
+
+### Balance del delta
+
+| # | Qué | Acción | Estado |
+|---|---|---|---|
+| 1 | D26 revertido (`f50f28e`) | — | Leído; confirma que es el refresco de paquete, no el hook de DLC, lo que enseña DLC en caliente |
+| 2 | Asset 2.9 reemplazado en el espejo sin cambiar de versión | — | Anotado |
+| 3 | Issues / releases de moon | Pendiente | Siguen sin leerse (403) |
+
+El próximo barrido arranca en `f50f28e` (`slsteam-moon`), `62767b3` (`beta`),
+`499b50e` (`millennium`), `2c739b5` (`luatools-moon`), `52475c3` (`lumen`),
+`19da055` (`cloudredirect-moon`), `7ca1854` (`jsdelivr`) y `58c784a`
+(`steam-monitor`).
