@@ -293,12 +293,24 @@ Steam: nada cambia en la instalación. El `.acf` y los depots son los
 mismos. En la siguiente actualización Steam baja la build real con sus
 claves reales, salvo que haya pin.
 
-LumaDeck: hoy no se entera. Sigue tratándolo como added: lo actualiza por
-zips y, si gmrc.json está en "down", le pone pin de manifests por SLSsteam,
-que congela un juego ya legítimo. Pendiente ("added → owned"): detectar en
-packageinfo que un juego gestionado ya tiene licencia y convertirlo: base
-fuera de AdditionalApps, claves y pins de depots base fuera, DLC se quedan
-como added, `owned: true`. La instalación no se toca.
+LumaDeck: `is_owned` es una pregunta viva desde el 07-10: el registro de
+pins.json O una licencia real en packageinfo.vdf. Así que en cuanto Steam
+tiene la licencia, el juego cuenta como owned sin convertir nada: el
+uninstall deja la carpeta y el .acf en paz (antes los borraba), la pasada de
+red solo mira los DLC sin licencia, y Fix Update / versiones / reparar .acf
+lo rechazan como "es tuyo". packageinfo.vdf es el fichero de Steam, inmune a
+la inyección en memoria de lumalinux (medido 06-10), y si no se puede leer
+vale "sin licencia", el camino de siempre.
+
+Lo que queda puesto y no hace daño: el appid en AdditionalApps (SLSsteam lo
+reescribe con los mismos valores) y las claves de los depots base en
+keys.txt (la misma clave que ya tiene Steam). Lo que sí muerde, pendiente
+("limpieza de F"): esas claves hacen que la pasada local, en modo "down"
+(providers caídos), pinee los depots base de un juego ya legítimo mientras
+dure la caída. La limpieza sería: al detectar licencia real sin registro,
+retirar las claves de los depots base, su pin y sus líneas del lua, y sacar
+el base de AdditionalApps. Sin medir hasta que alguien compre un juego que
+tenía added.
 
 ### G. Compras un DLC que tenías added (juego owned)
 
