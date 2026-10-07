@@ -2235,9 +2235,16 @@ build-pinned probes, off by default; nothing of it is in main.
 - LuaTools version "manifests" are bare luas (keys + `setManifestid`), no
   `.manifest` files.
 
-LumaDeck's `manifests.py` chains depotcache → its own archive → repo branch →
-repo tag → Hubcap (current build only, once a day per app); `pins.py` keeps
-every managed game pinned and moves the pin when a hub has the new build.
+LumaDeck's `manifests.py` chained depotcache → its own archive → repo branch →
+repo tag → luastools → Hubcap zip (current build only, once a day per app).
+
+> **2026-10-07:** `P-ToyStore/SteamManifestCache_Pro` is gone (GitHub API 404
+> for the repo). Removed from the chain, which is now depotcache → own archive
+> → luastools → Hubcap `/generate/manifest` (one manifest, any gid, the
+> `single` quota of 1,500/day, one attempt per depot+gid per day) → Hubcap zip.
+> The single manifest is the only online source left for an OLD build, which
+> is what moving a pin needs for the installed build's manifests. This was
+> F1 of `assella-analysis.md` §8, whose trigger ("P-ToyStore 404") has fired.
 
 > **2026-09-14, measured:** the "Free Providers" chain that SteaMidra's live
 > fork (`drappula/SFF`) added on 09-10 brings no live source. Its key DB
