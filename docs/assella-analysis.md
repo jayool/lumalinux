@@ -1719,7 +1719,7 @@ Cómo cubre LumaDeck la reinstalación (`pins.py:1-64`, `_apply_model`
   on uninstall, after commits and on re-plans", `pins.py:45-46`). Steam
   planifica contra esos gids y no pide código.
 
-Medido en septiembre en este mismo codespace (`docs/update-testing.md`):
+Medido en septiembre en este mismo codespace (`docs/design/update-testing.md`):
 
 - **T1** (15-sep): instalar desde Steam sin ningún manifest local → código por
   manifestdex, `CDN accepted`, instalado.
@@ -1798,7 +1798,7 @@ revisaron (fuera de interés); Integrations es sólo Hubcap.*
   `add_game_dlcs` sólo escribe `DlcData` con más de 64 DLC
   (`slssteam_ops.py:564`, llamado en `downloads.py:1308`): desbloquea licencias,
   no baja contenido. [inferred] Si añadir un juego comprado hace que Steam baje
-  los depots de DLC está **sin probar**; la V5 de `update-testing.md` mide otro
+  los depots de DLC está **sin probar**; la V5 de `design/update-testing.md` mide otro
   caso (DLC nuevo de un juego añadido).
 - **Workshop.** ASSella: `/generate/workshopmanifest/<id>` en Hubcap (500/día,
   §5.3), DepotDownloader `-ugc`, y `appworkshop_<appid>.acf` escrito a mano
@@ -2088,7 +2088,7 @@ mensaje de commit.*
 
 Nuevo documento en el repo, `depotmapping.md` (268 líneas, "Smart Depot &
 Decryption Key Mapping Specification"): el mismo problema que resolvimos
-en RESEARCH §21 y en `owned-games-guide.md`, planteado igual (los depots base
+en RESEARCH §21 y en `nosotros.md`, planteado igual (los depots base
 no declaran `dlcappid`; algunos DLC comparten id con su depot; "license-only
 DLCs" sin depot que van a `AdditionalApps` y a nada más; las claves van por
 depot, no por app). Su solución es un "pipeline heurístico de 7 niveles"

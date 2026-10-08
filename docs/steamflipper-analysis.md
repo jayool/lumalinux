@@ -549,7 +549,7 @@ already worth the section.
 
 ## §4 Gate-by-gate
 
-The spine is `method.md` §1. The finding that governs the whole section is that
+The spine is `nosotros.md` §1. The finding that governs the whole section is that
 **most of SteamFlipper's hooks do not resolve on Linux**, so the code you read is
 not the code that runs.
 
@@ -650,7 +650,7 @@ execution is back in scope.
 
 ### §4.3 Gate 6 is the one that matters, and they know it
 
-`method.md` §1 is explicit that gate 6 is the only gate that cannot be faked
+`nosotros.md` §1 is explicit that gate 6 is the only gate that cannot be faked
 locally — the request code is validated server-side by Valve. SteamFlipper has a
 complete, working implementation of it (`ManifestClient` + the NetPacket
 interception, same three providers: `opensteamtool` → `wudrm` → `steamrun`), and
@@ -802,7 +802,7 @@ settle. Everything below is from source.
 ### §5.1 Both projects copied the same idea, in opposite directions
 
 Worth stating before any comparison, because it makes the section awkward to
-write in our favour: `docs/rva-feed-design.md` opens by naming its prior art —
+write in our favour: `docs/design/rva-feed-design.md` opens by naming its prior art —
 *"Modeled on OpenSteamTool's `PatternLoader` (RVA-first, sig fallback) and
 OpenSteam001/steam-monitor's per-DLL-hash TOML feed"* [read]. Our RVA feed **is**
 an adaptation of the mechanism SteamFlipper inherited by descent.
@@ -881,7 +881,7 @@ hashes, so on Linux those five requests always 404 (§4.1).
 Ours ships the addresses as data. `res/rvas/<sha256>.yaml` is fetched at runtime
 over the same path as `res/updates.yaml`, with a `~/.cache/lumalinux` fallback for
 offline, so **merging a PR propagates to every Deck on next boot with no release
-and no user action** [read: `docs/rva-feed-design.md`, `src/rva_feed.cpp`,
+and no user action** [read: `docs/design/rva-feed-design.md`, `src/rva_feed.cpp`,
 `docs/maintenance.md` §A.1]. And that PR is opened by a bot: `watch-steam.yml`
 runs daily, detects a new Steam client, fetches its 32-bit `steamclient.so`, and
 branches on `check_patterns.py`'s exit code — clean → open the hash-bump PR;
@@ -917,7 +917,7 @@ majority case we need no human and no new data at all while they need both.
 
 ### §5.6 Where they are not wrong, correcting an implication in our own docs
 
-`docs/rva-feed-design.md` says our `xlate_vaddr` is *"the Linux-specific piece […]
+`docs/design/rva-feed-design.md` says our `xlate_vaddr` is *"the Linux-specific piece […]
 correct even when segments load at different biases (where OST's naive `base +
 rva` would be wrong)"*. Reading their Linux backend, that criticism **does not
 carry over to this port**: `DynamicLibrary` resolves the module through
@@ -1353,7 +1353,7 @@ must not be implemented before §5.9's experiment runs.
   was **not run** (execution is out of scope). Do not implement before it does.
 - **F4 — cross-check, `res/rvas/`.** Their pinned `ProcessPendingLicenseUpdates`
   and cache-owner displacement match ours exactly on the same build (§4.5). Worth
-  a line in `rva-feed-design.md` recording that an independent derivation agrees;
+  a line in `design/rva-feed-design.md` recording that an independent derivation agrees;
   it is the only external confirmation our feed has.
 - **F5 — documentation, `lumacore-findings.md` Finding 8.** That finding treats
   the hardened-Lua-VM threat model as LumaCore-specific and therefore not ours.
@@ -1422,12 +1422,12 @@ than *absent from upstream*.
   `src/OSTPlatform/Linux/.gitkeep` (the placeholder confirming upstream never
   implemented a Linux backend), and the counterparts of every file above.
 - Ours: `docs/bettersteamtools-findings.md` (the ruling corrected in §2.4),
-  `docs/method.md` (the six gates, §3's spine), `docs/maintenance.md` §A.2
+  `docs/nosotros.md` (the six gates, §3's spine), `docs/maintenance.md` §A.2
   (the derivation workflow §5 will compare against), `docs/RESEARCH.md`,
   `docs/slsdeck-analysis.md` (the template this document follows),
   `res/rvas/bc54101b….yaml` (the shared-build cross-check in §4.5–§4.6),
   `tools/derive_patterns.py`, `.github/workflows/watch-steam.yml`,
-  `docs/rva-feed-design.md`, `RESEARCH.md` §15 (RTTI resolution).
+  `docs/design/rva-feed-design.md`, `RESEARCH.md` §15 (RTTI resolution).
 
 ---
 

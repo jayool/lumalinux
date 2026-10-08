@@ -10,7 +10,7 @@ deployed and loaded through the **wrapper** at `~/.local/share/SLSsteam/path/ste
 (the model `setup.sh` installs, or LumaDeck's Quick Install). This replaces the old
 Headcrab-patched `steam.sh` model: `steam.sh` is left vanilla and injection comes
 from the wrapper (see the [README Installation](../README.md#installation) and
-[`decouple-headcrab-plan.md`](decouple-headcrab-plan.md)). Note `steamidra_lite.py`
+[`design/decouple-headcrab-plan.md`](design/decouple-headcrab-plan.md)). Note `steamidra_lite.py`
 below is about **installing a game** into that stack; it is independent of how the
 `.so`s are injected. Run every command with **Steam closed**.
 
@@ -18,7 +18,7 @@ below is about **installing a game** into that stack; it is independent of how t
 
 `python3 tools/steamidra_lite.py <appid>.zip` performs the six pieces SteaMidra
 Linux's `process_lua_full` does, plus a 7th lumalinux-specific ecosystem-interop
-step. The conceptual "why" of each is in [`method.md`](method.md) §3; this is the
+step. The conceptual "why" of each is in [`nosotros.md`](nosotros.md) §3; this is the
 operational "what".
 
 1. **Extracts `.manifest` files** into both `~/.local/share/Steam/depotcache/` and
@@ -89,7 +89,7 @@ written at add time any more (see step 7), so nothing backs it up either.
 Start Steam again and press **Install** on the game; it downloads natively, with
 progress shown in the Steam library.
 
-The **no-restart** behaviour (the license reconcile, method.md §8) does not apply
+The **no-restart** behaviour (the license reconcile, nosotros.md §2.2) does not apply
 to this flow, and this doc used to claim it did. The reconcile lives inside the
 injected `.so`: the `keys.txt` inotify watcher arms it and the package-0 finder
 fires it, both on threads inside a **running** Steam. With Steam closed — as every
@@ -111,7 +111,7 @@ default**, so the zip `--pin` no longer freezes anything on its own. The support
 freeze is `--pin-installed`, which writes SLSsteam `config.yaml` `ManifestIds`
 (see below); the zip `--pin` write only takes effect if you launch Steam with
 `LUMA_FORCE_BUILDDEP=1`. The tradeoffs, and how to move a pinned game to a new
-version, are in [`method.md`](method.md) §6.
+version, are in [`nosotros.md`](nosotros.md) §6.
 
 ## CLI reference
 

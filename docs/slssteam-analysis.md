@@ -639,7 +639,7 @@ puesto (`SLS-unblock: patched … -> and reg,0xFFFFFFFF`), al reiniciar Steam el
 juego pasó **solo** `Update Required → Update Queued → Update Running` y bajó el
 gid actual (`3512319404653808464`) sin tocar nada — justo lo que el bloqueo
 mataba. Coexistió con SLSsteam sin pisarse (hooks disjuntos, §5). Receta en
-`docs/update-testing.md`; detalle técnico del ancla y de los fail-safes en
+`docs/design/update-testing.md`; detalle técnico del ancla y de los fail-safes en
 `RESEARCH.md` §16.
 
 ### 7.2 Gap conocido de vanilla — CD-key legacy en added apps (visto vía moon `3acab45`)
@@ -859,7 +859,7 @@ Cambio arquitectónico **gordo** desde §7.4. Verificado en el fuente (`raw.gith
   eje de updates:
   - **`ManifestIds`**: descargar versiones viejas + **bloquear updates en juegos
     OWNED** (el `update-unblock` de §7.1 solo cubría unowned; esto cierra el hueco
-    de owned). Es el equivalente al `--pin` de moon (method.md §6).
+    de owned). Es el equivalente al `--pin` de moon (nosotros.md §2.5).
   - **`DepotBlacklist`**: bloquear que Steam baje ciertos depots (arregla p.ej. el
     download de Saints Row IV en Proton).
   - **Rework de `AppIds`**: ahora tiene en cuenta el **parent AppId** → puedes
@@ -3694,7 +3694,7 @@ Y una lectura de rebote sobre nosotros mismos: llevamos meses instalando un comp
 cuyo efecto secundario nadie había caracterizado. No lo escribió Ace en ningún sitio
 hasta que lo rompió — pero el punto es que lo desplegamos sin saber qué hacía más allá
 de *"redirige libcurl"*, que es lo único que dice nuestro
-`decouple-headcrab-plan.md:84`.
+`design/decouple-headcrab-plan.md:84`.
 
 **b) Lo que nos llegará: un `.so` de 0 bytes, y nuestro `setup.sh` lo instalará. [BAJA, cosmético]**
 

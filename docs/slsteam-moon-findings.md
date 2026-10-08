@@ -300,7 +300,7 @@ installing.
 > used to say it didn't and probably didn't need to — that was for the
 > *login-time* injection (warm cache, no hang). It turned out to be exactly the
 > missing piece for a **different** goal: **no-restart Add Game**. Ported in
-> v0.16.15 as `src/license_reconcile.cpp` (see `docs/method.md` §"license
+> v0.16.15 as `src/license_reconcile.cpp` (see `docs/nosotros.md` §"license
 > reconcile" and RESEARCH §"no-restart"). **Promoted to default in v0.16.16**;
 > kill-switch `LUMA_NO_RECONCILE` forces the old restart-based behaviour.
 
@@ -391,7 +391,7 @@ layer, surgical patch-only-primary — with nothing meaningful to port.
 The **only** of the six gates Valve validates **server-side**. The request code
 can't be forged or derived locally — it has to be fetched from a third-party
 service backed by accounts that actually own the content. This is the
-load-bearing piece (method.md).
+load-bearing piece (nosotros.md).
 
 ## The source of the code is identical
 
@@ -952,7 +952,7 @@ refresco **al wrapper de Steam**, y `ef36141` lo hace no bloqueante.
 Comparación con nuestro feed de RVAs, sin acción:
 - **Firma**: ellos verifican Ed25519 con clave pública horneada en compilación;
   `rva_feed.cpp` es HTTPS sin firmar. Declinado deliberadamente y por buenas
-  razones — ver `rva-feed-design.md` §14 (la raíz de confianza sigue siendo
+  razones — ver `design/rva-feed-design.md` §14 (la raíz de confianza sigue siendo
   GitHub) y §15 (por qué los overrides por entorno se quitaron).
 - **Momento**: ellos refrescan desde el wrapper, antes de Steam; nosotros
   descargamos perezosamente en el primer `Resolve()`. **No es un problema**:
@@ -1004,7 +1004,7 @@ demás es su infraestructura, o cosas que ya resolvemos de otra forma.
 - lumalinux: `src/hooks/depot_key_hook.cpp`, `src/key_store.{hpp,cpp}`,
   `src/hooks/load_package_hook.cpp`, `src/hooks/package_zero_finder.cpp`,
   `src/hooks/depot_dependency_hook.cpp`, `src/hooks/gmrc_hook.cpp`,
-  `src/gmrc_store.hpp`, `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`
+  `src/gmrc_store.hpp`, `tools/steamidra_lite.py`; `docs/nosotros.md` (the six gates), `docs/RESEARCH.md`
   §2–3, §6.
 - moon source reviewed: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon)
   v2.6 (AGPL-3.0) (formerly Codeberg `unplausible/slsteam-moon`; the project moved to GitHub).
@@ -2021,7 +2021,7 @@ hook de DLC sino **su refresco del paquete en runtime** (su inyección de
 licencias más la notificación, el equivalente de nuestro paquete 0 +
 `LicensesUpdated_t`), y la respuesta en el pipe del cliente solo duplicaba y
 llenaba el log con cada DLC gestionado en cada login. Coincide con lo que
-medimos el 07-10 (owned-games-guide.md, 08:10 y 09:59): la inyección más el
+medimos el 07-10 (nosotros.md, 08:10 y 09:59): la inyección más el
 reconcile hacen **aparecer** lo añadido sin reiniciar; lo que no hace ninguno
 de los dos es **retirar** de la interfaz lo quitado hasta reiniciar. Moon no
 dice nada de ese sentido. Upstream (AceSLS `main@049bbdd`, §7.14 de

@@ -14,7 +14,7 @@ hallazgo es código.** Es la continuación de `lumacore-findings.md`, que congel
 
 | Lado | Componentes |
 |---|---|
-| **Nosotros** | lumalinux (`.so`) + SLSsteam stock + LumaDeck (Decky) + CloudRedirect, instalados por nuestro `setup.sh` con wrapper propio (desacoplado de Headcrab, `decouple-headcrab-plan.md` WS1.1/WS1.2) |
+| **Nosotros** | lumalinux (`.so`) + SLSsteam stock + LumaDeck (Decky) + CloudRedirect, instalados por nuestro `setup.sh` con wrapper propio (desacoplado de Headcrab, `design/decouple-headcrab-plan.md` WS1.1/WS1.2) |
 | **Ellos** | SteaMidra (PyQt6/QtWebEngine, AppImage) + DepotDownloaderMod o descargador nativo + SLSsteam stock vía Headcrab (editado) |
 
 - **Referencia congelada:** `github.com/drappula/SFF`, `main` @ `92d6813`
@@ -121,7 +121,7 @@ convirtió en botón el 07-09.
 `steam.sh` queda vanilla, la inyección va en un wrapper propio alcanzado por el
 `Exec` de los `.desktop` en escritorio y por un drop-in de systemd en
 `steam-launcher.service` en modo juego, con un fail-safe que arranca vanilla al
-tercer crash seguido (`decouple-headcrab-plan.md` WS1.1/WS1.2, validado en
+tercer crash seguido (`design/decouple-headcrab-plan.md` WS1.1/WS1.2, validado en
 Deck). El parche de `steam-jupiter` es innecesario para inyectar en modo juego.
 
 ### 3.3 Vectores de "brickeo", del más al menos probable
@@ -382,7 +382,7 @@ la segunda. Compatible con los mensajes de Discord sin poder atribuir ningún ca
 
 Cuatro. **Ninguno es código.**
 
-- **F1 — documentación, `decouple-headcrab-plan.md`.** Los vectores de §3.3
+- **F1 — documentación, `design/decouple-headcrab-plan.md`.** Los vectores de §3.3
   como lista de "lo que no hacemos y por qué": nunca `/usr`, nunca
   `steamos-readonly disable`, nunca SIGKILL a Steam, SafeMode como lo deje
   Headcrab, y el OOBE de `RESEARCH.md` §17.3 como el coste real de un crash en
@@ -455,7 +455,7 @@ ManifestHub` y `steamtools-games/ManifestHub3` (snapshot de julio 2025),
 `revobd` (inverificable). Ninguna ha cambiado de URL. Con los providers de
 códigos de vuelta, la diferencia práctica es ésta: para un juego actualizado
 después de agosto, nosotros instalamos el build actual sin manifest local
-(GMRC nativo, T1-T4 de `update-testing.md`); el fork instala el gid de julio
+(GMRC nativo, T1-T4 de `design/update-testing.md`); el fork instala el gid de julio
 de 2025 si está en el espejo, o pide una key.
 
 ### Balance del delta

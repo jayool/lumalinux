@@ -2448,7 +2448,7 @@ three paths. §3.5's assessment stands unchanged.
 about moon's version-locking. No ordering can be established from here.
 
 **[read]** What is on record: **both** projects drew on OpenSteamTool.
-`docs/rva-feed-design.md:5-6` states our own RVA feed is *"Modeled on
+`docs/design/rva-feed-design.md:5-6` states our own RVA feed is *"Modeled on
 OpenSteamTool's `PatternLoader` (RVA-first, sig fallback) and
 OpenSteam001/steam-monitor's per-DLL-hash TOML feed"*. Shared upstream influence
 is documented on our side and is not by itself evidence of anything about theirs.

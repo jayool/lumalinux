@@ -23,7 +23,7 @@ Acciones (orden = el flow de SteaMidra Linux en sff/ui.py:process_lua_full):
      POR DEFECTO (no-pin) escribe gid=size=0 en los content depots → BuildDep
      hace passthrough → el juego se AUTO-ACTUALIZA siguiendo a Valve. Con --pin
      escribe el gid del zip → congela esa versión (juegos modeados, etc.). Ver
-     docs/method.md §6.
+     docs/nosotros.md §2.5.
   4. Inyecta las DecryptionKeys en ~/.local/share/Steam/config/config.vdf
      (POR DEFECTO; --no-vdf para saltar). Lo hace editando el VDF como texto
      (sin depender del módulo 'vdf' externo — ver update_config_vdf).
@@ -432,7 +432,7 @@ def write_lumalinux_keys(keys_path, depot_keys, manifests, manifest_sizes, app_i
         - pin=False (DEFAULT) → manifest_gid=size=0 → BuildDep hace passthrough →
           Steam sigue el manifest actual de Valve y se auto-actualiza. La key se
           escribe igual (es por depot y estable entre versiones; descifra cualquier
-          versión). Ver docs/method.md §6.
+          versión). Ver docs/nosotros.md §2.5.
 
     - El AppID principal → entry LEGACY con key (la del .lua si la trae, o
       000...000 como dummy). Steam pregunta por la 'key del AppID' durante
@@ -1192,7 +1192,7 @@ def main():
                          "Por DEFECTO NO se pinea (gid=0): el juego sigue a Valve y se "
                          "auto-actualiza vía el cliente nativo. Usa --pin para congelarlo "
                          "en la versión del zip (p.ej. juegos modeados a una versión concreta). "
-                         "Ver docs/method.md §6.")
+                         "Ver docs/nosotros.md §2.5.")
     ap.add_argument("--dlc-of-owned", action="store_true",
                     help="el juego base YA es de la cuenta: registra en AdditionalApps solo los "
                          "AppIDs de DLC del .lua (líneas addappid(n) sin key) y deja el base fuera; "

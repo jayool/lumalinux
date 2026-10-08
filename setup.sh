@@ -6,7 +6,7 @@
 # injects it via a WRAPPER reached from the Steam launchers — never by patching
 # steam.sh. steam.sh is SHA-verified and re-extracted by Steam whenever its size
 # differs from the manifest, so a block there does not survive Steam self-updates
-# (see docs/slsteam-moon-findings.md M7, docs/decouple-headcrab-plan.md).
+# (see docs/slsteam-moon-findings.md M7, docs/design/decouple-headcrab-plan.md).
 #
 # What it does:
 #   1. Fetches SLSsteam.so + library-inject.so (AceSLS/SLSsteam release, .7z),

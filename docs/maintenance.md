@@ -418,7 +418,7 @@ then fail, it wasn't B — go to A.
 
 > In the old model this row meant "Headcrab regenerated `steam.sh` and dropped
 > lumalinux's `LD_PRELOAD` block". That can't happen now: `steam.sh` is left vanilla
-> and the wrapper is the injection point (see `docs/decouple-headcrab-plan.md`).
+> and the wrapper is the injection point (see `docs/design/decouple-headcrab-plan.md`).
 
 ---
 
@@ -603,7 +603,7 @@ and the rest of the plugin are unaffected.
 **Bypass while you work on it**: whichever half `check_patterns.py` resolved
 `UNIQUE` for this build, the RVA feed carries it and the runtime skips that
 scan — `finder.cache_global_disp` for the idiom, `finder.got_rva` for the GOT
-(see `docs/rva-feed-design.md`). They are independent, so a `NOT_FOUND` on one
+(see `docs/design/rva-feed-design.md`). They are independent, so a `NOT_FOUND` on one
 anchor can be worked around by data while the other keeps working normally, and
 a `NOT_FOUND` on either becomes a feed fix rather than a release. The limit is
 `AMBIGUOUS`: there CI has no `UNIQUE` value to publish in the first place, so
@@ -611,7 +611,7 @@ there is nothing to fall back to — which is the point, not a gap.
 
 **Manual on-device validation** (the procedure that validated the 2026-09-08
 rework; do this before releasing a finder change — no CI job covers it,
-see `docs/update-testing.md`):
+see `docs/design/update-testing.md`):
 
 1. On a SteamOS box or codespace, install the stack normally from LumaDeck
    (`setup.sh`), so every other piece is the shipped one.

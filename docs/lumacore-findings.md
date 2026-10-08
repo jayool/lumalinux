@@ -38,7 +38,7 @@ game-side fix tools (Steamless, Goldberg, netsock, Unsteam/OnlineFix); it is not
 itself an in-client executor.
 
 > **Headline delta:** LumaCore has re-grown a runtime manifest-request-code
-> bridge (Finding 1). [`method.md`](method.md) §"Note on RESEARCH §11.5" and
+> bridge (Finding 1). [`nosotros.md`](nosotros.md) §"Note on RESEARCH §11.5" and
 > [`RESEARCH.md`](RESEARCH.md) §11.5 both currently say "the current LumaCore.dll
 > in `Midrags/SFF` has **no** `GetManifestRequestCode` hook at all." As of `6.6.4`
 > that is **no longer true.** Both notes are now stale and are corrected here.
@@ -147,7 +147,7 @@ The genuinely new material — the deltas — is below.
 
 ### The change
 
-`method.md` and `RESEARCH.md` §11.5 record, from an earlier read, that SFF
+`nosotros.md` and `RESEARCH.md` §11.5 record, from an earlier read, that SFF
 LumaCore had **no** `GetManifestRequestCode` hook — that the code was pre-fetched
 by SteaMidra's Python layer to pre-seed `depotcache/`, making lumalinux's runtime
 GMRC hook *unique to our native-download path*. As of `6.6.4` that is wrong.
@@ -194,7 +194,7 @@ LumaCore's does not gate for.
 
 ### Verdict — **documentation fix, no code change.**
 
-Correct `method.md` §"Note on RESEARCH §11.5" and `RESEARCH.md` §11.5: LumaCore
+Correct `nosotros.md` §"Note on RESEARCH §11.5" and `RESEARCH.md` §11.5: LumaCore
 now has a **wire-layer** GMRC bridge (SFF `6.6.4`, `NetPacket_Manifest.cpp` +
 `ManifestFetch.cpp`); lumalinux's edge is *mechanism* (function-layer,
 SLSsteam-safe) + *coverage* (shader pre-cache), not *existence*. This is the
@@ -225,7 +225,7 @@ Resolution is **RVA-first with byte-pattern fallback**, guarded by two runtime
 sanity checks — the RVA must translate via `VaddrXlate` and land inside
 steamclient.so's `r-x` mapping (`inSteamclientExec`). It is **wired into 5 hooks**
 (DepotKey, GMRC, BuildDep, ShaderDepot, Reconcile) and shipped since v0.18.0.
-Per `rva-feed-design.md` it is modelled on **OpenSteamTool's `PatternLoader`** —
+Per `design/rva-feed-design.md` it is modelled on **OpenSteamTool's `PatternLoader`** —
 the same ancestor as LumaCore's pattern system.
 
 ### The distinction
@@ -251,7 +251,7 @@ multi-mirror crowd feed.
 
 Keep the RVA feed. If the signing gap ever matters (feed tamper), it's a shared
 gap with LumaCore, not a lumalinux regression. Worth a one-line note in
-`rva-feed-design.md` that the upstream ancestor's byte-pattern variant is more
+`design/rva-feed-design.md` that the upstream ancestor's byte-pattern variant is more
 fragile.
 
 ---
@@ -436,7 +436,7 @@ primitive — latent, not active.)*
 
 ## Per-gate summary (LumaCore vs our stack)
 
-| Gate (`method.md`) | LumaCore | SLSsteam + lumalinux + LumaDeck | Who leads |
+| Gate (`nosotros.md`) | LumaCore | SLSsteam + lumalinux + LumaDeck | Who leads |
 |---|---|---|---|
 | 1 Ownership | `CheckAppOwnership` + `NotifyLicenseChanged` | SLSsteam spoof + lumalinux `package_zero_finder` | parity (finder more robust) |
 | 2 PICS appinfo | ownership spoof + access-token wire forge | SLSsteam AppTokens (optional; LumaDeck writes none) | parity |
@@ -458,7 +458,7 @@ Windows technique we solve differently (Steamless, Proton Override, netsock).
 
 ## Candidate shortlist (ranked)
 
-1. **Fix the stale GMRC docs (Finding 1)** — update `method.md`
+1. **Fix the stale GMRC docs (Finding 1)** — update `nosotros.md`
    §"Note on RESEARCH §11.5" and `RESEARCH.md` §11.5: LumaCore now has a
    **wire-layer** `GetManifestRequestCode` bridge (SFF `6.6.4`,
    `NetPacket_Manifest.cpp` + `ManifestFetch.cpp`); reframe lumalinux's edge as
@@ -470,7 +470,7 @@ Windows technique we solve differently (Steamless, Proton Override, netsock).
    no DenuvoAuth / no online-fix payload": captures the coexistence boundary so a
    contributor doesn't reimplement LumaCore's IPC/CreateProcess machinery on
    Proton. Documentation only.
-4. **One-liners in `rva-feed-design.md` (Finding 2)** — note the upstream
+4. **One-liners in `design/rva-feed-design.md` (Finding 2)** — note the upstream
    byte-pattern ancestor is more fragile than our RVA payload, and that neither
    side signs the feed yet.
 
@@ -595,8 +595,8 @@ nuevo sin clave y Hubcap no la trae".**
   `source/config/{LuaBindings,LuaState,LuaLoader,Settings}.cpp`; `lumacore.toml.example`.
 - lumalinux: `src/hooks/{depot_key_hook,depot_dependency_hook,gmrc_hook,shader_depot_hook,package_zero_finder,load_package_hook}.cpp`,
   `src/{patterns,rva_feed,vaddr_xlate,update,sha256,key_store,license_reconcile,sls_achievement_unblock,status,gmrc_store}.*`,
-  `src/main.cpp`, `tools/steamidra_lite.py`; `docs/method.md`, `docs/RESEARCH.md` §11 + §15 + §17,
-  `docs/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon-findings.md`,
+  `src/main.cpp`, `tools/steamidra_lite.py`; `docs/nosotros.md`, `docs/RESEARCH.md` §11 + §15 + §17,
+  `docs/design/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon-findings.md`,
   `docs/slssteam-analysis.md`.
 - SLSsteam (`AceSLS/SLSsteam`): `ticket.cpp`, `apps.cpp`, `Achievements::sendAndRecvGetUserStats`.
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.

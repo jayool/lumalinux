@@ -150,7 +150,7 @@ BST no lleva patrones compilados: hashea `steamclient64.dll` y `steamui.dll` y
 baja un TOML por hash (nombre, RVA, firma; 25 entradas) de `steam-monitor`, que es
 un espejo sincronizado cada 5 min de "evil-steam-monitor", un bot en la infra de
 LuaTools (`git.lua.tools`, secretos `UPSTREAM_URL`/`UPSTREAM_OWNER`). Nuestro
-feed está calcado de esto y lo dice `rva-feed-design.md` §2.
+feed está calcado de esto y lo dice `design/rva-feed-design.md` §2.
 
 | Eje | BST + steam-monitor | Diferencia |
 |---|---|---|
@@ -220,7 +220,7 @@ propia que salió de ahí: nuestro `.so` exige GLIBCXX 3.4.32 / GLIBC 2.38.
 ## §6 slsteam-moon (Linux)
 
 Fork de SLSsteam de LuaTools. Nuestro `setup.sh`, `ensure-desktop-coverage.sh` y
-`guard.sh` descienden de aquí (M3, M7, `decouple-headcrab-plan.md`).
+`guard.sh` descienden de aquí (M3, M7, `design/decouple-headcrab-plan.md`).
 
 | Eje | slsteam-moon | Diferencia |
 |---|---|---|
@@ -293,7 +293,7 @@ es la más robusta, y por eso es nuestro paracaídas.
   es la atestación en runtime (§10-C5).
 - *"`verify-fix.yml` nunca ha pasado: nada en CI ejecuta el `.so`."* Cierto y
   documentado en su cabecera; la validación en dispositivo sigue siendo manual
-  (`update-testing.md` Parte 2).
+  (`design/update-testing.md` Parte 2).
 - *"El pin de Headcrab sigue en LumaDeck."* Cierto, issue #26.
 - *"La re-derivación automática nunca ha corrido en producción."* Sigue siendo
   cierto, y el selftest del 14-09 (§1.1) enseña por qué importa: tres huecos
@@ -387,7 +387,7 @@ C3 anotado con variante barata; C4 anotado con lo ya intentado (#13,
     block", "reason per failed hook"). **Anotado, candidato real para una
     release futura de lumalinux.**
   - *Segundo mirror del feed* (jsDelivr, como SLSsteam, BST y moon): nuestro
-    propio diseño (§14 de `rva-feed-design.md`) fija que añadir un mirror que
+    propio diseño (§14 de `design/rva-feed-design.md`) fija que añadir un mirror que
     no controlamos es el disparador para firmar el feed, y jsDelivr cachea las
     refs de rama hasta 12 h. Hoy `raw.githubusercontent.com` llega a la Deck.
     **No, mientras GitHub raw funcione.**

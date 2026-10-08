@@ -18,7 +18,7 @@ OpenSteamTool (OST) is a **proxy DLL injected into `steam.exe`** (masquerades as
 `dwmapi.dll` / `xinput1_4.dll`). It runs **in-process inside the Steam client**
 and never replaces Steam's downloader: it feeds the client forged ownership,
 depot keys, manifest-GID pins and manifest-request-codes so **Steam's own
-machinery downloads and decrypts** the game (Model A, `method.md` §2). It is a
+machinery downloads and decrypts** the game (Model A, `nosotros.md` §2). It is a
 clean reverse-engineering of SteamTools and is unusually principled — it mutates
 the client's real internal data structures instead of hooking high-level API
 surfaces (`BIsSubscribedApp` etc. are deliberately **not** hooked).
@@ -362,7 +362,7 @@ already covers the providers), but noted.
 
 ## Per-gate summary (OST vs our stack)
 
-| Gate (`method.md`) | OST | SLSsteam + lumalinux + LumaDeck | Who leads |
+| Gate (`nosotros.md`) | OST | SLSsteam + lumalinux + LumaDeck | Who leads |
 |---|---|---|---|
 | 1 Ownership | pkg-0 inject + `CheckAppOwnership` + license re-index | SLSsteam spoof + lumalinux `package_zero_finder` | parity |
 | 2 PICS appinfo | outbound access-token forge (wire) | SLSsteam AppTokens (optional) / ownership spoof; **stripped-appinfo robustness still a gap** (see moon-findings §2) | parity (with the known moon-flagged gap) |
@@ -833,7 +833,7 @@ and has not reacted to 20770407 coming back on 09-16.
   `tools/extract_tickets/`; `opensteamtool.example.toml`.
 - lumalinux: `src/patterns.{hpp,cpp}`, `src/sha256.cpp`, `src/update.cpp`,
   `src/curl.cpp`, `src/gmrc_store.hpp`, `src/hooks/{depot_key_hook,depot_dependency_hook,gmrc_hook,shader_depot_hook,package_zero_finder}.cpp`,
-  `tools/steamidra_lite.py`; `docs/method.md` (the six gates), `docs/RESEARCH.md`,
+  `tools/steamidra_lite.py`; `docs/nosotros.md` (the six gates), `docs/RESEARCH.md`,
   `docs/slsteam-moon-findings.md`.
 - LumaDeck: `backend/achievements.py` (SLScheevo), Workshop page, CloudRedirect
   component, `FIXES_MAP.md` (Online Fix), `docs/cloud-saves.md`.

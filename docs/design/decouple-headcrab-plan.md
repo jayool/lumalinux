@@ -1,7 +1,7 @@
 # Plan — desacoplar LumaDeck de headcrab (inyección por wrapper)
 
 *Fecha original: 2026-08-08. Última actualización: 2026-08-11. Secuela de
-`docs/slsteam-moon-findings.md` (M7, M3) y `docs/method.md` (las 6 gates). Cruza
+`docs/slsteam-moon-findings.md` (M7, M3) y `docs/nosotros.md` (las 6 gates). Cruza
 dos repos: `jayool/lumalinux` (el instalador/wrapper) y `jayool/LumaDeck` (el
 backend Decky). Rama de trabajo: `claude/steam-update-gating`.*
 
@@ -427,7 +427,7 @@ downgrade/mirror en vivo una vez (ver WS5).
   baja los paquetes directo de `headcrab.bifrosthub.ru` vía `-overridepackageurl`, con
   los client manifests de `Deadboy666/SteamTracking@headcrab`; el path
   `dlm`/`dgsc`/`localhost:1666` está muerto).
-- Las 6 gates que deben seguir abriendo: `docs/method.md`.
+- Las 6 gates que deben seguir abriendo: `docs/nosotros.md`.
 - Inyección: sustituida por el wrapper (`lumalinux/setup.sh`). El viejo modelo era
   el `LD_PRELOAD` en `steam.sh` (`src/main.cpp`) parcheado por `_HEADCRAB_PATCHES`
   en `installer.py` — ya retirado de la ruta feliz. `backend/paths.py`

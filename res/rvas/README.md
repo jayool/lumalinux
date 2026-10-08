@@ -23,7 +23,7 @@ finder:                   # package-0 finder's per-build cache-global disp
   cache_global_disp: "0x3967c"
 ```
 
-The runtime resolver (see `docs/rva-feed-design.md`) consumes these **RVA-first**,
+The runtime resolver (see `docs/design/rva-feed-design.md`) consumes these **RVA-first**,
 translating the file vaddr to a live address via `xlate` (ELF program headers +
 `/proc/self/maps` file offsets, correct under split-mapping loads). A build with
 no file here — or a hook omitted from `hooks:` — falls back to the byte pattern

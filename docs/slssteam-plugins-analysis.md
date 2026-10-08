@@ -1940,7 +1940,7 @@ parsea. *Nunca la hay* — **corregido el 2026-09-08**: el finder ya lee
 `finder.cache_global_disp` de la chuleta (`RvaFeed::CacheGlobalDisp()`), así que
 esta categoría deja de aplicarle. Con matiz: la chuleta le da uno de los dos
 números que necesita, no los dos. El GOT lo sigue derivando escaneando porque
-`finder.got_rva` no se publica (`rva-feed-design.md` §5), o sea que el finder
+`finder.got_rva` no se publica (`design/rva-feed-design.md` §5), o sea que el finder
 está a medio camino, no fuera.
 
 El caso realista que junta dos: **el usuario actualiza Steam, reinicia, Steam

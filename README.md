@@ -234,8 +234,11 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 
 ### Related docs
 
-- [`docs/method.md`](docs/method.md): how an unowned-game install works end to end
-  (the six gates, the phase-by-phase native flow, the ecosystem comparison)
+- [`docs/nosotros.md`](docs/nosotros.md): the whole stack (lumalinux + LumaDeck +
+  how SLSsteam is configured) read from the code, function by function, with
+  every dated measurement; replaces the old `method.md` and `owned-games-guide.md`
+- [`docs/ecosystem-matrix.md`](docs/ecosystem-matrix.md): the twelve functions
+  of the ecosystem, program by program, against ours
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,

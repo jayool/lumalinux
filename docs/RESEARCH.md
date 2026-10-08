@@ -42,7 +42,7 @@ SLSsteam gets you ownership + appinfo. lumalinux gets you the actual bytes.
 
 (For the high-level, cross-tool version of this — the "six gates", the two
 download models, and a side-by-side with LumaCore/SteaMidra and
-SteamTools/OpenSteamTool — see [`method.md`](method.md). This section is the
+SteamTools/OpenSteamTool — see [`nosotros.md`](nosotros.md). This section is the
 lumalinux-specific, function-level detail.)
 
 Clicking Install kicks off, roughly:
@@ -658,7 +658,7 @@ v0.8.1.
 > (function-layer, SLSsteam-safe), not existence** — LumaCore reaches it on the
 > wire layer, which SLSsteam owns and lumalinux cannot touch. The table's LumaCore
 > column below is updated to the `6.6.4` wire-layer bridge. See
-> [`method.md`](method.md) §5 and [`lumacore-findings.md`](lumacore-findings.md)
+> [`nosotros.md`](nosotros.md) §5 and [`lumacore-findings.md`](lumacore-findings.md)
 > Finding 1.
 
 | | LumaCore 6.6.4 (wire-layer) | lumalinux |
@@ -1089,7 +1089,7 @@ barato: el doble papel de `0xc58`. El resultado se validó en una Deck real
 **La asimetría con los hooks, cerrada a medias (2026-09-08).** DepotKey y GMRC
 resuelven `ficha → patrón (único o nada) → rescate`; el finder no leía la ficha
 en absoluto, aunque el CI publicaba `finder.cache_global_disp` en cada
-`res/rvas/*.yaml`, `rva-feed-design.md` lo documentaba y steamflipper lo
+`res/rvas/*.yaml`, `design/rva-feed-design.md` lo documentaba y steamflipper lo
 corroboraba por otro método (`steamflipper-analysis.md` §735). `grep -rn
 cache_global_disp src/` daba cero: se escaneaban 32 MB por arranque para
 recalcular un número ya escrito. Ahora el finder hace `ficha → escaneo`
@@ -1545,7 +1545,7 @@ enter-the-wired/Headcrab + lumalinux v0.13.5 **release** loaded by the
 `install.sh` `steam.sh` patch — not env-var injection), that a game installed
 **pinned to an old manifest** auto-updates to Valve's current version once the
 pin is removed. Build `7c4ac73e`. This is the concrete proof behind
-[`method.md`](method.md) §6's "Auto-update by unpinning".
+[`nosotros.md`](nosotros.md) §6's "Auto-update by unpinning".
 
 ### 14.1 The recipe that worked
 
@@ -1572,7 +1572,7 @@ and no update happens.
   new content (same key decrypts the new manifest; depot keys are version-stable).
 - **lumalinux GMRC** — the new manifest is *not* in `depotcache` (nuked), so Steam
   requests its code at runtime and GMRC supplies it. This is the §11.5 /
-  method.md §6 "GMRC stays load-bearing for updates" path, exercised for real.
+  nosotros.md §2.5 "GMRC stays load-bearing for updates" path, exercised for real.
 - **Steam native client** — downloads the delta, decrypts, commits:
   `finished update, 2 mounted depots : 1794681 (7054…), 1794685 (7852…)`.
 
@@ -1581,7 +1581,7 @@ and no update happens.
 - **Per-depot detection, not buildid.** Both games kept the *current* `buildid`
   in the `.acf` (Steam stamps the live buildid at install even under a pinned old
   manifest); the update still fired because Steam compares the **per-depot
-  manifest GID** against PICS. See method.md §6.
+  manifest GID** against PICS. See nosotros.md §2.5.
 - **The injection vehicle matters.** This worked because lumalinux was in the
   live 32-bit client via the `steam.sh` LD_PRELOAD patch (§5). Injecting
   `LD_PRELOAD` as a bare env var on the `steam` command instead does **not**
@@ -1807,7 +1807,7 @@ built from `main` and wired through `install.sh`'s `steam.sh` LD_PRELOAD patch.
 every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
 
 - **Phase A (pin old):** built an "old" Balatro zip (depot 2379781 repinned to old
-  gid `3742336026811834465`, old `.manifest` swapped in — docs/update-testing.md
+  gid `3742336026811834465`, old `.manifest` swapped in — docs/design/update-testing.md
   recipe), deployed `steamidra_lite --pin`. Steam installed the old version: `.acf`
   `InstalledDepots 2379781 → 3742336026811834465`, `StateFlags 4`. Logs:
   `BuildDep: PATCH … 3512319404653808464 -> 3742336026811834465` and
@@ -2327,7 +2327,7 @@ single-manifest plan B in `assella-analysis.md` §8-F1 (not implemented).
 Continuation of §19. Everything measured from the SteamOS codespace, with
 `tools/gmrc_probe.py` (one request per second, every code taken to the CDN)
 and the hook itself; the pass/fail table of the runtime tests is in
-`docs/update-testing.md` Part 3.
+`docs/design/update-testing.md` Part 3.
 
 ### 20.1 What 09-09 was, seen from the providers' side
 
@@ -2580,5 +2580,5 @@ package cache (`appcache/packageinfo.vdf`, `backend/steam_licenses.py`), adds
 only the DLC the account lacks, and uninstalls them through Steam's own DLC
 tick box. Every piece and every flow, with the day's measurements (what makes
 Steam plan an installed game's depots and what does not, why depotcache must
-stay, what `DisabledDLC` is), lives in [owned-games-guide.md](owned-games-guide.md).
+stay, what `DisabledDLC` is), lives in [nosotros.md](nosotros.md).
 (2) is still open.
