@@ -1,11 +1,9 @@
 # SLSsteam — el unlocker de AceSLS, leído desde el código
 
-Relectura completa desde el código, 2026-10-08. Sustituye a
-`slssteam-analysis.md` (4319 líneas, barridos por fecha desde 2026-07-06):
-sus 223 mediciones con fecha están en §5.2 tal como estaban escritas, sus 84
-afirmaciones sin medición están contrastadas en §5.1, y su historia por
-releases está condensada en §5.3. `slssteam-plugins-analysis.md` (los plugins
-Lua como programas aparte) sigue siendo su propio doc. Cómo **nosotros**
+Leído desde el código el 2026-10-08. Sustituye a `slssteam-analysis.md`;
+sus mediciones con fecha están en §5.2 y su historia por releases en §5.3.
+`slssteam-plugins-analysis.md` (los plugins Lua como programas aparte) sigue
+siendo su propio doc. Cómo **nosotros**
 configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 §4.3); aquí se describe SLSsteam tal como es.
 
@@ -23,7 +21,7 @@ configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 
 **Lo que cambia respecto al doc anterior**, en una línea cada uno:
 
-- **`isSubscribed` queda cerrado** (la inconsistencia I1 del doc viejo): `CUser::isSubscribed` llama al **trampolín** de `CheckAppOwnership`, es decir, a Steam sin el spoof, y devuelve `ownsLicense && !licenseExpired` (`sdk/CUser.cpp:34-46`). Para un juego solo añadido a `AdditionalApps` es **false**; para uno con la inyección de package-0 de lumalinux es **true** porque el propio Steam lo cree poseído (medido en la Deck, `nosotros.md` §5.2 F7). Las dos posturas del doc viejo eran ciertas en contextos distintos.
+- **`isSubscribed` queda cerrado**: `CUser::isSubscribed` llama al **trampolín** de `CheckAppOwnership`, es decir, a Steam sin el spoof, y devuelve `ownsLicense && !licenseExpired` (`sdk/CUser.cpp:34-46`). Para un juego solo añadido a `AdditionalApps` es **false**; para uno con la inyección de package-0 de lumalinux es **true** porque el propio Steam lo cree poseído (medido en la Deck, `nosotros.md` §5.2 F7). Las dos posturas que circulaban eran ciertas en contextos distintos.
 - SLSsteam **no tiene almacén de logros**: solo consigue el esquema pidiendo las stats de reseñadores recientes y vacía los valores de la respuesta; quien guarda es Steam (`appcache/stats`). `nosotros.md` §2.7 decía "desde su almacén local"; corregido.
 - **No hay límite de 64 DLC en el código**: `DlcData` es la forma de suplir la lista que Steam no entrega; ni `dlc.cpp` ni `config.cpp` imponen ni mencionan 64. El "límite" es de Steam.
 - **No inyecta packages ni licencias**: el spoof es por app en `CheckAppOwnership`/`GetSubscribedApps`. La inyección de licencias, depots, claves de depot y el "exploit" de códigos de manifest viven solo en la rama `update`, nunca mergeada (§5.3).
@@ -32,7 +30,7 @@ configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 - **`res/version.txt` no ha subido** en los dos últimos tags (sigue en `20260903114323`) y no hay hashes posteriores al cliente del 2026-09-03: con `SafeMode: yes` cualquier `steamclient.so` más nuevo aborta. Nosotros lo llevamos a `no`.
 - **La caché offline de SafeMode no funcionó hasta el 2026-09-02** (`eafd3ea`): `path::append("/.updates.yaml")` sustituía la ruta por `/.updates.yaml`.
 - **`library-inject.so` es un fichero de 0 bytes** desde `148b9a1` (2026-08-23) y sigue en todos los `LD_AUDIT` upstream; glibc lo ignora con aviso.
-- Los hooks son **37** (tabla en §2.1); el doc viejo hablaba de "los `RunIPCFrame` de 7 interfaces", mecanismo muerto desde 2026-07-24.
+- Los hooks son **37** (tabla en §2.1); se hablaba de "los `RunIPCFrame` de 7 interfaces", mecanismo muerto desde 2026-07-24.
 - El endpoint de reseñas en `main@049bbdd` sigue siendo `store.steampowered.com/appreviews`; el cambio a `api.steampowered.com/IUserReviewsService` está solo en `dev` (`51724f5`, 2026-10-03).
 
 ---
@@ -962,7 +960,7 @@ ninguno se ha actuado.
    nuestro reconcile dispara `LicensesUpdate_t` (`0x7d`); el de SLSsteam
    `AppLicensesChanged_t` (`0xf90be`) solo cuando LumaDeck añade con Steam
    abierto. Son dos callbacks distintos y nadie ha medido cuál refresca la
-   UI (`nosotros.md` A11 / §5 F2). (`apps.cpp:274-381`, `config.cpp:329-364`)
+   UI (`nosotros.md` §5.1). (`apps.cpp:274-381`, `config.cpp:329-364`)
 4. **`GetSubscribedApps` no deduplica**: una app poseída (o inyectada por
    package-0) que además esté en `AdditionalApps` aparece dos veces en la
    lista. Nosotros escribimos `AdditionalApps` para todo lo que añadimos.
@@ -1081,451 +1079,152 @@ fixes, cloud (CloudRedirect), UI.
 
 ## §5 Historial
 
-### 5.1 Contraste con el doc anterior
+§5.1 recoge lo que se creía de SLSsteam y el código desmiente, además de lo
+ya listado al principio del doc, y lo que sigue sin medir. §5.2 recoge las
+pruebas y mediciones con fecha sobre SLSsteam mismo; las pruebas del stack
+completo (SLSsteam con lumalinux y LumaDeck) están en `nosotros.md` §5.2.
+§5.3 es la cronología del repositorio desde 2026-07-05.
 
-`slssteam-analysis.md` hacía 84 afirmaciones sin medición (S1-S84 en la
-extracción) y arrastraba 32 inconsistencias internas (I1-I32). Cada
-afirmación, contrastada con el código leído: **confirmada**, **caducada** (ya
-no es así), **sin evidencia** (ni código ni medición la sostienen). Las
-inconsistencias que el código decide se cierran aquí; las demás eran del doc
-y mueren con él.
+### 5.1 Lo que se creía y ya no es así
 
-| # | Afirmación (resumida) | Veredicto | Evidencia |
-|---|---|---|---|
-| S1 | modifica estructuras y mensajes para no poseídos, family share, DLC, AppId, tickets offline, cosméticos | confirmada | §2.2, §2.3, §2.6, §3.5 |
-| S2 | no hace polling: el loader le avisa | confirmada | `main.cpp:245-287` |
-| S3 | solo sigue en `steam`; en otros "hace `unload()` y se va" | confirmada con matiz: `unload()` es un no-op, simplemente no hace nada | `main.cpp:74-107` |
-| S4 | hosts de 64 bits rechazan auditores de 32 | sin evidencia aquí (no es cosa de SLSsteam) | — |
-| S5 | `PrologueUpwards` hasta 0x10000 bytes | confirmada | `memhlp.cpp:181-212` |
-| S6 | un detour cerca de un thunk IPC "podría corromperse" | sin evidencia | — |
-| S7 | tickets en `~/.config/SLSsteam/cache/*.yaml`, reproducidos offline | confirmada | `ticket.cpp:36-45,124-135` |
-| S8 | logros: fuerza `NoConnection` para usar stats offline | caducada: hoy es el borrow con reseñadores; `NoConnection` solo como fallback | `achievements.cpp:186-188,268` |
-| S9 | FakeAppId mapea real↔falso por pipe | confirmada | `fakeappid.cpp` |
-| S10 | `patchRetn` sobre `FamilyGroupRunningApp`/`StopPlayingBorrowedApp` | caducada: hoy descarta paquetes y reescribe `GetAppStateInfo` | `hooks.cpp:360-380`, `apps.cpp:144-172` |
-| S11 | no toca juegos Denuvo de otra cuenta | confirmada | `apps.cpp:102-110` |
-| S12 | sin red cae a `.updates.yaml` | confirmada (ruta correcta solo desde `eafd3ea`) | `update.cpp:94-127` |
-| S13 | settings en `mtvar`, los hooks leen en caliente | confirmada | `mtvar.hpp`; `.copy()` en cada hook |
-| S14 | con ≥ 20260815201341 el rename se detecta solo | confirmada en código (`IN_MOVED_TO`); on-device no medido | `filewatcher.cpp` |
-| S15 | SLSsteam "abre `/tmp/SLSsteam.API`" (como si siempre activo) | caducada: el fichero se crea siempre, los comandos solo con `API: yes`; el YAML instalado lleva `no` | `api.cpp:26-29,150-175` |
-| S16 | escribe la config solo si no existe; toastea claves faltantes; reinstalar no lo arregla | confirmada | `config.cpp:58-84,309-319`; `setup.sh` no copia config |
-| S17 | headcrab completa la config | fuera de alcance (COEX); sin evidencia aquí | — |
-| S18 | engancha "los `RunIPCFrame` de 7 interfaces" | caducada: ningún `RunIPCFrame`; 37 hooks (§2.1) | `hooks.cpp` |
-| S19 | `AppLicensesChanged_t` fuerza a Steam a re-indexar | sin evidencia (solo se postea; el efecto no está medido) | `apps.cpp:274-321` |
-| S20 | el mecanismo `GetAppStateInfo` de 20260705 "funciona para todos" | caducada (mecanismo retirado) | §2.5 |
-| S21 | updates: "Update required" sin bajar nada (v1) | caducada: hoy `GetUpdateInfo` false con `DisableUpdates` | `apps.cpp:449-458` |
-| S22 | `PlayNotOwnedGames` llena la biblioteca | caducada (clave eliminada `84c3672`) | §3.4 |
-| S23 | juegos modernos no llevan `hadthirdpartycdkey` | sin evidencia | — |
-| S24 | `CDKeys` cubre added apps porque `isSubscribed` lee propiedad real | confirmada en código; on-device no | `apps.cpp:177-180`, `sdk/CUser.cpp:37-46` |
-| S25 | inyectar la clave solo en `Get` no funcionaba | confirmada como comentario del autor | `apps.cpp:226-228` |
-| S26 | Steam mergea el esquema prestado con lo local | sin evidencia propia (es lo que el autor pretende al vaciar `stats`) | `achievements.cpp:132-133,218-220` |
-| S27 | LumaDeck escribe licencia real → `isSubscribed` true → el guard salta | **confirmada y reconciliada con S24/I1**: `isSubscribed` va por el trampolín (propiedad real según Steam); con la inyección de package-0 de lumalinux Steam la cree poseída (medido `sub=1 added=1`) | `sdk/CUser.cpp:34-46`; `nosotros.md` §5 F7 |
-| S28 | sin licencia local → `isSubscribed` false → el borrow corre | confirmada (lógica) | `achievements.cpp:154,236` |
-| S29 | un NOP del guard secuestraría la petición real | sin evidencia | — |
-| S30 | SteamOS `libssl.3.so` crashea al curlear | confirmada como motivo del autor; causa no verificada | `curl.cpp:7-9` |
-| S31 | el decompilador añade segundos al arranque | sin evidencia (nota de release) | — |
-| S32 | los métodos del cliente referencian su nombre como string | confirmada (`TraceIPC` en los stubs `*Map`) | `decompiler.cpp:593-648` |
-| S33 | leer el `.so` de memoria daría un binario parcheado | sin evidencia (motivo deducido) | — |
-| S34 | `DisableUpdates: no` anula el bloqueo en caliente | confirmada en código | `apps.cpp:451` |
-| S35 | no reescribe los settings del usuario | confirmada | `config.cpp:58-84` |
-| S36 | `isSubscribed` no se inlinea "sin LTO" | caducada como argumento (LTO activo); el hecho lo sostienen M62/M181 | `Makefile:10` |
-| S37 | no hay razón para que la forma de bytes derive | sin evidencia | — |
-| S38 | se publica sin strippear | confirmada por `Makefile` y `PKGBUILD`; el tarball no inspeccionado | `Makefile`, `PKGBUILD:26-27` |
-| S39 | `retf` es no-op defensivo | sin evidencia | — |
-| S40 | `.text` nunca es lo último del mapeo | sin evidencia | — |
-| S41 | prólogos se mueven "constantemente" | sin evidencia (opinión) | — |
-| S42 | interfaces embebidas (`this + offset`) | confirmada | `sdk/CUser.cpp:15-28` |
-| S43 | post-relocación los slots son direcciones absolutas | confirmada (por eso parsea antes) | `main.cpp:251-255`, `decompiler.cpp:59` |
-| S44 | el spoof solo con ticket cifrado cacheado, poblado del tráfico | parcialmente caducada: hoy hay tres fuentes en orden (§2.6); el poblado del tráfico sí | `hooks.cpp:1113-1159`, `ticket.cpp:301-305` |
-| S45 | `sprintf` desborda; `HOME` nulo es UB | caducada: `ostringstream`; sin `HOME`, `setup()` aborta | `config.cpp:22-41`, `main.cpp:109-116` |
-| S46 | `0xD6FC3200` puede moverse | caducada para el spoof (VFT hook desde `779178c`) | `hooks.cpp:1092-1160` |
-| S47 | SafeMode `no` por defecto, trabajo tirado | confirmada | `config.cpp:181`, `update.cpp:25-30` |
-| S48 | dos juegos podían consumir el spoof del otro | sin evidencia | — |
-| S49 | fd filtrado por fetch de esquema | caducada (`cbd0cd0`) | §5.3 |
-| S50 | "Add Game" emite `AppLicensesChanged_t` | confirmada en código solo con Steam abierto y tras `GetSubscribedApps`; cuál callback refresca la UI, sin medir | `config.cpp:337-359` |
-| S51 | índice de `Map` aplicado a la impl "funciona en la práctica" | sin evidencia | — |
-| S52 | callbacks al real que el juego no recibía | sin evidencia (internos de Steam) | — |
-| S53 | Steam asigna por `Plat_*` | sin evidencia (inferido) | — |
-| S54 | `isProtoBuf()` invertido es cosmético | confirmada (tapado por `isValid()`) | `CNetPacket.hpp` |
-| S55 | `/proc/<pid>/environ` legible en SteamOS | sin evidencia (solo el comentario del YAML) | `config.yaml:59` |
-| S56 | `/proc` inaccesible no crashea | confirmada desde `bbe1e3f`/`e7e54f7` | `process.cpp` |
-| S57 | migración de `Notifications` a `0x3F` | sin evidencia; la clave hoy se ignora | §3.4 |
-| S58 | cada recarga volcaba la config entera | sin evidencia | — |
-| S59 | `PostCallback` vs `PostCallbackToAppId` indeterminable | sin evidencia | — |
-| S60 | `setcompat` exige `API: yes`; lo escribe cualquier proceso del usuario | confirmada | `api.cpp:26-29,152` |
-| S61 | `CUtlRBTree::find` lee `elements[-1]` con árbol vacío | confirmada como bug latente; sin uso | `sdk/CUtl.hpp:99-128` |
-| S62 | con < 20260815201341 la recarga no se dispara al escribir LumaDeck | caducada/contradicha (I4): `IN_CLOSE_WRITE` sobre el directorio desde `5c632dd`; el poke funcionaba | `filewatcher.cpp` |
-| S63 | con `SafeMode: yes` y otro build que el 08-04, aborta | confirmada la mecánica; la lista de hashes es otra hoy | `update.cpp:143-152` |
-| S64 | la firma mala de `IsUserSubscribedAppInTicket` daba basura; no afecta a instalar | confirmada la corrección (`6546411`); consecuencias sin evidencia | §2.3 |
-| S65 | solo reporta claves faltantes | confirmada | `config.cpp` |
-| S66 | `SmartTickets` analiza en `ConnectPipe` | confirmada | `hooks.cpp:471-480` |
-| S67 | juegos que se atragantan con `NoConnection` | sin evidencia (motivo del autor) | `79a67ac` |
-| S68 | corremos con el despacho de excepciones corrompido por `library-inject` | caducada: vacío desde `148b9a1`; nunca se reprodujo | `tools/library-inject/Makefile` |
-| S69 | `SLSsteam::initialized` es el único punto sin patrón | confirmada (se dispara tras `Hooks::init`) | `hooks.cpp:1572` |
-| S70 | el gate de plugins está en ejecutar, no en montar | confirmada | `lua.cpp:560-563` |
-| S71 | `cf63d67` descartaba altas pendientes | sin evidencia (hipótesis) | — |
-| S72 | dos callbacks de refresco por coincidencia | sin evidencia (COEX) | — |
-| S73 | `f932133` sin relación con nuestro `LD_PRELOAD` | sin evidencia | — |
-| S74 | `download.lua` muerto desde el 9-sep | caducada (volvió el 16) | doc de plugins |
-| S75 | stable `1788652215` sin cambio (inferencia) | caducada (resuelta en el propio doc, I18) | M201 |
-| S76 | `strtok` partía `cmdline` por NUL de casualidad | sin evidencia | — |
-| S77 | analiza cada proceso que abre un pipe; un `/proc` raro tiraba Steam | confirmada | `hooks.cpp:471-480`, `e7e54f7` |
-| S78 | el endpoint de tienda muere el 2026-10-22 | sin evidencia (dicho del autor en `dev`) | `51724f5` |
-| S79 | `42568f0` motivó la segunda release | sin evidencia (plausible) | — |
-| S80 | `derive_version_floor` subestima | confirmada (COEX): `version.txt` no sube | §5.3 |
-| S81 | el `.so` de release da 403; no reproducible | sin evidencia | — |
-| S82 | mapas sin lock alcanzables desde hilos concurrentes → UB | confirmada la ausencia de mutex; la concurrencia sin evidencia (el autor asume hilo único) | `achievements.hpp:17-19`, `hooks.cpp:1473-1476` |
-| S83 | `Updater::init()` no descarga ni hashea con ambas off | confirmada | `update.cpp:25-30,131-135` |
-| S84 | `ticket-grabber` es el motivo del `!strip` | confirmada como comentario; "puede revertirse" es opinión | `PKGBUILD:26-27` |
+Además de lo listado en la cabecera del doc:
 
-Inconsistencias del doc viejo que el código cierra: **I1** (S27 arriba:
-ambas posturas eran ciertas en contextos distintos); **I2** (ni 7 ni 5: cero
-`RunIPCFrame`, 37 hooks); **I3** (argumento inválido, hecho sostenido por
-medición); **I4** (el poke funcionaba; S62 muere); **I5** (`IN_CLOSE_WRITE`
-sobre el directorio sí cubre el rename cuando el editor escribe y cierra en
-el directorio; `IN_MOVED_TO` cubre el `rename()` puro); **I20** (API apagada
-por defecto en el YAML instalado); **I27** (sin strip por `Makefile`, no solo
-por el PKGBUILD); **I29** (los hashes se añaden bajo la clave vigente; cada
-bump copia los vigentes). Las demás (I6-I19, I21-I26, I28, I30-I32) eran
-notas de redacción o de nuestro lado y no tienen correlato en el código.
+- **Los logros se consiguen forzando `NoConnection` para usar las stats
+  offline.** Hoy es el borrow con reseñadores; `NoConnection` queda como
+  respaldo (`achievements.cpp:186-188,268`).
+- **El family-share lock se salta con `patchRetn` sobre
+  `FamilyGroupRunningApp` y `StopPlayingBorrowedApp`.** Hoy descarta los
+  paquetes y reescribe `GetAppStateInfo` (`hooks.cpp:360-380`,
+  `apps.cpp:144-172`).
+- **El bloqueo de updates deja "Update required" sin bajar nada.** Era la
+  v1 de 2026-07-05 (`GetAppStateInfo` limpiando flags); desde
+  `20260714131044` es `GetUpdateInfo` devolviendo false bajo `DisableUpdates`
+  (`apps.cpp:449-458`). lumalinux retiró su contraparche en v0.16.18.
+- **`PlayNotOwnedGames` llena la biblioteca.** Clave eliminada en `84c3672`
+  (2026-07-07); `AdditionalApps` es el único mecanismo.
+- **`isSubscribed` no se inlinea porque no hay LTO.** LTO está activo
+  (`Makefile:10`); el hecho se sostiene porque el símbolo está en `.symtab`
+  de cada release (§5.2 F7).
+- **El spoof de SteamID solo usa el ticket cifrado cacheado.** Hoy hay tres
+  fuentes en orden (§2.6); el poblado desde el tráfico sigue.
+- **`sprintf` desborda la ruta de config y `HOME` nulo es UB.** Es
+  `ostringstream` desde `62afc2e`; sin `HOME`, `setup()` aborta
+  (`config.cpp:22-41`, `main.cpp:109-116`).
+- **El hash `0xD6FC3200` de `GetSteamID` puede moverse.** Desde `779178c`
+  el spoof es un hook de vtable; el hash queda solo en `ProcessIPCFrame`.
+- **La recarga no se dispara cuando LumaDeck escribe `config.yaml`.** Sí:
+  `IN_CLOSE_WRITE` sobre el directorio desde `5c632dd`; el poke de 0 bytes
+  funcionaba. `IN_MOVED_TO` (desde `1444fa5`) cubre además el `rename()`.
+- **`library-inject.so` corrompe el despacho de excepciones y corremos
+  así.** Está vacío desde `148b9a1` (2026-08-23); nunca se reprodujo.
+- **La fuga de descriptores en `Curl::getString` sigue.** Cerrada en
+  `cbd0cd0` (2026-07-30).
+- **El plugin `download.lua` murió con wudrm el 2026-09-09.** wudrm volvió
+  el 09-16 y con él el plugin.
 
-### 5.2 Mediciones y pruebas con fecha
+**Lo que sigue sin medir:**
 
-Las 223 del doc anterior (M1-M223), tal como estaban escritas (fecha, dónde,
-resultado literal), ordenadas por función. "Dónde": **commit/fuente** =
-lectura estática del repo a un commit o tag; **binario** = inspección de un
-`.so`; **codespace** = corrida en contenedor; **Deck** = on-device; **Discord**
-= dicho de segunda mano. Las de 2026-10-08 van en una tabla
-propia después de las doce funciones.
+- Que la detección del `rename()` (`IN_MOVED_TO`) funcione en una Deck; en
+  código sí.
+- Qué efecto tiene `AppLicensesChanged_t` sobre la interfaz, y cuál de los
+  dos callbacks (el de SLSsteam al añadir, el `LicensesUpdated_t` de
+  lumalinux) es el que la refresca.
+- `CDKeys` con una app añadida en dispositivo; en código no se inyecta
+  porque `isSubscribed` es true para las nuestras.
+- Que Steam fusione el esquema prestado con lo local, que es lo que el autor
+  pretende al vaciar `stats` de la respuesta.
+- La causa del crash de `libssl.3.so` en SteamOS que motivó el curl externo.
+- La retirada del endpoint de reseñas de la tienda el 2026-10-22: dicho del
+  autor en `dev`.
+- La concurrencia sobre los mapas sin mutex de `achievements.cpp`; el autor
+  asume un solo hilo.
+- La forma de bytes del `.so` de release: el asset da 403 tras el proxy y
+  compilarlo no es reproducible, así que las anclas del parche de logros se
+  verifican sobre `.symtab` y la fuente, no sobre el binario publicado.
+
+### 5.2 Pruebas y mediciones con fecha
+
+"Dónde": binario (inspección de un `.so` publicado), repo (un hecho sacado
+del repositorio con `git`, no una lectura de código), Deck, codespace, red,
+Discord (segunda mano).
 
 #### Función 1 — Engancharse a Steam
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M2 | (base ebfb079) | fuente `main.cpp:221-239` | 1 | Mecanismo de inyección | rtld-audit: `la_version()`→`LAV_CURRENT`; `la_preinit()`→`setup()`; `la_objopen()` dispara `load()` cuando `steamclient.so` o `steamui.so` entran en el mapa (`main.cpp:226-234`). Carga vía `LD_AUDIT`, no `LD_PRELOAD` | §0.1 |
-| M3 | (base ebfb079) | fuente `main.cpp:111-116`, `95-99` | 1 | Auto-limpieza y filtro de proceso | `cleanEnvVar("LD_AUDIT", ...)` borra sus entradas de `$LD_AUDIT`; sólo continúa si el proceso se llama `steam`, si no `unload()` | §0.1 |
-| M4 | (base ebfb079) | fuente `patterns.hpp:11-27`, `memhlp.cpp:35-108`, `11-33` | 1 | Motor de patrones | `Pattern_t` nombre+bytes con `?`+modo+prólogo; `patternScan` enumera segmentos `LM_PROT_XR`; `patternToBytes` → `int16_t` con `-1` comodín | §1.1 |
-| M5 | (base ebfb079) | fuente `memhlp.cpp:110-140`, `152-167`, `169-195` | 1 | Modos de resolución | `Relative` (`getJmpTarget`), `None`, `PrologueUpwards` (walk-up hasta 0x10000 bytes buscando prólogo p.ej. `56 57 e5 89 55`) | §1.2 |
-| M6 | (base ebfb079) | fuente `memhlp.cpp:197-278` | 1 | `fixPICThunkCall` | Detecta `call`→`mov reg,[retaddr]`→`ret` en el trampolín y reescribe la carga de retaddr desde la ubicación original | §1.3 |
-| M7 | (base ebfb079) | fuente `memhlp.cpp:281-288` | 1 | `getTypeName` | vft = `*pClass`; typeInfo = `*(vft - sizeof(ptr))`; name = `*(typeInfo + sizeof(ptr))`. Usado sólo para logging del tipo de cada `CProtoBufMsg` | §1.4 |
-| M8 | (base ebfb079) | fuente `hooks.cpp:65-108`, `110-149`, `vftableinfo.hpp` | 1/3 | Tipos de hook e índices | `DetourHook` (`LM_HookCode` + `fixPICThunkCall`); `VFTHook` (`LM_VmtHook(vft, index, hookFn)`); índices `IClientAppManager::BIsDlcEnabled = 11`, `IClientApps::GetDLCCount = 8` | §1.5 |
-| M9 | (base ebfb079) | fuente `hooks.cpp:433-455`, `508-531` | 1 | Captura de instancia viva | `hkClientAppManager_RunIPCFrame`: en 1ª llamada `LM_VmtNew(*reinterpret_cast<lm_address_t**>(pObj), vft)`, monta VFTHooks, `RunIPCFrame.remove()`; `hkClientApps_RunIPCFrame` usa `static bool hooked` | §1.6 |
-| M10 | 2026-07-24 | commit `8de3384` | 1 | Eliminación de los hooks RunIPCFrame | Eliminados los **cinco** hooks de `RunIPCFrame`; instancias navegadas `CSteamEngine → getUser() → getAppManager()/getClientApps()/getClientUser()` vía offsets por patrón, desde un único `placeVFTHooks()` | §1.6 (aviso SUPERSEDED) |
-| M11 | (base ebfb079) | fuente `hooks.cpp:824-930` | 1/2 | Hook naked de `IClientUser::GetSteamID` | `createAndPlaceSteamIdHook`: desensambla, ensambla trampolín (pushad/pushfd, llama hook `stdcall`, popad), `jmp` relativo; autor lo marca "lazy / bad at this" | §1.7 |
-| M12 | 2026-07-27 (y "desde 2026-08-05") | commit `c4152f5` | 1/2 | Sustituto del hook naked | Borrado el trampolín naked; `steamId` interceptado en el buffer de retorno IPC dentro de `CSteamEngine::RunInterface` (desde 2026-08-05 `ProcessIPCFrame`), filtro `interfaz == ClientUser && exitCode == Success && fnId == 0xD6FC3200`; el desensamblado queda como comentario | §1.7 (aviso SUPERSEDED) |
-| M23 | (base ebfb079) | fuente `update.cpp:22`, `27-34`, `41-55`, `102`; `main.cpp:176-188` | 1/11 | SafeMode | `Curl::getString` baja `raw.githubusercontent.com/AceSLS/SLSsteam/.../res/updates.yaml`; fallback `.updates.yaml`; `SafeModeHashes` mapa versión→{SHA256 de steamclient.so}; `verifySafeModeHash`; en `load()` hash desconocido + `SafeMode` on → `unload()`; off + `WarnHashMissmatch` → aviso | §3 |
-| M30 | (base ebfb079) | fuente `patterns.cpp` + `vftableinfo.hpp` | 1 | Disjunción de hooks | SLSsteam **no** toca `LoadDepotDecryptionKey` (CConfigStore slot 6), `BuildDepotDependency`, `GetManifestRequestCode`, `shadercachedepot`, package-0 finder. SLSsteam engancha: `CProtoBufMsgBase::Send/InitFromPacket`, `CUser::CheckAppOwnership/GetSubscribedApps`, `RunIPCFrame` de **7** interfaces, `IClientUtils::GetAppId/GetOfflineMode`, tickets `IClientUser`, DLC `IClientApps`/`IClientAppManager`, matchmaking | §5 |
-| M31 | release `5c632dd` | commit | 1/2/5 | Hooks nuevos | `CAppDataCache::BParseResponseMessage` y `IClientAppManager::GetAppStateInfo` (limpia `APPSTATE_UPDATE_*` en sitio); hot-reload postea `AppLicensesChanged_t` | §5, §7 |
-| M32 | 2026-09-03 | tag `20260903114323` | 1/4 | Plugins Lua | SLSsteam carga plugins Lua; con `download.lua` **DepotKey** y **GMRC** sí solapan | §5 aviso ALCANCE REDUCIDO |
-| M35 | 2026-07-05 | commit `5c632dd` (`20260705132808`) | 1 | Patterns wildcardeados | `cmp eax, <hash>`: `3D 37 9C 88 A6` → `3D ? 9C 88 A6`; reanclados IClientAppManager/IClientUtils RunIPCFrame; wildcards en RequiresLegacyCDKey. Diff `src/` ~22 ficheros, ~450 líneas | §7 |
-| M40 | 2026-07-05 | fuente `hooks.cpp` @5c632dd | 1 | Bug de SLSsteam | En `Hooks::remove()` el `CAppDataCache` llama a `.place()` en vez de `.remove()` | §7 observación |
-| M55 | 2026-07-22 | commit `2903ef8`, release `20260722152506` | 1 | Decompilador | Nuevos `src/decompiler.{cpp,hpp}`, `src/vftableinfo.{cpp,hpp}`; `collectVFTables` por RTTI; `parseInterfaceMapBase` → `map<string,unsigned>`; nota de release "Steamclient may take a few seconds longer to start now" | §7.5 |
-| M56 | 2026-07-22/23 | commits `fa8523f` (`20260722175657`), `4dd592c` (`20260723094105`), `69594b9` (`20260723102618`) | 1/3 | Hotfixes del decompilador | "Workaround SteamOS getting stuck"; "Fix decompiler branching decisions. DLC unlocks should work properly again and crashes should be gone. Use real appId in more interfaces"; "Fix crash for apps that have an empty parent" — tres parches en ~18h | §7.5 |
-| M59 | (tag `20260722152506`) | fuente `decompiler.{cpp,hpp}`, `vftableinfo.{cpp,hpp}` | 1 | Pipeline del decompilador | `parseHeader` con `fopen(mod.path,"r")` (disco, no memoria), map `"module::section"`; `collectStrings` `MIN_STRING_SIZE` 5; `collectVFTables` dos pasadas (`30CClientUnifiedServiceTransport`, `14IClientUserMap`); `VFTable::analzye` (typo); `parseInterfaceMapBase` por string de nombre de método; `__parseFunction` via `LM_Disassemble`, `branchesTaken`, `isPICThunk`, `getLeaOffset`; `NO_INDEX` = `0xFFFFFFFF`, caché `tableMap` | §7.5.1 |
-| M60 | (tag `20260722152506`) | fuente `vftableinfo.cpp` | 1 | Interfaces/funciones resueltas | 9 interfaces: `CCMInterface`, `CClientUnifiedServiceTransport`, `CSteamMatchmakingServers`, `IClientApps`, `IClientAppManager`, `IClientRemoteStorage`, `IClientUtils`, `IClientUser`, `IClientEngine`; ~27 funciones incl. `RecvPkt`, `SendAndRecv`, `BLoggedOn`, `BUpdateAppOwnershipTicket`, `GetAppOwnershipTicketExtendedData`, `IsUserSubscribedAppInTicket`, `RequiresLegacyCDKey`, `GetUpdateInfo`, `InstallApp`, `UninstallApp`, `GetAppInstallState`, `GetDLCCount`, `BGetDLCDataByIndex`, `BIsDlcEnabled` | §7.5.1 |
-| M66 | 07-23 … 08-15 (tabla de hitos) | commits | 1/11 | Cronología de la ventana | 07-23 patternScan ceñido a `.text`; 07-24 elimina 5 `RunIPCFrame`; 07-25 análisis antes de relocaciones; 07-27 borra naked `GetSteamId`; 07-28 release `20260728212859` (`SteamIdOverride`, `FakeName`); 08-04 stutters logros; 08-05 `RunInterface`→`ProcessIPCFrame`; 08-12 `CDKeys`; 08-14 API `setcompat`/`getcompat`/`dumpcompat`/`dumplibraries` + `API.md`; 08-15 release `20260815201341` (`IN_MOVED_TO`, `CUtlRBTree`) | §7.7.0 |
-| M68 | 2026-07-23 | commit `69d9623` | 1 | `retf` en parser | `__parseFunction` sólo reconocía `ret`/`retn`; añade `retf` (`CB`/`CA`); comentario suyo: capstone normaliza los `ret` → no-op defensivo | §7.7.1 |
-| M69 | 2026-07-23 | commit `f87979f` | 1 | patternScan sólo `.text` | Antes `LM_EnumSegments` sobre todo el proceso filtrando `LM_PROT_XR`; ahora `Decompiler::getSection(".text")` desde cabeceras ELF de disco, `[base+sh_addr, +sh_size)`; `main.cpp` añade `Decompiler::parseHeader(g_modSteamUI)` (`Didn't find .text section` si falta); `parseHeader` = sólo cabeceras, `parseModule` = + strings + vtables. Observación propia: off-by-one (`addr < end` vs guarda `byteAddr > end`); el escaneo devuelve el **último** match con `debug` si `matches > 1` (comentario "Not unique. All matches point to correct function though") | §7.7.1 |
-| M70 | 2026-07-25 | commit `3e9dfdd` | 1 | Relocación de `.data.rel.ro` | Mensaje: ".rodata.ro.rel seems to get modified so the offsets turn into actual addresses which broke the decompiler flow"; código `this->functions.emplace_back(offset + moduleBase);` asume offsets relativos; mueve `LM_FindModule` + `parseModule` dentro de `la_objopen` ("Analyse modules before any relocations get applied") | §7.7.1.b, §7.7.3 |
-| M71 | 2026-07-25 | commit `807e229` | 1 | Análisis inmediato de vtables | Analiza TODAS las vtables dentro de `la_objopen`; quita `analzye()` diferidos de `hooks.cpp`/`vftableinfo.cpp`; cita "This is wasteful, but we have to analyse right away otherwise the offset get turned into addresses messing up the analysis…" | §7.7.3 |
-| M72 | 2026-07-24 | commit `1865890` | 1 | Sub-vtables (herencia múltiple) | `CUser : CBaseUser, IClientUser, IClientMatchmaking, IClientAppDisableUpdates, IClientBilling` → varias sub-vtables con el mismo typeinfo `5CUser`; antes `vftables[name] = vft` pisaba; ahora `subclasses[0..n]` (`subclasses[0]` = `IClientUser`); frontera por heurística `offset & 0xFFFF0000`; `TODO`: cruzar typeinfos "funcionaba en las 4 primeras vftables de CUser y luego empezaba a fallar" | §7.7.2 |
-| M73 | 2026-07-24 | commits `8fada22` + `28d59a1` | 1 | Offsets de miembro por patrón | 4 patrones `SigFollowMode::None`: `m_OffsetUserAppInfo` = `"8D 90 ? ? ? ? …"` (`lea edx,[eax+disp32]`, lee en `+2`); `m_OffsetClientUser` = `"2D ? ? ? ? …"` (`sub eax,imm32`, lee en `+1`); interfaces embebidas (`this + offset`); cita "Like the previous commits I picked some patterns that go back about 9 months" | §7.7.2 |
-| M74 | 2026-07-24 | commits `69ea49b`, `269e867` | 1 | Víctimas de prueba | `69ea49b` retira patrón de `GetSteamId` (no-único); `269e867` retira `RunIPCFrame` de RemoteStorage; su vtable se relocaliza → `DetourHook` ("the pointers are all wrong and would need manual adjustment which breaks current assumptions by VFTHook<T>"); nueva sobrecarga `DetourHook::setup(name, addr, fn)` | §7.7.2 |
-| M75 | 2026-07-24 | commit `8de3384` | 1 | Consolidación | −223/+164 en `hooks.cpp`, 22 ficheros; 4 `RunIPCFrame` restantes fuera; `placeVFTHooks()` one-shot (`static bool hooked` + mutex, "I don't think the IPC layer is multithreaded but better safe than sorry") desde hook de `CSteamEngine::RunInterface`; "first run CUser is null"; mueren `g_pClientApps`/`g_pClientAppManager`/`g_pClientUtils`/`g_pClientUser` → `g_pSteamEngine->getUser()->getClientApps()`. Balance: −6 patrones, +4 offsets | §7.7.2 |
-| M76 | 2026-07-24 | commits `bc25bf8`, `3c77e9f`, `99d0af7` | 1 | Fixes SDK | `EInterfaceType` `uint32_t`→`uint8_t` (leía 4 bytes y enmascaraba `& 0xff`); `getPipeIndex() -> uint32_t*` → `getCurrentSteamPipe() -> HSteamPipe` (nombre real en `IClientUtils`); `CUtlBuffer::flags` `uint8_t`@0x1A → `uint32_t`@0x18, total sigue `0x24`, `flags` no se lee en ningún sitio | §7.7.2 |
-| M77 | 2026-07-24 | commits `73dba5f`, `b752536`, `ce0bb89` | 1 | Comentarios/limpieza | `b752536` documenta layout del buffer IPC y arregla: `interfaceType` está en offset **fijo 1** (antes usaba cursor `get`); `ce0bb89` formato ~17 ficheros | §7.7.2 |
-| M78 | 2026-07-31 (citado en §7.7.2.a) | commit `b8ef92f` | 1 | Índice de Map aplicado a impl | Coge índice de `21IClientConfigStoreMap` y lo aplica a la vtable de `12CConfigStore` (asume correspondencia de orden wrapper↔impl) | §7.7.2.a, §7.7.8 |
-| M79 | 2026-07-25 | commit `7aee22c` | 1 | ServerResponded | `ISteamMatchmakingPingResponse::ServerResponded` (patrón en `steamui.so`) → `VFTIndexes::CGameInfoDialog::ServerResponded`; primer patrón retirado en `steamui.so` | §7.7.3 |
-| M80 | 2026-07-25 | commit `d2f94c8` | 1 | "Refine patterns" | Prólogo `std::vector<uint8_t>` → `std::vector<int16_t>` (comodines `-1`); migración call-site+`Relative` → ancla corta+`PrologueUpwards`; `CUser::CheckAppOwnership` de 26 bytes a `"0F 94 C2 08 51"` + prólogo `{0x53,0x56,0x57,0xE5,0x89,0x55,-1,-1,-1,-1,0x5,-1,-1,-1,-1,0xE8}`; también `TraceIPC`, `CAPIJob::SendAndRecv`, `CAppDataCache::BParseResponseMessage`, `CWebSocketConnection::BBuildAndAsyncSendFrame`, `CSteamEngine::RunInterface`, `CUser::UpdateAppOwnershipTicket`. Log suyo `"Pattern %s found %i times"` | §7.7.3, §7.7.3.a |
-| M81 | 2026-07-25 | commits `ce6509f`, `8effc44` | 1 | Crash con `ExtendedLogging`; nullchecks | Guarda `getUser()` antes de `getUtils()->getAppId()`; mutex de `placeVFTHooks` movido tras el early-return `!usr`; `CSteamEngine::getUtils()` → `if (!getUser()) return nullptr;` | §7.7.3 |
-| M83 | 2026-07-25 | commits `4bd33e7`, `9927612`, `526b828`, `dfb8614`, `9f232e6` | 1 | Menores | `CNetPacket+0xC` = `int32_t refs`; `9927612` añade hash de cliente **2026.07.25** a SafeMode; `9f232e6`: buffer IPC `base+2` es `*(this+4)`, id de función en `base+6` | §7.7.3 |
-| M90 | 2026-07-27 | commits `d1bbc92`, `1082525`, `2be9d89` | 1 | Vocabulario IPC | `EInterfaceType` → `EIPCInterface` (48 constantes `k_EInterfaceTypeClient*` → `k_EIPCInterfaceClient*`); `EIPCCmd` (`RunInterface = 1`, `SerializeCallbacks = 2`, `ConnectPipe = 9`); `EIPCExitCode` (`Success = 0xb`); args `pBufInterfaceInfo` → `pBufIPCCmd`, `a2` → `pBufReturn` | §7.7.5 |
-| M91 | 2026-07-27 | commits `e8e04f1`, `b3b2f98` | 1 | Citas de diseño | "While hooking this function to replace the other hooks might seem attractive we do not do so. Many calls straight up bypass the IPC layer and go straight for the original VFT implementations (IClientAppManager comes to mind)…"; "I really do not like hooking the IClient*Map functions because they are very surface level and get skipped over a lot…" | §7.7.5 |
-| M92 | 2026-07-27 | commit `c4152f5` | 1/2 | Intercepción de GetSteamID en IPC | `if (type == k_EIPCInterfaceClientUser && exitCode == EIPCExitCode::Success && fnId == 0xD6FC3200) { if (!g_currentSteamId.accountId) memcpy(&g_currentSteamId, pBufIPCResult->mem.base + 1, sizeof(CSteamId)); … memcpy(pBufIPCResult->mem.base + 1, &newId, sizeof(newId)); }`; comentario "IClientUser::GetSteamID has been optimized to hell and back"; lee `[edx-0x174E]`/`[edx-0x1752]`, escribe `[eax]`/`[eax+4]`; `0xD6FC3200` hardcodeado | §7.7.5 |
-| M94 | 2026-07-27 | commit `12a8e2f` | 1/11 | `Updater::isEnabled()` | `return g_config.safeMode.get() \|\| g_config.warnHashMissmatch.get();` al inicio de `init()` y `verifySafeModeHash()`; `SafeMode` viene `no` por defecto | §7.7.5 |
-| M104 | 2026-07-30 | commit `e2ac776` | 1 | Centinela en `parseFunction` | `leaOffset = LM_ADDRESS_BAD` (`0xFFFFFFFF`); guarda `if (!leaOffset) continue;` comparaba contra 0 → referencias espurias; fix `if (leaOffset == LM_ADDRESS_BAD) continue;` | §7.7.7 |
-| M106 | 2026-07-31 | commit `b8ef92f` | 1 | Hook baja a `IClientConfigStore` | `IClientConfigStore_SetString.setup(VFTIndexes::IClientConfigStoreMap::SetString.getPrintName().c_str(), store.functions[VFTIndexes::IClientConfigStoreMap::SetString.index], hkClientConfigStore_SetString);` resuelto por RTTI `12CConfigStore` | §7.7.8 |
-| M107 | 2026-07-31 | commit `00c93c6` | 1 | Sobrecargas en `nombre→índice` | Dos slots con el mismo literal: el segundo pisaba `functionMap[str] = i`; ahora `nombre2`, `nombre3`…; `const auto& str` → `auto str` | §7.7.8 |
-| M109 | 2026-07-31 | commit `4bfe8e2` | 1 | Arena de paquetes | `g_packetsArrayIndex` (`uint32_t`) → `g_packetsArrayOffset` (`uintptr_t`); "Biggest message I have observed was around 600kb"; `MAX_PACKET_SIZE` 1 MB × `MAX_PACKETS` 8 = 8 MB estática | §7.7.8 |
-| M112 | 2026-08-01 | commit `46b6ff5` | 1 | `VFTIndexes::init()` prueba todos | `bool success = true; for(const auto& fn : functions) if (!fn->init()) success = false; … return success;`; llamante `main.cpp:184` sigue abortando ("Failed to parse VFTables! Aborting…"); incluye renombre `void* a0` → `pClientAppManager` en hook de `BuildDepotDependency` | §7.7.9 |
-| M115 | 2026-08-04 | commits `a1b30e8`, `690fb8a` | 1 | SafeMode | Hash de cliente **2026.08.04** en `res/updates.yaml`; merge `main`→`dev` | §7.7.10 |
-| M117 | 2026-08-05 | commit `77f5d44` | 1 | `RunInterface` → `ProcessIPCFrame` | `ProcessIPCFrame(this, HSteamPipe pipe, CUtlBuffer* in, CUtlBuffer* out)`; `const EIPCCmd cmd = *reinterpret_cast<EIPCCmd*>(pBufIn->mem.base + 0); if (cmd == EIPCCmd::RunInterface) {…} else { ret = tramp.fn(...); }`; nuevo `EIPCCmd::CreateGlobalUser = 3` ("Also used to connect to global user") | §7.7.11 |
-| M122 | 2026-08-06 | commit `a2edc13` | 1 | Asignador de Steam | `dlopen("libtier0_s.so")` + `dlsym` de `Plat_Alloc`, `Plat_Free`, `Plat_Realloc`; tercer módulo en `la_objopen` y precondición de `load()`; descuido `if (!Plat_Alloc \| !Plat_Free \| !Plat_Realloc)` con `\|` bitwise | §7.7.12 |
-| M123 | 2026-08-06 | commit `b937ab2` | 1 | Free netpacket | `clearBody()` viejo: `size = body->headerSize + sizeof(CNetPacketBody);` ("Hide body and call original function so steam uses it's own free"); ahora `Steam::Plat_Free(body)` y retorna sin llamar al original | §7.7.12 |
-| M124 | 2026-08-06 | commit `0fc9cf9` | 1 | Arena estática muere | Comentario "Freeing pData royally fucks up memory, proly a use after free scenario / So we copy the packet into fresh memory, modify that, etc"; `Plat_Alloc(dataSize)` → `memcpy` → mutar → tramp → `Plat_Free`; borra `g_packetsArray` (8 MB) y `g_packetSerializeMutex` | §7.7.12 |
-| M127 | 2026-08-07 | commit `cc8d42a` | 1 | Tamaño de `CNetPacket` | Declarado `0x14` (20 bytes), real `0x20` (32); +12 bytes de padding; campo `__pad0x10` está en `0x14` | §7.7.13 |
-| M128 | 2026-08-07 | commits `7366bed`, `6e8e8de` | 1 | Receta `recvPkt`; enviar/falsificar mensajes | Comentario: "Create header with steamId & realm / Create body / Serialize / Set type with ProtoBuf mask / Set refs to 1 (not doing this will debugbreak() in a failed assert)"; hook+tramp para `CCMInterface`, `CWebSocketConnection`, `IClientUser::sendMsg` | §7.7.13 |
-| M129 | 2026-08-07 | commits `3d7d3c6`, `a62efeb` | 1 | `has_target_job_name()`; `isValid()` | "Do not modify header by blindly requesting the target_job_name"; `isValid()`: `-return body && size > sizeof(CNetPacketBody) && body->type != INVALID_NETPACKET_TYPE;` → `+return getType() != INVALID_NETPACKET_TYPE && size > sizeof(CNetPacketBody);` (`getType()` guarda `if (!body) return INVALID_NETPACKET_TYPE;`) | §7.7.13 |
-| M130 | 2026-08-07 (HEAD del barrido) | fuente `CNetPacket.hpp`/`.cpp:8`, `hooks.cpp:271/275/481` | 1 | Bug `isProtoBuf()` | `constexpr bool isProtoBuf() const { if (getType() == INVALID_NETPACKET_TYPE) { return INVALID_NETPACKET_TYPE; } return getType() & PROTOBUF_TYPE_MASK; }` → `-1` a `bool` = `true`; dos llamantes tapados por `isValid() &&`; tercero `getProtoBufTypeName()` loguea `0x7FFFFFFF` en vez de `"Unknown"` (cosmético) | §7.7.13 |
-| M131 | 2026-08-07 | commits `c51c4fa`, `b571526` | 1 | Menores | `la_objopen` `const std::string name = map->l_name`; ya trackea `libtier0_s.so`; logging en `assembleCodeAt` | §7.7.13 |
-| M136 | 2026-08-08 | commits `23f3dd7`, `eb4cfac`, `e3ed672`, `6786383`, `b0781a0`, `a05f9ff`, `8375b8e` | 1/11 | Menores | Retira wrappers `Steam::alloc<T>()`/`free()`/`realloc<T>()`; `if (type == 2)` → `k_EWebSocketConnectionSendRaw`; toggle `DEBUG` en Makefile: "I checked using radare, without DEBUG being defined the inlined calls of CLog::once & CLog::debug get fully optimized out"; hook+tramp `CMCInterface`/`CWebSocketConnection` | §7.7.14 |
-| M150 | 2026-08-15 | commits `ac6830b`, `9be780a`, `ee0021b` | 1 | `CUtlRBTree` como árbol | `struct Element_t { int32_t leftIndex; //0x0 int32_t rightIndex; //0x4 uint8_t __pad0x0[0x8]; //0x8 T key; //0x10 T2* value; //0x14 }; //0x18`, `int32_t rootNodeIndex; //0x14`, `uint32_t allocated; //0x18`; `find()` devuelve `Element_t*`; `ee0021b`: probado contra `m_MapAppOwnershipTickets` y `m_mapPackages`; grep: `CUtlMap`/`CUtlRBTree` no se usan en ningún sitio (sólo `src/sdk/CUtl.hpp`); bug latente: deref `elements[index]` antes de comprobar `index == -1` (árbol vacío → lectura 0x18 bytes bajo el array) | §7.7.19 |
-| M154 | (§7.7.19) | fuente `update.cpp:128`, `res/config.yaml` líneas 98 y 102, `config.cpp:176-177` | 1 | Comportamiento de SafeMode | `verifySafeModeHash()` busca `clientHashMap[VERSION]`; `SafeMode: yes` → `LOG_NOTIFYERROR("Unknown steamclient.so hash! Aborting...")` + `unload()`; `WarnHashMissmatch: yes` → toast "please update"; ambos `no` por defecto (fichero y código `false`) | §7.7.19 |
-| M158 | 2026-08-17 | commit `aa27169` | 1/11 | Validación del feed | `- if (res == 0 && data.size() > 0)` → `+ if (res == 0 && data.starts_with("SafeModeHashes:\n"))`; cita "today github decided to do some trolling by returning a wholly different message" | §7.8.3 |
-| M171 | 2026-08-23 | commits `148b9a1`, `1f10312` | 1/11 | `library-inject` vaciado; excepciones | "la_objsearch messes up exceptions in a way that they do not get caught anymore"; `main.cpp` comentado entero; `catch (YAML::BadFile&)`/`ParserException`/`BadConversion` → `catch (...)`; Makefile: `#g++ … #Disabled, since having a la_objsearch fucks up exceptions for some reason / -rm "library-inject.so" / touch "library-inject.so"` | §7.9.4 |
-| M171b | (§7.9.4) | lumalinux `main.cpp:377-399`, `setup.sh:1044`, `:881`; **medido** `LD_AUDIT` con fichero vacío | 1 | `.so` de 0 bytes | lumalinux no implementa `la_objsearch`; `setup.sh` instala `library-inject.so` y lo pone primero en `LD_AUDIT`; `$ LD_AUDIT="$PWD/empty.so" /bin/true` → `ERROR: ld.so: object '…/empty.so' cannot be loaded as audit interface: file too short; ignored.` `exit=0`; entrada inválida no arrastra a la otra; accionable `-f` → `-s` | §7.9.4 (coexistencia) |
-| M173 | 2026-08-24 | commits `0420645`, `a17692e`, `07be566`, `f4a6b9f`, `0168c7d`, `6f7e0d1`, `1e6b96f`, `957ece2` | 1/12 | API de plugins Lua | LuaBridge (~7k líneas en `include/`), plugins en `config/plugins`; hooking desde Lua + vigilancia del directorio; callbacks; decompilador por nombre; `CUser::postCallback` & `MemHlp::hexdump`; callback `SLSsteam::initialized` ("Fired when Steam has finished initializing `CUser`, making it safe to access"); `6f7e0d1` bug: `VFTableInfo_t::init()` tomaba referencia a `Decompiler::vftables[typeName]` y la machacaba con `subClassIndex`; `libluajit.a` reconstruido con GCC 4 (`_GLIBCXX_USE_CXX11_ABI=0`); `957ece2` `SLS.alloc/realloc/free` | §7.9.5 |
-| M174 | (§7.9.5) | fuente `src/sdk/CUser.cpp:48-52`, `patterns.cpp:145`, `example.lua` | 1 | `postCallback` es por patrón | `void CUser::postCallback(const ECallbackType type, void* pCallback, const uint32_t callbackSize) { const static auto fn = reinterpret_cast<...>(Patterns::CUser::PostCallback.address); fn(this, type, pCallback, callbackSize, 0); }`; `example.lua`: `memhlp.patternScan("E8 ? ? ? ? 8B 75 ? 89 D8", modSteamClient)`; README: "While hot reloading Luas is possible it's highly advised against doing so. You have been warned." | §7.9.5 |
-| M175 | 2026-08-25 | commits `8b9ccf6`, `ac0b16b`, `2b628b2`, `81252c8`, `d62707c`, `3ea3b87`, `0453823`, `7faec87`, `1306feb` | 1/11 | API Lua se llena | `SLSsteam::luaReload`, `SLSsteam::configLoaded` + `rootNode`, `Network::recvPkt`/`Network::sendPkt` con `CNetPacket`/`CNetPacketBody`; crea dir de plugins; sólo `.lua`; orden alfabético (`std::set`); no escribe rutas completas al log | §7.9.6 |
-| M176 | 2026-08-26 | commits `c9c0bbb`, `2432a37`, `c0f42f2`, `60a60db`, `3f9c705`, `85dac66`, `ee2620c`, `d648297`, `56bc770`, `7d7a5e6` | 1/11 | Candado de plugins | Desactiva compilación de `library-inject` en Makefile; `Plugins: no` en `config_default.hpp`, `g_config.plugins` gatea `Lua::runLua()`; "SLSsteam plugins can run arbitrary code! So only run plugins you trust"; "the rest of the system stays active to allow for hot reloading"; `watchLoop` gana flag `running` + manejador de señal; `eventMask` configurable; `reloadlua` en API; `Utils::exec` se comía `argv[0]`; `LuaHook` rechaza `LM_ADDRESS_BAD` | §7.9.7 |
-| M180 | 2026-08-29 | commits `913a431`, `0a77412`, `f932133`, `7850ab2`, `3131c5f`, `52bbe5e` | 1 | Refactor de `Hooks` | 579 líneas `hooks.cpp` + 196 `hooks.hpp`; `IHook` con `std::unordered_set<IHook*> hooks`; `DetourHook`/`VFTHook`/`LuaHook` : `Hook<T>`; objetos → punteros (`Hooks::CUser_CheckAppOwnership->tramp.fn`); borra comentario "This does not work! GCC sees no path to the hk* functions…"; `LOG_IF_EXISTS(g_pLog)` ("Seems like SLSsteam was trying to preload libc.so.6"); `MTVariable` a `shared_ptr` `.get()`→`.copy()`; `operator=` asignaba puntero | §7.9.10 |
-| M182 | 2026-08-30/31 | commits `d900d77`, `32bb863`, `f4213e5`, `2f9af1b`, `3a3ee4a`, `1721312` | 1/12 | API Lua se mueve | Makefile `-rm` + `touch`; LuaBridge moderno (+16k/−4.7k; `Coroutine`, `Expected`, `Enum`, `Overload`), `addConstant` → `addVariable`; `place_lua_hook` export C; elimina `SLS.alloc/realloc/free`, `memhlp.getUserDataPtr`; fusiona `downloadStringWithHeaders` en `downloadString` | §7.9.11 |
-| M183 | 2026-09-01 | commits `ac52879`, `3f8e429` | 1 | `unpack_user_data` | `extern void* unpack_user_data(const void* pData) { return reinterpret_cast<const luabridge::detail::Userdata*>(pData)->getPointer(); }`; tercera encarnación en 8 días; doc "Use this to convert `SLS.steamEngine` to the real `CSteamEngine` pointer etc."; `example.lua` engancha `postCallback` escaneando bytes desde Lua, usa `VFTableInfo_t` con subclases, en `SLSsteam::initialized` llama `isSubscribed` y `config:setAdditionalApps()` | §7.9.12 |
-| M186 | 2026-09-01..03 | commits `3d45b14`, `5f8ce3a`, `a7c47f5`, `b1fd214`, `6015c05`, `c95b119`, `eafd3ea`, `fc96f26`, `71021ad`, `11f0970`, `f2d6544`, `75acfce`, `94e9341` | 1/11 | `main` hasta release `20260903114323` | `3d45b14` permisos `u=rwx` a dir de plugins y cada `.lua`, si no puede desactiva plugins esa sesión; `eafd3ea` corrige path de `.updates.yaml` (sobraba una barra); hashes de cliente: 2-sep `bc54101b…` (ubuntu12_32 + steamdeck_stable), 3-sep `237495b4…` (sólo ubuntu12_32); release `71021ad` | §7.10 |
-| M191 | 2026-09-16 | commit `003f8f0` | 1 | `CNetPacket` vuelve al búfer estático | "Went back to the old method using a buffer + overwriting the body only. Freeing/replacing the originalBody caused issues"; vuelven `g_packetsArray[1 MB × 8]`, `g_packetsArrayOffset`, `g_packetSerializeMutex`; rechaza mensajes ≥ 1 MB; "If I understand correctly Steam cleans up for us, that's why we crash when we free the oldBody ourself. However the body we allocate doesn't get freed, so we just reuse a buffer for it". Moon `2668620` (2-sep) había borrado `PACKETS_ARRAY` | §7.11 |
-| M192 | 2026-09-17 (barrido) | feed de SafeMode + tracker moon `swwayps/steam-monitor` | 1 | Hashes | Último hash 3-sep `237495b4…` (`ubuntu12_32`, versión `1788400362`); stable escritorio `1788652215` (5-sep) sin hash (CDN no alcanzable tras el proxy; inferencia); Deck en `1788291500` (2-sep) con hash en los tres sitios | §7.11 |
-| M195 | 2026-09-17 | commit `0cad406` | 1 | Mutex en `serialize` | `lock_guard` sube por encima de la lectura de `g_packetsArrayOffset`; "Doesn't really matter right now, since RecvPkt seems to always get called from the CSteamEngine thread anyway"; `newBdy->type = getType()` | §7.12 |
-| M201 | 2026-09-18 (tracker moon `19ca7ee`) | TOML de moon | 1 | Hash del stable 5-sep | `237495b4…` cambió `steam_version` `1788400362` → `1788652215` → el stable del 5-sep lleva el mismo `steamclient.so` que el del 3; betas `1789606022` (18-sep), `1789781627` (19-sep), `1790036264` (22-sep) sin hash; Deck en `1788291500` (`bc54101b…`); nuestro feed sin `237495b4…` | §7.12 |
-| M206 | 2026-09-28 | tracker moon | 1 | Hashes | Betas escritorio `1790121765` (23-sep), `1790380355` (26-sep), `1790534246`, `1790545198` (27-sep); stable `1788652215`; Deck `1788291500` (`bc54101b…`) | §7.13 |
-| M208 | 2026-09-28 | commit `779178c` | 1/2 | `GetSteamID` a VFT hook | Deja el hash `0xD6FC3200` en `ProcessIPCFrame`; `g_currentSteamId` capturado en el hook; `IClientUser::getSteamId()` en SDK; "Thanks 3vil3vo for explaining what the hell is going on in this function" | §7.14.1 |
-| M213 | 2026-10-02 | `dev` commits `07dc57e`, `3d9ee15`, `4f3f2ef`, `b92dd53` | 1 | Offsets por RTTI | `MemHlp::searchOffsetByTypeName(obj, "15CUserAppManager")` recorre hasta 0x10000 bytes; sustituye tres patrones (`CUser::m_OffsetUserAppManager`, `m_OffsetUserAppInfo`, `m_OffsetClientUser`) y `g_pClientCompat` → `CUser::getClientCompat`; `b92dd53` mide y loguea ms | §7.14.2 |
-| M216 | 2026-10-07 | tracker moon + feed MigoReleases (`lumacore-findings.md`) | 1 | Hashes | `res/updates.yaml` upstream sin cambio (`main@71021ad`); moon parado desde 27-sep; betas 30-sep `1790721607`, 2-oct `1790904859`, 6-oct `1791249696`; stable `1788652215`; Deck `bc54101b…` | §7.14.3 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08-23 | shell | `LD_AUDIT` con un `.so` de 0 bytes, como queda `library-inject.so` | `ld.so: object '…/empty.so' cannot be loaded as audit interface: file too short; ignored`, salida 0: la entrada se ignora y el resto del `LD_AUDIT` carga | `nosotros.md` §2.1 |
+| 2026-09-17 → 10-07 | red (feed `res/updates.yaml`, tracker `swwayps/steam-monitor`) | Qué clientes tienen hash en el feed | Último hash el 3-sep (`237495b4`, versión `1788400362`); el stable de escritorio del 5-sep (`1788652215`) lleva el mismo `steamclient.so` (el tracker cambió solo la versión el 09-18); Deck en `1788291500` (`bc54101b`) desde el 2-sep. Ninguna beta posterior (18-sep a 6-oct) con hash. `res/version.txt` sigue en `20260903114323` | §2.1 |
 
 #### Función 2 — Propiedad y licencias
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M13 | (base ebfb079) | fuente `hooks.cpp:290`, `apps.cpp:52`, `apps.cpp:18` | 2 | Ownership | `CUser::CheckAppOwnership` detour → `Apps::checkAppOwnership`; `unlockApp` muta `CAppOwnershipInfo`: `ownsLicense=true`, owner, `releaseState`, quita low-violence/region-lock | §2 tabla |
-| M14 | (base ebfb079) | fuente `hooks.cpp:313`, `apps.cpp:129` | 2 | AppList injection | `CUser::GetSubscribedApps` detour → `Apps::getSubscribedApps` añade `AdditionalApps` | §2 tabla |
-| M15 | (base ebfb079) | fuente `hooks.cpp:203`, `apps.cpp:230` | 2/4 | PICS tokens | `CProtoBufMsgBase::Send` detour → `Apps::sendPICSInfoRequest` adjunta `access_token` por-app en `PICSProductInfoRequest` (EMsg 8903) | §2 tabla |
-| M17 | (base ebfb079) | fuente `fakeappid.cpp` | 2 | FakeAppId | Hooks `SetAppIdForCurrentPipe`, `GetAppId`, matchmaking, UGC, servers; mapea appId real↔falso por pipe | §2 tabla |
-| M18 | (base ebfb079) | fuente `ticket.cpp:253` | 2 | Tickets | `CProtoBufMsgBase::InitFromPacket` → `Ticket::recvMsg`; `BUpdateAppOwnershipTicket`, `GetAppOwnershipTicketExtendedData`, GetSteamId; cache a `~/.config/SLSsteam/cache/*.yaml` (base64), reproducido offline, spoof de `steamId` | §2 tabla |
-| M20 | (base ebfb079) | fuente `hooks.cpp:1037-1041`, `813-821` | 2 | Family lock | `patchRetn` escribe `0xC3` al inicio de `FamilyGroupRunningApp` y `StopPlayingBorrowedApp` | §2 tabla, §2.1 |
-| M21 | (base ebfb079) | fuente `misc.cpp` | 2 | Cosméticos | `GetOfflineMode`, `BLoggedOn`, `InitFromPacket`: offline por-app, wallet, email verificado | §2 tabla |
-| M22 | (base ebfb079) | fuente `apps.cpp:61-69`, `config.cpp:292-309` | 2/6 | Guardas | Denuvo: no modifica juegos Denuvo poseídos por otra cuenta (config `DenuvoGames`); `shouldExcludeAppId`: appId `>= 1e9` nunca se toca + whitelist/blacklist | §2 tabla, §2.2 |
-| M33 | (v0.5.6 de lumalinux) | fuente lumalinux `main.cpp:21-22` | 2 | Hook retirado en lumalinux | "Packet/858 hook REMOVED: SLSsteam already covers ownership (CheckAppOwnership) and PICS access tokens. Nothing extra." | §5 |
-| M37 | 2026-07-05 | commit `5c632dd` | 2/9 | Add/remove en caliente | Deltas `newApps`/`removedApps` bajo mutex (`config.cpp`); `Apps::runIPCFrame` desde `hkClientUtils_RunIPCFrame` postea `AppLicensesChanged_t` (`postCallback`) + re-pide appinfo; disparador movido de `InitFromPacket` a `RunIPCFrame` (race) | §7 pt 3-4 |
-| M46 | 2026-08-12 | fuente `src/sdk/CUser.cpp` "idéntico en ebfb079, 69594b9 y HEAD" | 2 | `isSubscribed` ve propiedad real | `CUser::checkAppOwnership` → `Hooks::CUser_CheckAppOwnership.tramp.fn(this, appId, pInfo)`; `isSubscribed` = `info.ownsLicense && !info.licenseExpired`; para added app devuelve **false** | §7.2 corrección |
-| M51 | 2026-07-07 | commit `84c3672` | 2 | Opciones eliminadas | `PlayNotOwnedGames` y `AutomaticFilterList` eliminados (config, parsing, `apps.cpp`); `AdditionalApps` único mecanismo de unlock | §7.4 |
-| M82 | 2026-07-25 | commit `3620dd2` | 2/6 | SteamStub Palworld multicuenta | Precedencia invertida en `hkClientUser_GetSteamId`: spoof de un solo uso manda sobre el steamId del ticket cifrado cacheado; cita "One time spoof should take presedence, otherwise SteamStub will fail for games that use encrypted tickets for online auth when you play on multiple accounts" | §7.7.3 |
-| M87 | 2026-07-26 | commit `293eb93` | 2/6 | Spoof de SteamId con FakeAppIds | Pros: tickets cifrados reales, AuthSessions; Cons: rompe activaciones Denuvo recientes y online Denuvo vía FakeAppIds. "Never spoof inside the Steamclient" (`utils->getAppId()` == 0 → sin tocar). Mecanismo indirecto: consulta caché con `utils->getAppId()` (falso) en vez de `getRealAppIdForCurrentPipe()`; guarda en `getCachedEncryptedTicket`: `if (realAppId && fakeAppId && appId != realAppId) { g_pLog->once("Returning empty cached encrypted ticket for %u because it's set to %u\n", ...); return ticket; }` | §7.7.4 |
-| M87b | (§7.7.4) | LumaDeck `backend/fixes.py`, `GameDetail.tsx:390` | 2/6 | Rutas de FakeAppId en LumaDeck | Automática: sólo desde `[Main]` de `OnlineFix.ini` ("never a hardcoded 480"); manual "Native Online" → `add_fake_app_id(appid, 480)`. LumaDeck no toca la caché de tickets (cero referencias en `backend/`) | §7.7.4 (lado LumaDeck) |
-| M88 | 2026-07-26 | commit `7663aef` | 2/12 | Redacción de apps privadas | `sendGamesPlayed`: `else if (!owned \|\| getFakeAppId(gameId))` → `else if (getFakeAppId(gameId))`; hook `SetString` del config store parsea `WebStorage\PrivateApps` (`[730,240,440]`) → escribe `"Redacted"` | §7.7.4 |
-| M93 | 2026-07-27 | commits `3250c2c`, `6d1c7fd` | 2 | `g_currentSteamId` a 64 bits | `uint32_t` → `CSteamId`; usos en `apps.cpp` (`familyShared`, `unlockApp`, guard Denuvo), `ticket.cpp` (dos `saveTicketToCache`); ticket-grabber cambia formato; borra aviso de `globals.hpp` | §7.7.5 |
-| M98 | 2026-07-28 | commits `3c520bd`, `b8b0b51`, `3b2e0d8`, `8d5c4f9` | 2/6 | Saga ticket cifrado | hook `IClientUser::GetEncryptedAppTicket` spoof one-shot y saca guarda FakeAppIds; `oneTimeSteamIdSpoof` → `unordered_map<AppId_t, CSteamId>`; revert: "Denuvo can be tricked by switching after a variable amount of GetSteamId calls. But it's to unreliable, needs custom amounts per game… So it's axed until I can find a safe timing", `.place()`/`.remove()` comentados; `getCachedTicket` devuelve `SavedTicket*` (`SavedTicket& ticket = ticketMap[appId];`) | §7.7.6 |
-| M99 | 2026-07-28 | commits `f7926b5`, `4390e1a`+`a630b7e`/`8da82c2`, `c61df24`+`d942ada` | 2 | Config nueva | `SteamIdOverride` (`appId → steamId64`; `0` = ticket cacheado); `FakeName` (intercepta `CMsgClientPersonaState`, compara `friendid()` con `g_currentSteamId.steamId64`, reescribe `player_name`); `DenuvoGames` `uint32_t` → `uint64_t`/`CSteamId` (antes el guard comparaba mal) | §7.7.6 |
-| M105 | 2026-07-30 | commit `146e28f` | 2/9 | `AppLicensesChanged_t` sólo para apps nuevas | "Previously we just invoked it for any appInfo received. Didn't cause any issues but was lazy"; `pendingLicenseChanges` con mutex; `const auto added = g_config.newApps; if (!added.size()) return; … pendingLicenseChanges.emplace(appId);` / `if (!pendingLicenseChanges.contains(app.appid())) continue; set.emplace(app.appid()); pendingLicenseChanges.erase(app.appid());`; diff en `config.cpp:203-212` | §7.7.7 |
-| M105b | (§7.7.7.a) | traza de código (no on-device) | 2/9 | Live refresh LumaDeck vs SLSsteam | SLSsteam `AppLicensesChanged_t` vía `Apps::postAppLicensesChanged(set)` por diff de `AdditionalApps`; lumalinux `LicensesUpdated_t` (`ECallbackType` 0x7d) vía `CUser::NotifyLicensesUpdated(user)` por `keys.txt`. "no verificado on-device: no he comprobado cuál de los dos callbacks es el que realmente refresca la UI" | §7.7.7.a (coexistencia) |
-| M113 | 2026-08-01 | commit `2281333` | 2 | `AppOwnershipInfo_t::region` | `char region[2]` + `char field7_0x1A[2]` → `char region[4]`; cita "Client copies this like a DWORD…"; tamaño total igual; nadie lee `region` (se usa `regionRestricted`) | §7.7.9 |
-| M118 | 2026-08-05 | commit `50c439a` | 2 | Callbacks a FakeAppId | `DetourHook` patrón `CUser::PostCallbackToAppId`: `const AppId_t fakeAppId = FakeAppIds::getFakeAppId(appId); if (fakeAppId) { g_pLog->debug("Rerouting callback from %u to %u\n", appId, fakeAppId); appId = fakeAppId; }` | §7.7.11 |
-| M119 | 2026-08-05 | commit `50eed0d` | 2 | Lobbies con FakeAppId | Hook `IClientFriends::GetFriendGamePlayed` (RTTI `12CUserFriends`): `if (fakeAppId && fakeAppId == gamePlayed->appId) gamePlayed->appId = realAppId;`; cita "We do not log this function, it's basically useless since we don't want any SteamIds in the logs" | §7.7.11 |
-| M120 | 2026-08-05 | commit `913aca1` (config) | 2 | Aviso FakeAppIds | Línea "Do not run multiple apps under the same AppId simultaneously!" (en HEAD ampliada con "It's possible but will most likely cause undefined behaviour") | §7.7.11 |
-| M120b | (§7.7.11) | LumaDeck grep `i18n.ts`, `GameDetail.tsx` | 2 | Aviso en UI | Ningún aviso sobre ejecutar varios juegos con el mismo 480; `slssteam_ops.list_fake_app_ids()` devuelve `{realId: fakeId}` | §7.7.11 (lado LumaDeck) |
-| M121 | 2026-08-05 | commits `d566a87`, `f79b238`, `73a710c`, `c727ff1`, `de76936`, `ec239e6`, `6c85f93`, `05d89d9`, `a646d81`, `8d16704` | 2/1 | Refactors | `FakeAppIds::runIPCFrame` comprueba `shouldUseRealAppIdForInterface` él mismo; `EIPCInterface` → `enum class`; `steamId64 \|= 0x0110000100000000`; `IClientFriends.hpp` nuevo; `fakeAppIdMap` `unordered_map<uint32_t, AppId_t>` → `unordered_map<HSteamPipe, AppId_t>` (mismo typedef, cero cambio) | §7.7.11 |
-| M132 | 2026-08-08 | commit `9ce2650` | 2 | AppId real desde `/proc` | Antes `AppId_t lastAppLaunched` global; ahora `getRealAppIdFromEnv(HSteamPipe)`: pid del `CServerPipe` → `/proc/<pid>/environ` → regex `SteamAppId=N` → `fakeAppIdMap[pipe] = appId` (cachea también 0); fallback `utils->getAppId()`; logs `"No SteamAppId in /proc/<pid>/environ! Using 0"`, `"Failed to open … to get %p's appId!"` | §7.7.14 |
-| M133 | 2026-08-08 | commit `c2a3a2f` (config) | 2/12 | Requisito `/proc` | Comentario "#Requires access to /proc to read processes' real AppId from their environment / #(most distros allow this by default)" | §7.7.14 |
-| M134 | 2026-08-12 | commit `d680874` | 2/11 | `/proc/<pid>/comm` en logs | `"Failed to open /proc/1234/environ for MyGame.exe to get 0x3's appId!"`; si `comm` falla: `"ExeName will be unknown in logs"` y `"Unknown"` | §7.7.14, §7.7.17 |
-| M135 | 2026-08-08 | commit `14d9e32` | 2 | Alternativa descartada | Comentario "Replacing this call with an injected GetAppOwnershipTicketResponse is possible, but breaks in offline mode so we don't do that" | §7.7.14 |
-| M138 | 2026-08-09 | commit `4afaede` | 2 | Strict aliasing | `-fakeAppIdMapPings[*reinterpret_cast<uint64_t*>(&details.address)] = realAppId;` → `+fakeAppIdMapPings[details.ip64] = realAppId;` con `union { servernetadr_t address; uint64_t ip64; }`; Makefile `-O3 -flto=auto -floop-block -fgraphite-identity -floop-parallelize-all -fomit-frame-pointer` | §7.7.15.a |
-| M145 | 2026-08-12 (ventana 05-08 → 12-08) | commit `3d7b17f`; `git log res/version.txt` | 2/9 | "forgotten test" en `postCallback` | `-Hooks::CUser_PostCallbackToAppId.tramp.fn(this, 0, static_cast<unsigned int>(type), pCallback, callbackSize);` → `+const static auto fn = reinterpret_cast<void(*)(void*, ECallbackType, void*, uint32_t, uint32_t)>(Patterns::CUser::PostCallback.address); +fn(this, type, pCallback, callbackSize, 0);`; `CUser::postCallback` tiene exactamente dos llamantes (`feats/apps.cpp:271` y `:279`, en `Apps::postAppLicensesChanged`); entre `20260728212859` y `20260815201341` **no hay ninguna release** → nunca publicado | §7.7.17.a |
-| M145b | (§7.7.17.a) | LumaDeck `slssteam_ops.py:126` | 2 | Comodín `0:` | LumaDeck escribe `"  {appid}: {fake_id}"`, nunca el comodín `0:` | §7.7.17.a (lado LumaDeck) |
-| M163 | 2026-08-21 | commit `d056fda` | 2 | `process.cpp` | ~86 líneas de `/proc/<pid>/comm`+`environ` salen de `fakeappid.cpp` a `process.cpp` con `g_processMap` por pipe; "lo vamos a necesitar también para los tickets" | §7.9.2 |
-| M164 | 2026-08-21 | commit `5882bed` | 2 | Ocultar family-share | Hook `IClientAppManager::GetAppStateInfo`: tras el original, `ownerAccountId` = usuario actual, `realOwner` = 0, limpia `k_EAppOwnershipFlagsBorrowed`; gated en `DisableFamilyShareLock` + appId de pipe activo; enum `EAppOwnershipFlags`, struct `AppStateInfo_t` | §7.9.2 |
-| M165 | 2026-08-21 | commits `1b9b556`, `91a4336`, `de8d555`, `6dfaf3d`, `861b342` | 2/6 | PE/ELF + `SmartTickets` | Parsers PE/ELF 32 y 64 bits en `process.cpp`; nace `SmartTickets: no` | §7.9.2 |
-| M177 | 2026-08-27 | commit `cf63d67` | 2/9 | Batch `setAdditionalApps` | `- auto _newApps = newApps.empty(); - auto _removedApps = removedApps.empty();` → `+ auto _newApps = newApps.get(); + auto _removedApps = removedApps.get();`; `MTVariable::empty()` **vacía** la variable; cada recarga descartaba altas pendientes | §7.9.8 |
-| M178b | (§7.9.8) | código | 2/9 | Dos mecanismos de refresco | SLSsteam `AppLicensesChanged_t` (`0xf90be`); lumalinux `LicensesUpdated_t` (`0x7d`) vía `NotifyLicensesUpdated` | §7.9.8 (coexistencia) |
-| M179 | 2026-08-28 | commits `f03ad94`, `76d9c7c` | 2 | No trackear antes de `GetSubscribedApps` | `- if (!firstLoad)` → `+ if (!firstLoad && Apps::applistRequested)` (comentario "No need to post a AppLicenseChanged_t callback when GetSubscribedApps hasn't been called yet"); `LuaMutex` RAII | §7.9.9 |
-| M198 | 2026-09-20 | commits `ed347d7`, `e7e54f7` | 2/6 | `Process_t` endurecido | Defaults (`pid = -1`, `appId = 0`, `steamDRM = false`…) "so even when parsing fails we have fallback values"; `init` en `try/catch (...)` ("There might be some weirder procfs isolations"); `hkSteamEngine_ProcessIPCFrame` sólo llama `Ticket::connectPipe` si `init` devolvió `true` (antes siempre, también para `steam`) | §7.12 |
-| M209 | 2026-09-28 | commit `39822da` | 2/6 | Spoof condicionado | `Ticket::getEncryptedAppTicket` sólo spoofea si `SmartTickets` incluye `k_ESmartTicketsDenuvo` | §7.14.1 |
-| M222 | 2026-07-07 .. (§7.4) | LumaDeck `_set_playnotowned_no` | 2/11 | Impacto de eliminar `PlayNotOwnedGames` | LumaDeck devolvía falso "reinstall dependencies" cuando faltaba la línea; corregido 2026-07; headcrab antiguo aún fuerza `yes` | §7.4 |
+Las pruebas en vivo son del stack completo (`isSubscribed` true para los
+juegos añadidos, qué concede `AdditionalApps` frente al package-0, aparición
+y retirada en caliente): `nosotros.md` §5.2 F2.
 
 #### Función 3 — DLC
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M16 | (base ebfb079) | fuente `dlc.cpp`, vftable | 3 | DLC unlock | VFTHooks `IClientApps::GetDLCCount/GetDLCDataByIndex`, `IClientAppManager::BIsDlcEnabled/IsAppDlcInstalled` + `IsUserSubscribedAppInTicket` | §2 tabla |
-| M89 | 2026-07-26 | commits `27f4926`, `f34025e`, `32d0ed0`, `a5abb50`, `0684cc3` | 3/11 | Menores | `27f4926` retira override manual de appId en hooks DLC (título dice `IClientAppManager`, diff toca `IClientApps`); `f34025e` `printf`→`g_pLog->debug`; `32d0ed0` `stringstream`→`ostringstream` 6 ficheros; `a5abb50` paddings `char`→`uint8_t`; `0684cc3` "Chocked"→"Choked" | §7.7.4 |
-| M157 | 2026-08-20 | commit `6546411`, release `20260820085507` | 3 | Firma de `isUserSubscribedAppInTicket` | `- (IClientUser*, uint32_t steamId, uint32_t a2, uint32_t a3, AppId_t appId)` → `+ (IClientUser*, uint64_t steamId, AppId_t appId)`; notas de release "Fix DLC unlocker in games using AuthSessions" | §7.8.2 |
+Sin pruebas propias; las de DLC de juegos poseídos están en `nosotros.md`
+§5.2 F3.
 
 #### Función 4 — Claves y manifests
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M187b | 2026-09-12 | plugin `download.lua` (slssteam-plugins-analysis §3.3) | 4 | Request codes | Pide a `gmrc.wudrm.com` en solitario y por HTTP en claro → muerto desde el día 9 (corregido en §7.11: volvió el 16-sep) | §7.10, §7.11 |
+SLSsteam no interviene. El plugin `download.lua` (códigos por wudrm, en
+claro) se mide en `slssteam-plugins-analysis.md`.
 
 #### Función 5 — Updates de juegos
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M36 | 2026-07-05 | commit `5c632dd` | 5 | Update-blocking v1 | Retirado VFThook `GetUpdateInfo` (devolvía `false`) por detour `GetAppStateInfo` que hace `&= ~APPSTATE_UPDATE_RUNNING`… | §7 pt 2 |
-| M41 | 2026-07 (20260705) | binario `SLSsteam.so` 20260705132808 | 5 | Codegen del clear de flags | `-flto=auto -O3` colapsa seis `&=` en `and dword [reg+disp], 0xFFFFF8E5` (`0xFFFFF8E5 = ~0x71A = ~(REQUIRED\|QUEUED\|OPTIONAL\|RUNNING\|PAUSED\|STARTED)`); ancla `E5 F8 FF FF` con prefijo `81 /4`, exactamente 1 hit | §7.1 |
-| M42 | (20260705) | fuente `apps.cpp` | 5 | Criterio de bloqueo | `shouldDisableUpdates(appId) = isAddedAppId(appId) \|\| !isSubscribed(appId)`; sin toggle de config; `UseWhitelist: yes` es global (caso thecatantirat/Cuphead) | §7.1 |
-| M43 | **2026-07-07** | **codespace limpio**, SLSsteam `20260705132808` | 5 | Test end-to-end de `sls_update_unblock` | Balatro (2379780) en `AdditionalApps`, pinneado a manifest `3742336026811834465` vía `steamidra_lite --pin`, luego `--unpin`. Log `SLS-unblock: patched … -> and reg,0xFFFFFFFF`; al reiniciar: `Update Required → Update Queued → Update Running`, bajó gid `3512319404653808464` | §7.1 |
-| M44 | 2026-07-14 | release `20260714131044` | 5 | Revert del bloqueo | Vuelta al hook de `GetUpdateInfo` gated por `DisableUpdates`; parche quedó código muerto, retirado en v0.16.18 (2026-07-23) | §7.1 aviso |
-| M57 | 2026-07-14 | commit `c69d502`, release `20260714131044` | 5/4/2 | Config nueva | `ManifestIds` (versiones viejas + bloquear updates en OWNED), `DepotBlacklist`, rework de `AppIds` con parent AppId, revert del bloqueo de updates (solo unowned), fixes shortcuts non-Steam y playtime de refunds | §7.5 |
-| M61 | 2026-07-23 | clon `AceSLS/SLSsteam@20260723102618` | 5 | Mecanismo nuevo de bloqueo | Hook vtable `IClientAppManager::GetUpdateInfo` → `return false` si `shouldDisableUpdates`; `shouldDisableUpdates`: `if (!g_config.disableUpdates.get()) return false; return isAddedAppId \|\| !isSubscribed`; `DisableUpdates` **yes por defecto** (`config_default.hpp`); grep de `0xFFFFF8E5` → cero | §7.6 |
-| M219 | 2026-07 (issue #20) | LumaDeck issue | 5 | Síntoma del bloqueo de updates v1 | "Update required" sin bajar nada; `UseWhitelist: yes` global rompe unlock/DLC (caso thecatantirat / Cuphead) — segunda mano | §7.1 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-07 | binario `SLSsteam.so` `20260705132808` | Codegen del bloqueo de updates v1 | `-flto=auto -O3` colapsa seis `&=` en un solo `and dword [reg+disp], 0xFFFFF8E5` (`~0x71A`); con el prefijo `81 /4` el ancla `E5 F8 FF FF` casa exactamente una vez. Base del contraparche de lumalinux (probado el 07-07, `nosotros.md` §5.2 F5) | lumalinux `RESEARCH.md` §16.2 |
+| 2026-07 | Discord (issue #20 de LumaDeck, segunda mano) | Síntoma del bloqueo v1 | "Update required" sin bajar nada; `UseWhitelist: yes` global rompía el unlock y los DLC (caso Cuphead) | §2.5 |
+| 2026-07-23 | repo (`20260723102618`) | ¿Queda el ancla v1? | `grep` de `0xFFFFF8E5` en la fuente: cero; el bloqueo es el hook de `GetUpdateInfo` con `DisableUpdates: yes` por defecto | §2.5 |
 
 #### Función 6 — Fixes y DRM
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M45 | 2026-07-01 | moon `3acab45` vs vanilla `ebfb079` | 6/2 | CD-key legacy | vanilla: `shouldDisableCDKey = !isSubscribed`; `shouldDisableUpdates = isAddedAppId \|\| !isSubscribed`; moon añade `isAddedAppId \|\| isAddedAppDlcId`, zerea out-param, `neutralizeLegacyCdKey` sobre `extended/hadthirdpartycdkey` | §7.2 |
-| M47 | 2026-08-12 | commit `79905b0` | 6/2 | `CDKeys` + `GetLegacyCDKey` | `hkClientUser_GetLegacyCDKey` llama `Apps::getLegacyCDKey(appId)` antes del original; sale si `isSubscribed`; clave de `CDKeys` o determinista `srand(accountId + appId)`, 4×4 `A-Z0-9` `XXXX-XXXX-XXXX-XXXX`, fijada con `clientUser->setLegacyCDKey()`; se borra quitando `cdk_[n]` de `localconfig.vdf`; flag `silent` en `getSetting`/`getList`/`getMap`; log `"Added CDKey for %u"`. Cita del commit: antes desactivaban CD keys "porque no teníamos decompilador y la VFT de IClientUser cambiaba mucho" | §7.2 actualización |
-| M149b | 2026-08-17 (rebajado) | LumaDeck `backend/steam_utils.py:440`, `downloads.py:1403`, commit `cda38b7` (2026-07-29), `GameDetail.tsx:188-196` | 6/9 | `set_compat_tool_for_app` | Escribe `CompatToolMapping` en `localconfig.vdf` con Steam vivo; docstring "Safe to call while Steam is not running"; no verificado on-device; rebajado: Steam Play global ON por defecto en Deck, pin redundante | §7.7.18.a (lado LumaDeck) |
-| M166 | 2026-08-22 | commits `0fec99d`, `c1a958f`, `9571cdc`, `4aa94a7`, `79a45a7`, `cd10f2c`, `95d56fd` | 6 | Detección DRM | Denuvo: secciones características **y** entropía de `.text` > 7.0; escanea ficheros abiertos; `checkMagic()` en vez de extensión; `Elf_Sheader` → `Section_t`; `IExecutableFile::load()` recibe `LogLevelFlags_t` | §7.9.3 |
-| M167 | 2026-08-22 | commit `2febc71` (`config_default.hpp`, `hooks.cpp:499-506`) | 6/2 | `SmartTickets` a flags | `- smartTickets = getSetting<bool>(rootNode, "SmartTickets", false);` → `+ smartTickets = getSetting<SmartTicketsFlags>(rootNode, "SmartTickets", 1);`; `0x1` = SteamDRM, `0x2` = Denuvo; medición de Ace: "less than 10ms for SteamDRM, up to 20-2000ms for Denuvo on my SSD"; análisis en `ConnectPipe` | §7.9.3 |
-| M168 | 2026-08-22 | commit `f20ef6c` | 6 | Retira conteo de pipes Denuvo | "It only works on new games. I'd rather have consistent & predictable behaviour than something that sometimes works" | §7.9.3 |
-| M197 | 2026-09-20 | commit `3ca4b73` | 6 | Parser PE/ELF | `strncpy` en búfer de 8 bytes sin terminador → 9 a cero; ELF `.at()`; `parseSections` devuelve resultado real | §7.12 |
-| M200 | 2026-09-20 | commits `1298aa8`, `4a24b69` | 6 | `getOpenFiles`, `analyse` | Resuelve symlinks de `/proc/<pid>/map_files/*` y descarta no-regulares; no re-analiza el exe principal si aparece mapeado ("only affects wine games") | §7.12 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08-22 | Ace (commit `2febc71`, segunda mano) | Coste del análisis de ejecutables en `ConnectPipe` | Menos de 10 ms para SteamDRM, de 20 a 2000 ms para Denuvo en su SSD | §2.6 |
 
 #### Función 7 — Logros, stats y tiempo de juego
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M19 | (base ebfb079) | fuente `achievements.cpp` | 7 | Achievements offline | `CAPIJob::GetPlayerStats` detour + `InitFromPacket` fuerzan `ERESULT_NO_CONNECTION` | §2 tabla |
-| M39 | 2026-07-05 | commit `5c632dd` (`tools/`) | 7 | schema-grabber | Reemplaza SLScheevo (dejó de funcionar); batch lee `loginusers.vdf`/`libraryfolders.vdf` | §7 pt 6 |
-| M48 | (julio 2026) | fuente `feats/achievements.cpp` | 7 | Guard del borrow | `if (g_pSteamEngine->getUser(0)->isSubscribed(appId)) return;` en `sendAndRecvGetUserStats` (`CMsgClientGetUserStats`) y `sendAndRecvGetPlayerStats` (`Player.GetUserStats#1`); `getReviewersForGame` → `store.steampowered.com/appreviews/<appId>?…&num_per_page=<MaxSchemaTries>`; `set_steam_id_for_user(id)` sobre el protobuf; reenvío por trampolín; limpia `achievement_blocks`/`crc_stats`/`stats`; `ownerBlacklist` `unordered_map` sin lock; `fork`+`curl` bloqueante | §7.3 |
-| M49 | 2026-08-04 | commit `3b97ac2` | 7 | `preferredOwners` | Recuerda el dueño que funcionó (`preferredOwners[appId]`), salta el fetch de reviews; segundo `unordered_map` sin lock con `contains` → `at` → `erase`; "Comprobado a HEAD: cero mutex en todo `achievements.cpp`" | §7.3 nota |
-| M50 | (v0.16.x) | Deck (OOBE) | 7 | Postmortem del parche `sls_achievement_unblock` | Escritura no atómica del `rel32` → hilo de Steam leyó destino a medias → `SIGILL` → wipe de gamescope; arreglado con `WriteRel32` atómico (detalle en RESEARCH §17) | §7.3 |
-| M53 | 2026-07-11 (HEAD `d35a697`, VERSION `20260710192125`) | commits `4f3e607`, `0d6b3a8`, `4ab84f7`, `c063fb1`, `6e8d357`, `c12234f`, `aa316c4` | 7 | Evolución del borrow | protobufs en vez de scrapear HTML; blacklist por AppId; `MaxSchemaTries` configurable (default 10; `0` = sólo caché offline); auto-update de schema; refactor | §7.4 |
-| M54 | 2026-07-11 | **Deck (on-device)** contra `d35a697`/20260711 | 7 | Validación `sls_achievement_unblock` | Anclajes (símbolos + patrón del guard) casan | §7.4 |
-| M62 | 2026-07-23 | fuente @`20260723102618` (`.symtab`) | 7 | Símbolos del parche de logros | `_ZN5CUser12isSubscribedEj`, `_ZN7CConfig12isAddedAppIdEj`, `g_config`, `Achievements::sendAndRecvGetUserStats`, `...GetPlayerStats`; guard `call isSubscribed; add esp,imm; test al,al; jne` único por función (L105/L153); otros branches `85 C0` | §7.6 |
-| M63 | 2026-08-17 (corrección) | commit `59f8259` (2026-07-20) + tabla release a release | 7 | Cambio de firma | Último parámetro de `sendAndRecvGetUserStats`: `const uint32_t targetType` → `const EMsg targetType`; mangled `…S3_j` → `…S3_4EMsg`. Tabla: `20260710192125` uint32_t; `20260714131044` uint32_t; **`20260722152506` EMsg (primera afectada)**; `20260723102618` EMsg; `20260728212859` EMsg | §7.6 corrección |
-| M64 | (2026-07-23) | binario release | 7 | `.so` del release | Da 403 en el proxy; compilarlo no es reproducible → forma de bytes no confirmada | §7.6 |
-| M96 | 2026-07-28 | commit `f624777` | 7 | Mangling | `CUtl*` `struct`→`class` con `public:` **no altera mangled names** | §7.7.6 |
-| M103 | 2026-07-30 | commit `a673d04` | 7 | Buffer de lectura | 128 → 8192 bytes (64× menos syscalls) | §7.7.7 |
-| M114 | 2026-08-02 | commits `03a4a96`, `fdefbe5`, `ae9428a` | 7/11 | Tools .NET | `OnDisconnected`/`OnLoggedOff` imprimían "Disconnected from Steam! Exiting..." sin `finished = true` → cuelgue en `schema-grabber`/`ticket-grabber`; borra `build.sh`; 4 espacios → tab en dos `Program.cs` (812 líneas) | §7.7.9 |
-| M116 | 2026-08-04 | commit `3b97ac2` | 7 | Fix stutters | Cita: "Some games just ruthlessly spam GetUserStats, which in turn just spams getReviewersForGame which causes massive stuttering."; código `if (preferredOwners.contains(appId)) { const uint32_t res = tryGetPlayerStats(..., preferredOwners.at(appId)); if (res == k_EResultOK) return res; preferredOwners.erase(send->appid()); }`; `preferredOwners[appId]` fijado en `tryGetPlayerStats`/`tryGetUserStats` sólo con `k_EResultOK`; sólo `k_EResultFailure` quema un dueño, no `NoConnection`; escrituras en líneas 113 y 200, lecturas 142-150 y 221-230; "Comprobado a HEAD: cero mutex en todo `achievements.cpp`" | §7.7.10 |
-| M169 | 2026-08-22 | commit `79a67ac` | 7 | Cooldown de logros | `Achievements::setCooldown()` marca el appId **10 minutos** sin schema; `getReviewersForGame()` sale temprano; llamadas dentro de `sendAndRecvGetPlayerStats`/`sendAndRecvGetUserStats` | §7.9.3 |
-| M181 | 2026-08-29 (verificado "sobre el fuente, no sobre el binario") | `dev@3f8e429` | 7 | Supervivencia de `sls_achievement_unblock` | `_ZN5CUser12isSubscribedE` sigue (`sdk/CUser.cpp:37`, ni inline ni virtual); `_ZN7CConfig12isAddedAppIdE` (`config.cpp:324`); `g_config`; `_ZN12Achievements23sendAndRecvGetUserStatsE`; `_ZN12Achievements25sendAndRecvGetPlayerStatsE`; exactamente un `call isSubscribed` por función (`achievements.cpp:154` y `:236`); guard `call`+`test`+`jne` intacto | §7.9.10 |
-| M214 | 2026-10-03 | `dev` commit `51724f5` | 7 | Endpoint de reseñas | `getReviewUrl`: `store.steampowered.com/appreviews/<app>?json=1…` → `api.steampowered.com/IUserReviewsService/GetAppReviews/v1/?appid=…&filter=1&languages[0]=all&review_type=0&purchase_type=1…`; "Store endpoint gets deprecated on 2026.10.22" (no verificado por nosotros); release instalada `20261001163836` sin el fix | §7.14.2 |
-| M218 | (sin fecha; "cuando se root-causeó") | **Deck** | 7 | Release presente en el Deck al diagnosticar la rotura de `sls_achievement_unblock` | `20260728212859` era la instalada; la rotura se **detectó** ahí, se introdujo en `59f8259` (07-20) | §7.7.6 |
-| M220 | (§7.6) | lumalinux log | 7 | Señales on-device del parche de logros | `SLS-ach: scoped the native-achievement guard…` vs `guard pattern not found exactly once`; `LUMA_SLS_ACH_TRACE=1`; `SLS-ach: could not resolve` | §7.6, §7.7.1 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-07-11 | Deck, SLSsteam `d35a697` (`20260710192125`) | Anclas del parche de logros de lumalinux | Símbolos y patrón del guard casan | `nosotros.md` §2.7 |
+| 2026-07-23 | binario (`.symtab` de `20260723102618`) | Símbolos que necesita el parche | `_ZN5CUser12isSubscribedEj`, `_ZN7CConfig12isAddedAppIdEj`, `g_config`, `Achievements::sendAndRecvGetUserStats` y `…GetPlayerStats` presentes; en cada una de las dos funciones un solo `call isSubscribed; add esp,imm; test al,al; jne`. Las releases no van strippeadas (`Makefile`, `PKGBUILD` `!strip`) | §2.7 |
+| 2026-07-20 → 08-17 | binario, release a release | Cambio de firma de `sendAndRecvGetUserStats` (`uint32_t` → `EMsg`, `59f8259`) | `20260710192125` y `20260714131044` con `…S3_j`; `20260722152506` es la primera con `…S3_4EMsg`; `20260723102618` y `20260728212859` también. El parche de lumalinux quedó mudo desde la primera; se detectó con `20260728212859` instalada en la Deck | `nosotros.md` §5.2 F7 |
+| 2026-08-29 | repo (`dev@3f8e429`, fuente) | Supervivencia de las anclas | Los cinco símbolos siguen (ni inline ni virtual); un solo `call isSubscribed` por función | §2.7 |
+| 2026-08-04 | Ace (commit `3b97ac2`, segunda mano) | Tartamudeo con el borrow | Algunos juegos llaman a `GetUserStats` sin parar y cada llamada pedía reseñadores; `preferredOwners` recuerda el dueño que funcionó | §2.7 |
 
 #### Función 8 — Cloud saves
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 9 — Añadir y quitar un juego
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M170 | 2026-08-22 | commit `1bbcbc8` (`apps.cpp:396-410`) | 9/6 | `LaunchOptions` | Por juego con `%command%`, en `Apps::spawnGame`; comodines `UINT32_MAX-1` (no poseídos) y `UINT32_MAX` (todos; el primero gana) | §7.9.3 |
+Sin pruebas propias; aparición y retirada en caliente en `nosotros.md` §5.2
+F2 y F9.
 
 #### Función 10 — Credenciales y proveedores
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 11 — Mantenimiento propio
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M24 | (base ebfb079) | fuente `filewatcher.cpp`, `config.cpp:75-86` | 11 | Hot-reload | `CFileWatcher` inotify en hilo `watchLoop`; `loadSettings()` recarga sin reiniciar; settings en `mtvar` | §4.1 |
-| M25 | release `5c632dd` (2026-07-05) | commit | 11 | Fix del filewatcher | Variante `inotify_add_watch(fd, fichero, IN_MODIFY)` rota con rename atómico (sólo dispara una vez); nueva: directorio padre + `IN_CLOSE_WRITE` + filtro `event->name` + leer buffer entero (antes `sizeof(inotify_event)`) | §4.1 |
-| M26 | 2026-08-15 | commit `1444fa5` | 11 | `IN_MOVED_TO` | `constexpr static int WATCH_MASK = IN_CLOSE_WRITE \| IN_MOVED_TO;` (`filewatcher.hpp`), en el `inotify_add_watch` y en el filtro del loop | §4.1 |
-| M27 | (base ebfb079) | fuente `api.cpp` | 11/9 | API local | Fichero `/tmp/SLSsteam.API` observado con el filewatcher; `echo "install\|<appid>\|<library>" > /tmp/SLSsteam.API` → `IClientAppManager::installApp` | §4.2 |
-| M28 | 2026-09-14 | (cierre, lectura ASSella) | 11 | Uso real del pipe | Único uso en el ecosistema: modo experimental de ASSella (`install\|appid\|0` tras DepotDownloaderMod) | §4.2 |
-| M29 | 2026-08 | fuente SLSsteam (`createFile()`), headcrab `fe3f6ba`, Discord | 11 | Completado del config | `createFile()` es create-if-missing; al cargar toastea `"Missing key(s)"`; headcrab `updateSLSsteamConfig` (commit `fe3f6ba`, "headcrab updates configs now" en el Discord de SLSsteam) reescribe según `res/config.yaml` del release, backup `config.yaml.headcrab-<fecha>`, valida con `DisableFamilyShareLock:` | §4.3 |
-| M34 | 2026-07-05 | commit `da97d11` (`20260705144737`) | 11 | Release pequeña | Cero código: bump `VERSION` 20260624075231 → 20260705144737 en `version.hpp` + `res/updates.yaml`; en la grande olvidaron subir la versión → el gate habría rechazado su propio build | §7 |
-| M38 | 2026-07-05 | commit `5c632dd` | 11 | API fixes | Recursión infinita en la API arreglada; fix creación fichero API; comando `uninstall\|appid` nuevo | §7 pt 5 |
-| M52 | 2026-07-11 | commit `f62d97c` | 11/12 | curl externo | libcurl in-process → `fork`+`execve("/bin/curl")` porque en SteamOS `libssl.3.so` crashea al curlear ciertas URLs | §7.4 |
-| M58 | 2026-07-15 | commit `7d62c68`, release `20260715200441` | 11 | Fixes | Recursión infinita en exclusiones (parent↔hijo), mirror jsdelivr para `res/updates.yaml`, `curl --connect-timeout 15` | §7.5 |
-| M67 | 2026-07-23 | commit `6725ff1` (`pkg/slssteam/PKGBUILD`) | 11/7 | PKGBUILD sin strip | `pkgver` → `20260723102618`; `#Disable stripping to not mess up disturb ticket-grabber` / `options=(!strip)` → `.symtab` intacta; `sls_achievement_unblock` resuelve `_ZN12Achievements25sendAndRecvGetPlayerStatsE*` y `_ZN12Achievements23sendAndRecvGetUserStatsE*` (no exportadas, sólo `.symtab`). Diagnóstico sugerido: `nm -a SLSsteam.so \| wc -l` | §7.7.1 |
-| M84 | 2026-07-26 | commit `1250950` | 11 | Errores de config enumerados | Antes `enum ELoadError { None, MissingKey, ParsingException }` con severidad (`if (__loadErrors.get() > err) return;`), toast `"Issues during config loading encountered! Missing key(s)"`; ahora `__loadErrors` `std::string` acumulado, `setError(name)`, formato `Config loading errors:\nMissing DlcData\nMissing DenuvoGames\nFailed to parse IdleStatus`; emitido con `g_pLog->notify(errors.c_str())` → `system("notify-send … \"<msg>\"")` (format-string observación) | §7.7.4 |
-| M85 | (escrito ~2026-08, §7.7.4) | HTTP a GitHub | 11 | URL de `config_default.hpp` usada por LumaDeck | Apunta a rama `master`, que **no existe** en `AceSLS/SLSsteam` (ramas `main` y `dev`); GitHub redirige y devuelve **200 idéntico a `main`** incl. `CDKeys`, `LogLevels`, `SteamIdOverride`, `FakeName` | §7.7.4 |
-| M85b | (§7.7.4) | LumaDeck `_BUNDLED_YAML` vs upstream | 11 | Snapshot desfasado | 29 claves; faltan `CDKeys` (08-12) y `LogLevels` (08-09); arrastra `LogLevel` singular (upstream renombró a plural). El flag `silent` no suprime `setError` | §7.7.4 (lado LumaDeck) |
-| M86 | 2026-07-26 | commit `62afc2e` | 11 | C→C++ en ruta de config | Antes `char pathBuf[255]` + `sprintf` desde `$XDG_CONFIG_HOME`/`$HOME`; ahora `ostringstream`; `getenv("HOME")` sigue sin comprobar; `createFile()` pasa de `fopen(path,"w")` a `std::ofstream(path, std::ios::app \| std::ios::out)` (revertido 07-27 `4e79bcd`) | §7.7.4 |
-| M95 | 2026-07-27 | commits `4e79bcd`, `42a23ff`, `871f065`, `f91ceaf`, `9d6a05d`, `a9b5135`, `30acee8` | 11/2 | Higiene | `lock_guard` en `log.hpp`/`mtvar.hpp` + revierte `std::ios::app`; `SavedTicket::isValid()`; `map`→`unordered_map` tickets; Makefiles propios para `library-inject`, `schema-grabber`, `ticket-grabber`; nix `audit-libs`; easter egg 22 de febrero en `notifyInit` | §7.7.5 |
-| M97 | 2026-07-28 | commits `a8c468d`, `f391f19` (PRs #146, #147) | 11/12 | Comunidad | `_drazy` / Deadboy666 actualizan `res/updates.yaml` | §7.7.6 |
-| M100 | 2026-07-28 | commits `3f56397`, `e7eb27a`, `bfc3458` | 11/2 | Robustez | Crash al loguear en apagado (`ofstream.is_open()`); `getTicketOwnershipExtendedData` sólo si la original devolvió tamaño; `/run/current-system/sw/bin/curl` para NixOS en la cascada de `execve` | §7.7.6 |
-| M101 | 2026-07-28 | commits `22b49e7`, `0c6d8ec`/`1906382`, `0919403`, `3f2bc38`, `81f4e8e`/`1a06744`/`f828ba5` | 11 | Release | Bump a `20260728212859`; PKGBUILDs; `updates.yaml`; borra `CSteamID.hpp`; estilo (typo `VFTable::analyze`) | §7.7.6 |
-| M102 | 2026-07-30 | commit `cbd0cd0` | 11/7 | Fuga de fds en `Curl::getString` | `fork()`+`execve("curl")`+`pipe()`: si `fork()` falla no cierra el pipe; extremo de lectura nunca se cerraba; usada por app en `getReviewersForGame` | §7.7.7 |
-| M108 | 2026-07-31 | commit `284115b` | 11 | Abort si falla la config | `CConfig::init()` retorna `false` si `createFile()` falla; cita "the tickets assume the config directory was created successfully"; `Ticket::getTicketDir()` = `<configDir>/cache` | §7.7.8 |
-| M111 | 2026-07-31 | commits `e15dcce`, `57b80e3`, `5f946ec` | 11 | Menores | Renombre `hkBUpdateOwnershipTicket`→`hkBUpdateAppOwnershipTicket`; `if (!name.size())` → `if (name.size() < 1)` (idénticos) | §7.7.8 |
-| M111b | (§7.7.8.b) | LumaDeck `main.py`, `backend/slssteam_config.py:88` | 11 | `set_sls_value` destructivo | `_read_yaml` hace `line.strip()` → pierde anidados; `_write_yaml` reescribe plano; cero llamadas desde `api.ts`/`pages/*.tsx`/`components/*.tsx`; backend corre root (`flags: ["_root"]`, `paths.py:561`), config queda root:644 (no verificado on-device) | §7.7.8.b (lado LumaDeck) |
-| M125 | 2026-08-06 | commits `da69f54`, `38b3af1`, `556d2a6`, `dd85a69`, `e2cfdb2`/`4d4eab8` | 11 | Menores | `EIPCCmd_ToString`/`EIPCInterface_ToString`; log de `hkTraceIPC` antes de la llamada; `malloc`→`std::string` en `memhlp` | §7.7.12 |
-| M137 | 2026-08-09 | commits `b556408`, `652a3b6`, `ebf28b4`, `9a54629`, `0f73549`, `dfed8e2`, `e578e5a`, `9aad713`, `9e51989`, `3b1be49` | 11 | Reescritura del logging | `__FILE__`/`__FUNCTION__`/`__LINE__` en `LOG_*`; niveles como flags `k_ELogLevelX = 1 << n`; off-by-one (empezaban en `1 << 1`) → `LogLevel: 4` pasa a `LogLevel: 3`; `traceOnce`; quita `NotifyWarn`/`NotifyError`, `ELogLevelCount = 8`; "we get actual format checks" + fix de printf malformados ("Using pedantic settings…") 21 min después; cita `e578e5a` "tracing will come in very handy when hunting down crashes" | §7.7.15 |
-| M139 | 2026-08-11 (corrección de fecha) | `git log -S"LogLevels:" -- res/config.yaml` | 11 | Fecha de `LogLevels` | Clave `LogLevels` (plural) aparece en `b5b1315`, 2026-08-11 ("refactor(log): Make logging smarter"); tres pasos: 09-08 flags, 10-08 `82afc5d` test de máscara, 11-08 renombre; LumaDeck `a061b00` citó "b556408/ebf28b4, 2026-08-09" (impreciso); `_BUNDLED_YAML` verificado byte-idéntico a la URL; default `LogLevels: 0xff` | §7.7.15.b |
-| M140 | 2026-08-09 | commits `8f450e8`, `cfc3bfb`, `3882c46` | 11/4 | Menores | Script Debug+Release; `3882c46` quita arg `appId` sin usar de `Apps::buildDepotDependency` (helper interno, no la firma del hook `CUserAppManager::BuildDepotDependency`); su handler de BuildDep no filtra por app | §7.7.15 |
-| M141 | 2026-08-10 | commits `82afc5d`, `8097864` | 11 | Máscara de log | `-if (flags < getMinLevel())` → `+if (!(g_config.logLevel.get() & flags))`; desaparece `getMinLevel()` ("dirty workaround for not being able to access g_config from __log"); `ELogLevelCount` 8 → 9, bucle `i = ELogLevelCount - 1` (sin cambio neto) | §7.7.16 |
-| M142 | 2026-08-11 | commit `d5a17c7` | 11 | `Notifications` eliminada | `-if (shouldNotify() && notification.size() > 0)` → `+if (notification.size() > 0)`; fuera `notifications`, `CLog::shouldNotify()`; control vía `LogLevels` bits `k_ELogLevelNotifyShort` = `0x40`, `k_ELogLevelNotifyLong` = `0x80` (default `0xff`); migración `0x3F` | §7.7.16 |
-| M143 | 2026-08-11 | commits `b5b1315`, `49cc2dc`, `37a29f7`, `cd43f3b`, `7059664` | 11 | Logging asentado | `LogLevel` → `LogLevels`; `LOG_CUSTOM(Info \| Once, …)` para volcado de config ("Prevents the logfile bloating to hell and back with big configs"), dedupe por `msgHist`; `LogLevels` se carga primero ("Otherwise on first load settings won't get logged"); `DlcData` vía `getMap` | §7.7.16 |
-| M143b | (§7.7.16) | grep LumaDeck | 11 | `Notifications` | LumaDeck no escribe `Notifications` en ningún sitio | §7.7.16 (lado LumaDeck) |
-| M144 | 2026-08-12 | commit `2b4b411` | 11 | Info en notify | Añade `k_ELogLevelInfo` a `notify`/`notifyLong` "So it still gets logged when users turn of notifications" | §7.7.16, §7.7.17 |
-| M146 | 2026-08-12 | commits `f0dab0e`, `df64d1d`, `ce8ce33`, `9d88160`, `dbb3a09`, `4d99883`, `25e1a2f`, `ffc66d6` | 11/1 | Tipado | `void*` → tipos reales en hooks; `sdk.hpp`; `CServerPipe` ampliado; `ffc66d6` `uint32_t type` → `EWebSocketConnectionSendType` (`: uint32_t`, cero ABI) | §7.7.17 |
-| M148 | 2026-08-14 | commits `aebac96`, `b7407e4`, `89c70c8`, `1dc0fdd`, `75ba3eb`, `4eecaa4`, `6e8951e`, `4135d51`, `aa35638`, `ac6830b`, `06603a0`, `9c350c1` | 11/9 | API local a 6 comandos + `API.md` | `Utils::tryConvertToNumber`; `InstallOp_t`/`LibraryOp_t`; `setcompat`/`getcompat`/`dumpcompat`/`dumplibraries` vía `IClientCompat` (`src/sdk/IClientCompat.hpp`); `API.md`: `dumplibraries`, `install\|appId\|libraryIndex`, `uninstall\|appId`, `dumpcompat\|appId`, `getcompat\|appId`, `setcompat\|appId[\|tool-name]`; `k_ELogLevelAPI`; `CUtlString`, `CUtlMap`, `CUtlRBTree` | §7.7.18 |
-| M149 | (§7.7.18.a) | fuente `res/config.yaml` línea 110 vs `getSetting<bool>(node, "API", true)` | 11 | Default de `API` | Fichero enviado dice `API: no`; default en código es `true` | §7.7.18.a |
-| M151 | 2026-08-15 | commit `665fc8c` | 11 | API: primer comando ejecutado dos veces | `fstream.close(); fstream.open(path, std::fstream::in);` sobre stream abierto; `isEnabled()` usaba `is_open()`; `echo >` dispara 2 eventos inotify; fix: `bool initialized`, abre-lee-cierra con `goto done`; `strcmp` → `==`. Presente en versiones < `20260815201341` | §7.7.19 |
-| M152 | 2026-08-15 | commit `182fdf0` | 11 | Makefile flag-aware | `FLAGSSHA := sha256sum` de `CXXFLAGS + LDFLAGS`; `obj/$(FLAGSSHA)/`, `bin/SLSsteam-$(FLAGSSHA).so`, `link-bins` con `ln -f`; `embed-config.sh`/`embed-version.sh` sólo reescriben si cambió | §7.7.19 |
-| M153 | 2026-08-15 | commits `c73e40b`, `505b2c5`, `97364a2` | 11/1 | Release `20260815201341` | `res/version.txt` y `src/version.hpp` de `20260728212859` a `20260815201341`; PKGBUILDs venían de `20260801163409`; SafeMode: `20260815201341: #tag 20260815201341 / - d0c0ff6e...a6b3df8900 #ubuntu32_32 & steamdeck_stable - 20260804` (**un solo hash**, el anterior listaba dos) | §7.7.19 |
-| M159 | 2026-08-15 release (verificado "contra el upstream de hoy", §7.8.4) | `config_default.hpp` | 11 | `Notifications` desaparecida | `NotifyInit` y `LogLevels` siguen; `Notifications` no; SLSsteam sólo reporta claves faltantes (`ELoadError::MissingKey`, `config.cpp:121`); `setup.sh:210` `sed -i "s/^Notifications:.*/Notifications: yes/"` muerto; mensaje línea 234 "NotifyInit/Notifications=yes" | §7.8.4 |
-| M162 | 2026-08-20 | commits `7186151`, `5d01066` | 11 | API multilínea | Antes leía **una** línea de 128 bytes; ahora fichero entero línea a línea; `goto done` → `return`; `lock_guard` al inicio de `parseCmd()` | §7.9.1 |
-| M178 | 2026-08-27 | commits `9c9de32`, `407b572`, `f497d6d`, `14034de`+`5d22865`, `8397c56`/`df92dc5`/`9a4f779`, `f801adb` | 11/1 | Fixes | `eventMask` configurable se ignoraba (`inotify_add_watch` con `WATCH_MASK`); full reload de Lua sólo en DEBUG; recarga silenciosa de config (flag `silent`); `stateMutex`; `YAMLNode` | §7.9.8 |
-| M184 | (§7.9.13) | fuente `config.cpp:127` | 11 | Claves nuevas | `SmartTickets`, `LaunchOptions`, `Plugins`; `ELoadError::MissingKey`; LumaDeck `_CONFIG_DEFAULT_URL = "https://raw.githubusercontent.com/AceSLS/SLSsteam/main/src/config_default.hpp"` | §7.9.13 |
-| M187 | 2026-09-03 y 08 | `dev` commits `faeaf9b`, `a456396`, `bbe1e3f` | 11/2 | `dev` sin publicar | newlines en logs; bypass de controles parentales en `ClientLogOnResponse`; crash en `Process_t::getRealExe` con `/proc` inaccesible | §7.10 |
-| M189 | 2026-09-12 | commits `6956e2b`, `e6082d0`; issue **#158** (Zyggarg, 11-sep) | 11 | Filewatcher `running` / EINTR | `running = true` antes de crear el hilo; `read()` `-1` con `errno == EINTR` → `continue`; cita issue: "System signals (like OS performance profile changes or thread teardowns) trigger errno == EINTR … break treats it like one and dies"; Ace: "pretty ghetto and shouldn't happen in the first place. But I got 2 reports of it randomly happening" | §7.11 |
-| M190 | 2026-09-14 | commit `cf79c27` | 11 | `tryConvertToNumber` | Gana `int64_t`/`uint64_t` (`stoll`/`stoull`) | §7.11 |
-| M196 | 2026-09-17..19 | commits `2c021bd`, `65d4071`, `ae4d4c7` | 11 | Menores | Typo README Lua; comentarios `CServerPipe`; log de `RecvPkt` con `refs`, `body`, `originalBody` ("Ref counted pointer") | §7.12 |
-| M199 | 2026-09-20 | commit `2a538fd` | 11 | `strsplit` por regex | `strtok` → `std::regex` + `sregex_token_iterator`; firma `(const std::string&, const char*)`; `process.cpp:698` `strsplit(readFile("cmdline"), "\0")` → delimitador = cadena vacía → `cmdLine` troceado por caracteres; `cmdLine` no se lee (`git grep`) | §7.12 |
-| M203 | 2026-09-22 | commits `ae5cbf1`, `32d6d96` | 11 | Log de arranque + `config_default.hpp` fuera de git | `SLSsteam (<rama> -> <commit>) loading in <proceso>` a INFO; `embed-version.sh` genera `BUILD_BRANCH` y `LAST_COMMIT_HASH`; `src/config_default.hpp` borrado (168 líneas), en `.gitignore`; `res/config.yaml` idéntico byte a byte al YAML del `.hpp` (verificado con diff) | §7.13 |
-| M204 | 2026-09-22 / 24 / 25 | commits `d659a66`, `6d9ad4e`, `1c2cc92` | 11/2 | Fixes | `Config::logLevels` arranca en `0xff`; `hkUser_CheckAppOwnership` devuelve `bool` (antes `uint32_t`, funcionaba porque i386 lee `al`); `strsplit` toma `const std::string&`, `cmdline` partido con `std::string("\0", 1)` (cierra nota de §7.12) | §7.13 |
-| M210 | 2026-10-01 | commit `42568f0` | 11 | API rota en `20260930144343` | `SLSAPI::parseCmd`: `strsplit(cmd, "\\|")`; desde `2a538fd` el `"\|"` era alternancia vacía → comandos no se partían; arreglado en `20261001163836` | §7.14.1 |
-| M212 | 2026-10-07 | `git show 20261001163836:res/version.txt` | 11/1 | Versión sin subir | Ambas releases llevan `res/version.txt = 20260903114323`; `verifySafeModeHash` usa la entrada `20260903114323` (`bc54101b…`, `237495b4…`); LumaDeck `SafeMode: no` (`installer.py:164`); `derive_version_floor` subestima; `.slssteam.version` = `20261001163836`; `~/.SLSsteam.log` arranca con `SLSsteam (main -> 42568f0) loading in <proceso>` | §7.14.1 |
-| M215 | 2026-10-02/03 | `dev` commits `71e3eb3`, `f64b2ab`, `b10181d`, `10b5cf1`, `0f21f31`, `993f691` | 11/1 | Menores | "pattern found N times", "unable to find signature", "failed to disassemble" pasan de DEBUG a WARN/ERROR; `__attribute__((hot))` en `hkSteamEngine_ProcessIPCFrame`; merges | §7.14.2 |
-| M217 | 2026-10-07 | LumaDeck | 11 | Accionable de §7.13 hecho | `slssteam_schema.py` ya lee `res/config.yaml`; `src/config_default.hpp` da 404 en `main` desde el merge | §7.14.4 (lado LumaDeck) |
-| M221 | (§7.8.1, sin fecha ni commit) | release assets | 11 | Renombrado de assets de release | "Nos rompió el instalador 44 h; ya arreglado" | §7.8.1 |
-| M223 | (§7.7.4) | SLSsteam config | 11 | Claves ignoradas | "una clave desconocida se ignora en silencio; sólo toasta lo que SLSsteam espera y no encuentra" (coherente con `config.cpp:121/127` `MissingKey`) | §7.7.4, §7.8.4, §7.9.13 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08 | red | La URL de `config_default.hpp` en rama `master`, que no existe | GitHub redirige y devuelve 200 con el mismo contenido que `main` | §2.11 |
+| 2026-08-11 | repo (`git log -S"LogLevels:"`) | Cuándo nace `LogLevels` (plural) | `b5b1315`, 2026-08-11, tras los flags del 08-09 y el test de máscara del 08-10 | §2.11 |
+| 2026-08-15 | repo (commit `665fc8c`) | API local: el primer comando se ejecutaba dos veces | `echo >` dispara dos eventos inotify y el stream se reabría sobre uno abierto; corregido; afecta a versiones anteriores a `20260815201341` | §2.11 |
+| 2026-09-14 | ecosistema | Quién usa el fichero de comandos | Único uso encontrado: el modo experimental de ASSella (`install\|appid\|0` tras DepotDownloaderMod) | §2.11 |
+| 2026-09-22 | repo (`diff`) | `res/config.yaml` frente al YAML embebido en `config_default.hpp` | Idénticos byte a byte; el `.hpp` sale del repo ese día y LumaDeck pasa a leer `res/config.yaml` | §2.11 |
+| 2026-10-07 | repo (`git show <tag>:res/version.txt`), Deck | Versión embebida de las dos últimas releases | `20260930144343` y `20261001163836` llevan `20260903114323`: el gate de SafeMode usa esa entrada (hashes `bc54101b`, `237495b4`). En la Deck, `.slssteam.version` = `20261001163836` y el log arranca con `SLSsteam (main -> 42568f0)` | §2.11 |
+| 2026-10-08 | repo | Tamaño | 11 972 líneas en `src/` sin los protobufs generados | §0 |
 
 #### Función 12 — Proyecto
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M1 | 2026-07-06 (fecha de investigación) | commit `ebfb079` | 12 | Base del análisis | `VERSION = 20260624075231`, i386, C++20/CMake, libmem. Re-verificado contra `20260705132808` (`5c632dd`) y `20260705144737` (`da97d11`) | Cabecera |
-| M65 | 2026-08-17 (cierre) | clon completo `69594b9`→`01a3b1e` | 12 | Tamaño de la ventana | 205 commits, 2026-07-23 → 2026-08-15, releases `20260728212859` y `20260815201341`, +43.7k/−25.1k líneas (~38k = regeneración de protobufs del 08-07, lite→completo) | §7.7 |
-| M110 | 2026-07-31 | commit `ac12369` (README) | 12 | Hall of shame | "OnetapBeta & Hammer Decky by Hammer Steam: Resells Steamless & SLSsteam for a bogus price, completely breaking licensing agreements and leeching off the communities hard work while putting in 0 effort themself." | §7.7.8, §7.7.8.a |
-| M126 | 2026-08-07 | commit `4b29945` | 12 | ProtoBuf lite → completo | +38k/−22k líneas; cita "We're gonna need it from now on. Mostly for dumping messages" | §7.7.13 |
-| M147 | 2026-08-13 | commits `0227a09`, `1bdf1a6` (DeveloperMikey) | 12 | Contribución externa | Fix build nix; segundo aporte externo del rango | §7.7.18 |
-| M155 | 2026-08-15 | commits `5d76d5b`, `143dcba`, `a70939b`, `01a3b1e` | 12 | Markdown de `API.md` | "Fix docs again I hate github's markdown. Why is it so weird..."; `01a3b1e` = HEAD del rango | §7.7.19 |
-| M156 | 2026-08-15 … 2026-08-20 | tags `20260819120840` (sin release), `20260819131545`, `20260820085507` | 12 | Ventana §7.8 | 34 commits en 5 días; 9 SDK (16 y 19-ago), 1 firma, 1 feed, 3 logging, 1 renombrado de assets ("nos rompió el instalador 44 h"), 19 chore | §7.8, §7.8.1 |
-| M161 | 2026-08-20 → 2026-09-01 | clon `65b6ee1` (= tag `20260820085507`) → `dev@3f8e429` | 12 | Ventana §7.9 | 112 commits, +22k/−1.2k (~16k LuaBridge 31-ago); cero releases/tags; `main` clavado en `65b6ee1` trece días; 34/112 commits son Lua | §7.9 |
-| M172 | 2026-08-23 | commits `82a9e85`, `49186e7`, `5f9d9b4`, `78789fb` | 12/11 | Menores | `lib/libluajit.a` al repo sin usar; `CFileWatcher*` a smart pointers; `MTVariable` acelerado | §7.9.4 |
-| M185 | 2026-09-12 (barrido) | clon `main`/`dev` | 12 | Ventana §7.10 | Nada después del 9-sep en `main` ni `dev` tras el 8; 14 commits de `main` 1→3 sep; 3 de `dev` (3 y 8 sep) | §7.10 |
-| M188 | 2026-09-17 (barrido) | clon fresco; `main@71021ad`; `dev` 4 commits 12–16 sep | 12 | Ventana §7.11 | Sin commit/tag/release en `main` | §7.11 |
-| M193 | 2026-09-17 | issues GitHub | 12 | Issues | #157 (HANDZCZ, crash con SamRewritten, bisecado a `d056fda`) cerrada 8-sep, arreglado por `bbe1e3f`; #136 y #124 cerradas el mismo día; #158 abierta; #155 (cliente 1-sep) cerrada 4-sep | §7.11 |
-| M194 | 2026-09-22 (barrido; issues 403) | `dev` 10 commits 17–20 sep | 12 | Ventana §7.12 | `main@71021ad` sin cambios | §7.12 |
-| M202 | 2026-09-28 (barrido; issues leídas) | `dev` 5 commits 22–25 sep | 12 | Ventana §7.13 | `main@71021ad` sin cambios desde 3-sep | §7.13 |
-| M205 | 2026-09-28 | issues GitHub | 12/7/2 | Issues | #159 (kaunkrishna, 27-sep): horas/logros de SLScheevo al comprar, Steam Cloud; #158 abierta; #156 (Ace, 4-sep, "LuaHook issues") abierta; #46 (Ace, nov-2025, "Problems with FakeAppIds") lista *tickets* y *achievements* como rotos al cambiar AppId | §7.13 |
-| M207 | 2026-10-07 (barrido; issues 403) | `main` `71021ad` → `049bbdd`; `dev` fusionado; `dev` 11 commits 2–6 oct | 12 | Ventana §7.14 | Releases **`20260930144343`** (tag `39822da`, 28-sep) y **`20261001163836`** (`42568f0`, 1-oct; la de `.slssteam.version` en el codespace) | §7.14 |
-| M211 | 2026-09-28..10-06 | commits `5774941`, `9c829a7`, `cd83d69`, `9e19510` (DeveloperMikey), `e84bbb8`, `049bbdd` | 12 | Menores + README | Nix; Docker `git`; README quita "ADS": "They asked for collab, yet didn't add proper support. They also supposedly collect HWIDs of their users which is a huge nogo" | §7.14.1 |
-
-#### Mediciones del lado lumalinux / LumaDeck que vivían en el doc anterior
-
-Son de nuestro stack, no de SLSsteam; se conservan aquí para no perderlas (la relectura de `nosotros.md` no las tomó de este doc). Van a `nosotros.md` §5.2 cuando se consolide.
-
-| # | Fecha | Dónde | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|
-| M69b | (sin fecha, §7.7.1.c) | **lumalinux**, `-O2`, Xeon @ 2.1 GHz, maps sintéticos 1.5k/4k líneas, `.text` 9 MB | Coste de `patterns.cpp` de lumalinux | parseo maps 0.064 / 0.219 ms; `SigScan` 9 MB 18.6 / 19.0 ms; bucle unique 20.1 / 19.9 ms; 8× parseos 0.51 / 1.75 ms; 4× escaneo 74.5 / 76.1 ms; ratio 145× / 43×. 4 escaneos por arranque en Deck (DepotKey, GMRC, ShaderDepot, Reconcile) | §7.7.1.c (lado lumalinux) |
-| M78b | (RESEARCH §15.2, build f5eb8bd3) | lumalinux | Virtualidad de los 5 targets de lumalinux | DepotKey SÍ (`CConfigStore` slot 6); GMRC no; BuildDep no; ShaderDepot no; LoadPackage no | §7.7.2.a (lado lumalinux) |
-| M80b | (§7.7.3.a) | lumalinux `src/patterns.hpp` | Anclas de los 6 patrones de lumalinux | `kDepotKeyFnPattern` `55 57 56 53 E8 ??…` (45 bytes, ~37 fijos); `kBuildDepotDependencyPattern` `55 89 E5 57 56 E8`; `kLoadPackagePattern` `55 89 E5 57 E8`; `kGmrcFunctionPattern` `E8 ?? ?? ?? ?? 05 ?? … 55 89 E5`; `kShaderCacheDepotPattern` `57 56 53 E8 ?? … 81 C3`; `kNotifyLicensesUpdatedPattern` `55 89 E5 57 56 53 E8`; deriva documentada 0x1b18→0x1b14 | §7.7.3.a (lado lumalinux) |
-| M94b | (§7.7.5.a) | lumalinux | Hash doble, timeouts | SHA-256 12 MB ~12 ms OpenSSL; duplicado 25-50 ms; `Curl::getString` defaults `connectTimeoutSec = 15`, `totalTimeoutSec = 30`; peor caso ~60 s; incidente `CURL_OPENSSL_4` en `reaper` (0.13.6 → 0.15.0) | §7.7.5.a (lado lumalinux) |
-| M114b | (§7.7.9) | lumalinux `src/main.cpp:218-241`, grep | Reporte de hooks en lumalinux | `InstallHooks()` recorre todos, `Status::RecordHook` INSTALLED/DISABLED/FAILED, `X/Y hooks active`; cero referencias a `AppOwnershipInfo` en `src/` | §7.7.9 (lado lumalinux) |
-| M125b | (§7.7.12.a) | lumalinux `load_package_hook.cpp::AppendIdsToVec`, `package_zero_finder.cpp:348`, `main.cpp:5`, `:19` | `std::realloc` sobre memoria de Steam | `void* new_mem = std::realloc(vec->m_pMemory, new_alloc * sizeof(uint32_t));` en ruta viva por defecto (finder ON, `LUMA_NO_PKG0_FINDER` lo apaga); comentario "CUtlMemory is malloc-backed on Steam Linux i386"; historial v0.3 "allocator issues — abandoned"; v0.5.6 dice "In-place append only (no risky manual realloc)" (incoherente) | §7.7.12.a (lado lumalinux) |
-| M131b | (§7.7.13.a) | grep lumalinux `src/` | Capa de mensajes | Cero `#include` de protobuf, cero `CNetPacket`/`EMsg`/`CMsgClient*` (salvo comentario en `sls_achievement_unblock.cpp`) | §7.7.13.a (coexistencia) |
-| M138b | (§7.7.15.a) | lumalinux flags | Aliasing en lumalinux | `-m32 -D_GLIBCXX_USE_CXX11_ABI=0`, `-Wall -Wextra -Wpedantic`, `-fno-reorder-blocks-and-partition`; ningún type-punning de miembro tipado | §7.7.15.a (lado lumalinux) |
-| M158b | (§7.8.3) | **medido compilando contra yaml-cpp** (lumalinux `src/update.cpp:39-51`, `:80`) | Cuerpos HTTP 200 vs `YAML::Load` | Vacío: parsea, 0 entradas, envenena caché, toast; JSON de error: parsea, 0, envenena, toast; HTML: lanza, no envenena, toast; `Guru Meditation:`: lanza; `Not Found`: lanza; feed bueno: 1 entrada. `setup.sh:224` `_sls_ensure_kv SafeMode no`; `main.cpp:145` "Mirrors SLSsteam's SafeMode=no" | §7.8.3 (lado lumalinux) |
-| M160 | 2026-08-20 | commits `49e4279`, `51297c4` (lumalinux) | Cierre de §7.8 | Validación del cuerpo del feed y `sed` muerto cerrados el 20-ago | §7.9 preámbulo (lado lumalinux) |
-| M189b | (§7.11) | lumalinux `src/key_store.cpp:194-199` | EINTR en el watcher de `keys.txt` | Ya hace `if (n < 0 && errno == EINTR) continue;` | §7.11 (lado lumalinux) |
-
-#### Verificaciones en el código, 2026-10-08 (`main@049bbdd`)
-
-| Fecha | Dónde | F | Qué se midió | Resultado |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
 |---|---|---|---|---|
-| 2026-10-08 | fuente `sdk/CUser.cpp:33-46` | 2/7 | `CUser::isSubscribed` | `checkAppOwnership` = `Hooks::CUser_CheckAppOwnership->tramp.fn(this, appId, pInfo)`; `isSubscribed` = `info.ownsLicense && !info.licenseExpired` tras llamar al trampolín. Propiedad real según Steam, sin el spoof |
-| 2026-10-08 | fuente `feats/achievements.cpp:154,236` | 7 | guard del borrow | `if (g_pSteamEngine->getUser(0)->isSubscribed(send->appid()))` / `(sendBdy->game_id())` → return; `:21` URL `store.steampowered.com/appreviews/`; `:188`/`:268` `k_EResultNoConnection`; `:96` `setCooldown` |
-| 2026-10-08 | `grep -rn 64 src/feats/dlc.cpp src/config.cpp` (sin `uint64/int64/steamId64/base64`) | 3 | límite de 64 DLC | **cero** coincidencias; `res/config.yaml:40-42` "Only needed when the App you're playing is hit by Steams 64 DLC limit" |
-| 2026-10-08 | fuente `feats/apps.cpp:93-142` | 2 | `Apps::checkAppOwnership` | guarda `!applistRequested \|\| !pInfo \|\| !g_currentSteamId.isSet()` → false; Denuvo de otro → false; `shouldExcludeAppId` → false; decensor + región + timestamps para todas; `unlockApp` solo si `isAddedAppId` |
-| 2026-10-08 | fuente `feats/apps.cpp:24-56` | 2 | `unlockApp` | `owner = ownerId.accountId()`, `realOwner = 0`, `familyShared = owner != cuenta`, `licensePermanent = !familyShared`, `ownsLicense = true`, `releaseState = Released`, `freeLicense = familyShared`; sobrecarga de 2 args usa `g_currentSteamId` |
-| 2026-10-08 | fuente `feats/apps.cpp:236-252` | 2 | `getSubscribedApps` | "`//TODO: Maybe Add check if AppId already in list before blindly appending`"; `applistRequested = true` tras rellenar |
-| 2026-10-08 | fuente `config.cpp:329-364` | 2/9 | `setAdditionalApps` | diffs solo `if (!firstLoad && Apps::applistRequested)`; comentario "No need to post a AppLicenseChanged_t callback when GetSubscribedApps hasn't been called yet" |
-| 2026-10-08 | fuente `feats/apps.cpp:434-458` | 5/8 | `shouldDisableCloud` / `shouldDisableUpdates` | cloud: `!disableCloud → false; return !isSubscribed`; updates: `!disableUpdates → false; return isAddedAppId \|\| !isSubscribed` ("Using AdditionalApps here aswell so users can manually block updates"); `shouldDisableCDKey = !isSubscribed` sin llamadores |
-| 2026-10-08 | fuente `feats/dlc.cpp:8-27` | 3 | `shouldUnlockDlc` | `!getUtils()->getAppId() → false; isSubscribed → false; shouldExcludeAppId → false; true` |
-| 2026-10-08 | fuente `config.cpp:162,177-189` | 11 | defaults en código | `API` **true**, `DisableFamilyShareLock` true, `UseWhitelist` false, `MaxSchemaTries` 10, `SmartTickets` 1, `SafeMode` false, `WarnHashMissmatch` false, `NotifyInit` true, `Plugins` false, `DisableCloud` true, `DisableUpdates` true |
-| 2026-10-08 | fuente `hooks.cpp:1495-1516` | 1 | hooks duplicados | los seis `new VFTHook(vft, VFTIndexes::IClientAppManager::…)` aparecen dos veces, literalmente iguales; `Hooks::removeAll` definido en `:1575` y solo referenciado en `hooks.hpp:279` |
-| 2026-10-08 | `git tag --sort=creatordate \| tail -3`; `cat res/version.txt` | 11 | versión | tags `20260903114323`, `20260930144343`, `20261001163836`; `res/version.txt` = `20260903114323` |
-| 2026-10-08 | fuente `feats/ticket.cpp:20-46` | 6 | ruta de tickets | `getTicketDir` = `g_config.getDir()/cache` (creado si falta); `ticket_<app>.yaml` |
-| 2026-10-08 | `cat src/*.cpp src/*.hpp src/feats/* src/sdk/*.cpp src/sdk/*.hpp \| wc -l` | 12 | tamaño | 11 972 líneas sin protobufs |
+| 2026-09-17 / 09-28 | GitHub (issues) | Issues abiertas y cerradas | #157 (crash con SamRewritten, bisecado a `d056fda`, arreglado por `bbe1e3f`) cerrada el 8-sep con #136 y #124; #155 (cliente del 1-sep) cerrada el 4-sep; #158 (EINTR en el filewatcher) abierta y arreglada en `6956e2b`; #159 (horas y logros al comprar) y #156 (LuaHook) abiertas; #46 (nov-2025, FakeAppIds rompe tickets y logros) sigue | §5.3 |
 
 ### 5.3 Cronología (desde 2026-07-05)
 
@@ -1533,7 +1232,7 @@ Son de nuestro stack, no de SLSsteam; se conservan aquí para no perderlas (la r
 (`22f4880`, 2026-07-21, "initial function parser": snapshot de 739 ficheros).
 `git merge-base 20260715200441 origin/main` está vacío: los tags
 `20250510134347` … `20260715200441` y el tag `update` son huérfanos y siguen
-en el remoto. Para cubrir desde 07-05 se leyeron tres rangos: la historia
+en el remoto. La historia desde 07-05 está en tres rangos: la historia
 vieja `20260705132808..20260715200441` (70 commits), `origin/main` completo
 (397 commits, 07-21 → 10-06: 99 en julio, 250 en agosto, 44 en septiembre, 4
 en octubre) y la rama `update` (`22f4880..update`, 18 commits, 17 patches que
@@ -1683,15 +1382,14 @@ ni en los releases: el consumidor **no** puede contar con inyección de
 licencias, depots o códigos de manifest en SLSsteam. Si siguen vivos en `dev`
 no se ha comprobado.
 
-**Lo que vio el doc anterior y conviene recordar** (detalle en §5.2):
-`5c632dd` 07-05 reescribió el filewatcher (directorio padre +
-`IN_CLOSE_WRITE`), wildcardeó patrones y añadió `uninstall` a la API (M25,
-M35, M38); el parche `sls_update_unblock` de lumalinux se probó end-to-end el
-07-07 contra el bloqueo v1 y murió con `20260714131044` (M43, M44); el cambio
+**Hitos que tocan a nuestro stack** (detalle en `nosotros.md` §5.2):
+`5c632dd` (07-05) reescribió el filewatcher (directorio padre +
+`IN_CLOSE_WRITE`), puso comodines en los patrones y añadió `uninstall` a la
+API; el contraparche `sls_update_unblock` de lumalinux se probó de extremo a
+extremo el 07-07 contra el bloqueo v1 y murió con `20260714131044`; el cambio
 de firma `uint32_t → EMsg` en `sendAndRecvGetUserStats` (`59f8259`, 07-20)
-dejó mudo seis días a `sls_achievement_unblock` y se detectó en
-`20260728212859` (M63, M218); la escritura rasgada del `rel32` del mismo
-parche tiró Steam en Game Mode hasta el OOBE (M50); issues #157 (crash con
-SamRewritten, bisecado a `d056fda`, arreglado por `bbe1e3f`), #158 (EINTR),
-#159 (horas y logros al comprar), #156 (LuaHook), #46 (FakeAppIds rompe
-tickets y logros) (M193, M205).
+dejó mudo seis días al parche de logros y se detectó con `20260728212859`; la
+escritura rasgada del `rel32` de ese mismo parche tiró Steam en Game Mode
+hasta el OOBE; issue #157 (crash con SamRewritten, bisecado a `d056fda`,
+arreglado por `bbe1e3f`), #158 (EINTR), #159 (horas y logros al comprar),
+#156 (LuaHook), #46 (FakeAppIds rompe tickets y logros).
