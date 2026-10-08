@@ -9,10 +9,6 @@ condensada en §5.3. `slssteam.md` describe el upstream; aquí se describe el
 fork y, en cada punto, si es igual que upstream o distinto. Cómo **nosotros**
 hacemos lo mismo está en `nosotros.md`.
 
-Formato: el de todos los docs de programa (ver `ecosystem-matrix.md`). §0 ficha,
-§1 mapa del código, §2 las doce funciones con la lista de control contestada,
-§3 superficies externas, §4 lo que nos afecta, §5 historial.
-
 ---
 
 ## §0 Ficha
@@ -1037,9 +1033,9 @@ llamadas internas: `LicensesUpdated_t` (`0x7d`, una vez), `MarkLicenseAsChanged`
 
 ## §4 Lo que nos afecta
 
-### 4.1 Hallazgos de la relectura (pendientes de decisión)
+### 4.1 Hallazgos pendientes de decisión
 
-Aparcados hasta terminar las relecturas, por orden del usuario (2026-10-08).
+Aparcados el 2026-10-08.
 Los que el doc anterior ya decidió están en §4.4 y no se repiten.
 
 1. **Retirar un juego de la biblioteca sin reiniciar**: moon lo hace con dos
@@ -1480,7 +1476,7 @@ Son de nuestro stack, no de moon; se conservan aquí para no perderlas (la relec
 | M107 | **2026-10-01** (runs 3–7 de `probe-steam.yml`, build-id por `readelf`) | **lumalinux** CI `probe-steam.yml` | 1 (lado lumalinux) | Tabla de canales de Steam vs nuestros patrones | "Deck stable 1788652215 `bc54101b…` `a577b836…` CLEAN (whitelist); Escritorio stable 1788652215 `237495b4…` `29734b56…` CLEAN; Deck beta 1790721607 `a3661f5b…` `e6de8467…` CLEAN; Escritorio beta 1790721607 `a3661f5b…` `e6de8467…` CLEAN". "Mismo número de versión en stable con binarios distintos … `steam_client_steamdeck_{main,preview,beta}_ubuntu12` no existen (404). `d9f8d233254bf375…` (steamui `d27e6a9a…`) no es ninguno de los cuatro … hipótesis: una beta de Deck servida entre el 27 y el 30 y ya retirada." "la beta actual cae en el layout `beta-0xf90` y resuelve" | Delta 10-01 |
 | M110 | 07-10 (nosotros.md, 08:10 y 09:59) | **lumalinux** on-device (referencia a nosotros.md) | 2/9 (lado lumalinux) | Aparecer vs retirar en caliente | "la inyección más el reconcile hacen **aparecer** lo añadido sin reiniciar; lo que no hace ninguno de los dos es **retirar** de la interfaz lo quitado hasta reiniciar." | D29 |
 
-#### Verificaciones de la relectura (2026-10-08, `origin/slsteam-moon@f50f28e`, lectura estática)
+#### Verificaciones en el código, 2026-10-08 (`origin/slsteam-moon@f50f28e`)
 
 | Fecha | Dónde | F | Qué se midió | Resultado |
 |---|---|---|---|---|

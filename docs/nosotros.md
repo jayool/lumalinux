@@ -1,14 +1,9 @@
 # nosotros — lumalinux + LumaDeck, y cómo usamos SLSsteam
 
-Relectura completa desde el código, 2026-10-08. Sustituye a `method.md` y a
-`owned-games-guide.md` (absorbidos en §2 y §5). `RESEARCH.md` (diario de
-ingeniería) y `maintenance.md` (runbook) siguen vivos y se enlazan donde toca.
-Los docs de diseño ya ejecutados están en `docs/design/`.
-
-Formato: el de todos los docs de programa (ver `ecosystem-matrix.md`). §0 ficha,
-§1 mapa del código, §2 las doce funciones con la lista de control contestada,
-§3 superficies externas, §4 lo que nos afecta, §5 historial (mediciones con
-fecha conservadas de los docs anteriores y contraste con lo que afirmaban).
+Leído desde el código el 2026-10-08. Sustituye a `method.md` y a
+`owned-games-guide.md`; sus mediciones con fecha están en §5. `RESEARCH.md`
+(diario de ingeniería) y `maintenance.md` (runbook) siguen vivos y se enlazan
+donde toca. Los docs de diseño ya ejecutados están en `docs/design/`.
 
 ---
 
@@ -1057,7 +1052,7 @@ configuring → done | failed | cancelled), `currentApi`, bytes, `steamidraStep`
 ---
 ## §4 Lo que nos afecta
 
-### 4.1 Hallazgos de la relectura (pendientes de decisión)
+### 4.1 Hallazgos pendientes de decisión
 
 Cosas que el código hace y que no coinciden con lo que se cree o se promete.
 Ninguna está decidida; cada una es una fila candidata para `ecosystem-matrix.md`
@@ -1217,7 +1212,7 @@ almacén local de logros (con nuestro parche del guard), su hook de
 (default 10), `LaunchOptions`, `API` (`/tmp/SLSsteam.API`), `FakeName`,
 `FakeEmail`, `FakeWalletBalance`, `DumpClientInterfaces`, `ExtendedLogging`,
 `WarnHashMissmatch`. Qué hace SLSsteam con cada una y si alguna nos vendría
-bien: lo contesta la relectura de SLSsteam (`slssteam.md`, pendiente).
+bien: `slssteam.md` §4.3.
 
 ### 4.4 Decisiones ya tomadas (2026-10-05 → 10-08)
 
@@ -1516,7 +1511,7 @@ existen, y sus mediciones están aquí.
 | sin fecha | Deck | 4 | Zips Hubcap y manifest del depot shader | "confirmed across Silksong/Brotato/Formula Legends/Binding-of-Isaac zips — none ship a `<appid>_*.manifest`"; síntoma Silksong: wudrm caído → "No internet connection" aunque el contenido instaló | RESEARCH §13.11 |
 | 2026-09-10 → 2026-09-11 | devcontainer SteamOS | 4 | Qué rompió el 09-09 en lumalinux | el shader pre-cache: el hook devolvía basura de proveedores moribundos → "401 storm on the CDN and stuck the whole download queue"; con fallthrough limpio solo popup "No internet connection", ~30 s de stall y luego instala; quitar GMRC apagaba el finder → "0-target-depot phantom installs during testing" | RESEARCH §19.1 |
 | 2026-09-10/11 | devcontainer (`tools/gmrc_mint.py`) | 4 | Qué códigos concede Valve anónimamente | públicos: redists 228980 (depots 228988–229005) y el depot Workshop (id = appid = depot shader). Brotato, RimWorld obtienen el manifest shader; Lethal Company, Silksong, Vampire Survivors no; depots de contenido siempre denegados; gid nunca visto (p.ej. 1) se concede | RESEARCH §19.2 |
-| 2026-09-09 (rama `claude/lumadeck-lumalinux-context-chlkmw`, borrada) | devcontainer | 4 | Login anónimo `node-steam-user` `getManifestRequestCode` | Brotato, Lonely Mountains: **AccessDenied**; control Dota: código y 200 del CDN | RESEARCH §19.2b |
+| 2026-09-09 (rama de prueba, borrada) | devcontainer | 4 | Login anónimo `node-steam-user` `getManifestRequestCode` | Brotato, Lonely Mountains: **AccessDenied**; control Dota: código y 200 del CDN | RESEARCH §19.2b |
 | 2026-09-09 (build `1788652215`, Ghidra + hook in-process) | devcontainer | 4 | `GetCDNAuthToken(this, app_id, depot_id, char* host, CUtlString* out)` | Valve lo emite (`rc=1`) también para depot de pago no owned → no gateado por ownership; irrelevante (no sustituye al request code) | RESEARCH §19.2b |
 | sin fecha (2026-09) | codespace (`tools/smc_fresh.py`) | 4 | `P-ToyStore/SteamManifestCache_Pro` | Valheim: manifest 15 min tras Valve; ficheros = cabecera 10 B + raw deflate; "verifies a chunk on the CDN: 22/22 OK"; sin claves | RESEARCH §19.4 |
 | 2026-10-07 | codespace | 4 | `api.993499094.xyz/depotkeys.json` | 240,103 claves (221,727 al verlo por primera vez), 18 MB, `last-modified` el mismo día, ids hasta 5.3 M (218 >5 M, 3,136 en 4.5-5 M); 32/32 depots de las luas Hubcap cacheadas presentes con la clave correcta (dos en mayúsculas); NO day-one: STAR WARS: Galactic Racer 4078430 (salió 2026-10-06) sin 4078431 ni 4554460 | RESEARCH §19.4 |
@@ -1629,7 +1624,7 @@ existen, y sus mediciones están aquí.
 | 2026-08 (live) | devcontainer CachyOS-Desktop / Arch fresco | 11/12 | Caveat upstream Headcrab | `LinuxClientManifest` build 1784669098 (2026-07-21) "lags its own `HeadcrabCompatibleClientVer` (1785187029, 2026-07-27) by ~6 days"; SLSsteam aborta "Unknown steamclient.so hash", LumaDeck "Steam build not supported"; Handheld usa el manifest Deck (alineado) | porting-cachyos.md §0 "Upstream caveat" |
 | sin fecha | CI (`tests/test_installer_crashloop.py`) | 11 | Mecanismo `do_repair()` del tracker reproducido en test | "DONE" (approach B) | cachyos-vm-testing.md tabla; porting-cachyos.md §0 Phase 2 |
 | sin fecha | CI | 11 | Tests de caracterización SteamOS del env layer | "65 tests, including golden-value characterization that SteamOS resolves bit-for-bit to `deck` / `/home/deck`"; live run con uid≠1000 | porting-cachyos.md §0, §10 |
-| sin fecha (`claude/cachyos-support`) | código | 11 | Regresión `desktop` para CachyOS | "an earlier revision put CachyOS in the ChimeraOS family and sent it `desktop` — a regression (CachyOS rejects `desktop`); now fixed" (verificado en fuente `CachyOS/gamescope-session@cachyos`) | porting-cachyos.md §0, §2 corrección |
+| sin fecha | código | 11 | Regresión `desktop` para CachyOS | "an earlier revision put CachyOS in the ChimeraOS family and sent it `desktop` — a regression (CachyOS rejects `desktop`); now fixed" (verificado en fuente `CachyOS/gamescope-session@cachyos`) | porting-cachyos.md §0, §2 corrección |
 
 #### Función 12
 
@@ -1637,20 +1632,20 @@ existen, y sus mediciones están aquí.
 |---|---|---|---|---|---|
 | 2026-06-24 (ecosistema) | SLSsteam upstream | 12 | Valve reordenó los virtuals `IClient*::RunIPCFrame`; SLSsteam tuvo que bumpear; 2026-07-24 SLSsteam borró esos hooks (`8de3384`) | (contexto para la caveat RTTI) | RESEARCH §15.4 |
 | build 2026-09-13 | PC (`strings`/`pefile`) | 12 | `ManifestDeXCore.dll` | PDB `C:\Users\berke\source\repos\OpenSteamTool`, mismos proxies `dwmapi.dll`/`xinput1_4.dll`, mismo hook (eMsg 151/147); no reporta códigos ni identidad | RESEARCH §20.2 |
-| 2026-08 (CONFIRMED) | Codespace del mantenedor | 12 | KVM en el Codespace | `ls -l /dev/kvm` → "No such file or directory"; el dev container de Claude tampoco (`ls /dev/kvm` not found, sin `vmx`/`svm`) → cualquier VM es TCG | cachyos-vm-testing.md §1 |
+| 2026-08 (CONFIRMED) | Codespace del mantenedor | 12 | KVM en el Codespace | `ls -l /dev/kvm` → "No such file or directory"; el devcontainer tampoco (`ls /dev/kvm` not found, sin `vmx`/`svm`) → cualquier VM es TCG | cachyos-vm-testing.md §1 |
 
 #### Mediciones de 2026-10-07/08 (codespace, Deck y PC) que no estaban en ningún doc
 
 | Fecha | Dónde | F | Qué se midió | Resultado | Fuente |
 |---|---|---|---|---|---|
-| 2026-10-07 18:17 | codespace SteamOS | 10 | Verificación de login de Ryuu desde el Python de Decky | `CERTIFICATE_VERIFY_FAILED` (sin contexto SSL); Decky encuentra los CA por `certifi` ("SSL: loaded certs from certifi"); arreglado pasando el contexto de `http_client` (LumaDeck `8200d4e`) | esta relectura |
-| 2026-10-07 18:25 | codespace SteamOS | 10 | Login de Ryuu con la cookie anónima rechazada | log "anonymous session; waiting" ×2 y luego "logged-in session cookie captured"; la home logueada lleva `data-user-id="1698…"`; `GET /download?appid=1942280` → `200 application/zip` 42082 B con `1942280.lua` y manifests | esta relectura |
-| 2026-10-07 19:13 | codespace SteamOS, sin clave de Hubcap | 4/10 | Descarga por `api.json` | `Morrenus status=401` → `Forced Ryu (Cookie) status=200`; añadir habilitado solo con Ryuu | esta relectura |
-| 2026-10-07 19:47 | codespace SteamOS, Balatro 2379780 (zip de Ryuu) | 9 | Orden del lua de Ryuu | `addappid(2379780)` al final; steamidra tomó 2379781 como juego (`AdditionalApps` 2379781, claves con padre 2379781, `stplug-in/2379781.lua`); post-check abortó. Tras `_app_line_first` (LumaDeck `fcef4f7`), 19:56: `appid principal 2379780`, `3 keys nuevas`, `post-check OK — 2 depot key(s)`, `keys.txt` `2379780;` + dos extendidas con padre 2379780 | esta relectura |
-| 2026-10-07 ~19:38 | codespace SteamOS | 9 | Búsqueda por nombre con la tienda de Steam, sin clave | `storesearch?term=brotato` → 4 items (`type: app` incluidos los dos DLC y la banda sonora); la UI muestra 3 (banda sonora filtrada) | esta relectura |
-| 2026-10-07 | codespace SteamOS | 10 | Borrado de la clave de Hubcap desde Settings | `credentials.json` sin `hubcap_key`; Morrenus `enabled: False` y sin `api_key=`; Settings "No Hubcap key saved" (las cadenas `credHubcap*` estaban borradas desde `cf0dedb` y salían en crudo; restauradas) | esta relectura |
-| 2026-10-07 | Deck | 11 | Comprobaciones de update de componentes | `.so` de CloudRedirect `2.6.5+870afdb-dirty`; caché `Selectively11__CloudRedirect__cloud_redirect.so.json` = `v2.6.6`; `cr_debug.log` acumulativo desde agosto (primera línea `2.6.3`), por lo que Settings leía 2.6.3; `.slssteam.version` `20261001163836`; lumalinux `v0.22.1` | esta relectura |
-| 2026-10-07 22:16 | Deck | 1/8/11 | Update de CloudRedirect desde LumaDeck (`setup.sh`) | `.so` y última línea de `cr_debug.log` `2.6.6+3434d9d`, `DoInit: SUCCESS`, `cloud_redirect.so` mapeado 6 veces en `steam`; lumalinux v0.22.1 "CR-stats: cloud_redirect.so not loaded (or it no longer defines HandleGetUserStats)" (texto corregido en v0.22.2) | esta relectura |
-| 2026-10-07 22:52-23:06 | Deck + PC (Windows) | 7 | Sync de logros con CloudRedirect 2.6.6 | Deck: `config.json` `stats_sync_enabled: True`; `ExportNativeStats app=2379780: wrote 79 bytes (1 stats, 1 ach blocks)`, `Cloud blob refreshed: 7 app(s)`; al relanzar Balatro `GetUserStats app=2379780 … handled locally (5 bytes)` y el logro visible. PC: no aparecía hasta reiniciar Steam; tras reiniciar y abrir Balatro, el logro está (`SyncFromCloud`/changelists en `<Steam>\cloud_redirect.log`). Dos logs de CloudRedirect: `cr_debug.log` y `cloud_redirect.log` | esta relectura |
-| 2026-10-08 06:51-06:52 | CI | 11/12 | Releases lumalinux v0.22.2 y LumaDeck v0.11.0 | `build.yml` run 534 success con `liblumalinux.so` (9,5 MB) y `version.txt`; `release.yml` run 143 estampa `0.11.0` del tag. Los tags no se pueden empujar desde la sesión de Claude (403 del proxy a tags y releases); se crearon desde la web | esta relectura |
-| 2026-10-08 | sandbox de la relectura | 1 | `liblumalinux.so` recién compilado (`cr_stats_fix` v0.22.2) | compila (`cmake --build`), self-test `cr_stats_fix_selftest/run.sh` 6/6; las únicas cadenas de versión en el binario son `lumalinux v0.22.1 preinit` y `lumalinux/v0.22.1` | esta relectura |
+| 2026-10-07 18:17 | codespace SteamOS | 10 | Verificación de login de Ryuu desde el Python de Decky | `CERTIFICATE_VERIFY_FAILED` (sin contexto SSL); Decky encuentra los CA por `certifi` ("SSL: loaded certs from certifi"); arreglado pasando el contexto de `http_client` (LumaDeck `8200d4e`) | LumaDeck `8200d4e` |
+| 2026-10-07 18:25 | codespace SteamOS | 10 | Login de Ryuu con la cookie anónima rechazada | log "anonymous session; waiting" ×2 y luego "logged-in session cookie captured"; la home logueada lleva `data-user-id="1698…"`; `GET /download?appid=1942280` → `200 application/zip` 42082 B con `1942280.lua` y manifests | LumaDeck `0187590` |
+| 2026-10-07 19:13 | codespace SteamOS, sin clave de Hubcap | 4/10 | Descarga por `api.json` | `Morrenus status=401` → `Forced Ryu (Cookie) status=200`; añadir habilitado solo con Ryuu | log de LumaDeck (Decky) |
+| 2026-10-07 19:47 | codespace SteamOS, Balatro 2379780 (zip de Ryuu) | 9 | Orden del lua de Ryuu | `addappid(2379780)` al final; steamidra tomó 2379781 como juego (`AdditionalApps` 2379781, claves con padre 2379781, `stplug-in/2379781.lua`); post-check abortó. Tras `_app_line_first` (LumaDeck `fcef4f7`), 19:56: `appid principal 2379780`, `3 keys nuevas`, `post-check OK — 2 depot key(s)`, `keys.txt` `2379780;` + dos extendidas con padre 2379780 | LumaDeck `fcef4f7` |
+| 2026-10-07 ~19:38 | codespace SteamOS | 9 | Búsqueda por nombre con la tienda de Steam, sin clave | `storesearch?term=brotato` → 4 items (`type: app` incluidos los dos DLC y la banda sonora); la UI muestra 3 (banda sonora filtrada) | LumaDeck `5bb8fdb` |
+| 2026-10-07 | codespace SteamOS | 10 | Borrado de la clave de Hubcap desde Settings | `credentials.json` sin `hubcap_key`; Morrenus `enabled: False` y sin `api_key=`; Settings "No Hubcap key saved" (las cadenas `credHubcap*` estaban borradas desde `cf0dedb` y salían en crudo; restauradas) | LumaDeck `1b5e678` |
+| 2026-10-07 | Deck | 11 | Comprobaciones de update de componentes | `.so` de CloudRedirect `2.6.5+870afdb-dirty`; caché `Selectively11__CloudRedirect__cloud_redirect.so.json` = `v2.6.6`; `cr_debug.log` acumulativo desde agosto (primera línea `2.6.3`), por lo que Settings leía 2.6.3; `.slssteam.version` `20261001163836`; lumalinux `v0.22.1` | LumaDeck `c4776ce`, `be36d92` |
+| 2026-10-07 22:16 | Deck | 1/8/11 | Update de CloudRedirect desde LumaDeck (`setup.sh`) | `.so` y última línea de `cr_debug.log` `2.6.6+3434d9d`, `DoInit: SUCCESS`, `cloud_redirect.so` mapeado 6 veces en `steam`; lumalinux v0.22.1 "CR-stats: cloud_redirect.so not loaded (or it no longer defines HandleGetUserStats)" (texto corregido en v0.22.2) | lumalinux `e92b763` |
+| 2026-10-07 22:52-23:06 | Deck + PC (Windows) | 7 | Sync de logros con CloudRedirect 2.6.6 | Deck: `config.json` `stats_sync_enabled: True`; `ExportNativeStats app=2379780: wrote 79 bytes (1 stats, 1 ach blocks)`, `Cloud blob refreshed: 7 app(s)`; al relanzar Balatro `GetUserStats app=2379780 … handled locally (5 bytes)` y el logro visible. PC: no aparecía hasta reiniciar Steam; tras reiniciar y abrir Balatro, el logro está (`SyncFromCloud`/changelists en `<Steam>\cloud_redirect.log`). Dos logs de CloudRedirect: `cr_debug.log` y `cloud_redirect.log` | `cloudredirect.md` (2.6.6) |
+| 2026-10-08 06:51-06:52 | CI | 11/12 | Releases lumalinux v0.22.2 y LumaDeck v0.11.0 | `build.yml` run 534 success con `liblumalinux.so` (9,5 MB) y `version.txt`; `release.yml` run 143 estampa `0.11.0` del tag (tags creados desde la web de GitHub) | `build.yml` run 534; `release.yml` run 143 |
+| 2026-10-08 | build local (`cmake --build`) | 1 | `liblumalinux.so` recién compilado (`cr_stats_fix` v0.22.2) | compila, self-test `cr_stats_fix_selftest/run.sh` 6/6; las únicas cadenas de versión en el binario son `lumalinux v0.22.1 preinit` y `lumalinux/v0.22.1` | `tools/cr_stats_fix_selftest/run.sh` |

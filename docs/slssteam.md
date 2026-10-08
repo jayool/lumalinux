@@ -9,10 +9,6 @@ Lua como programas aparte) sigue siendo su propio doc. Cómo **nosotros**
 configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 §4.3); aquí se describe SLSsteam tal como es.
 
-Formato: el de todos los docs de programa (ver `ecosystem-matrix.md`). §0 ficha,
-§1 mapa del código, §2 las doce funciones con la lista de control contestada,
-§3 superficies externas, §4 lo que nos afecta, §5 historial.
-
 ---
 
 ## §0 Ficha
@@ -941,10 +937,10 @@ rechazan.
 
 ## §4 Lo que nos afecta
 
-### 4.1 Hallazgos de la relectura (pendientes de decisión)
+### 4.1 Hallazgos pendientes de decisión
 
-Aparcados hasta terminar las relecturas, por orden del usuario (2026-10-08).
-Cada uno con dónde está en el código y qué nos toca; ninguno se ha actuado.
+Aparcados el 2026-10-08. Cada uno con dónde está en el código y qué nos toca;
+ninguno se ha actuado.
 
 1. **`isSubscribed` es true para nuestros juegos**, así que todas las guardas
    de SLSsteam los tratan como comprados: no solo el borrow de logros (que
@@ -1198,7 +1194,7 @@ Las 223 del doc anterior (M1-M223), tal como estaban escritas (fecha, dónde,
 resultado literal), ordenadas por función. "Dónde": **commit/fuente** =
 lectura estática del repo a un commit o tag; **binario** = inspección de un
 `.so`; **codespace** = corrida en contenedor; **Deck** = on-device; **Discord**
-= dicho de segunda mano. Las de la relectura de hoy (2026-10-08) van en una tabla
+= dicho de segunda mano. Las de 2026-10-08 van en una tabla
 propia después de las doce funciones.
 
 #### Función 1 — Engancharse a Steam
@@ -1276,7 +1272,7 @@ propia después de las doce funciones.
 | M183 | 2026-09-01 | commits `ac52879`, `3f8e429` | 1 | `unpack_user_data` | `extern void* unpack_user_data(const void* pData) { return reinterpret_cast<const luabridge::detail::Userdata*>(pData)->getPointer(); }`; tercera encarnación en 8 días; doc "Use this to convert `SLS.steamEngine` to the real `CSteamEngine` pointer etc."; `example.lua` engancha `postCallback` escaneando bytes desde Lua, usa `VFTableInfo_t` con subclases, en `SLSsteam::initialized` llama `isSubscribed` y `config:setAdditionalApps()` | §7.9.12 |
 | M186 | 2026-09-01..03 | commits `3d45b14`, `5f8ce3a`, `a7c47f5`, `b1fd214`, `6015c05`, `c95b119`, `eafd3ea`, `fc96f26`, `71021ad`, `11f0970`, `f2d6544`, `75acfce`, `94e9341` | 1/11 | `main` hasta release `20260903114323` | `3d45b14` permisos `u=rwx` a dir de plugins y cada `.lua`, si no puede desactiva plugins esa sesión; `eafd3ea` corrige path de `.updates.yaml` (sobraba una barra); hashes de cliente: 2-sep `bc54101b…` (ubuntu12_32 + steamdeck_stable), 3-sep `237495b4…` (sólo ubuntu12_32); release `71021ad` | §7.10 |
 | M191 | 2026-09-16 | commit `003f8f0` | 1 | `CNetPacket` vuelve al búfer estático | "Went back to the old method using a buffer + overwriting the body only. Freeing/replacing the originalBody caused issues"; vuelven `g_packetsArray[1 MB × 8]`, `g_packetsArrayOffset`, `g_packetSerializeMutex`; rechaza mensajes ≥ 1 MB; "If I understand correctly Steam cleans up for us, that's why we crash when we free the oldBody ourself. However the body we allocate doesn't get freed, so we just reuse a buffer for it". Moon `2668620` (2-sep) había borrado `PACKETS_ARRAY` | §7.11 |
-| M192 | 2026-09-17 (barrido) | feed de SafeMode + tracker moon `swwayps/steam-monitor` | 1 | Hashes | Último hash 3-sep `237495b4…` (`ubuntu12_32`, versión `1788400362`); stable escritorio `1788652215` (5-sep) sin hash (CDN bloqueado en sandbox; inferencia); Deck en `1788291500` (2-sep) con hash en los tres sitios | §7.11 |
+| M192 | 2026-09-17 (barrido) | feed de SafeMode + tracker moon `swwayps/steam-monitor` | 1 | Hashes | Último hash 3-sep `237495b4…` (`ubuntu12_32`, versión `1788400362`); stable escritorio `1788652215` (5-sep) sin hash (CDN no alcanzable tras el proxy; inferencia); Deck en `1788291500` (2-sep) con hash en los tres sitios | §7.11 |
 | M195 | 2026-09-17 | commit `0cad406` | 1 | Mutex en `serialize` | `lock_guard` sube por encima de la lectura de `g_packetsArrayOffset`; "Doesn't really matter right now, since RecvPkt seems to always get called from the CSteamEngine thread anyway"; `newBdy->type = getType()` | §7.12 |
 | M201 | 2026-09-18 (tracker moon `19ca7ee`) | TOML de moon | 1 | Hash del stable 5-sep | `237495b4…` cambió `steam_version` `1788400362` → `1788652215` → el stable del 5-sep lleva el mismo `steamclient.so` que el del 3; betas `1789606022` (18-sep), `1789781627` (19-sep), `1790036264` (22-sep) sin hash; Deck en `1788291500` (`bc54101b…`); nuestro feed sin `237495b4…` | §7.12 |
 | M206 | 2026-09-28 | tracker moon | 1 | Hashes | Betas escritorio `1790121765` (23-sep), `1790380355` (26-sep), `1790534246`, `1790545198` (27-sep); stable `1788652215`; Deck `1788291500` (`bc54101b…`) | §7.13 |
@@ -1512,7 +1508,7 @@ Son de nuestro stack, no de SLSsteam; se conservan aquí para no perderlas (la r
 | M160 | 2026-08-20 | commits `49e4279`, `51297c4` (lumalinux) | Cierre de §7.8 | Validación del cuerpo del feed y `sed` muerto cerrados el 20-ago | §7.9 preámbulo (lado lumalinux) |
 | M189b | (§7.11) | lumalinux `src/key_store.cpp:194-199` | EINTR en el watcher de `keys.txt` | Ya hace `if (n < 0 && errno == EINTR) continue;` | §7.11 (lado lumalinux) |
 
-#### Verificaciones de la relectura (2026-10-08, `main@049bbdd`, lectura estática)
+#### Verificaciones en el código, 2026-10-08 (`main@049bbdd`)
 
 | Fecha | Dónde | F | Qué se midió | Resultado |
 |---|---|---|---|---|
