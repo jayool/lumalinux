@@ -601,8 +601,7 @@ Además de lo listado en la cabecera:
 
 - Si el CM acepta `ClientStoreUserStats2` de una app no poseída y los logros
   persisten entre máquinas.
-- Si los tres proveedores de códigos responden hoy (tras el proxy no son
-  medibles, §5.2).
+- Si los tres proveedores de códigos responden hoy (no medidos).
 - Qué hace Steam con un hook puesto en un RVA viejo de una TOML válida.
 - Si las carreras del estado de Lua (§2.12) llegan a romper algo en un
   hot-reload.
@@ -616,7 +615,7 @@ Además de lo listado en la cabecera:
 | 2026-09-23 | `KoriaPolis/Steam-Auto-PT` rama `pattern` | último commit del feed original | `654dab1`, 2026-08-19 ("stable 1785799196, beta 1787097529"); 28 TOML de `steamclient` frente a 24 del feed de madoiscool, 15 comunes, 9 solo en madoiscool (todos posteriores al 19-ago, entre ellos el estable Windows `1788652215`) | desde el estable del 5/8-sep, LumaCore sin patrones por red hasta que SteaMidra empezó a precalentar desde MigoReleases (`ffd70db`, 09-08) |
 | 2026-09-28 | MigoReleases | contenido | dos `steamclient` (`caba4826…` = estable 1788652215, `3f864358…` = 1782533657), dos `steamui`, dos `steamclientipc`; prueba de beta el 23-sep revertida el 24 | TOML de "SteamPatternForge", cabecera "Made by migo3" |
 | 2026-10-07 | MigoReleases | refresco | 27 ficheros, `state/stable.txt = 1788652215`, `state/beta.txt = 1791249696`; betas 1790545198 (09-29), 1790721607 (09-30), 1790904859 (10-02), 1791249696 (10-06) | el tracker de slsteam-moon estaba parado, no Steam (corregido en `slssteam.md` y `slsteam-moon.md`) |
-| 2026-10-08 | MigoReleases `@61988bc` | refresco y contenido | 31 ficheros (7 `steamclient`, 7 `steamui`, 7 `steamclientipc`, 8 `bundle`, 2 `state`); beta nueva 1791415817 (10-08 01:03); **0 ficheros `.sig`**; cada TOML de `steamclient`, 40 entradas | firma: imposible aunque la DLL la pidiera |
+| 2026-10-08 | MigoReleases `@61988bc` | refresco y contenido | 31 ficheros (7 `steamclient`, 7 `steamui`, 7 `steamclientipc`, 8 `bundle`, 2 `state`); beta nueva 1791415817 (10-08 01:03); **0 ficheros `.sig`**; cada TOML de `steamclient`, 40 nombres (54 secciones en seis de ellas, con alias) | firma: imposible aunque la DLL la pidiera |
 | 2026-10-08 | MigoReleases `@61988bc` vs `source/` | nombres que la DLL busca frente a los de la TOML estable `caba4826…` | presentes todos los de `LM_INSTALL`/`LM_BIND`/`LM_CAPTURE`/`SpawnProcess` salvo `CConfigStore::FlushToDisk`, `CConfigStore::SetString`, `IClientRemoteStorage::FileExists`, `IClientRemoteStorage::Dispatch`; los cuatro faltan en **las siete** TOML | esos hooks/binds no se instalan nunca; `status.json` queda en `hooks-missed` |
 
 #### Función 2 — Propiedad y licencias
@@ -624,12 +623,6 @@ Además de lo listado en la cabecera:
 | Fecha | Dónde | Qué se probó | Resultado | Detalle |
 |---|---|---|---|---|
 | 2026-10-07 | `c0d0537` (michelegoku3) | reconcile del package 0 en caliente | contra el conjunto completo de `.lua`, no el delta ("Aether parity") | el mismo día y por el mismo motivo que lumalinux `4f8579c` (`RetireDepots` + `InjectDepots` en cada pasada del finder) |
-
-#### Función 4 — Claves y manifests
-
-| Fecha | Dónde | Qué se probó | Resultado | Detalle |
-|---|---|---|---|---|
-| 2026-10-08 | proxy de la sesión | `manifest.opensteamtool.com`, `manifest.steam.run`, `gmrc.wudrm.com`, `gitflic.ru` | `connect_rejected` por el proxy; no medibles | GitHub raw de MigoReleases: 200 |
 
 #### Función 8 — Cloud saves
 
