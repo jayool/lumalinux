@@ -256,6 +256,9 @@ condición para desaparcarlo), **descartado** (con el motivo), **pendiente**.
 "Barrido" = delta por fechas (lo que había hasta ahora). "Relectura por la
 matriz" = desde el código actual, las doce funciones, y contraste con el doc
 viejo: lo que el doc afirma y el código no sostiene se marca o se borra.
+"Parcial" = celdas rellenas con una mezcla de código leído y doc previo; vale
+como punto de partida, no como verdad. Una celda solo pasa a fiable cuando la
+relectura la ha sacado del código y lo dice en su columna Fuente.
 
 | Programa | Doc | Último barrido | Relectura por la matriz | Orden propuesto |
 |---|---|---|---|---|
@@ -268,5 +271,5 @@ viejo: lo que el doc afirma y el código no sostiene se marca o se borra.
 | SteamFlipper | `steamflipper-analysis.md` | 2026-09-28 | pendiente | 7 |
 | slsteam-moon | `slsteam-moon-findings.md` | 2026-10-07 | pendiente | 8 |
 | plugins de SLSsteam | `slssteam-plugins-analysis.md` | 2026-09-29 | pendiente | 9 |
-| CloudRedirect | `cloudredirect.md` | 2026-10-07 (2.6.6) | hecha 2026-10-07 (filas 1, 7, 8, 11, 12; el resto n/a) | — |
-| nosotros | `RESEARCH.md`, `owned-games-guide.md`, docs de LumaDeck | — | columna rellena 2026-10-08 desde el código | — |
+| CloudRedirect | `cloudredirect.md` | 2026-10-07 (2.6.6) | **parcial**: filas 7 y 8 desde el código (`init.cpp`, `cloud_hooks.cpp`, `stats_hooks.cpp`, `stats_handlers.cpp`, `log.cpp`) y medidas; filas 1, 11 y 12 desde el doc y lectura de pasada | 10 |
+| nosotros | `RESEARCH.md`, `owned-games-guide.md`, docs de LumaDeck | — | **parcial** (2026-10-08): LumaDeck desde el código en `downloads`, `pins`, `manifests`, `api_manifest`, `components`, `paths`, `slssteam_ops`; `fixes`, `goldberg`, `eos_proxy`, `cef_cdp`, `game_versions` solo por cabeceras. lumalinux desde cabeceras de módulos, `main.cpp`, `gmrc_store.hpp`, `cr_stats_fix`, `update.cpp` y `RESEARCH.md`; los hooks no releídos uno a uno. SLSsteam desde `sls_apps.cpp`, `sls_hooks.cpp`, `sls_config.cpp` y el doc. **Primera relectura completa pendiente: la nuestra.** | 0 |
