@@ -343,7 +343,7 @@ a third-party script they do not control, resolved by ordering. The re-patch
 path exists because the patch demonstrably does not survive.
 
 This is precisely the dead end recorded as **M7** in
-`docs/slsteam-moon-findings.md` — Steam re-extracts `steam.sh` when its size
+`docs/slsteam-moon.md` (§5.2 M22) — Steam re-extracts `steam.sh` when its size
 changes — and **slsteam-moon itself tried it and reverted** (`d829fb2` →
 `dc89501`, M7). The engine they depend on abandoned this approach; the plugin
 built on that engine has reimplemented it.
@@ -383,7 +383,7 @@ Comparable subsets: moon's install core (`depotkey`, `pics`, `packagepatch`,
 **15.846 L**; lumalinux is **5.590 L**. **[read]**
 
 Gate-by-gate conclusions are carried forward from
-[`slsteam-moon-findings.md`](slsteam-moon-findings.md), which analysed these
+[`slsteam-moon.md`](slsteam-moon.md), which analysed these
 function by function and remains current to `d3402a1`.
 
 | Gate | Ours | Theirs | Lead |
@@ -898,7 +898,7 @@ produces our own `maintenance.md`.
 
 **"Breaking existing ones" — supported, with a concrete instance.** **[read]**
 moon dropped SLSsteam's hash-whitelist SafeMode
-([`slsteam-moon-findings.md`](slsteam-moon-findings.md) M2), a safety mechanism
+([`slsteam-moon.md`](slsteam-moon.md) §5.2 M16), a safety mechanism
 that existed upstream, and `chore: remove flatpak installation support` removes
 another upstream capability. **[read]** moon still fetches
 `AceSLS/SLSsteam/.../res/updates.yaml` at runtime while having discarded its own
@@ -1618,7 +1618,7 @@ of our stack three iterations out of date.
   `py_modules/lt/hv/*`, `src/lib/*Capture*.ts`, `src/sections/*`, `CHANGELOG.md`,
   `plugin.json`.
 - **slsteam-moon**: [`swwayps/slsteam-moon`](https://github.com/swwayps/slsteam-moon) @ `d3402a1` (v2.8);
-  see [`slsteam-moon-findings.md`](slsteam-moon-findings.md), especially M7.
+  see [`slsteam-moon.md`](slsteam-moon.md), especially §5.2 M22.
 - **steam-monitor**: [`swwayps/steam-monitor`](https://github.com/swwayps/steam-monitor) @ `e82030d`
   — the signed per-build locator feed moon consumes (§10.1).
 - **SLSsteam (stock)**: [`slssteam.md`](slssteam.md).
@@ -2964,7 +2964,7 @@ moon's ManifestStore and Steam's `depotcache`, so Steam finds the manifest and
 never asks for a request code. Both workers are stopped on unload/uninstall.
 
 **[inferred]** This is SLSDeck's own answer to moon dropping request codes
-(`slsteam-moon-findings.md` D20): a key holder gets updates by polling Hubcap
+(`slsteam-moon.md` §2.4 and §5.2 M90-M91): a key holder gets updates by polling Hubcap
 every two hours at the cost of quota; everyone else waits for the LuaTools
 archive to be donated the manifest. Ours needs neither: GMRC-native codes let
 Steam update natively the moment Valve publishes, and when the providers are

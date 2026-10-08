@@ -2451,7 +2451,7 @@ asks, exactly the §19 pinned model, and only tells the user to wait when the
 archive has not got the gid yet. LumaDeck is a reader of that archive and
 not a donor; whether it should donate (the user's Steam minting codes every
 30 s for manifests it is not installing) is a decision to put to the user,
-not a default. Details in `slsteam-moon-findings.md`, delta 2026-09-22, D20.
+not a default. Details in `slsteam-moon.md` §2.4 (donante) and §5.2 M90.
 
 ### 20.5 What this changes upstream of lumalinux
 

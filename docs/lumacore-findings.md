@@ -4,7 +4,7 @@
 @ `6d2fb30` (SteaMidra `6.6.4`), the `LumaCore/` subtree — the injected DLL, not
 the Python launcher. C++20/CMake, MSVC, **x64-only**, Microsoft Detours + Lua 5.4
 + protobuf + toml++. Companion to [`bettersteamtools-findings.md`](bettersteamtools-findings.md),
-[`slsteam-moon-findings.md`](slsteam-moon-findings.md) and
+[`slsteam-moon.md`](slsteam-moon.md) and
 [`slssteam.md`](slssteam.md); the same coexistence lens applies.*
 
 LumaCore is different from every other program analysed in this folder: **it is
@@ -86,7 +86,7 @@ dispatch (`CProtoBufMsgBase`) and the IPC path. So **any LumaCore mechanism
 implemented as a network / IPC / wire hook is not portable to lumalinux** — it
 would double-wrap or reorder SLSsteam's own hooks and crash. lumalinux must use
 distinct **function-layer** seams, exactly as it already does for DepotKey /
-BuildDep / GMRC. This one ruling — identical to `slsteam-moon-findings.md` and
+BuildDep / GMRC. This one ruling — identical to `slsteam-moon.md` and
 `bettersteamtools-findings.md` — is *why* several things LumaCore does in one place
 are split across three components on our side.
 
@@ -596,7 +596,7 @@ nuevo sin clave y Hubcap no la trae".**
 - lumalinux: `src/hooks/{depot_key_hook,depot_dependency_hook,gmrc_hook,shader_depot_hook,package_zero_finder,load_package_hook}.cpp`,
   `src/{patterns,rva_feed,vaddr_xlate,update,sha256,key_store,license_reconcile,sls_achievement_unblock,status,gmrc_store}.*`,
   `src/main.cpp`, `tools/steamidra_lite.py`; `docs/nosotros.md`, `docs/RESEARCH.md` §11 + §15 + §17,
-  `docs/design/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon-findings.md`,
+  `docs/design/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon.md`,
   `docs/slssteam.md`.
 - SLSsteam (`AceSLS/SLSsteam`): `ticket.cpp`, `apps.cpp`, `Achievements::sendAndRecvGetUserStats`.
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.

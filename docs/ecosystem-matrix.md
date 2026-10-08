@@ -67,7 +67,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | `LD_AUDIT` solo desde su wrapper, con cuatro capas de cobertura (shim root en `/usr/bin/steam` con sudo, sombras `.desktop`, guardian systemd `--user`, PATH); sin Flatpak; Deck solo si Game Mode invoca `steam` por PATH. Localiza por caché local → catálogo firmado Ed25519 por SHA del `steamclient.so` (solo aporta RVAs) → 55 firmas con unicidad obligatoria y auto-corrección de raíces IPC; 24 opcionales (feature off); índices de vtable fijos sin verificación. SafeMode inerte (feed de AceSLS); crash guard en el wrapper: latch a vanilla al primer crash si cambió el cliente, borrando `appinfo.vdf`. `library-inject.so` activo. | `slsteam-moon.md` §2.1 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -83,7 +83,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | fuente `stplug-in/<appid>.lua` + `luaappids.yaml` (`AdditionalApps` legado). Inyección en el package 0 real (`CPackageInfoCache::LoadPackage` + `CUtlMemory::Grow`) con `LicensesUpdated_t` una vez y `MarkLicenseAsChanged`/`ProcessPendingLicenseUpdates` en caliente desde el hilo IPC dueño (`OwnerWork`); `CheckAppOwnership` con gate de tipo y `StatsPolicy::hasNativeLicense` (`isSubscribed` miente: package 0 inyectado); `GetSubscribedApps` sin overflow; PICS saliente sin apps autoritativas y changelist filtrado; family share por choke opcional + `owner_id=1` (sin `GetAppStateInfo`); retirada visual de la biblioteca sin reinicio (`steamui.so`). Redists: nada. | `slsteam-moon.md` §2.2 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -99,7 +99,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | solo DLC del scope de bases gestionados (`listofdlc`, `dlcappid` del appinfo, `DlcData` bajo padre gestionado) + pipe de juego (gate restaurado 09-29) + sin licencia nativa; `BIsDlcEnabled` sobre el DLC; DLC inyectados en package 0 (anunciados solo con contenido o `InjectAllAdvertisedDlc`); metadatos de DLC escritos en `appinfo.vdf`; cuarentena persistente de depots DLC cuya clave no descifra (3 chunks); sin tope propio. | `slsteam-moon.md` §2.3 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -115,7 +115,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | claves del `.lua` (`addappid(d,1,hex)`) y observadas de Steam, en `cache/depotkey_<d>.yaml`, sustituidas en la respuesta 5439 (32 ceros si no hay); depots sin clave podados del appinfo provisionado. Manifests: pin → depotcache → store propio `~/.config/SLSsteam/manifests/` → archivo luastools `manifest.luastools.xyz/m/<depot>/<gid>` (**único** origen; circuito 2 fallos/429) → fallback local; síntesis de `depots`/`launch` para token-locked. Códigos: ninguno para instalar (retirados 09-21); donación de códigos de depots poseídos con la sesión real (`Donate.Enabled: yes` por defecto). | `slsteam-moon.md` §2.4 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -131,7 +131,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | `ManifestPins` del YAML (`locked`, gid+size) aplicados en el plan (`BuildDepotDependency`) y en el reconcile (`EvaluateConfigChanges`, "one downgrade"); los `setManifestid` del `.lua` no se aplican como gid; `AutoUpdateApps` global; updates suprimidas con proveedores offline; instalación inicial siempre permitida; sin cancelación. | `slsteam-moon.md` §2.5 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -147,7 +147,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | tickets con `eresult=OK` estampado y ticket derivado de la app 7 cuando no hay real; Steamless integrado (kit commiteado, opt-in `--steamless` en LaunchOptions, síncrono en `LaunchApp` hasta 180 s, Wine propio; sin opt-in restaura el `.original.exe`); Proton automático por SO (herramienta del usuario o Experimental) en `config.vdf` y en caliente; `RequiresLegacyCDKey` suprimido para base + DLC; `SmartTickets`/`DenuvoGames` (account id); sin Goldberg/EOS; sin `LaunchOptions` de upstream. | `slsteam-moon.md` §2.6 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -163,7 +163,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | sin almacén; reescribe bytes de `ClientGetUserStats`/`Player.GetUserStats#1` en el WebSocket con un owner fijo (`AchievementOwnerId` 76561198028121353, o `AchievementOwners`) solo para apps que moon inyectó en package 0; descarta `stats`/`crc_stats` del owner; fallo seguro `eresult=2`; sin reseñadores ni cooldown; ABI `slsteam_local_stats_epoch_v1` para CloudRedirect; sin filtrado de playtime; sincronización por cloudredirect-moon. | `slsteam-moon.md` §2.7 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -179,7 +179,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | `DisableCloud: no` por defecto (CloudRedirect por `LD_PRELOAD` desde el wrapper), pero toda app gestionada va siempre sin cloud; Steam solo se consulta con `PlayNotOwnedGames`. | `slsteam-moon.md` §2.8 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -195,7 +195,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | entrada `<appid>.lua` por nombre de fichero (escrito por luatools-moon/Lumen), `luaappids.yaml`, API privada `install\|app\|lib`; escribe `appinfo.vdf` (transaccional), pares `picsbuffer_*`, claves, manifests, `config.vdf`, fechas de inclusión; quita renombrando la caché (`.forgotten.*`) y retirando de la UI; deja claves, manifests, entrada en appinfo, contenido y `.acf`; bibliotecas por `libraryfolders.vdf` e índice; carpeta: Steam salvo síntesis. | `slsteam-moon.md` §2.9 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -211,7 +211,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | sin credenciales (CM anónimo propio, archivo sin auth, `api.steamcmd.net`, owner de logros público); usa la sesión real del usuario para donar códigos (opt-out); TTL de appinfo 5 min, `change_number`, circuitos; sin red: pares validados, store y updates suprimidas; `ticket-grabber` sin empaquetar. | `slsteam-moon.md` §2.10 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -227,7 +227,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | YAML autorreparado con hot reload (3 rutas, ráfagas coalescidas); API privada de un comando; toasts EN/PT con throttle + cola JSON para Lumen; CEF a puerto libre salvo Decky; sin Lua; `autofix.sh` reinstala el último release (`-lumen.zip`); catálogos de patrones autoactualizados por `pattern-refresh`; versión embebida fija + build-ids; `~/.SLSsteam.log` en append; 97 tests y sondas en Steam real. | `slsteam-moon.md` §2.11 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -243,7 +243,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
-| slsteam-moon | ? | |
+| slsteam-moon | Linux 32-bit, sin Flatpak, Deck por PATH; AGPL-3.0 + Steamless CC BY-NC-ND; un mantenedor (`unplausible`), 349 commits visibles (clon superficial desde 06-04), 5 tags, `version.txt` congelado, zip 2.9 resubido cuatro veces; terceros luastools, Valve CM/CDN, steamcmd, steam-monitor, GitHub/jsDelivr, Wine; donación de códigos por defecto; detección: escribe `appinfo.vdf` y `config.vdf`, package 0, paquetes CM mutados, tickets derivados, parche parental. | `slsteam-moon.md` §2.12 |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
 
@@ -263,22 +263,33 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 2, 3 | SLSsteam | `AppIds`/`UseWhitelist` para excluir apps o DLC del unlock (con herencia por `parent`) | aparcado: no lo escribimos; LumaDeck gestiona DLC por `DisabledDLC` de Steam | 2026-10-08 |
 | 4 | SLSsteam | `CDKeys` (clave legacy inyectada o determinista) | aparcado: con `isSubscribed` true para nuestros juegos no se inyecta (`slssteam.md` §4.1-1); sin caso conocido | 2026-10-08 |
 | 9, 11 | SLSsteam | `install\|app\|lib`, `uninstall\|app`, `setcompat` por `/tmp/SLSsteam.API` | descartado por ahora: canal sin autenticación, off por defecto y roto en 20260930144343; Proton lo fijamos en `localconfig.vdf` | 2026-10-08 |
+| 9 | slsteam-moon | retirar un juego de la biblioteca sin reiniciar (`LibraryRemoval`: dos detours en `steamui.so`, `ownershipFlags=0` + `MarkAppChange`) | aparcado hasta terminar las relecturas; nosotros solo hacemos aparecer (`nosotros.md` §2.9) | 2026-10-08 |
+| 3, 4 | slsteam-moon | cuarentena de depots DLC cuya clave no descifra (3 chunks `Unpack failed`, persistida por FNV de la clave) | hook rechazado 2026-08-18; verificación (`content_log.txt`, si nos ocurre) sigue pendiente | 2026-10-08 |
+| 4 | slsteam-moon | claves observadas de respuestas legítimas y sustitución de la respuesta 5439 | hook de mensaje rechazado 2026-06-23 (coexistencia); captura en el passthrough pendiente desde 2026-06-23 | 2026-10-08 |
+| 4 | slsteam-moon | síntesis de `depots`/`launch`/`installdir` para apps token-locked | cerrado 2026-07-05: `--token`/`add_game_token` | 2026-10-08 |
+| 1 | slsteam-moon | crash guard con latch al primer crash si cambió `steamclient.so` (y borrado de `appinfo.vdf`) | aparcado; el nuestro latchea tras N crashes sin mirar el cliente | 2026-10-08 |
+| 1 | slsteam-moon | catálogo de patrones firmado (Ed25519, solo RVAs) y shim root en el PATH | rechazados 2026-08-18 y 2026-09-01 (feed sin firma deliberado; nada de root) | 2026-10-08 |
+| 7 | slsteam-moon | esquema de logros con un owner fijo (sin reseñadores) | aparcado; dato para cuando muera el endpoint de reseñas (2026-10-22) | 2026-10-08 |
+| 4, 10 | slsteam-moon | donación de códigos de manifest con la sesión real (`Donate`, on por defecto) | rechazado por el usuario 2026-09-28: no se dona | 2026-10-08 |
+| 6 | slsteam-moon | Steamless integrado en `LaunchApp` (opt-in por opción de lanzamiento) | sin cambio 2026-09-22: por botón en LumaDeck | 2026-10-08 |
+| 11 | slsteam-moon | `autofix.sh` (`curl \| bash` que reinstala el último release) y 97 tests + sondas de hooks en Steam real | anotado; comparar con `probe-steam.yml` cuando se toque el CI | 2026-10-08 |
 
 ### 3.2 Nosotros sí, ellos no
 
 | Función | Qué | Quién más lo tiene | Notas |
 |---|---|---|---|
-| 4 | claves de depot (`keys.txt` + `config.vdf`), manifests por proveedor, códigos GMRC | SLSsteam: no (solo en su rama `update`, nunca mergeada); resto pendiente de relectura | `slssteam.md` §2.4 |
-| 2 | package-0 en memoria + `NotifyLicensesUpdated` | SLSsteam: no (spoof por app en `CheckAppOwnership`) | `slssteam.md` §2.2 |
-| 5 | updates por proveedor (`pins.py`, `api.steamcmd.net`, Fix Update) | SLSsteam: solo `ManifestIds` + `DisableUpdates` | `slssteam.md` §2.5 |
-| 6 | fixes (lua.tools, Steamless, Goldberg, EOS) | SLSsteam: ninguno | `slssteam.md` §2.6 |
-| 7 | sincronización de logros entre máquinas (CloudRedirect) | SLSsteam: ninguna | `slssteam.md` §2.7 |
-| 11 | UI (QAM, Settings), update propio y de componentes, estado | SLSsteam: YAML + fichero de comandos + Lua; sin auto-update | `slssteam.md` §2.11 |
+| 4 | claves de depot (`keys.txt` + `config.vdf`), manifests por proveedor, códigos GMRC | SLSsteam: no (solo en su rama `update`); slsteam-moon: claves del `.lua` + observadas y manifests del archivo luastools (único origen), pero **sin** códigos desde 09-21; resto pendiente | `slssteam.md` §2.4, `slsteam-moon.md` §2.4 |
+| 2 | package-0 en memoria + `NotifyLicensesUpdated` | SLSsteam: no (spoof por app); slsteam-moon: sí (`LoadPackage` + `Grow`, reconcile `LicensesUpdated_t`, refresco en caliente) | `slssteam.md` §2.2, `slsteam-moon.md` §2.2 |
+| 5 | updates por proveedor (`pins.py`, `api.steamcmd.net`, Fix Update) | SLSsteam: solo `ManifestIds` + `DisableUpdates`; slsteam-moon: `ManifestPins` + `AutoUpdateApps` + supresión con proveedores offline, sin pase de proveedores propio | `slssteam.md` §2.5, `slsteam-moon.md` §2.5 |
+| 6 | fixes (lua.tools, Steamless, Goldberg, EOS) | SLSsteam: ninguno; slsteam-moon: solo Steamless (integrado) | `slssteam.md` §2.6, `slsteam-moon.md` §2.6 |
+| 7 | sincronización de logros entre máquinas (CloudRedirect) | SLSsteam: ninguna; slsteam-moon: cloudredirect-moon (externo) | `slssteam.md` §2.7, `slsteam-moon.md` §2.7 |
+| 11 | UI (QAM, Settings), update propio y de componentes, estado | SLSsteam: YAML + fichero de comandos + Lua; slsteam-moon: Lumen (sidecar CDP) + `autofix.sh`; ninguno comprueba componentes | `slssteam.md` §2.11, `slsteam-moon.md` §2.11 |
 
 ### 3.3 Fuentes retiradas
 
 | Función | Qué | Cuándo | Motivo |
 |---|---|---|---|
+| 4 | `gmrc.wudrm.com` y `manifest.steam.run` como proveedores de códigos de manifest en slsteam-moon | 2026-09-21 (`c1b5e15`) | "superseded by the archive and no longer reachable": el archivo luastools sirve el manifest entero; moon dejó de generar e inyectar códigos | 
 
 ---
 
@@ -299,7 +310,7 @@ dice en su columna Fuente; hasta entonces es `?`.
 | ASSella | `assella-analysis.md` | 2026-10-07 | pendiente | 5 |
 | SLSDeck | `slsdeck-analysis.md` | 2026-10-05 | pendiente | 6 |
 | SteamFlipper | (ninguno: `steamflipper-analysis.md` borrado el 2026-10-08) | 2026-09-28 | **retirado**: el proyecto ya no existe | — |
-| slsteam-moon | `slsteam-moon-findings.md` | 2026-10-07 | pendiente | 8 |
+| slsteam-moon | `slsteam-moon.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`origin/slsteam-moon@f50f28e`); `slsteam-moon-findings.md` absorbido (mediciones en §5.2, portables en §4.4) | 8 |
 | plugins de SLSsteam | `slssteam-plugins-analysis.md` | 2026-09-29 | pendiente | 9 |
 | CloudRedirect | `cloudredirect.md` | 2026-10-07 (2.6.6) | pendiente | 10 |
 | nosotros | `nosotros.md` (+ `RESEARCH.md`, `maintenance.md`, docs de LumaDeck) | — | **hecha 2026-10-08** desde el código (lumalinux `df22459`, LumaDeck `c4776ce`); `method.md` y `owned-games-guide.md` absorbidos | 0 |

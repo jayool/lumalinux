@@ -484,7 +484,7 @@ desde mayo. Cinco semanas sin un commit.*
 
 Lo que sí se ha movido está fuera de este repo y ya está anotado en los otros
 docs: `cloudredirect-moon` reconstruyó su `.so` el 19-sep arrastrando el mismo
-bug del store vacío que parcheamos con `cr_stats_fix` (`slsteam-moon-findings.md`,
+bug del store vacío que parcheamos con `cr_stats_fix` (`slsteam-moon.md` §5.2 M97,
 satélites), y SLSDeck añadió proveedor de carpeta personalizada e importador de
 saves sobre CR (`slsdeck-analysis.md` §18.7). Ninguno toca el camino de
 contenido; la premisa de superficies disjuntas sigue intacta.

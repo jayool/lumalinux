@@ -2113,7 +2113,7 @@ clave a `v2`. Esa parte del diseño es sólida y conviene no tocarla.
 
 ### 7.6 Prerrequisito para mover anclas: convergencia
 
-`slsteam-moon-findings.md` §D11.b se retiró el 2026-09-01 con el argumento
+`slsteam-moon.md` §5.2 M53 (D11.b del doc anterior) se retiró el 2026-09-01 con el argumento
 correcto: anclando en prólogos, la convergencia no puede darse. Pero dejó escrita
 la condición, y **es exactamente el prerrequisito de cualquier movimiento a la
 familia 3**:

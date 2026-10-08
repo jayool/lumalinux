@@ -1,7 +1,7 @@
 # Plan — desacoplar LumaDeck de headcrab (inyección por wrapper)
 
 *Fecha original: 2026-08-08. Última actualización: 2026-08-11. Secuela de
-`docs/slsteam-moon-findings.md` (M7, M3) y `docs/nosotros.md` (las 6 gates). Cruza
+`docs/slsteam-moon.md` (§5.2 M22, M17) y `docs/nosotros.md` (las 6 gates). Cruza
 dos repos: `jayool/lumalinux` (el instalador/wrapper) y `jayool/LumaDeck` (el
 backend Decky). Rama de trabajo: `claude/steam-update-gating`.*
 
@@ -421,7 +421,7 @@ downgrade/mirror en vivo una vez (ver WS5).
 ## 9. Referencias
 
 - Modelo de inyección: `swwayps/slsteam-moon` `setup.sh` (wrapper + cobertura
-  `.desktop`/launcher). Findings propios: `docs/slsteam-moon-findings.md` M7, M3.
+  `.desktop`/launcher). Findings propios: `docs/slsteam-moon.md` §5.2 M22, M17.
 - Mecanismo de downgrade: `Deadboy666/h3adcr-b` `headcrab.sh`
   (`clientdowngrade` = `prepdowngrade` + `overideupdate`; **enfoque mirror**: Steam
   baja los paquetes directo de `headcrab.bifrosthub.ru` vía `-overridepackageurl`, con

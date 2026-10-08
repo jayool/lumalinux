@@ -242,6 +242,9 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 - [`docs/slssteam.md`](docs/slssteam.md): SLSsteam itself, read from its code
   function by function (hooks, config keys, what it does and does not do), with
   every dated measurement of the old `slssteam-analysis.md`
+- [`docs/slsteam-moon.md`](docs/slsteam-moon.md): the slsteam-moon fork, read from
+  its code function by function against upstream, with every dated measurement
+  and every portability verdict of the old `slsteam-moon-findings.md`
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,

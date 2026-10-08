@@ -9,7 +9,7 @@
 *Investigation date: 2026-07-03. Reference: [`OpenSteam001/OpenSteamTool`](https://github.com/OpenSteam001/OpenSteamTool)
 @ `main` (GPL-3.0, C++20/CMake, Windows-only). These are notes for a possible
 future port of selected ideas into lumalinux / LumaDeck — nothing here is
-implemented yet. Companion to [`slsteam-moon-findings.md`](slsteam-moon-findings.md);
+implemented yet. Companion to [`slsteam-moon.md`](slsteam-moon.md);
 the same coexistence lens applies.*
 
 ## Context
@@ -669,7 +669,7 @@ its whole Windows user base, which raises the expected coverage of the tier
 added in LumaDeck `4638a97` and lowers the single-operator risk noted above.
 (2) The Linux side (slsteam-moon / luatools-moon, `swwayps/*`) has **no commit
 after 2026-09-02** as of 2026-09-13; the moon delta in
-`slsteam-moon-findings.md` will need a re-sweep when "the new system" lands
+`slsteam-moon.md` will need a re-sweep when "the new system" lands
 there. (3) Contributing codes back is not on the table for a lua-only stack
 that owns no licences.
 
@@ -834,7 +834,7 @@ and has not reacted to 20770407 coming back on 09-16.
 - lumalinux: `src/patterns.{hpp,cpp}`, `src/sha256.cpp`, `src/update.cpp`,
   `src/curl.cpp`, `src/gmrc_store.hpp`, `src/hooks/{depot_key_hook,depot_dependency_hook,gmrc_hook,shader_depot_hook,package_zero_finder}.cpp`,
   `tools/steamidra_lite.py`; `docs/nosotros.md` (the six gates), `docs/RESEARCH.md`,
-  `docs/slsteam-moon-findings.md`.
+  `docs/slsteam-moon.md`.
 - LumaDeck: `backend/achievements.py` (SLScheevo), Workshop page, CloudRedirect
   component, `FIXES_MAP.md` (Online Fix), `docs/cloud-saves.md`.
 
@@ -850,7 +850,7 @@ commits after `b754d13`, tags `1.5.1.1` 09-15 and `1.5.1.2` 09-18).
 `madoiscool/steam-monitor` `pattern` @ `7bea3a6` (09-22),
 `OpenSteam001/steam-monitor` `pattern` @ `134c9b1` (**09-06**), `ipc` @
 `c61b5fd` (09-22). *Correction:* the `92d027b` cited for steam-monitor in
-`slsteam-moon-findings.md` resolves in neither repository; the anchors above
+the old `slsteam-moon-findings.md` (now `slsteam-moon.md`) resolves in neither repository; the anchors above
 replace it.
 
 ### BetterSteamTools (`0b776c5`, `1d15f39`, `4747385`)
@@ -988,7 +988,7 @@ mirror stays a parked candidate (09-22).
 **[read]** `madoiscool/steam-monitor` `pattern` published a TOML pair
 (`steamclient`, `steamui`) for every desktop beta Valve shipped: `1790121765`
 (09-23), `1790380355` (09-26), `1790534246` and `1790545198` (09-27) — the
-same four moon's tracker recorded for Linux (`slsteam-moon-findings.md`,
+same four moon's tracker recorded for Linux (`slsteam-moon.md` §5.2 M104,
 delta 09-28). Stable unchanged at `1788652215`. `OpenSteam001/steam-monitor`
 `pattern` has **still not published since 09-06** — 22 days, nine betas
 missing — while its `ipc` and `protobuf` branches kept updating (09-22,
