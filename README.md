@@ -245,6 +245,9 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 - [`docs/slsteam-moon.md`](docs/slsteam-moon.md): the slsteam-moon fork, read from
   its code function by function against upstream, with every dated measurement
   and every portability verdict of the old `slsteam-moon-findings.md`
+- [`docs/steamidra.md`](docs/steamidra.md): SteaMidra (the `drappula/SFF` fork), read from
+  the code: what it installs on Linux (headcrab, `steam.sh`, `steam-jupiter`,
+  SLSsteam's `config.yaml`), its key/manifest chain and what it leaves behind.
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,

@@ -437,7 +437,7 @@ downgrade/mirror en vivo una vez (ver WS5).
 
 ## Nota cruzada 2026-09-14 — lo que no hacemos, y por qué (SteaMidra)
 
-`steamidra-linux-analysis.md` §3.3 lista los vectores por los que SteaMidra
+`steamidra.md` §4.4 lista los vectores por los que SteaMidra
 puede dejar una Deck "de fábrica" (crash en bucle en modo juego → gamescope
 `short_session_recover` → borrado de `~/.local/share/Steam` → OOBE, medido en
 `RESEARCH.md` §17.3). Este plan ya los evita, y conviene que siga así:

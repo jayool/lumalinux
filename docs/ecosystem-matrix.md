@@ -61,7 +61,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | wrapper `~/.local/share/SLSsteam/path/steam` escrito por `setup.sh`: `LD_AUDIT` (SLSsteam) + `LD_PRELOAD` (lumalinux, CloudRedirect); cobertura Desktop por `.desktop` sombreados y guardian systemd, Game Mode por drop-in de `steam-launcher.service`. lumalinux localiza cinco funciones de `steamclient.so` por feed de RVAs → patrones únicos → rescates (RTTI, xref, anchor); hash SafeMode solo advisory; CI diaria con PR automático de hashes y RVAs. Recuperación: guard anti crash-loop (vanilla), kill-switches, `setup.sh`, downgrade por Desktop (no ejercitado). LumaDeck: estados por componente. | `nosotros.md` §2.1 |
 | SLSsteam | `LD_AUDIT` (rtld-audit), solo en el proceso `steam`. Localiza por 18 patrones de bytes (último match) + RTTI y xref de `TraceIPC` para derivar los índices de vtable + 5 índices fijos; 37 hooks (15 detours, 22 VMT sobre objetos vivos, colocados en el primer `RunInterface`). Al actualizar Steam: gate de hash SafeMode opcional (off por defecto; fail-closed sin feed; `version.txt` congelado desde 09-03), si no aborta limpio o crashea. Recuperación: solo `~/.SLSsteam.log` y toasts; sin kill-switch en caliente ni crash guard. | `slssteam.md` §2.1 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | no se engancha: instala a otro. Linux: **SLSsteam** por `LD_AUDIT`, instalado ejecutando **headcrab** (`bash` de `h3adcr-b@main` filtrado por texto; headcrab sustituye `steam.sh` entero, rebaja el cliente a `1788652215`, escribe `steam.cfg` y `config.yaml`) en cada arranque y **cada 60 min** con Steam cerrado (`VERSION` nunca se escribe → siempre "update available"); después `patch_steam_sh` (644, `export LD_AUDIT=…`), `Popen(steam)` con `LD_AUDIT`, `.desktop` por juego, botón `sudo` sobre `/usr/bin/steam-jupiter` (+ `SafeMode: yes`). Sin patrones propios; SafeMode lo decide headcrab (yes en SteamOS, no en el resto). Sin crash guard; "Fix Hash Issue" = `curl \| bash` de `headcrab.pages.dev/reset` + repatch. Windows: LumaCore (DLL de `drappula/LumaCore`, patrones de `MigoReleases` por SHA-256). | `steamidra.md` §2.1 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -77,7 +77,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | SLSsteam spoofea por `AdditionalApps`/`FakeAppIds` (los escribimos nosotros). lumalinux inyecta los ids de depot de `keys.txt` en el package-0 en memoria cada 15 s y al cambiar el fichero, retira los que salen (v0.22.2) y dispara `NotifyLicensesUpdated` con el `CUser*` capturado del guard de SLSsteam (sin reiniciar). Juegos poseídos: LumaDeck decide desde `packageinfo.vdf`, añade solo DLC, nunca pinea depots con licencia real. Family sharing: nada. Redists: en `keys.txt`, nunca pin ni `AdditionalApps`. | `nosotros.md` §2.2 |
 | SLSsteam | post-hook de `CheckAppOwnership`: `unlockApp` solo para `AdditionalApps` (tras el primer `GetSubscribedApps`), decensor y región para todas; `GetSubscribedApps` añade `AdditionalApps` sin deduplicar. Sin packages ni licencias (solo en la rama `update`, nunca mergeada); `AppTokens` en PICS; `AppLicensesChanged_t` solo en caliente. Poseídos de verdad: `isSubscribed` = trampolín de `CheckAppOwnership` (propiedad real según Steam) protege DLC, logros, cloud, updates, CD keys. Family sharing: descarta 9406 y `NotifyRunningApps`, `GetAppStateInfo` sin `Borrowed`, `owner_id=1`. Redists: nada (solo loguea `sharedDepots`). | `slssteam.md` §2.2 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | delegado: Linux `AdditionalApps` de SLSsteam (app + **todos** los `dlcappid` + `AppTokens`; `migrate_existing_games` mete todo lo instalado, poseído o no); Windows `addappid(<id>)` en `stplug-in/<id>.lua` para LumaCore. Sin packages, sin distinción de poseídos (`LastOwner` del setting o `0`), `DisableFamilyShareLock: yes`; redists solo como lista fija para agrupar el lua. `PlayNotOwnedGames` ya no se escribe (6.6.1). | `steamidra.md` §2.2 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -93,7 +93,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | unlock: SLSsteam (todo DLC no poseído del juego en marcha). LumaDeck: `DlcData` solo >64 DLC; alta y baja por la casilla de Steam (`SetDLCEnabled`, `DisabledDLC`); DLC comprado se deja a Steam en todos los caminos; DLC sin depot → `AdditionalApps`; quitar un DLC de un juego added exige reinicio. | `nosotros.md` §2.3 |
 | SLSsteam | `shouldUnlockDlc`: todo DLC no poseído de verdad y no excluido (`AppIds`/`UseWhitelist`, herencia por `parent`) mientras el pipe sea de un juego; contesta `CheckAppOwnership`, `IsAppDlcInstalled`, `BIsDlcEnabled` (sobre el padre), `IsUserSubscribedAppInTicket`. Comprado: se respeta. Sin depot: flag. Sin límite propio: `DlcData` suple la lista que Steam no entrega (sin llamar al original). Se quita por config (hot reload). | `slssteam.md` §2.3 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | todos los `dlcappid` del padre a `AdditionalApps` siempre; `DlcData` solo si `listofdlc` ≥ 64 (camino CLI: depots `{}` con `yaml.dump`); DLC sin depot = `addappid(<dlc>)` en el lua + `AdditionalApps` previa confirmación; "DLC Check" + `download_dlc_free` (append al lua del padre, manifest, ficheros). Comprado de verdad: sin distinción. Quitar: nunca se limpian los DLC. Fuera de Steam: Goldberg `unlock_all=1`, SmokeAPI/CreamAPI/Uplay con DLL empaquetadas. | `steamidra.md` §2.3 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -109,7 +109,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | claves del lua a `keys.txt` (tres formatos) + `config.vdf`, servidas por el hook DepotKey; `retired_keys.txt` para borrar. Manifests: depotcache → archivo propio → luastools → Hubcap suelto (1500/día, 1 intento por depot+gid/día) → zip (Hubcap 25/día, Ryuu; Sushi/Spinoza off). Códigos GMRC: hook de lumalinux con 20770407, manifestdex, wudrm, steam.run (1 req/s, backoff, verificación en el CDN, `gmrc.json`). Sin proveedores: todo congelado al build instalado. | `nosotros.md` §2.4 |
 | SLSsteam | sin claves de depot, sin manifests externos, sin códigos de petición (todo eso solo en la rama `update`). `ManifestIds` (pin por depot) y `DepotBlacklist` (con bug de swap) en el post-hook de `BuildDepotDependency`; `CDKeys` legacy (o clave determinista) vía `SetLegacyCDKey`. Servicios: GitHub/jsDelivr (solo SafeMode), tienda de Steam (reseñas para logros). | `slssteam.md` §2.4 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | claves: lua de Hubcap/Ryuu/DepotBox (clave) o "Free Providers" (`api.steamcmd.net` + `fylsdy/ManifestHub` **404** + BD local `KoriaPolis/Steam-Depot` cada 6 h → `revobd` → `steamtoolsapp/ManifestHub`, `steamtools-games/ManifestHub3`) → `saved_lua`, `config.vdf` `DecryptionKey` (nunca sobrescribe), `stplug-in`; contribución de claves al worker `steamidra.workers.dev` (ON por migración de settings). Manifests: local → **`manifest.luastools.xyz`** → (Hubcap on-demand 1500/día) → 3 espejos GitHub `k25FCdfEOoEJ42S6` → ManifestHub2 (clave 24 h). Códigos: solo la sesión **anónima** del descargador nativo; sin GMRC externos (`9033611`). Descarga: nativo propio (CDN, AES, VZ/VSZTD, SHA-1) o DDMod; sin circuito. | `steamidra.md` §2.4 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -125,7 +125,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | pin vivo = `ManifestIds` de SLSsteam (`keys.txt` gid/size dormido, BuildDep OFF). `pins.py`: pase local 60 s (heal, modelo up/down por `gmrc.json`), pase de update 30 min contra `api.steamcmd.net`, pin solo con todos los manifests; congelación por usuario, ficheros (fixes) o proveedores. Versión antigua: SteamDB (10 builds, BrowserView oculto) + `--set-pin` + `StateFlags\|=2`; también por LuaTools. Update atascada: `UpdateResult=8` → Fix Update; sin cancelación. | `nosotros.md` §2.5 |
 | SLSsteam | `ManifestIds` para fijar o bajar de versión; `DisableUpdates: yes` (default) → `GetUpdateInfo` false para `AdditionalApps` o no poseídas de verdad (hot reload). La automática la decide Steam; no toca `buildId`; sin cancelación de updates en curso. | `slssteam.md` §2.5 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | freeze: ACF a mano 0444 (`StateFlags 4`, `buildid`/`TargetBuildID` public, `AutoUpdateBehavior 0`, `InstalledDepots` reales desde `8eaf238`) + `DisableUpdates: yes` + `ManifestIds` y `setManifestid` si el usuario eligió versión + `steam.cfg` (cliente). Sin comprobación periódica; "Update" = refetch + rebajar; "Lure Fix" = ACF con gids actuales sin descargar. Versión antigua: historial (CM → morrenus → árbol GitHub → tokens; SteamDB off), DepotBox build-details (token embebido), HTML de SteamDB; `_sync_acf_downgrade` o cola de 7 días. Windows: `00_LetUpdate_override.lua`. | `steamidra.md` §2.5 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -141,7 +141,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | LumaDeck: catálogo lua.tools (cuenta Discord; slot manifest + fix), fixes sin cuenta de files.luatools.work, Steamless (.NET 9, sin deshacer), Goldberg, proxy EOS, toggle Online (480 + netsock + EOS), spliced tickets (plugin Lua de Ace); backups por fichero y log `[FIX]`; cualquier escritura congela el juego. | `nosotros.md` §2.6 |
 | SLSsteam | sin fixes (ni Steamless, Goldberg ni EOS). Tickets de propiedad (858) y cifrados (5527) cacheados en `<config>/cache`, reinyectados en `LaunchApp` y si el servidor falla; SteamID que ve el juego: `SteamIdOverride` → spoof de una vez (`SmartTickets`: SteamDRM/Denuvo por entropía en `ConnectPipe`) → ticket cifrado; `DenuvoGames` no finge propiedad de otra cuenta; `FakeAppIds` (AppId real para stats/cloud/appinfo, falso para amigos/matchmaking/presencia); `LaunchOptions` (`%command%`); `ticket-grabber`. | `slssteam.md` §2.6 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | Fix Game (DRM check por `appdetails`: Denuvo → **para**; gbe_fork de GitHub sin hash; `steam_settings` con SteamID64 compartido; Steamless `Steamless.CLI.dll`/dotnet sobre todos los exe; swap de DLL / ColdClient / ColdLoader; launch scripts), "Crack a game" (`OG_`), "Remove SteamStub", SteamAutoCrack CLI (sin `wine` en Linux), "Fixes & Bypasses" (`KoriaPolis/CrakFiles` → pixeldrain, contraseña `cs.rin.ru`, zip sin backup), online-fix solo navegador, `-onlinefix` en `localconfig.vdf`. Deshacer incompatible entre caminos. EOS: nada. La descarga CLI Linux pasa Steamless sin preguntar. | `steamidra.md` §2.6 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -157,7 +157,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | SLSsteam consigue el esquema por el borrow con reseñadores (sin almacén propio: guarda Steam) y lo salta si `isSubscribed`, que con nuestra inyección de package-0 es true; lumalinux repunta ese guard a `subscribed && !added` (escritura atómica) para que los juegos añadidos entren. CloudRedirect sincroniza stats y logros por blob en Drive (una descarga por arranque); `cr_stats_fix` sobra desde CR 2.6.6. LumaDeck: generador de esquemas apagado. Pendiente: endpoint de tienda retirado el 2026-10-22, esperar SLSsteam. | `nosotros.md` §2.7 |
 | SLSsteam | sin almacén propio (guarda Steam). Borrow de esquemas solo para no poseídas de verdad (guard `isSubscribed`, el que lumalinux repunta): reescribe `GetUserStats` (legacy y `Player.GetUserStats#1`) con SteamIDs de reseñadores de `store.steampowered.com/appreviews` (`MaxSchemaTries`, blacklist, `preferredOwners`, cooldown 10 min; `NoConnection` como fallback); vacía los stats de la respuesta. Borra las `AdditionalApps` de `ClientGetLastPlayedTimes`. Sin sincronización. `schema-grabber` offline. Endpoint de tienda cambia en `dev` (retiro anunciado 2026-10-22). | `slssteam.md` §2.7 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | nada propio: Linux lanza **SLScheevo** (script Python empaquetado, no leído) con `--max-tries 101`; `set_stats_and_achievements` es un stub; Windows LumaCore. Goldberg: esquema por Web API con clave **embebida**, logros en `GSE Saves/`. Sin sincronización. | `steamidra.md` §2.7 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -173,7 +173,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | CloudRedirect (componente core de `setup.sh`; Drive/OneDrive/Dropbox; app flatpak para el login). `DisableCloud: no` en SLSsteam. LumaDeck solo observa (`not_authed`, `disabled`). `libcurl_pin` para nuestras propias descargas. | `nosotros.md` §2.8 |
 | SLSsteam | `DisableCloud: yes` (default) → `IsCloudEnabledForApp` false para no poseídas de verdad; sin redirección ni proveedores; el YAML remite a CloudRedirect. | `slssteam.md` §2.8 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | sin redirección: `DisableCloud: yes` en SLSsteam y **CloudRedirect recortado** del headcrab que ejecuta. Backup/restore de `userdata/<id>/<app>/remote`, emuladores, rutas custom (Ludusavi muerto por ruta) a local, rclone (ELF i386) o Google Drive (`_gc.py` gitignorado → off en el árbol público); auto backup cada 10 min; Steam reconcilia. | `steamidra.md` §2.8 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -189,7 +189,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | entradas: AppID, página abierta (CEF), nombre (tienda de Steam); sin zip local; sin elección de disco. Add: zip por `api.json` → `_process_and_install_lua` (orden del lua, depot Linux) → `steamidra_lite` (depotcache, `AdditionalApps`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`) → post-check → Proton forzado; sin reinicio (reconcile). Quitar: carpeta, `.acf` en todas las bibliotecas, compatdata/shadercache (raíz + biblioteca), depotcache, config de SLSsteam, claves (retiradas si poseído); deja `config.vdf`, `pins.json`, archivo propio. Bibliotecas: unión de los dos `libraryfolders.vdf` con tres puntos ciegos. | `nosotros.md` §2.9 |
 | SLSsteam | entrada: solo AppId en el YAML (a mano, por Lua `setAdditionalApps`, o `install\|app\|lib`/`uninstall\|app` por el fichero de comandos); no escribe nada en disco; no limpia nada (tickets, `cdk_<n>`); `AppLicensesChanged_t` en caliente; bibliotecas por índice (`dumplibraries`); carpeta la decide Steam. | `slssteam.md` §2.9 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | entradas: appid/nombre (catálogo local → `GetAppList` → espejos → Hubcap), lua/zip/rar/7z, recientes, bulk, `-f`; URL solo en la CLI; `midra://` no se procesa. Escribe: `AdditionalApps` (+DLC) → `ManifestIds` → `config.vdf` → `saved_lua` → `stplug-in` (**matando Steam**) → manifests a depotcache + staging → descarga a `<lib>/steamapps/common/<installdir>` → ACF 0444 → `libraryfolders.vdf`. Quitar: lua (+`saved_lua`), "full" + `AdditionalApps`(base), `ManifestIds`, manifests, ACF, `rmtree`; CLI `full_keys` borra claves. Quedan DLC, `DlcData`, `AppTokens`, `libraryfolders`, `steam.cfg`. Biblioteca: `libraryfolders.vdf`; picker solo en versión/DDMod. | `steamidra.md` §2.9 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -205,7 +205,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | Hubcap (clave, `/user/stats`, borrable), Ryuu (sesión de Discord por CDP o SQLite del CEF, verificada con `data-user-id`, viva cada hora), LuaTools (Supabase con refresh), Web API de Steam (apagada). Sin ninguna: no se añade; actualizar sigue por depotcache, archivo y luastools. | `nosotros.md` §2.10 |
 | SLSsteam | solo una sesión de Steam; opcionales `AppTokens`, `CDKeys`, SteamIDs (`DenuvoGames`, `SteamIdOverride`) y tickets; caducidad no detectada (tickets reutilizados sin mirar antigüedad); `ticket-grabber`/`schema-grabber` piden usuario y contraseña en argv + Steam Guard. | `slssteam.md` §2.10 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | Hubcap (`smm`, validada al arrancar, diálogo "Remove Key"), Ryuu reseller/premium, DepotBox (+plan), ManifestHub2 (24 h), Web API key opcional (si no, la **embebida**), token DepotBox embebido, Steam **anónimo** siempre, Google OAuth, `sudo` en Deck. Sin ninguna: Free Providers, LuasTools, espejos, BD, nativo con manifest local, DDMod, headcrab, cracks. | `steamidra.md` §2.10 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -221,7 +221,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | QAM + Settings de Decky (pestaña Dev siempre visible); CLI `setup.sh`/`steamidra_lite.py`. Update propio: zip a `~/Downloads`. Componentes: versión del `.so` en disco (CloudRedirect, lumalinux), tag grabado (SLSsteam), GitHub con caché 6 h, aplicar = `setup.sh` entero. Salud: `status.json`, `gmrc.json`, crash guard, pin de headcrab; logs en lumalinux, SLSsteam y Decky. CI: tests, autotest de rederivación, smoke test nunca verde. | `nosotros.md` §2.11 |
 | SLSsteam | YAML con hot reload (inotify, `IN_CLOSE_WRITE\|IN_MOVED_TO`; claves faltantes → toast, desconocidas ignoradas); fichero de comandos `/tmp/SLSsteam.API` (7 comandos; `API: no` en el YAML instalado; cualquier proceso del usuario puede escribirlo; roto 09-28→10-01); plugins Lua sin sandbox (`Plugins: no`, 0700 forzado, hot reload sin recrear estado en release); toasts por `notify-send`. Sin auto-update (`update.cpp` solo baja hashes). Versión = `VERSION` embebida (no sube en cada tag) + rama/commit en el log. Releases 7z/zip + PKGBUILD + Nix, sin strip. | `slssteam.md` §2.11 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | GUI web (Chromium sin sandbox, bridge sin autenticación) + Qt + CLI + instalador sh; self-update por GitHub releases sin firma; SLSsteam "versión" = `unknown` → headcrab cada hora; LumaCore por tag con caché 6 h; .NET 9 auto; gbe_fork por `version.txt`; resto fijo en `third_party/`. Logs `debug.log`/`crash.log`; no lee el estado de SLSsteam. CI por tag sin checksums. | `steamidra.md` §2.11 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -237,7 +237,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 |---|---|---|
 | **nosotros** | SteamOS/Deck; CachyOS en curso; Flatpak no. GPL-3 (lumalinux, con `update.cpp` AGPL de SLSsteam), LumaDeck sin LICENSE; releases por tag. Terceros: GitHub, AceSLS, Selectively11, Valve, api.steamcmd.net, SteamDB, Hubcap, Ryuu, luastools, lua.tools, proveedores GMRC (tabla en `nosotros.md` §4.2). Sin telemetría; TLS sin verificar como último recurso; riesgo de detección el de SLSsteam. | `nosotros.md` §2.12 |
 | SLSsteam | Linux x86 32-bit en `steam` (nativo, Flatpak, SteamOS/Deck); AGPL-3.0; un mantenedor, ~1 tag cada 4 días, historia reescrita el 07-21, rama `dev` activa; terceros GitHub/jsDelivr, tienda de Steam, `curl` y `notify-send` del sistema, `/proc`; sin telemetría; borra el control parental siempre; detección: detours en `steamclient.so`, paquetes CM modificados y descartados, stats de otros usuarios desde la sesión propia. | `slssteam.md` §2.12 |
-| SteaMidra/SFF | ? | |
+| SteaMidra/SFF | Windows + Linux x86_64 (AppImage glibc 2.39), Flatpak parcial, sin macOS. GPL-3 (Midrag); fork `drappula` (mallusrgreat, 88 commits, 7 releases 09-05 → 10-03; `AGENTS.md`: agente IA); upstream parado 08-21. Depende de ~25 servicios (headcrab/jsDelivr/SteamTracking, luastools, Hubcap, Ryuu, DepotBox, ManifestHub2, KoriaPolis ×2, MigoReleases, GitHub ×12 repos, steamcmd.net, morrenus, revobd, pixeldrain, Google). Telemetría local; contribución de claves ON de facto; `curl \| bash` ×2 + `bash` de `main` filtrado; sin tests. | `steamidra.md` §2.12 |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
 | ASSella | ? | |
@@ -273,23 +273,32 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 4, 10 | slsteam-moon | donación de códigos de manifest con la sesión real (`Donate`, on por defecto) | rechazado por el usuario 2026-09-28: no se dona | 2026-10-08 |
 | 6 | slsteam-moon | Steamless integrado en `LaunchApp` (opt-in por opción de lanzamiento) | sin cambio 2026-09-22: por botón en LumaDeck | 2026-10-08 |
 | 11 | slsteam-moon | `autofix.sh` (`curl \| bash` que reinstala el último release) y 97 tests + sondas de hooks en Steam real | anotado; comparar con `probe-steam.yml` cuando se toque el CI | 2026-10-08 |
+| 1 | SteaMidra | headcrab como instalador (rebaja y congela el cliente de Steam, sustituye `steam.sh`), parche de `steam.sh` y de `/usr/bin/steam-jupiter` con `sudo`, hash fix por `curl \| bash`, reinstalación cada hora | rechazado 2026-09-14 (F1: nunca `/usr`, nunca `steamos-readonly disable`, nunca SIGKILL, `steam.sh` vanilla); confirmado hoy con `headcrab.sh` | 2026-10-08 |
+| 4 | SteaMidra | base pública de claves `KoriaPolis/Steam-Depot` (369k entradas, 190k con clave; descargada cada 6 h) | pendiente condicionado desde 2026-09-12: "no se implementa hasta ver en un log real el caso DLC nuevo sin clave y Hubcap no la trae"; hoy responde | 2026-10-08 |
+| 4 | SteaMidra | descargador nativo de depots propio (sesión anónima, CDN, AES, VZ/VSZTD/ZIP, SHA-1) y DDMod | descartado por diseño: Steam descarga (`nosotros.md` §2.4) | 2026-10-08 |
+| 5 | SteaMidra | ACF a mano 0444 con `buildid`/`TargetBuildID`, `AutoUpdateBehavior 0` y cola de 7 días | rechazado 2026-09-12 (LumaDeck 0.8.0 `self_heal_acf_build`: Steam escribe el ACF) y 2026-09-14 (P26) | 2026-10-08 |
+| 5 | SteaMidra | versiones antiguas por historial (CM/morrenus/árbol GitHub/tokens), DepotBox build-details e importación de HTML de SteamDB | no aplica: nuestro freeze no hace rollback (`nosotros.md` §2.5) | 2026-10-08 |
+| 6 | SteaMidra | Fix Game completo (Goldberg/ColdClient/ColdLoader, SteamAutoCrack, CrakFiles, DLC unlockers) | aparcado hasta terminar las relecturas; nuestros fixes (lua.tools, Steamless, Goldberg, EOS) por botón | 2026-10-08 |
+| 10 | SteaMidra | validación de claves de proveedor al arrancar con diálogo "Remove Key" | anotado (`_HUBCAP_ATTEMPTS` sin diálogo); aparcado | 2026-10-08 |
 
 ### 3.2 Nosotros sí, ellos no
 
 | Función | Qué | Quién más lo tiene | Notas |
 |---|---|---|---|
-| 4 | claves de depot (`keys.txt` + `config.vdf`), manifests por proveedor, códigos GMRC | SLSsteam: no (solo en su rama `update`); slsteam-moon: claves del `.lua` + observadas y manifests del archivo luastools (único origen), pero **sin** códigos desde 09-21; resto pendiente | `slssteam.md` §2.4, `slsteam-moon.md` §2.4 |
-| 2 | package-0 en memoria + `NotifyLicensesUpdated` | SLSsteam: no (spoof por app); slsteam-moon: sí (`LoadPackage` + `Grow`, reconcile `LicensesUpdated_t`, refresco en caliente) | `slssteam.md` §2.2, `slsteam-moon.md` §2.2 |
-| 5 | updates por proveedor (`pins.py`, `api.steamcmd.net`, Fix Update) | SLSsteam: solo `ManifestIds` + `DisableUpdates`; slsteam-moon: `ManifestPins` + `AutoUpdateApps` + supresión con proveedores offline, sin pase de proveedores propio | `slssteam.md` §2.5, `slsteam-moon.md` §2.5 |
-| 6 | fixes (lua.tools, Steamless, Goldberg, EOS) | SLSsteam: ninguno; slsteam-moon: solo Steamless (integrado) | `slssteam.md` §2.6, `slsteam-moon.md` §2.6 |
-| 7 | sincronización de logros entre máquinas (CloudRedirect) | SLSsteam: ninguna; slsteam-moon: cloudredirect-moon (externo) | `slssteam.md` §2.7, `slsteam-moon.md` §2.7 |
-| 11 | UI (QAM, Settings), update propio y de componentes, estado | SLSsteam: YAML + fichero de comandos + Lua; slsteam-moon: Lumen (sidecar CDP) + `autofix.sh`; ninguno comprueba componentes | `slssteam.md` §2.11, `slsteam-moon.md` §2.11 |
+| 4 | claves de depot (`keys.txt` + `config.vdf`), manifests por proveedor, códigos GMRC | SteaMidra: claves en `config.vdf` + lua + BD pública, manifests por LuasTools/GitHub/ManifestHub2/Hubcap, **sin** códigos externos (solo sesión anónima); SLSsteam: no (solo en su rama `update`); slsteam-moon: claves del `.lua` + observadas y manifests del archivo luastools (único origen), pero **sin** códigos desde 09-21; resto pendiente | `slssteam.md` §2.4, `slsteam-moon.md` §2.4 |
+| 2 | package-0 en memoria + `NotifyLicensesUpdated` | SteaMidra: no (solo `AdditionalApps` de SLSsteam); SLSsteam: no (spoof por app); slsteam-moon: sí (`LoadPackage` + `Grow`, reconcile `LicensesUpdated_t`, refresco en caliente) | `slssteam.md` §2.2, `slsteam-moon.md` §2.2 |
+| 5 | updates por proveedor (`pins.py`, `api.steamcmd.net`, Fix Update) | SteaMidra: ACF 0444 + `DisableUpdates` + pins; "Update" manual = rebajar; SLSsteam: solo `ManifestIds` + `DisableUpdates`; slsteam-moon: `ManifestPins` + `AutoUpdateApps` + supresión con proveedores offline, sin pase de proveedores propio | `slssteam.md` §2.5, `slsteam-moon.md` §2.5 |
+| 6 | fixes (lua.tools, Steamless, Goldberg, EOS) | SteaMidra: kit completo salvo EOS; SLSsteam: ninguno; slsteam-moon: solo Steamless (integrado) | `slssteam.md` §2.6, `slsteam-moon.md` §2.6 |
+| 7 | sincronización de logros entre máquinas (CloudRedirect) | SteaMidra: ninguna (SLScheevo externo); SLSsteam: ninguna; slsteam-moon: cloudredirect-moon (externo) | `slssteam.md` §2.7, `slsteam-moon.md` §2.7 |
+| 11 | UI (QAM, Settings), update propio y de componentes, estado | SteaMidra: GUI web + CLI, self-update sin firma, versión de SLSsteam desconocida; SLSsteam: YAML + fichero de comandos + Lua; slsteam-moon: Lumen (sidecar CDP) + `autofix.sh`; ninguno comprueba componentes | `slssteam.md` §2.11, `slsteam-moon.md` §2.11 |
 
 ### 3.3 Fuentes retiradas
 
 | Función | Qué | Cuándo | Motivo |
 |---|---|---|---|
 | 4 | `gmrc.wudrm.com` y `manifest.steam.run` como proveedores de códigos de manifest en slsteam-moon | 2026-09-21 (`c1b5e15`) | "superseded by the archive and no longer reachable": el archivo luastools sirve el manifest entero; moon dejó de generar e inyectar códigos | 
+| 4 | `steam.run`, `wudrm`, `manifest.opensteamtool.com` (y su variante XOR) y toda la familia de request codes externos en SteaMidra | 2026-09-12 (`9033611`) | "the public GMRC mirrors … now answer 403/404 everywhere"; queda solo el código de la sesión anónima del descargador nativo | 
+| 4 | `fylsdy/ManifestHub/main/depotkeys.json` (claves "trionine" de Free Providers) | 404 desde 2026-09-14 (medido; sigue 404 el 2026-10-08) | el código lo sigue pidiendo; la cadena gratis depende de `KoriaPolis/Steam-Depot` | 
 
 ---
 
@@ -304,7 +313,7 @@ dice en su columna Fuente; hasta entonces es `?`.
 | Programa | Doc | Último barrido | Relectura por la matriz | Orden propuesto |
 |---|---|---|---|---|
 | SLSsteam | `slssteam.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`main@049bbdd`, release `20261001163836`); `slssteam-analysis.md` absorbido (mediciones en §5.2, afirmaciones en §5.1) | 1 |
-| SteaMidra/SFF (drappula) | `steamidra-linux-analysis.md` | 2026-10-07 | pendiente | 2 |
+| SteaMidra/SFF (drappula) | `steamidra.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`origin/main@4159300`, v6.9.0) y `headcrab.sh` de hoy; `steamidra-linux-analysis.md` absorbido (mediciones en §5.2, afirmaciones en §5.1, vectores y hallazgos en §4.4); las partes SFF-app de `lumacore-findings.md` también | 2 |
 | LumaCore (drappula) | `lumacore-findings.md` | 2026-10-07 | pendiente | 3 |
 | LuaTools + BetterSteamTools (+ OpenSteamTool) | `luatools-app-analysis.md`, `bettersteamtools-findings.md` | 2026-10-07 | pendiente | 4 |
 | ASSella | `assella-analysis.md` | 2026-10-07 | pendiente | 5 |

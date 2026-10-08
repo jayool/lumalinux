@@ -2267,7 +2267,7 @@ repo tag → luastools → Hubcap zip (current build only, once a day per app).
 > (`fylsdy/ManifestHub`) is 404 and its GitHub manifest mirrors
 > (`steamtoolsapp/ManifestHub`, `steamtools-games/ManifestHub3`,
 > `qwe213312/k25FCdfEOoEJ42S6`) carry 0 of the 6 current gids that P-ToyStore
-> had the same day. See `steamidra-linux-analysis.md` §5.
+> had the same day. See `steamidra.md` §5.2 (M23).
 
 ### 19.5 First production update through the pinned model (2026-09-13)
 

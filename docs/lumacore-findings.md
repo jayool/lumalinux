@@ -602,9 +602,9 @@ nuevo sin clave y Hubcap no la trae".**
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.
 - LumaDeck: `backend/achievements.py`, `FIXES_MAP.md` (Steamless / Goldberg / netsock / Override).
 
-> **2026-09-14:** `Midrags/SFF` no se ha movido desde `fa44fc9` (2026-08-21). El desarrollo de SteaMidra continúa en el fork `drappula/SFF`; su capa Linux, su cadena de adquisición y los vectores de "brickeo" de la Deck están en `steamidra-linux-analysis.md` (congelado en `92d6813`, 2026-09-13). El próximo barrido de SFF arranca ahí.
+> **2026-09-14:** `Midrags/SFF` no se ha movido desde `fa44fc9` (2026-08-21). El desarrollo de SteaMidra continúa en el fork `drappula/SFF`; su capa Linux, su cadena de adquisición y los vectores de "brickeo" de la Deck estaban en `steamidra-linux-analysis.md` (congelado en `92d6813`, 2026-09-13); desde el 2026-10-08 ese doc es `steamidra.md` (relectura desde `4159300`).
 >
-> **2026-09-17:** sin cambios en `Midrags/SFF` (`fa44fc9`) ni en `KoriaPolis/LumaCore` (`8a32798`, 2026-05-18). `drappula/SFF` publicó v6.8.0 el 15-sep; delta en `steamidra-linux-analysis.md` §10.
+> **2026-09-17:** sin cambios en `Midrags/SFF` (`fa44fc9`) ni en `KoriaPolis/LumaCore` (`8a32798`, 2026-05-18). `drappula/SFF` publicó v6.8.0 el 15-sep; delta hoy en `steamidra.md` §5.3.
 
 ## Re-sweep 2026-09-23 — `LumaCore/` en `drappula/SFF` (`fa44fc9` → `8eaf238`) y el feed `Steam-Auto-PT`
 
@@ -714,7 +714,7 @@ hash** en vez de conseguir patrones nuevos. Lo contrario de nuestro modelo
 ## Re-sweep 2026-10-07 — LumaCore tiene repo propio (`drappula/LumaCore`, V37) y su feed de patrones vuelve a vivir
 
 *El subárbol `LumaCore/` salió de `drappula/SFF` el 3-oct (`e4c6b65`,
-`da3108e`; `steamidra-linux-analysis.md` §13). Clon de `drappula/LumaCore`
+`da3108e`; `steamidra.md` §5.3). Clon de `drappula/LumaCore`
 hecho hoy en `drappula/lumacore`: 35 commits, historia extraída (las
 releases de Midrag de v6.3.2 a v6.6.6, el fix de `FileExists` de
 wtfseanscool del 4-sep que ya estaba en `8eaf238`), más dos cosas nuevas:
