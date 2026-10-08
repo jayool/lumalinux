@@ -15,7 +15,7 @@ en `slssteam.md`.
 | | |
 |---|---|
 | **Qué es** | La **mitad DLL de SteaMidra en Windows**: cuatro ficheros que el lanzador copia junto a `steam.exe`. `xinput1_4.dll` y `dwmapi.dll` son proxies que Steam carga de su propia carpeta y que cargan `LumaCore.dll` desde un hilo; `LumaCore.dll` se engancha **dentro del proceso de Steam** (Microsoft Detours sobre `steamclient64.dll` y `steamui.dll`, dos trampas `int3` con VEH, reescritura de mensajes protobuf del CM y del IPC cliente↔juego) y lee los `.lua` de `config/stplug-in/` **ejecutándolos en un Lua 5.5 con sandbox**; `LumaCorePayload.dll` se inyecta en los procesos de juego lanzados por la ruta online-fix (puente EOS). Hace en un solo binario lo que nuestro stack reparte entre SLSsteam, lumalinux y CloudRedirect: propiedad, package 0, claves, pin de versión, códigos de manifest, tickets forjados, logros con SteamID de donantes, family sharing, ruta Spacewar (480), bloqueo de Steam Cloud. |
-| **Repo y commit leídos** | `drappula/LumaCore` `main@33c36e9` (2026-10-03, tag `V37`). Clon completo: 35 commits; raíz `8ec4e88` (2026-05-25, "Initial clean commit - SteaMidra v6.2.4", la historia extraída del subárbol `LumaCore/` de `Midrags/SFF`). 165 ficheros, 24.980 líneas en `source/` (`.cpp` + `.h`; `steam/Enums.h` son 1.902). Patrones: `michelegoku3/MigoReleases` rama `pattern` `@61988bc` (2026-10-08). |
+| **Repo y commit leídos** | `drappula/LumaCore` `main@33c36e9` (2026-10-03, tag `V37`). 35 commits; raíz `8ec4e88` (2026-05-25, "Initial clean commit - SteaMidra v6.2.4", la historia extraída del subárbol `LumaCore/` de `Midrags/SFF`). 165 ficheros, 24.980 líneas en `source/` (`.cpp` + `.h`; `steam/Enums.h` son 1.902). Patrones: `michelegoku3/MigoReleases` rama `pattern` `@61988bc` (2026-10-08). |
 | **Plataforma** | Windows x64 solo (`README.md:30`, `CMakeLists.txt`): MSVC, CMake 3.20+, C++20, runtime estático. Ningún camino Linux ni Proton. |
 | **Licencia y quién** | GPL-3.0 (`LICENSE`; cabeceras "GNU General Public License v3 or later", "Copyright (c) 2025-2026 Midrag"). `CREDITS.md`: escrito por Midrag, inspirado en OpenSteamTool (GPL-3.0). Commits: Midrag 26 (05-25 → 08-21, releases de SteaMidra aplastadas), wtfseanscool 1 (09-04), michelegoku3 1 (`c0d0537`, 09-30, el autor de Aether), mallusrgreat 7 (CI, 10-03). Mantenido hoy dentro del fork `drappula`; el original `KoriaPolis/LumaCore` parado en V36. |
 | **Relación con los demás programas** | **SteaMidra** lo instala, le escribe los `.lua` y le precalienta la caché de patrones (`steamidra.md` §2.1); **MigoReleases** (michelegoku3) le da los patrones por SHA-256; **Aether** (michelegoku3) es la fuente de la última tanda de cambios; **OpenSteamTool** es su antepasado. Con nosotros: es el **origen de los hooks de lumalinux** (`main.cpp:9-22`, `RESEARCH.md` §11): mismas funciones para claves, pin y package 0; `steamidra_lite.py` imita su lectura del `.lua` (`steamidra_lite.py:111-122,206`). No convive con nosotros en ninguna máquina: es solo Windows. |
@@ -39,8 +39,7 @@ en `slssteam.md`.
 ## §1 Mapa del código
 
 Cobertura por fichero con la función de la matriz a la que sirve (números de
-§2). Líneas = `wc -l`. "Muerto" = sin llamadores en todo `source/` (grep del
-nombre fuera de su propio fichero).
+§2). "Muerto" = sin llamadores en todo `source/`.
 
 ### 1.1 Arranque, proxies, patrones
 
@@ -597,7 +596,7 @@ Además de lo listado en la cabecera:
   `DenuvoGames`) y de LumaDeck (esquema de logros offline) no es de este
   programa: está en `slssteam.md` y `nosotros.md`.
 
-**Lo que sigue sin medir** (Windows, no hay banco):
+**Lo que sigue sin medir**:
 
 - Si el CM acepta `ClientStoreUserStats2` de una app no poseída y los logros
   persisten entre máquinas.
