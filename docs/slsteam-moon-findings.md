@@ -1265,7 +1265,7 @@ de anclaje, y la munición fechada de §D12 para `verify_mask.py`.
 entre el 30-ago y el 3-sep, más 13 commits de upstream SLSsteam (19-jul → 7-ago,
 autor AceSLS: `162cae6`, `c494838`/`5a9b17a`, `b779174`, `937d889`, `fa924a0`,
 `6a5bc71`, `f594328`, `3e831b0`, `2a92806`, `02c55e3`, `fe1e71d`, `13dbce5`) que
-entran por merge y ya están leídos en `slssteam-analysis.md` §7.7–§7.8. Rama
+entran por merge y ya están leídos en `slssteam.md` §5.3. Rama
 `beta`: un commit el 4-sep (`62767b3`, quita `dist/slsteam-moon-linux.zip` del
 árbol). Rama `millennium`: nada desde el 22-jul. Sin tag nuevo (sigue v2.8,
 21-jul). **Profundidad de lectura:** los 11 commits propios leídos como diff
@@ -1287,7 +1287,7 @@ activo, los dos mensajes CM entrantes que bloquean una biblioteca compartida
 (`EMsg 9406 SharedLibraryStopPlaying`, y `ServiceMethod 146` cuando
 `CMsgProtoBufHeader.target_job_name == "FamilyGroupsClient.NotifyRunningApps#1"`).
 Upstream ya lo hace así desde julio (`5a9b17a`, "Replace patches with message
-choking", en §7.7 de `slssteam-analysis.md`); lo que moon narra es el coste de
+choking", en `slssteam.md` §5.3); lo que moon narra es el coste de
 portarlo a su árbol.
 
 - **`50a5959` (30-ago).** Hook nuevo sobre `CCMInterface::RecvPkt` (patrón
@@ -1321,7 +1321,7 @@ portarlo a su árbol.
 - **`d7d263c`, `6fa9a2d` (2-sep).** Tests de tabla: parseo acotado, hook opcional
   no cableado si no resuelve, los dos mensajes descartados y el resto pasando.
 
-**Nuestra posición.** No tocamos la capa CM (§5 de `slssteam-analysis.md`: hooks
+**Nuestra posición.** No tocamos la capa CM (`slssteam.md` §2.1 y `nosotros.md` §2.1: hooks
 disjuntos), así que ni el hook ni el patrón nos afectan. Lo que sí es nuestro es
 la lección de método, y la teníamos ya: un hook no crítico nunca debe ser condición
 de carga. `main.cpp` lo hace desde v0.20.0 con un solo crítico (DepotKey); moon lo
@@ -1646,7 +1646,7 @@ elemento), y el código real usa `luastools.xyz` como *"the only source"*.
   protocolo, hay voluntarios.
 - **moon ya no compite en el gate GMRC**: nuestro hook de códigos y su
   antiguo `manifestcode` eran el único solape de coexistencia que quedaba
-  (`slssteam-analysis.md` §5 y el `download.lua` del doc de plugins). Con
+  (`slssteam.md` §2.4 y el `download.lua` del doc de plugins). Con
   moon en modo "manifest en depotcache", si algún día coexistieran, no
   habría dos manos en la misma respuesta CM.
 - **LumaDeck es cliente de ese archivo y no donante.** Sin `Donate` no
@@ -1659,7 +1659,7 @@ Empaquetado en el mismo commit, sin relación: `AchievementOwnerId:
 76561198028121353` como **cuenta fija por defecto** de la que leer el esquema
 de logros de un juego no poseído (`Achievements: yes`, con `AchievementOwners`
 por juego). Upstream lo hace con reseñadores de `appreviews`
-(`slssteam-analysis.md` §7.3); moon pone un SteamID64 concreto en el YAML.
+(`slssteam.md` §2.7); moon pone un SteamID64 concreto en el YAML.
 
 ### D21 — `d3a424e` + `2f66eaf`: Steamless pasa a ser opt-in por opción de lanzamiento
 
@@ -1741,7 +1741,7 @@ de teardown que upstream arregló en `CFileWatcher` el 12-sep), `1052d4b`
 (escritura de la lista de apps suscritas acotada al búfer del llamador),
 `1fac75a`, `b101ef6`, `2fa7e67` (el analizador de `process.cpp` y la caché de
 tickets, endurecidos el 17-sep, **cuatro días antes** de que upstream `dev`
-hiciera lo mismo el 20; `slssteam-analysis.md` §7.12).
+hiciera lo mismo el 20; `slssteam.md` §5.3).
 
 ### Los satélites
 
@@ -1888,7 +1888,7 @@ reconcile que loguea cada anchor); no hay splice de appinfo que endurecer.
 - **steam-monitor** (`58c784a`, 27-sep): cuatro betas de escritorio nuevas
   (`1790121765` 23-sep, `1790380355` 26-sep, `1790534246` y `1790545198` 27-sep).
   Stable de escritorio `1788652215` sin cambio; **Deck sin cambio
-  (`1788291500`)**. Detalle en `slssteam-analysis.md` §7.13.
+  (`1788291500`)**. Detalle en `slssteam.md` §5.2 F1 (M201, M206).
 
 ### Balance del delta
 
@@ -2024,8 +2024,8 @@ llenaba el log con cada DLC gestionado en cada login. Coincide con lo que
 medimos el 07-10 (nosotros.md, 08:10 y 09:59): la inyección más el
 reconcile hacen **aparecer** lo añadido sin reiniciar; lo que no hace ninguno
 de los dos es **retirar** de la interfaz lo quitado hasta reiniciar. Moon no
-dice nada de ese sentido. Upstream (AceSLS `main@049bbdd`, §7.14 de
-`slssteam-analysis.md`) mantiene el gate de app activa desde siempre; moon
+dice nada de ese sentido. Upstream (AceSLS `main@049bbdd`, `slssteam.md`
+§2.6) mantiene el gate de app activa desde siempre; moon
 vuelve a la misma forma por otro motivo. **Sin acción**: no es nuestra capa.
 
 ### Satélites

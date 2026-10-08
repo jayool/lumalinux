@@ -241,7 +241,7 @@ Atribución por versión, con el original `fa44fc9` delante:
   `add_manifest_id` existe pero `1cfb20a` (08-09) "drop version pinning": no
   se usa.
 - `yaml_config.py`: escrituras atómicas (`os.replace`), que el inotify viejo de
-  SLSsteam no veía (`slssteam-analysis.md` §5, ya corregido en SLSsteam).
+  SLSsteam no veía (`slssteam.md` §2.11, ya corregido en SLSsteam).
 - `steam_process.py`: arranque `env LD_AUDIT=... steam`; accesos directos
   `.desktop` con el mismo `env`.
 - `flat_file_repair.py`: repara los ficheros con barras invertidas en el nombre

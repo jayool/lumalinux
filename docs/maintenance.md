@@ -664,7 +664,7 @@ degrades (native cheevos → off) but Steam never crashes.
 > neutralised SLSsteam's update-clear. It was **removed in v0.16.18**: SLSsteam changed
 > that mechanism to a config-gated `GetUpdateInfo` hook (`20260714131044`), so the
 > instruction it anchored on is gone. Update-unblocking is now a LumaDeck config
-> concern (`DisableUpdates: no`). See `docs/slssteam-analysis.md` §7.6.
+> concern (`DisableUpdates: no`). See `docs/slssteam.md` §2.5.
 
 **Native achievements silently off.** Grep `SLS-ach`:
 

@@ -3,12 +3,12 @@
 *Fecha de investigación: 2026-09-03. Base: [`AceSLS/SLSsteam`](https://github.com/AceSLS/SLSsteam)
 @ `main` `71021ad`, tag `20260903114323` (publicado **hoy**), y el fichero
 `download.lua` recibido por vía informal el mismo día.
-Continuación directa de [`slssteam-analysis.md`](slssteam-analysis.md) §7.9 —
+Continuación directa de [`slssteam.md`](slssteam.md) (antes `slssteam-analysis.md` §7.9; hoy §2.11 y §5.3) —
 en particular de §7.9.5 y del cierre §7.9.13, que dejó anotado el evento a
 vigilar: **`dev` mergeado a `main` y tagueado**. Ese evento ha ocurrido.*
 
 Este documento no analiza SLSsteam otra vez; para eso está
-`slssteam-analysis.md`. Analiza **una cosa nueva y sus consecuencias**: que
+`slssteam.md`. Analiza **una cosa nueva y sus consecuencias**: que
 SLSsteam ha dejado de ser una librería con hooks y se ha convertido en una
 plataforma con API de plugins, y que ya circula un plugin que hace, desde Lua,
 tres de las cosas que lumalinux hace desde C++.
@@ -29,7 +29,7 @@ El análisis va **por capas**, y cada una condiciona a la siguiente:
 | **0** | Datación y autoría de `download.lua` | **§1 — cerrada** |
 | **1** | La API de plugins como mecanismo | **§2 — cerrada** |
 | **2** | `download.lua` como artefacto técnico | **§3 — cerrada** |
-| **3** | La frontera de coexistencia (§5 de `slssteam-analysis` deja de valer) | **§4 — cerrada** |
+| **3** | La frontera de coexistencia (§5 del viejo `slssteam-analysis`, hoy `slssteam.md` §2.1, deja de valer) | **§4 — cerrada** |
 | **4** | Consecuencias para LumaDeck | **§5 — cerrada** |
 | **5** | Escenarios estratégicos y señales de vigilancia | **§6 — cerrada** |
 | **+** | **Anexo técnico**: motores de localización comparados | **§7** |
@@ -98,7 +98,7 @@ Las tres primeras filas fijan el suelo en **2026-08-31**. Dos son inequívocas:
 
 - `place_lua_hook` sólo es invocable desde el FFI de LuaJIT **desde que es
   export de C**; antes era una función puenteada por LuaBridge y no servía para
-  esto (es justo lo narrado en `slssteam-analysis.md` §7.9.12).
+  esto (es justo lo narrado en `slssteam.md` §5.2 F1, M183).
 - La línea comentada del propio fichero —
   `-- local codeStr = tostring(curl.downloadString(url, headers, 5))` — usa el
   overload de **tres** argumentos bajo el nombre `downloadString`. Antes de
@@ -965,7 +965,7 @@ detrás.
 
 ### 4.1 Lo que §5 del doc hermano afirmaba, y por qué deja de valer
 
-`slssteam-analysis.md` §5 se titula, literalmente, *"los conjuntos de hooks son
+el doc anterior de SLSsteam (`slssteam-analysis.md` §5, hoy `slssteam.md` §2.1) se titulaba, literalmente, *"los conjuntos de hooks son
 **disjuntos** (la sección que importa)"*, y sostiene:
 
 > *"Lo más valioso del análisis: **verificar que SLSsteam y lumalinux no tocan

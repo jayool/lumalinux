@@ -462,7 +462,7 @@ suele estar presente; es un arreglo para multi-cuenta. No aplicado.
 - **`ea671c8` "Watch SLSSteam config in a smarter way"** — CR pasa de
   `inotify_add_watch(configPath, IN_MODIFY)` a vigilar el **directorio** con
   `IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE`. Es el mismo fallo que SLSsteam
-  arregló en `1444fa5` (ver `slssteam-analysis.md` §4.1): vigilar el fichero con
+  arregló en `1444fa5` (ver `slssteam.md` §2.11): vigilar el fichero con
   `IN_MODIFY` no ve una escritura por rename atómico. Tercer proyecto en
   tropezar con ello. **lumalinux ya lo hace bien** — `key_store.cpp:181` vigila
   el directorio con esa máscara exacta, y lo documenta. Nada que hacer.

@@ -689,7 +689,7 @@ not**, and our own documentation says so:
 
 - SLSsteam hooks `CProtoBufMsgBase::Send` and `::InitFromPacket` on this exact
   i386 binary, by **detour on a byte-pattern-scanned address** (`DetourHook`,
-  `hooks.cpp:203`) [read: `slssteam-analysis.md` §1.5, §2 inventory].
+  `hooks.cpp:203`) [read: `slssteam.md` §2.1].
 - slsteam-moon builds on that to hook the depot-key **protobuf message**
   (`CMsgClientGetDepotDecryptionKey`), which is why `slsteam-moon-findings.md`
   Finding 3 records the approach as *more* update-resilient than ours — the wire

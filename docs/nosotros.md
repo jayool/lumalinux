@@ -384,7 +384,7 @@ nunca pin, nunca `AdditionalApps`.
 
 **Criterio de unlock: SLSsteam.** En su código, `shouldUnlockDlc` desbloquea
 cualquier DLC no poseído mientras el juego corre, sin mirar `AdditionalApps`
-(`slssteam-analysis.md` §7.14; se reverificará en la relectura de SLSsteam). En
+(`slssteam.md` §2.3, reverificado 2026-10-08). En
 lumalinux no hay lógica de DLC: un DLC es "una línea más" de `keys.txt`
 (`DepotEntry.DlcAppId` existe en el layout, `steam_types.hpp:33`, y no se lee).
 
@@ -633,8 +633,10 @@ quitar: backups por fichero, log por juego, launch options por el frontend.
 
 ### 2.7 Logros, stats y tiempo de juego
 
-**Dónde viven.** Los logros de un juego añadido los sirve **SLSsteam** desde
-su almacén local, pero su código salta ese camino ("schema borrow") cuando
+**Dónde viven.** El esquema de logros de un juego añadido lo consigue
+**SLSsteam** pidiendo las stats de reseñadores recientes en nombre de la
+cuenta (no tiene almacén propio: guarda Steam en `appcache/stats`;
+`slssteam.md` §2.7), pero su código salta ese camino ("schema borrow") cuando
 `CUser::isSubscribed(appid)` es verdadero, y con la inyección de licencias de
 lumalinux **lo es** también para los juegos añadidos (medido: trace
 `appid=1454400 sub=1 added=1`, §5 F7). Por eso lumalinux parchea SLSsteam:
@@ -683,12 +685,12 @@ de juego: nada propio; CloudRedirect reconcilia el tiempo desde
 Pendiente externo: Valve retira el endpoint de tienda de esquemas el
 2026-10-22; SLSsteam lleva el arreglo (`51724f5`) sin release.
 
-**Lista de control.** Almacén: SLSsteam local (+ CloudRedirect). Sincronización:
+**Lista de control.** Almacén: Steam (`appcache/stats`) + CloudRedirect. Sincronización:
 blob de CloudRedirect en Drive/OneDrive/Dropbox, descargado una vez por
 arranque. Convivencia: SLSsteam contesta para añadidos gracias al guard;
 CloudRedirect contesta desde su almacén o deja pasar. Esquemas: generador de
-LumaDeck apagado; SLSsteam los baja del CDN (`MaxSchemaTries: 10`, por
-defecto).
+LumaDeck apagado; SLSsteam los consigue por reseñadores de la tienda
+(`MaxSchemaTries: 10`, por defecto).
 
 ### 2.8 Cloud saves
 

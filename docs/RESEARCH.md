@@ -1694,7 +1694,7 @@ build" for "update rarely" — what CR advertises.
 > `IClient*::RunIPCFrame` hook** (`8de3384`), so the specific precedent no longer
 > exists upstream — it navigates `CSteamEngine → CUser →` member offsets instead.
 > The caveat itself is unaffected, and arguably reinforced: the reorder is part of
-> *why* Ace moved off those hooks. See `slssteam-analysis.md` §7.7.2. **DepotKey now closes even the
+> *why* Ace moved off those hooks. See `slssteam.md` §5.3 (2026-07-24). **DepotKey now closes even the
 reorder gap**: instead of trusting a fixed index it DERIVES the slot by matching
 the accessor's prologue signature inside the vtable (`ResolveVtableSlotBySignature`),
 so a reorder is *handled* — the accessor is found at its new slot — and a
@@ -1715,7 +1715,7 @@ string, so the prologue signature is the discriminant.)
 > and was **removed** (`src/sls_update_unblock.{cpp,hpp}` deleted). The countermeasure
 > now lives in LumaDeck at the config level: `ensure_slssteam_flags()` writes
 > `DisableUpdates: no`, which short-circuits the new hook entirely. See
-> `docs/slssteam-analysis.md` §7.6 for the current mechanism. The reverse-engineering
+> `docs/slssteam.md` §2.5 for the current mechanism. The reverse-engineering
 > below is kept as a historical record.
 
 **Context.** SLSsteam's 2026-07-05 release (`5c632dd`) replaced its old
@@ -1729,7 +1729,7 @@ SLSsteam: those games stop auto-updating (Steam shows "Update required" but neve
 downloads on its own). Owned games are hit only transiently at startup (an
 `isSubscribed` race before licences load — benign, but it's why owned games can
 log a one-shot "Disabled updates"). This is deliberate on AceSLS's side; there is
-no config toggle. See docs/slssteam-analysis.md §7 for the SLSsteam-side reading.
+no config toggle. See docs/slssteam.md §2.5 and §5.3 for the SLSsteam-side reading.
 
 ### 16.1 Why no config workaround is acceptable
 
@@ -1755,7 +1755,7 @@ combined-mask instruction:
 file offset `0x1cd7b0`. We anchor on the **immediate** `E5 F8 FF FF`, not a
 prologue: the `APPSTATE_*` values are ABI-stable (games depend on them), so the
 constant survives SLSsteam recompiles even as the surrounding code shifts — the
-very treadmill §8 / slssteam-analysis §7 point 1 describe for byte-patterns,
+very treadmill §8 / slssteam.md §5.3 describe for byte-patterns,
 dodged here by anchoring on a value the ABI freezes.
 
 The immediate `E5 F8 FF FF` also appears 6 other times in the binary as
@@ -1796,7 +1796,7 @@ Env override `LUMA_NO_SLS_UNBLOCK=1` skips it entirely (the A/B control). Nothin
 else in SLSsteam is touched: the game stays in AdditionalApps; ownership, DLC
 surfacing, depot keys, tokens all behave exactly as before. The only removed
 behaviour is the flag-clearing. This is the **first place lumalinux modifies
-SLSsteam** rather than just coexisting with it (frontier note, slssteam-analysis
+SLSsteam** rather than just coexisting with it (frontier note, slssteam.md §4.3, formerly slssteam-analysis
 §5 / §7.1).
 
 ### 16.4 End-to-end validation (2026-07-07, Balatro, clean codespace)
@@ -1825,7 +1825,7 @@ every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
   never downloads — matching the pre-patch Mina observation that opened issue #20.
 
 Coexistence held throughout: SLSsteam and lumalinux both mapped in the same client
-(disjoint hook sets, §11 / slssteam-analysis §5), no heap corruption.
+(disjoint hook sets, §11 / slssteam.md §2.1), no heap corruption.
 
 ## 17. Native achievements — scoping SLSsteam's borrow guard (`sls_achievement_unblock`), and the atomic-rel32 OOBE fix
 
@@ -1851,7 +1851,7 @@ for them — the guard fires, the borrow is skipped, and the game shows no
 achievements. (Contrast a DepotDownloader-style tool that self-downloads with no
 local licence → `isSubscribed=false` → the borrow runs → cheevos work. lumalinux's
 whole differentiator is the native path, so it loses the borrow.) The
-SLSsteam-side reading of the borrow flow is in docs/slssteam-analysis.md §7.3.
+SLSsteam-side reading of the borrow flow is in docs/slssteam.md §2.7.
 
 **Resolving the apparent paradox — "SLSsteam fakes ownership, so why does its own
 guard see the game as owned?"** Two facts that look contradictory but aren't:
@@ -1919,7 +1919,7 @@ SLSsteam.so:
    > release **`20260722152506`**, NOT in `20260728212859` as this note and `e3dc918`
    > originally said; `20260728212859` is where it was *detected*. The broken window is
    > therefore six days and two releases wider than first recorded (see
-   > `slssteam-analysis.md` §7.6/§7.7.6 for the release-by-release table). The hardcoded
+   > `slssteam.md` §5.2 F7 (M63) for the release-by-release table). The hardcoded
    > `…sendAndRecvGetUserStatsE…S3_j` stopped matching the real `…S3_4EMsg`, and
    > since the resolve is all-or-nothing `Apply()` **silently no-op'd on every Deck
    > that had updated SLSsteam** — native achievements OFF, and (because the

@@ -1621,7 +1621,7 @@ of our stack three iterations out of date.
   see [`slsteam-moon-findings.md`](slsteam-moon-findings.md), especially M7.
 - **steam-monitor**: [`swwayps/steam-monitor`](https://github.com/swwayps/steam-monitor) @ `e82030d`
   — the signed per-build locator feed moon consumes (§10.1).
-- **SLSsteam (stock)**: [`slssteam-analysis.md`](slssteam-analysis.md).
+- **SLSsteam (stock)**: [`slssteam.md`](slssteam.md).
 - **Ours**: `jayool/LumaDeck` @ `eea30e5`, `jayool/lumalinux` @ `87ee544`.
 - **DeckTools**: [`lopesleo/DeckTools`](https://github.com/lopesleo/DeckTools)
   — the common ancestor, used as the control corpus in §5.9.

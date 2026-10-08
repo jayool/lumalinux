@@ -5,7 +5,7 @@
 the Python launcher. C++20/CMake, MSVC, **x64-only**, Microsoft Detours + Lua 5.4
 + protobuf + toml++. Companion to [`bettersteamtools-findings.md`](bettersteamtools-findings.md),
 [`slsteam-moon-findings.md`](slsteam-moon-findings.md) and
-[`slssteam-analysis.md`](slssteam-analysis.md); the same coexistence lens applies.*
+[`slssteam.md`](slssteam.md); the same coexistence lens applies.*
 
 LumaCore is different from every other program analysed in this folder: **it is
 the ancestor, not a sibling.** lumalinux's core seams — the
@@ -81,7 +81,7 @@ freely at the **message / wire / IPC / VEH layers**: its own IPC dispatch
 (`BBuildAndAsyncSendFrame` / `RecvPkt`), and `int3` VEH captures.
 
 Our stack runs **vanilla SLSsteam *plus* lumalinux, and deliberately does not
-modify SLSsteam** (`slssteam-analysis.md` §0). SLSsteam already owns the message
+modify SLSsteam** (`slssteam.md` §2.1). SLSsteam already owns the message
 dispatch (`CProtoBufMsgBase`) and the IPC path. So **any LumaCore mechanism
 implemented as a network / IPC / wire hook is not portable to lumalinux** — it
 would double-wrap or reorder SLSsteam's own hooks and crash. lumalinux must use
@@ -423,7 +423,7 @@ primitive — latent, not active.)*
 
 - **Injection technique (A1/A2)** — LumaCore's dual proxy DLLs + diversion copy
   are the Windows analogue of our dual-load (`LD_AUDIT` for SLSsteam, `LD_PRELOAD`
-  for lumalinux, split on purpose — `slssteam-analysis.md` §0.1) and live
+  for lumalinux, split on purpose — `slssteam.md` §2.1) and live
   steamclient.so hooking (no copy; libmem). Windows-only; noted, discarded.
 - **VEH `int3` captures** — LumaCore's `docs/LumaCore.md` lists four; the current
   source uses int3 for only **`GetAppDataFromAppInfo`** and the `SpawnProcess`
@@ -597,7 +597,7 @@ nuevo sin clave y Hubcap no la trae".**
   `src/{patterns,rva_feed,vaddr_xlate,update,sha256,key_store,license_reconcile,sls_achievement_unblock,status,gmrc_store}.*`,
   `src/main.cpp`, `tools/steamidra_lite.py`; `docs/nosotros.md`, `docs/RESEARCH.md` §11 + §15 + §17,
   `docs/design/rva-feed-design.md`, `docs/bettersteamtools-findings.md`, `docs/slsteam-moon-findings.md`,
-  `docs/slssteam-analysis.md`.
+  `docs/slssteam.md`.
 - SLSsteam (`AceSLS/SLSsteam`): `ticket.cpp`, `apps.cpp`, `Achievements::sendAndRecvGetUserStats`.
 - CloudRedirect (`Selectively11/CloudRedirect`): cloud-save layer.
 - LumaDeck: `backend/achievements.py`, `FIXES_MAP.md` (Steamless / Goldberg / netsock / Override).

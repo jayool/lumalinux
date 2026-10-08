@@ -131,7 +131,7 @@ patching a byte of it (plain `LD_PRELOAD` symbol interposition; opt-out via env 
 > SLSsteam reverted its update-block mechanism on `20260714131044`, so the
 > instruction it anchored on no longer exists. The countermeasure now lives in
 > LumaDeck, which writes `DisableUpdates: no` into SLSsteam's `config.yaml`. See
-> [slssteam-analysis §7.6](docs/slssteam-analysis.md).
+> [slssteam.md §2.5](docs/slssteam.md).
 
 ## Usage
 
@@ -239,6 +239,9 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   every dated measurement; replaces the old `method.md` and `owned-games-guide.md`
 - [`docs/ecosystem-matrix.md`](docs/ecosystem-matrix.md): the twelve functions
   of the ecosystem, program by program, against ours
+- [`docs/slssteam.md`](docs/slssteam.md): SLSsteam itself, read from its code
+  function by function (hooks, config keys, what it does and does not do), with
+  every dated measurement of the old `slssteam-analysis.md`
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,
