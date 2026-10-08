@@ -206,13 +206,13 @@ de caché de `RemoteToml`.
 | Eje | SteamFlipper | Diferencia |
 |---|---|---|
 | 1 | Ninguna. Sin CI, sin cron. El usuario se entera cuando Steam pisa el proxy o el generador se niega. | Cron. |
-| 2 | Tres por **VProf scope** (strings de profiling + `.eh_frame`, sin desensamblador), tres por derivación estructural desde el cuerpo de `CheckAppOwnership` (con chequeo de FDE), tres **pineadas a mano** por SHA en un dict Python (`VERIFIED`). Sin RTTI: `CConfigStore::GetBinary` no lo alcanzan y escriben `config.vdf` desde Python. | Tenemos RTTI y nombre; no tenemos VProf (`steamflipper-analysis.md` §5.7, F3 evidence-gated). |
+| 2 | Tres por **VProf scope** (strings de profiling + `.eh_frame`, sin desensamblador), tres por derivación estructural desde el cuerpo de `CheckAppOwnership` (con chequeo de FDE), tres **pineadas a mano** por SHA en un dict Python (`VERIFIED`). Sin RTTI: `CConfigStore::GetBinary` no lo alcanzan y escriben `config.vdf` desde Python. | Tenemos RTTI y nombre; no tenemos VProf (`steamflipper-analysis.md` (doc retirado el 2026-10-08, proyecto desaparecido) §5.7, F3 evidence-gated). |
 | 3 | Para Linux **no hay canal**: commit, `git pull`, reinstalar. Self-updater compilado fuera. Los cinco mirrors de steam-monitor dan 404 en Linux. | PR + feed + compilado. |
 | 4 | Fail-closed razonado: `CUtlMemoryGrow` es load-bearing, sin ella el generador sale con error. Nosotros no la necesitamos (el finder camina la caché). | Degrada por hook. |
 | 5 | Proxy **dentro del árbol de Steam**, Valve lo pisa en cada update, slot compartido con Millennium. Recuperación: reinstalar a mano. | Fuera del árbol, guardián. |
 | 6 | Ninguno. Que no brickee es porque sin proxy Steam arranca vanilla por accidente. | `guard.sh`. |
 
-Sin reacción al 09-09 (`steamflipper-analysis.md` §10). Nota de portabilidad
+Sin reacción al 09-09 (`steamflipper-analysis.md` (doc retirado el 2026-10-08, proyecto desaparecido) §10). Nota de portabilidad
 propia que salió de ahí: nuestro `.so` exige GLIBCXX 3.4.32 / GLIBC 2.38.
 
 ---

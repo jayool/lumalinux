@@ -1090,7 +1090,7 @@ barato: el doble papel de `0xc58`. El resultado se validó en una Deck real
 resuelven `ficha → patrón (único o nada) → rescate`; el finder no leía la ficha
 en absoluto, aunque el CI publicaba `finder.cache_global_disp` en cada
 `res/rvas/*.yaml`, `design/rva-feed-design.md` lo documentaba y steamflipper lo
-corroboraba por otro método (`steamflipper-analysis.md` §735). `grep -rn
+corroboraba por otro método (`steamflipper-analysis.md` (doc retirado el 2026-10-08, proyecto desaparecido) §735). `grep -rn
 cache_global_disp src/` daba cero: se escaneaban 32 MB por arranque para
 recalcular un número ya escrito. Ahora el finder hace `ficha → escaneo`
 (`RvaFeed::CacheGlobalDisp()`), con el mismo criterio de no revalidar la ficha

@@ -148,7 +148,7 @@ Nuevo en la app, que LumaDeck no usa:
   (`LuaVaultTests.cs`: *"re-adding a game from a different generator (Luie vs
   Hubcap)"*), el port de moon lo define como `managed` con URL vacía,
   bloqueado hasta el login y colocado justo debajo de Hubcap (`668b493`,
-  27-ago), Aether lo prefiere el primero, y `steamflipper-analysis.md` §10.1
+  27-ago), Aether lo prefiere el primero, y `steamflipper-analysis.md` (doc retirado el 2026-10-08, proyecto desaparecido) §10.1
   ya lo listaba el 8-sep (corrección: en la primera versión de esta nota lo
   di por nuevo). Solo se sirve por `lua.tools/api/manifest/download?source=
   Luie` con sesión; cómo genera no se ve desde fuera. Para ese juego no

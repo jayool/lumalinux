@@ -66,7 +66,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -82,7 +82,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -98,7 +98,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -114,7 +114,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -130,7 +130,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -146,7 +146,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -162,7 +162,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -178,7 +178,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -194,7 +194,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -210,7 +210,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -226,7 +226,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -242,7 +242,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LuaTools + BST | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
-| SteamFlipper | ? | |
+| SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | ? | |
 | plugins SLSsteam | ? | |
 | CloudRedirect | ? | |
@@ -298,7 +298,7 @@ dice en su columna Fuente; hasta entonces es `?`.
 | LuaTools + BetterSteamTools (+ OpenSteamTool) | `luatools-app-analysis.md`, `bettersteamtools-findings.md` | 2026-10-07 | pendiente | 4 |
 | ASSella | `assella-analysis.md` | 2026-10-07 | pendiente | 5 |
 | SLSDeck | `slsdeck-analysis.md` | 2026-10-05 | pendiente | 6 |
-| SteamFlipper | `steamflipper-analysis.md` | 2026-09-28 | pendiente | 7 |
+| SteamFlipper | (ninguno: `steamflipper-analysis.md` borrado el 2026-10-08) | 2026-09-28 | **retirado**: el proyecto ya no existe | — |
 | slsteam-moon | `slsteam-moon-findings.md` | 2026-10-07 | pendiente | 8 |
 | plugins de SLSsteam | `slssteam-plugins-analysis.md` | 2026-09-29 | pendiente | 9 |
 | CloudRedirect | `cloudredirect.md` | 2026-10-07 (2.6.6) | pendiente | 10 |
