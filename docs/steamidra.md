@@ -1,14 +1,11 @@
 # SteaMidra (drappula/SFF) — la app, leída desde el código
 
-Relectura completa desde el código, 2026-10-08. Sustituye a
-`steamidra-linux-analysis.md` (595 líneas, análisis del 2026-09-14 y cuatro
-deltas hasta el 2026-10-07) y absorbe de `lumacore-findings.md` lo que habla
+Leído desde el código el 2026-10-08. Sustituye a
+`steamidra-linux-analysis.md` y absorbe de `lumacore-findings.md` lo que habla
 de la **app** SteaMidra (lanzador Python, releases, feeds que consume); lo que
-ese doc dice del DLL LumaCore queda para `lumacore.md`. Sus 69 mediciones con
-fecha están en §5.2 tal como estaban escritas, sus 40 afirmaciones sin
-medición están contrastadas en §5.1, sus cinco "vectores de brickeo" y sus 26
-hallazgos/decisiones están en §4.4 con el estado de hoy, y su historia por
-releases está condensada en §5.3. `LumaCore/` (el DLL de Windows, hoy repo
+ese doc dice del DLL LumaCore queda para `lumacore.md`. Sus mediciones con
+fecha están en §5.2, sus vectores de brickeo y decisiones en §4.4 con el
+estado de hoy, y su historia por releases en §5.3. `LumaCore/` (el DLL de Windows, hoy repo
 aparte `drappula/LumaCore`) **no** se lee aquí: solo cómo SteaMidra lo
 descarga, instala y alimenta. Cómo **nosotros** hacemos lo mismo está en
 `nosotros.md`.
@@ -32,7 +29,7 @@ descarga, instala y alimenta. Cómo **nosotros** hacemos lo mismo está en
 - **headcrab rebaja el cliente de Steam también al instalar**, no solo en el "hash fix": `CheckHeadcrabCompatibility` compara la versión del `package/*.manifest` con `HeadcrabCompatibleClientVer=1788652215` (`headcrab.sh:5,215`) y si difiere ejecuta `clientdowngrade` (manifest de `Deadboy666/SteamTracking@headcrab`, servidor local `dgsc --port 1666`). Resuelve I8 y S26.
 - **`SafeMode: no` ya no lo fuerza SFF tras headcrab**: `patch_slssteam_config` sale si existe `.headcrabd` (`slssteam.py:257-258`), y headcrab lo escribe siempre (`headcrab.sh:841,846,849`); en SteamOS headcrab deja `SafeMode: yes`, en el resto `no`. SFF escribe `no` solo en una config sin marcador (instalación previa a mano/pacman) o cuando crea `config.yaml` desde su plantilla (`yaml_config.py:336-377`). El "hash fix" tampoco lo reescribe (misma función, mismo marcador). Resuelve I6.
 - **`InstalledDepots` vacío fue del 09-09 al 09-20** (`46a421d` → `8eaf238`), incluido en v6.8.0; hoy `create_acf` escribe `manifest`, `size` y `dlcappid` por depot (`acf_writer.py:68-82`). Resuelve I4.
-- **Los patrones de LumaCore vienen de `michelegoku3/MigoReleases` desde `ffd70db` (09-08)**: `lumacore_setup.py:163` ya lo decía en `8eaf238`; el grep del 09-23 del doc anterior (M65) era incorrecto. Resuelve I2.
+- **Los patrones de LumaCore vienen de `michelegoku3/MigoReleases` desde `ffd70db` (09-08)**: `lumacore_setup.py:163` ya lo decía en `8eaf238`.
 - **`ManifestIds` de SLSsteam se siguen escribiendo** cuando el usuario elige versión (`ui.py:1041-1046`), y se borran al quitar el juego "full" (`misc_bridge.py:2760-2764`); "`add_manifest_id` no se usa" (M18) es de 6.6.7c y caducó.
 - **`PlayNotOwnedGames` no se escribe** (solo un comentario, `download_bridge.py:2319`): entró en 6.6.0 y salió en 6.6.1; SLSsteam eliminó la clave (`slssteam.md` §5.1 S22). El CHANGELOG lo sigue diciendo.
 - **Manifests**: copia local → **`manifest.luastools.xyz/m/<depot>/<gid>`** → (con clave Hubcap) `hubcapmanifest.com/api/v1/generate/manifest` → tres espejos planos de GitHub → `api.manifesthub2.filegear-sg.me` (clave de 24 h). Ningún CDN en `ManifestDownloader`; el único código de petición es el de la **sesión anónima** del descargador nativo (`native_downloader.py:302-319`). Consumidor puro del archivo de LuaTools: cero donación.
@@ -51,7 +48,7 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 §2). Líneas = `wc -l`. "Sin llamadores" = grep en todo `*.py` fuera de
 `LumaCore/`.
 
-### 1.1 Capa Linux, inyectores y núcleo (lectura A1)
+### 1.1 Capa Linux, inyectores y núcleo
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
@@ -76,7 +73,7 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `Main.py` | 636 | CLI: `os.chdir(sff_data_dir)`, `SteamClient()`, `check_and_notify_update()` en cada arranque Linux (`:570-575`), menú Linux sin `MANAGE_LUA`, `UPDATE_ALL_MANIFESTS`, `DLC_CHECK`, `INSTALL_MENU`, `CHECK_UPDATES`, `CRACK_GAME`, `REMOVE_DRM`, `STEAM_AUTO`; args `-f/-b/--auto-update/--export-ids/--dry-run/-q`; `prctl(15, "SteaMidra")` | 1, 6, 9, 11 |
 | `steamidra_install.sh` | 331 | instala SteaMidra (AppImage/binario/fuente) en `~/.local/share/SteaMidra`, lanzador `~/.local/bin/steamidra` (`QTWEBENGINE_DISABLE_SANDBOX=1`), `.desktop`, icono, **.NET 9** por `dot.net/v1/dotnet-install.sh`, `DOTNET_ROOT` en `.bashrc/.zshrc`; `uninstall` | 11, 12 |
 
-### 1.2 Adquisición: lua, claves, manifests, descarga (lectura A2)
+### 1.2 Adquisición: lua, claves, manifests, descarga
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
@@ -94,7 +91,7 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `sff/lua/choices.py`, `manager.py`, `writer.py`, `generator.py`, `update_pins.py`, `dlc_appid_enricher.py`, `fallback_tokens.json` | 339, 281, 432, 202, 351, 184, datos | flujo CLI (appid o URL de tienda, `GetAppList` con clave Web API, fzf); parser de lua (`addappid`, `setManifestid`, `addtoken`; appid = nombre numérico del fichero) y `write_manifest_pins_to_lua`; `ACFWriter` (no en Windows; `chmod 444` en Linux; `_patch_acf_error_state`) y `ConfigVDFWriter` (`depots/<id>/DecryptionKey`, nunca sobrescribe, `config.vdf.backup`); lua agrupado; comentar/descomentar `setManifestid` + helper `00_LetUpdate_override.lua` (Windows); `addappid(<dlc>)` para DLC sin depot; 6.063 pares depot→gid | 2, 3, 4, 5, 9 |
 | `sff/zip.py`, `game_list_fallback.py`, `tools/fetch_store_metadata.py`, `sff/store/*`, `sff/data/manifest.yaml` | 221, 831, 79, 162, 17 MB | zip/7z/rar → lua + manifests a staging y `depotcache`, `safe_extract_*`; catálogo offline (`SteamTools-Team/GameList`, `jsnli/steamappidlist`, `charts/topselling`); seed de CI; `ddmod_launcher.py` **sin llamadores**, `older_version.py` (SteamDB en `QWebEngineView`); manifest de **Ludusavi** (48.716 bloques `steam:`) que solo lee `cloud_save_paths.py` por una ruta que **no existe** | 4, 8, 9, 11 |
 
-### 1.3 Juego, fixes, DLC unlockers, cloud, utilidades, terceros (lectura B)
+### 1.3 Juego, fixes, DLC unlockers, cloud, utilidades, terceros
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
@@ -107,7 +104,7 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `sff/analytics.py`, `updater.py`, `uri_handler.py`, `image_cache.py`, `recent_files.py`, `fzf.py`, `i18n.py`, `quick_tools/steam_updates.py` | 235, 134, 176, 180, 119, 59, 103, 42 | analytics **100 % local** (`analytics.json`); self-update por `api.github.com/repos/drappula/SFF/releases` sin hash ni firma; `midra://` registrado (Windows) y **nunca procesado**; `steam.cfg` `BootStrapperInhibitAll=Enable\|False` (tile "Steam Updates") | 11, 12, 9 |
 | `third_party/` | 1.806 ficheros | DDMod 3.4.0 (+copia Linux), SteamAutoCrack CLI 3.5.0.5 (.NET 10, 162 MB, con su propio Goldberg), Steamless 3.1.0.0 (Windows) y `Steamless.CLI.dll` (Linux, dotnet), gbe_fork Windows/Linux (sin versión), `gbe_fork_tools(_linux)`, coldloader (Rust, sin licencia), fzf 0.66.1 (solo `.exe`), rclone 1.74.2 (Windows; Linux **ELF i386 estático**), `linux/slscheevo/SLScheevo.py` (57 KB, no leído) | 6, 7, 8, 4 |
 
-### 1.4 GUI, UI compartida, web UI (lectura C)
+### 1.4 GUI, UI compartida, web UI
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
@@ -122,7 +119,7 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `sff/webui/index.html` + `js/*.js` (13) + `css/*` | 2382 + ~9.000 | páginas home/store/library/downloads/downgrade/fixgame/cloudsaves/linuxguide/settings; `bridge.js` (`QWebChannel` sobre `qt.webChannelTransport`); guía Linux con los pasos de la Deck (`steamos-readonly disable`, `SafeMode: yes`, `steam-jupiter`); página `tools` huérfana; `cloud-backup-btn` inexistente; 36 temas | todas |
 | `c/`, `hooks/`, `sff/locales/` | — | reproductor MIDI (tsf/tml/miniaudio, `.dll` precompilada, `FF5.sf2`, 14 `.mid`); hook PyInstaller `win10toast`; 19 idiomas × 2 ficheros (38 y 144 claves; `webui_zh_CN.json` 916) | 11 |
 
-### 1.5 Build, release, docs upstream (lectura D)
+### 1.5 Build, release, docs upstream
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
@@ -452,15 +449,11 @@ Vectores de "brickeo" (§3.3 del doc anterior) con lo que el código y `headcrab
 | V4 | `headcrab.pages.dev/reset` + `steam.cfg`: cliente pineado viejo vs gamescope | **vigente, ampliado**: no solo el reset; el **install** rebaja a `1788652215` si la versión difiere (`CheckHeadcrabCompatibility`), y corre cada hora |
 | V5 | SIGKILL a Steam en setup, hash fix y **cada instalación/borrado de lua** | **vigente, ampliado** (`steam_tools_compat.py:39-65`) |
 
-Hallazgos y propuestas del doc anterior (P1–P26 de la extracción):
+Propuestas anteriores y su estado:
 
 | # | Qué | Estado 2026-10-08 |
 |---|---|---|
-| P1 | nota en `decouple-headcrab-plan.md` "lo que no hacemos y por qué" | **hecha** (existe la "Nota cruzada 2026-09-14" en `design/decouple-headcrab-plan.md`; referencia actualizada a este doc) |
-| P2 | línea en `RESEARCH.md` §19.4: la cadena gratis no aporta fuente viva | **hecha** (`RESEARCH.md` §19.4, 09-14; referencia actualizada a este doc §5.2 M23) |
-| P3 | línea en `lumacore-findings.md` remitiendo | **hecha** |
 | P4 | exclusiones por diseño (contributor, SteamDB, rclone, DRM, logros) | **superado**: cubiertos en §2.4, §2.6, §2.7, §2.8 |
-| P5 | barrido pendiente desde `92d6813` | **cerrado**: relectura completa en `4159300` |
 | P6 | OpenValve (alternativa anunciada en FMHY, "finales de septiembre", sin repo) | **vigilar**; sin noticias en el repo de SFF ni en sus docs |
 | P7 | purga de manifests al borrar (`3befc59`) | **convergido**: `uninstall_game_full` ya lo hacía |
 | P8 | request codes externos borrados (`9033611`) | **contexto**: sin vuelta atrás en 6.9.0; el único código es el anónimo de la sesión |
@@ -469,7 +462,7 @@ Hallazgos y propuestas del doc anterior (P1–P26 de la extracción):
 | P11 | LuasTools primero sin donar | **contexto** (D20): confirmado en código, `c2c35af` |
 | P12 | `InstalledDepots {}` | **cerrado**: del 09-09 al 09-20; hoy escribe depots; nuestra semilla `StateFlags 1` no lo sufre |
 | P13 | chunks ZIP, filtro Mono, RAM | **no aplica** |
-| P14 | `lumacore-findings.md` cambia de repo a `drappula/LumaCore` | **hecho**; la relectura de LumaCore es la siguiente |
+| P14 | `lumacore-findings.md` cambia de repo a `drappula/LumaCore` | **hecho** |
 | P15 | "Patch Gaming Mode" como equivalente de nuestro wrapper para el port a CachyOS | **pendiente condicionado** (`cachyos-port.md`); hoy el botón exige `is_steamos()` en el bridge aunque la UI lo muestre en todo Linux |
 | P16 | "flag licenses changed" de `PackagePatch.cpp` | es del DLL: va a `lumacore.md` |
 | P17 | veredicto "drappula/SFF es SteaMidra vivo; en Linux es ASSella con peores fuentes; los reportes de Discord son del original" | **parcialmente caducado**: vivo sí (v6.9.0); "peores fuentes" ya no (LuasTools primero, igual que ASSella/moon); la atribución al original sigue sin poder probarse (§5.1 S5) |
@@ -509,236 +502,119 @@ Hallazgos y propuestas del doc anterior (P1–P26 de la extracción):
 
 ## §5 Historial
 
-### 5.1 Contraste con el doc anterior
+§5.1 recoge lo que se creía de SteaMidra y el código desmiente, además de lo
+listado al principio del doc, y lo que sigue sin medir. §5.2 recoge las
+pruebas y mediciones con fecha: sondas de red a sus fuentes, lo que sus
+propios commits y changelogs dicen haber medido, y lo que cuentan sus
+usuarios. §5.3 es la cronología del repositorio.
 
-Las 40 afirmaciones sin medición de `steamidra-linux-analysis.md` y de las
-partes SFF-app de `lumacore-findings.md`, contrastadas con `4159300` y con
-`headcrab.sh` de hoy. **confirmada** = el código lo sostiene; **caducada** = lo
-sostenía y ya no, o nunca lo sostuvo; **sin evidencia** = no se puede decidir
-desde el código.
+### 5.1 Lo que se creía y ya no es así
 
-| # | Afirmación | Veredicto | Dónde |
-|---|---|---|---|
-| S1 | "En Linux nunca deja que Steam descargue ni actualice: baja fuera de Steam, escribe el ACF a mano y lo protege por permisos" | confirmada (descarga nativa/DDMod, `create_acf` 0444, `DisableUpdates: yes`); matiz: "Add to Library" local solo registra y deja a Steam descargar si tiene manifest | §2.5, §2.9 |
-| S2 | guarda de `.bashrc`: "no se ha encontrado qué problema real arregla" | confirmada como desconocido: `bashrc_has_broken_prompt_guard` (`slssteam.py:156-163`) bloquea el setup si existe `[[ $- != *i* ]] && return`; el comentario dice "rompe el prompt de Konsole"; sin más | §2.1 |
-| S3 | `patch_steam_sh` "funciona porque el `export $INJECT_SLS` de Headcrab exporta vacío" | sin evidencia aquí: el `steam.sh` que SFF edita es `headcrab_native.sh` (no leído); lo que sí está: SFF borra toda línea con `LD_AUDIT` e inserta la suya | §2.1 |
-| S4 | "el parche de `steam-jupiter` es innecesario para inyectar en modo juego" | confirmada para nuestra pila (drop-in systemd), sin evidencia para la suya (no tienen otro camino en Game Mode) | §2.1 |
-| S5 | "los reportes de Discord se refieren al original, no al fork" | sin evidencia (el hilo no trae versión); lo que el código muestra: el fork conserva `steam.sh` 644, `steam-jupiter`, SIGKILL y añade headcrab horario | §4.4 |
-| S6 | "el fork no aparece en el hilo: para la comunidad está muerto" | sin evidencia nueva; el fork publica (v6.9.0, 10-03) | §0 |
-| S7 | vector 3: Steam re-extrae `steam.sh` cuando el tamaño no coincide; headcrab lo deja en 555; SFF lo pone en 644 | parcialmente confirmada: 555 y 644 sí (`headcrab.sh:913,923`; `slssteam.py:123`); que `bin_steam.sh` re-extraiga sigue sin medir; y el fichero es el de headcrab, no el de Valve | §4.4 V3 |
-| S8 | vector 4: cliente pineado viejo vs gamescope | sin evidencia de desencaje; confirmado que el cliente queda en `1788652215` (install y reset) | §4.4 V4 |
-| S9 | vector 5: SIGKILL con `config.vdf`/`localconfig.vdf` a medio escribir | confirmada la parte SIGKILL (psutil `kill()`), ampliada a cada lua; corrupción no medida | §4.4 V5 |
-| S10 | ACF 444 "es su forma de que Steam no toque el juego" | confirmada (`writer.py:147-151` "Steam cannot flip StateFlags"; `acf_writer.py:124`) | §2.5 |
-| S11 | tabla de síntomas: "Steam valida, no puede reconstruir el estado del depot y limpia el contenido" | sin evidencia (comportamiento de Steam); lo que sí: `InstalledDepots` vacío del 09-09 al 09-20 y hoy lleno | §4.4 |
-| S12 | "request code anónimo muerto desde el 09-09 salvo 731/571/441" | sin evidencia aquí; el código asume que sirve "live GIDs" (`downloader.py:523`) y cae a DDMod con manifest local | §2.4 |
-| S13 | Hubcap `/generate/manifest` "1500/day" | confirmada (`downloader.py:342-343,368`) | §2.4 |
-| S14 | "chunks por CDN con login anónimo, que sigue vivo" | confirmada en código (`native_downloader.py:485-510`); no medido en red | §2.4 |
-| S15 | `api.luagen.revobd.club` no medible tras el proxy | confirmada (000 hoy también) | §5.2 |
-| S16 | "no hay ninguna fuente nueva que adoptar" | confirmada: sus fuentes vivas son LuasTools, Hubcap, ManifestHub2 (ya nuestras o conocidas), `KoriaPolis/Steam-Depot` (candidata desde 09-12) y dos espejos congelados | §4.4 P25 |
-| S17 | G5 "nativo Python o DDMod (.NET 9 en `~/.dotnet`)"; G9 "SteamDB con cookie + DDMod, sin pin" | G5 confirmada; G9 caducada: SteamDB está desactivado (`depot_history.py:1835-1839`), el historial sale del CM/morrenus/GitHub/tokens, y los pins (`ManifestIds` + `setManifestid`) **sí** se escriben al elegir versión | §2.4, §2.5 |
-| S18 | G10 "su escritura destroza el formato" | confirmada solo para el camino CLI Linux (`yaml.dump`); el resto edita por regex con `.bak` | §2.3 |
-| S19 | G15 "su CI es mejor que el de ASSella" | sin evidencia (comparación); su CI: build por tag, sin firma ni checksums | §2.11 |
-| S20 | "un cambio de Headcrab puede romper el filtro en silencio" | confirmada (filtro por texto, `_cr_filter`); el hash fix ya va sin filtro | §2.1 |
-| S21 | "keys de proveedores validadas al arrancar" | confirmada (`web_bridge.py:952-1138`, desde `4cc2559` 09-12) | §2.10 |
-| S22 | "en Linux es ASSella con peores fuentes" | caducada: LuasTools primero desde 09-20 (`c2c35af`), como ASSella | §4.4 P17 |
-| S23 | "snapshot sin bot contra bot con lag" | sin evidencia (alimentación de los espejos no medida) | — |
-| S24 | "un ACF de solo lectura lo rompe (nuestro freeze) tras cada lanzamiento" | sin evidencia nueva; decisión nuestra sin cambio | §4.4 P26 |
-| S25 | "el fork no lo va a notar: ya no tiene código que los llame" (vuelta de wudrm/steam.run) | confirmada (cero referencias en código, solo comentarios) | §2.4 |
-| S26 | "headcrab rebaja el cliente a la versión que fija; cuando el cliente de la Deck se mueva, sus usuarios se quedan en uno antiguo" | **confirmada** (`HeadcrabCompatibleClientVer=1788652215`, `clientdowngrade` en el install) | §2.1 |
-| S27 | "snapshot de julio 2025" de los espejos de GitHub | sin evidencia nueva (no medido hoy) | — |
-| S28 | "su única vía para un manifest fuera de GitHub es el request code (con licencia) o Hubcap con key" | caducada: LuasTools sin clave es la primera vía; ManifestHub2 con clave gratuita de 24 h | §2.4 |
-| S29 | "el archivo alimenta a moon, luatools-moon, SLSDeck y SFF; los donantes son moon y LuaTools" | confirmada la parte SFF (consumidor, cero donación: grep `donat` en `sff/` vacío) | §4.1-4 |
-| S30 | "Celeste verificado por ellos en 504231/504233" | sin evidencia (mensaje de commit `8eaf238`) | §5.3 |
-| S31 | "el fallo de SFF es lo que pasa cuando el `.acf` se usa para mentirle a Steam" | opinión; el código escribe `StateFlags 4` con depots reales hoy | §2.5 |
-| S32 | "SteaMidra instala SLSsteam por headcrab en el arranque" | **confirmada** (y cada hora) | §2.1 |
-| S33 | "Patch Gaming Mode es su respuesta al mismo problema que nuestro wrapper de `steam-jupiter`" | confirmada (misma necesidad, parche al binario del sistema) | §2.1 |
-| S34 | "SFF aplasta cada release en un commit único" | confirmada para upstream (`Release SteaMidra vX`), no para el fork (commits pequeños + `chore(release)`) | §5.3 |
-| S35 | "Midrag no ha reaccionado a la caída de los request-code providers" | confirmada (último commit upstream `fa44fc9` 08-21) | §0 |
-| S36 | "claves aportadas por usuarios sin verificación (una mala deja el DLC en error de descifrado)" | confirmada la primera parte (`update_cache_from_lua_bytes` solo añade ids sin clave, sin validar); la segunda no medida | §2.4 |
-| S37 | "the code was pre-fetched by SteaMidra's Python layer to pre-seed `depotcache/`" | caducada como "code": la capa Python siembra **manifests**, no códigos (`zip.py`, `_seed_free_manifest`, `_preseed_depotcache`) | §2.4 |
-| S38 | "no está muerto, está en mantenimiento: los mantenedores tocan el lanzador y entran en la DLL solo para arreglar" | confirmada para la app (88 commits, 7 releases); la DLL va a `lumacore.md` | §0 |
-| S39 | "lo contrario de nuestro modelo (feed RVA + derivación + rescate)" | confirmada para Windows (catálogos por SHA de MigoReleases); en Linux no hay patrones en SFF | §2.1 |
-| S40 | "la base que medimos no cambia de contenido con `f98c8e0`" | confirmada (`f98c8e0` memoiza y paraleliza; no toca la BD); la BD ya no viaja en el build | §2.4 |
+Además de lo listado en la cabecera del doc:
 
-Inconsistencias internas del doc anterior (I1–I15 de la extracción), resueltas:
-I1 (headcrab: botón vs arranque) → arranque y cada hora; I2 (feed de patrones) →
-MigoReleases desde 09-08, el grep del 09-23 era erróneo; I3 (fecha del snapshot) →
-sin medida nueva; I4 (`InstalledDepots`) → vacío 09-09 → 09-20; I5 (cabecera
-congelada en `92d6813`) → este doc; I6 (`SafeMode: no`) → solo sin marcador;
-headcrab decide; I7 (claves vs entradas) → 369.408 entradas, 190.465 con clave
-(09-12), hoy fuera del build; I8 (install vs reset rebajan el cliente) → ambos;
-I9 (pendiente de barrido) → cerrado; I10 (PR `8aaf3c5`/`c0d0537`) → va a
-`lumacore.md`; I11 (etiquetas) → este doc no usa etiquetas, cita líneas; I12
-(Hubcap sin clave) → "sin clave" se refiere al árbol de ficheros y a LuasTools
-primero; Hubcap on-demand sigue exigiendo clave; I13 (555) → es el fichero de
-headcrab; I14 (líneas sin versión) → todas las citas de aquí son de `4159300` y
-de `headcrab.sh` sha256 `caeca7e4…`; I15 (F1 vs Finding 1) → aquí no hay F1–F4.
+- **Las versiones antiguas salen de SteamDB con la cookie del usuario y no
+  hay pin.** El scraper de SteamDB está desactivado
+  (`depot_history.py:1835-1839`); el historial sale del CM, de morrenus, del
+  árbol de GitHub y de los tokens, y al elegir versión sí escribe
+  `ManifestIds` en SLSsteam y `setManifestid` en el lua.
+- **En Linux es ASSella con peores fuentes.** Desde `c2c35af` (09-20) el
+  archivo de LuasTools va primero, como en ASSella.
+- **Su única vía para un manifest fuera de GitHub es el request code con
+  licencia o Hubcap con clave.** LuasTools sin clave es la primera vía;
+  ManifestHub2 da una clave gratuita de 24 h.
+- **La capa Python pre-obtiene el código de manifest para sembrar
+  `depotcache/`.** Siembra manifests, no códigos (`zip.py`,
+  `_seed_free_manifest`, `_preseed_depotcache`).
+- **Los espejos de GitHub son un snapshot de julio de 2025.** Sin medición
+  nueva; lo medido el 2026-09-14 es que no tienen ningún gid actual.
 
-### 5.2 Mediciones y pruebas con fecha
+**Lo que sigue sin medir:**
 
-Todo lo que el doc anterior midió o probó con fecha, tal como estaba escrito
-(M1–M69 de la extracción), agrupado por la función a la que sirve. Las de
-nuestro lado (`lumalinux`/`LumaDeck`) van en la última tabla. Después, las
-verificaciones de hoy.
+- Que `bin_steam.sh` re-extraiga `steam.sh` cuando el tamaño no coincide;
+  y el fichero que SFF deja en 644 es el de headcrab, no el de Valve.
+- Corrupción de `config.vdf` o `localconfig.vdf` por el SIGKILL a Steam en
+  cada instalación; el SIGKILL sí está en el código.
+- Que Steam "valide, no pueda reconstruir el estado del depot y limpie el
+  contenido" con un ACF a mano; lo que sí consta es `InstalledDepots` vacío
+  del 09-09 al 09-20.
+- Que el descargador nativo con sesión anónima siga sirviendo en red.
+- Que una clave mala aportada por un usuario deje el DLC en error de
+  descifrado; la base no valida claves.
+- El caso Celeste (504230) que cita `8eaf238`: verificado por ellos, no por
+  nosotros.
+- Si los informes de Discord se refieren al original o al fork: el hilo no
+  trae versión.
+
+### 5.2 Pruebas y mediciones con fecha
 
 #### Función 1 — Engancharse a Steam
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M6 | (fuente @ `92d6813`) | fuente `steam_process.kill_steam` | 1/11 | Paso 2: cómo mata Steam | "Mata Steam con **SIGKILL** (`steam_process.kill_steam`, `proc.kill()`), leyendo antes `/proc/<pid>/maps` para saber qué `.so` reinyectar." | §3.1 |
-| M7 | (fuente @ `92d6813`) | fuente `slssteam.py` (`_cr_filter`) | 1/8 | Paso 3: Headcrab recortado | "Baja `headcrab.sh` del raw de GitHub, **le recorta por texto todas las funciones y líneas de CloudRedirect** (`_cr_filter`) y ejecuta el resultado." | §3.1 |
-| M8 | (fuente @ `92d6813`; `headcrab.sh:840-856` "[read hoy]" = 2026-09-14) | fuente `patch_slssteam_config`; **Headcrab** `headcrab.sh:840-856` | 1 | Parche 1 tras Headcrab: `config.yaml` | "`patch_slssteam_config`: fuerza `SafeMode: no`, `DisableUpdates: yes`, `DisableCloud: yes`, `WarnHashMissmatch: no`. Solo si no existe `.headcrabd`; Headcrab lo escribe siempre, así que **tras Headcrab no corre** y queda lo de Headcrab: en SteamOS `SafeMode: yes` (`headcrab.sh:840-856` [read hoy]). En las versiones anteriores al 13-09, que instalaban SLSsteam por su cuenta, sí corría." | §3.1 |
-| M9 | (fuente @ `92d6813`; original `fa44fc9`) | fuente `patch_steam_sh`; `fa44fc9:sff/linux/slssteam.py:348` | 1 | Parche 2: `steam.sh` | "`patch_steam_sh`: `chmod 644` a `~/.local/share/Steam/steam.sh`, **borra toda línea que contenga `LD_AUDIT`** (la `INJECT_SLS=...` de Headcrab), inserta `export LD_AUDIT=<dir>/library-inject.so:<dir>/SLSsteam.so` en la línea 10 y **no devuelve el bit de ejecución**. Headcrab lo había dejado en 555. Funciona porque el `export $INJECT_SLS` de Headcrab exporta vacío y el `export` global hace el trabajo. Está también en el Midrags original (`fa44fc9:sff/linux/slssteam.py:348`)." | §3.1 |
-| M10 | (fuente @ `92d6813`) | fuente `create_steam_cfg` | 1/5 | Parche 3: `steam.cfg` | "`create_steam_cfg`: `BootStrapperInhibitAll=enable`, sin pisar si existe. Igual que Headcrab." | §3.1 |
-| M11 | 07-09 (`410a3c7`; cambio de nombre del backup) | fuente `patch_steam_jupiter`; commit `410a3c7` | 1 | Botón "Patch Gaming Mode" | "`sudo cp /usr/bin/steam-jupiter /usr/bin/steam-jupiter.bak`, reescribe el script metiendo el `export LD_AUDIT` antes del último `exec`, `sudo cp` de vuelta, `chmod 755`. Si el sudo falla, el mensaje dice `sudo steamos-readonly disable`. Desde `410a3c7` (07-09) también pone `SafeMode: yes`. Su doc: "SteamOS updates reset the file; re-run after every update". El nombre del backup cambió el 07-09 de `.steamidra.bak` a `.bak`." | §3.2 |
-| M12 | 07-09 (botón) | fuente original `fa44fc9:sff/webui/index.html:1508-1554` | 1/11 | Lo que hacía el original | "en su webui … mandaba al usuario hacer `steamos-readonly disable`, backup, `sudo kate /usr/bin/steam-jupiter`, y ya tenía la entrada **"Gaming Mode black screen / boot loop — boot to Desktop Mode, restore steam-jupiter from backup"**. El fork lo convirtió en botón el 07-09." | §3.2 |
-| M15 | (capturas anteriores al 08-09; transcritas por el usuario el 09-14) | **Discord** (capturas del servidor de SLSsteam) cruzadas con fuente, "cada fila [inferred]" | 1/9/5 | Seis síntomas → causa candidata → confianza | (1) Deck "abrí SteaMidra por error … reinstalé con Headcrab … `slssteam loaded successfully` pero Steam no abre nunca" → `steam.cfg` + `steam-jupiter` editado + raíz desbloqueada, "media". (2) Deck "formateé la Deck" → OOBE o rendición, "baja". (3) Bazzite "Steam ya no recibe updates, rompió los plugins de Decky, y solo puedo jugar sin internet" → `BootStrapperInhibitAll=enable` + `start_steam` con entorno del AppImage limpiado, "media". (4) ROG Ally X "Steam no arranca en absoluto" → `steam.sh` en 644 reescrito, "media". (5) "aunque desinstale, todos mis juegos dicen comprar" → `yaml.dump` del `config.yaml` entero o `steam.sh` re-extraído por Steam tras el `chmod 644`, "media-alta". (6) "Steam borra la carpeta entera del juego" → ACF a mano sin keys ni manifests; "`InstalledDepots` vacío de `46a421d` (09-09, "fixing update issue with newly downloaded games")", "baja-media". Conclusión: "**los daños son en Deck, Bazzite y CachyOS, en Steam y en SLSsteam/ACCELA, y sobreviven a desinstalar SteaMidra** … Lo que no confirman: qué parche concreto rompió cada máquina." | §3.3 tabla |
-| M16 | original `fa44fc9`; fork 07-09 (`3cc8c41`, `410a3c7`), 13-09 (`92d6813`) | fuente `fa44fc9:linux_download.py:341`, `install_from_github`; commits del fork | 1 | Atribución por versión | "**Original:** el flujo de terminal (`linux_download.py:341`) instalaba SLSsteam **sin Headcrab** (`install_from_github`: 7z, apt/pacman, limpieza del paquete pacman), y la GUI probaba Headcrab con **fallback silencioso** al instalador propio. Sin `.headcrabd`, `patch_slssteam_config` corría y forzaba **`SafeMode: no`**. … **Fork:** botón automático de `steam-jupiter` desde el 07-09 (`3cc8c41`, `410a3c7` añade `SafeMode: yes` al pulsarlo) y Headcrab sin fallback desde el 13-09 (`92d6813`), que en SteamOS deja `SafeMode: yes`. En el vector 1 el fork es más seguro que el original; en el 2 es el mismo vector con botón." | §3.3 |
-| M25 | (2026-09-14) | fuente (resumen) + **lumalinux**/**LumaDeck** (columna "Nosotros") | 1/2/4/5/9/3/6/7/8/12 | Tabla puerta a puerta (15 filas) | G1 "SLSsteam stock vía Headcrab editado al vuelo + 3 parches encima" vs "SLSsteam stock instalado por `setup.sh`, sin Headcrab". G1b "`steam.sh` reescrito y en 644 + botón sudo sobre `/usr/bin/steam-jupiter`" vs "Wrapper propio: `.desktop` Exec + drop-in systemd, `steam.sh` vanilla, fail-safe anti-crash-loop. Nunca `/usr`." G2 "Solo para DDMod/nativo. Nunca a Steam." vs "`config.vdf`; Steam las reusa." G3 "request code (muerto) → Hubcap → 3 repos planos (snapshot) → ManifestHub2" vs "depotcache → archivo → P-ToyStore → luastools → Hubcap zip" — "0/6 contra 6/6 hoy". G4 "Lo piden primero y falla" vs "No se pide". G5 "Nativo Python o DDMod (.NET 9 en `~/.dotnet`)" vs "Steam". G6 "ACF a mano, `InstalledDepots` vacío, 444" vs "Steam escribe el ACF". G7/G8 "Aviso; actualizar = rebajar. `DisableUpdates: yes`." vs "30 min + update nativo". G9 "SteamDB con cookie del usuario + DDMod. Sin pin." vs "Freeze, sin rollback." G10 "`DlcData` con `yaml.dump` completo" vs "Por secciones" — "Su escritura destroza el formato." G12/G13 "Kit completo / SLScheevo" vs "Nada / nativo". G14 "rclone manual a un remote del usuario; CloudRedirect eliminado de Headcrab" vs "CloudRedirect". G15 "AppImage de CI, `~/.local`, sudo solo en el botón" vs "Decky + `.so`" — "Su CI es mejor que el de ASSella." | §6 |
-| M35 | (v6.8.0); Deck en `1788291500` desde el 2-sep | **changelog** v6.8.0 (`92d6813`) | 1 | Headcrab rebaja el cliente | "el fork instala SLSsteam en Linux con el script h3adcr-b, es decir, **rebajando el cliente de Steam** a la versión que Headcrab fija. Con el cliente de la Deck parado en `1788291500` desde el 2-sep no se nota; el día que se mueva, sus usuarios Linux se quedan en un cliente antiguo con las actualizaciones bloqueadas." | §10 |
-| M45 | (30-sep → 3-oct) | commit `02976bf` | 1/11 | "Patch Gaming Mode" para todo Linux | "el botón **"Patch Gaming Mode"** ("inyectar SLSsteam en `/usr/bin/steam-jupiter` para que en Gaming Mode salga Play y no Purchase; repetir tras cada actualización de SteamOS") deja de esconderse fuera de SteamOS: ahora sale en CachyOS, ROG Ally y cualquier Linux. Para el port a CachyOS (`cachyos-port.md`): es su respuesta al mismo problema que nuestro wrapper de `steam-jupiter`, aplicada como parche al binario del sistema." | §13.2 |
-| M65 | 2026-09-23 | grep en todo `drappula/SFF` @ `8eaf238` | 1/12 | URL del feed de patrones en el fork | "El fork tampoco ha cambiado la URL del feed (grep de `Steam-Auto-PT\|MigoReleases\|migo3` en todo `drappula/SFF`: solo las tres URLs de KoriaPolis)." (ver I2) | Re-sweep 09-23 (L638-640) |
-| M67 | 8-sep (`ffd70db`); contenido del feed a 28-sep | fuente `sff/lumacore/lumacore_setup.py`; commit `ffd70db`; repo `michelegoku3/MigoReleases` rama `pattern` | 1 (Windows) | De dónde precalienta patrones el lanzador | "(2) El lanzador Python (`sff/lumacore/lumacore_setup.py`, `ffd70db` 8-sep, "switch pattern source to MigoReleases") **precalienta esa caché** al arrancar: calcula el sha256 de `steamclient64.dll` y `steamui.dll`, baja `<sha>.toml` de `raw.githubusercontent.com/michelegoku3/MigoReleases` rama `pattern` (los otros dos orígenes, comentados) y lo escribe donde la DLL lo lee. Ese repo es de una persona (michelegoku3, "migo3"), sin README, con un bot de Actions … TOML generados por una herramienta llamada `SteamPatternForge` … Contenido a 28-sep: dos `steamclient` (`caba4826…` = stable Windows 1788652215 del 5-sep, `3f864358…` = 1782533657), dos `steamui`, dos `steamclientipc`, bundles para 1782533657, 1788400362 y 1788652215; una prueba con una beta el 23-sep, revertida el 24." "**la cobertura Windows de SteaMidra hoy es el stable actual, servida por un repo unipersonal**" | Re-sweep 09-28 (L677-702) |
-| M68 | 2026-09-28 | fuente `sff/linux/slssteam.py::fix_hash_mismatch` | 1/11 | Qué hace el fork ante "Unknown steamclient.so hash" | "**Linux: no hay patrones que traer.** SFF no descarga patrones para SLSsteam; los de SLSsteam van compilados en el `.so` y el gate es su lista SafeMode. Lo que hace el fork … es: parar Steam, `headcrab reset` (rebaja el bootstrap de Steam a la versión que Headcrab fija), arrancar Steam un momento, `headcrab install` para reinyectar, y reescribir el config con `SafeMode: no` y `WarnHashMissmatch: no`. O sea, **sujeta el cliente y apaga la puerta del hash** en vez de conseguir patrones nuevos." | Re-sweep 09-28 (L704-712) |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08 / 09 | Discord (servidor de SLSsteam, capturas transcritas el 09-14; segunda mano) | Seis máquinas rotas tras SteaMidra, causa candidata por el código | Deck que no arranca Steam tras reinstalar con headcrab (`steam.cfg` + `steam-jupiter` editado + raíz desbloqueada); Deck formateada (OOBE o rendición); Bazzite sin updates de Steam, Decky roto, solo offline (`BootStrapperInhibitAll` + entorno del AppImage); ROG Ally con Steam que no arranca (`steam.sh` en 644); "aunque desinstale, todos mis juegos dicen comprar" (`yaml.dump` del `config.yaml` entero o `steam.sh` re-extraído); "Steam borra la carpeta entera del juego" (ACF a mano sin claves ni manifests). Los daños sobreviven a desinstalar SteaMidra; qué parche rompió cada máquina no se confirma | §4.4 |
+| 2026-09-08 → 09-14 | Discord (hilo "Remove SteaMidra" en FMHY; segunda mano) | Qué dice la comunidad | "No hace la mayoría de lo que anuncia, o no correctamente", "le dice a un LLM que haga las cosas", "malfunciona en Linux, dejando instalaciones rotas"; el fork no aparece en el hilo | §4.4 |
+| 2026-10-08 | red (`curl`) | `headcrab.sh` tal como lo ejecuta SFF | 954 líneas, sha256 `caeca7e4…88c9d4`; `HeadcrabCompatibleClientVer=1788652215`; instala o rebaja el cliente según esa versión; sustituye `steam.sh` entero por `headcrab_native.sh` y guarda el de Valve como `client.sh` | §2.1 |
 
 #### Función 2 — Propiedad y licencias
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias; SteaMidra delega en SLSsteam (`slssteam.md` §5.2).
 
 #### Función 3 — DLC
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 4 — Claves y manifests
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M19 | 10-09 (6.6.7d) | fuente `endpoints.py::get_freelua`, `provider.py` | 4/10 | Cadena "Free Providers" (luas y keys) | "construye el lua él mismo con los gids actuales de `api.steamcmd.net` y las keys de `fylsdy/ManifestHub/main/depotkeys.json` ("trionine"), rellenando con `KoriaPolis/Steam-Depot/fallback_depotkeys.json` (o su mirror r2.dev); si no, `api.luagen.revobd.club/<app>.zip`; si no, los luas de `steamtoolsapp/ManifestHub/<app>/<app>.lua` y `steamtools-games/ManifestHub3`. Con key: Hubcap, Ryuu, DepotBox, ManifestHub2 (`manifesthub2.filegear-sg.me`, keys de 24 h)." | §4.1 |
-| M20 | 12-09 (`9033611`); "muerto desde el 09-09" | fuente `manifest/downloader.py`, `native_downloader.py:300-527`; changelog | 4/10 | Cadena de manifests | "depotcache local → **request code anónimo** con el cliente `steam` de Python (`native_downloader.py:300-527`; muerto desde el 09-09 salvo 731/571/441; su changelog lo reconoce: "Steam stopped serving manifests to anonymous clients") → Hubcap `/generate/manifest` (mensaje "1500/day") → repos planos `qwe213312\|mejikuhibiniu1\|Sainan/k25FCdfEOoEJ42S6/main/<depot>_<gid>.manifest` → ManifestHub2 con key. Los mirrors GMRC (steam.run, wudrm, opensteamtool) se retiraron el 12-09 por muertos (`9033611`)." | §4.2 |
-| M22 | (fuente @ `92d6813`) | fuente `provider.py:427-740`, `:413-426`; `structs.py:399` | 4/10/12 | El "contributor" | "Escanea los luas de `config/stplug-in`, extrae `addappid(depot,0,"key")`, los enriquece con nombres (PICS, opcional) y los sube por POST a `stea-provider-api.steamidra.workers.dev/submit` cada 3 h. **Opt-in, default `False`** (`structs.py:399`). Excluye, por una cadena ofuscada en cinco trozos que decodificada es "Downloaded using DepotBox" (`provider.py:413-426`), los luas de DepotBox." | §4.4 |
-| M23 | **2026-09-14** [measured] | **red** (peticiones tras un proxy a cada fuente del fork) | 4/10 | ¿Sirve hoy la cadena gratis? | "`fylsdy/ManifestHub/main/depotkeys.json` … **404**." "`steamtoolsapp/ManifestHub/<app>/` y `steamtools-games/ManifestHub3/<app>/`: Las 7 apps probadas existen (lua 200), pero **0 de 6 gids actuales** (2545360 LMSR, 252490 Rust, 1794680 Hades, 275850 Valheim, 739630 Vampire Survivors, 892970 Hades II). Solo Balatro (2379780), sin update desde hace meses. El gid de LMSR que tienen (`5818028561835039765`) es anterior al build instalado del 08-09. Snapshot congelado." "`qwe213312/k25FCdfEOoEJ42S6/main/` (plano): Igual: Balatro sí, nada reciente." "`api.luagen.revobd.club`: Bloqueado por el proxy; no medido." "Request code anónimo: Muerto desde el 09-09." "Hubcap `/generate/manifest`: Único generador vivo, con key (`assella-analysis.md` §5.3)." | §5 |
-| M29 | 14-sep | commit `7e34444` (`choices.py`); **LumaDeck** `resolve_all` | 4/10 | Sentinel `NOT_FOUND` | "Los providers devuelven un sentinel `NOT_FOUND` distinto de `None`; un único despachador en `choices.py` decide: catálogo sin el juego → ofrecer Free Providers; si tampoco → diálogo "pídelo en el Discord del provider". Antes un 404 de Ryuu entraba en bucle de "enter a new API key"." Nosotros: "Nuestro `resolve_all` ya distingue miss de fallo por fuente." | §10 |
-| M31 | 15-sep | commit `f98c8e0` (perfilado hecho por ellos) | 4/11 | Rendimiento de un add "Free Providers" | "Perfilaron un add "Free Providers" a 17 s con 2,8 s de red: parseaban dos veces por descarga la base local de claves (67 MB, 370k entradas, 13,8 s) y escribían la contribución en línea (7,1 s). Ahora memoizan por proceso, escriben en un worker, prewarm de la base y del dump de trionine a los 12 s de arrancar, y los tres espejos de manifests se piden en paralelo." | §10 |
-| M33 | 12-sep (`9033611`); providers vuelven 16-sep | commit `9033611`; **changelog** v6.8.0; grep en `sff/` | 4/10 | Request codes externos borrados | Changelog: *"Manifest sources prefer free mirrors — the public GMRC mirrors (steam.run, wudrm, opensteamtool) are gone; they now answer 403/404 everywhere."* "Es `9033611` (12-sep): **borraron toda la familia de request codes externos** (`_REQUEST_CODE_FALLBACKS`, `_fetch_manifest_code_external`, 350 líneas). El 16-sep `gmrc.wudrm.com` y `manifest.steam.run` volvieron (RESEARCH §20). El fork no lo va a notar: ya no tiene código que los llame, y nunca tuvo 20770407 ni manifestdex (grep en `sff/`: cero referencias)." | §10 |
-| M37 | 2026-09-17 ("§5 revisitado") | fuente (URLs sin cambio); **lumalinux** GMRC nativo (`design/update-testing.md` T1-T4) | 4 | Cadena gratis tras la vuelta de los providers | "La cadena gratis sigue siendo la del 14-sep: keys de `fylsdy/ManifestHub` (404), manifests de `qwe213312/…`, `steamtoolsapp/ManifestHub` y `steamtools-games/ManifestHub3` (snapshot de julio 2025), `revobd` (inverificable). Ninguna ha cambiado de URL. … para un juego actualizado después de agosto, nosotros instalamos el build actual sin manifest local (GMRC nativo, T1-T4 de `design/update-testing.md`); el fork instala el gid de julio de 2025 si está en el espejo, o pide una key." | §10 |
-| M39 | 20-sep | commit `c2c35af`; grep `donat`/`manifestcode` en `sff/` | 4/10/11 | LuasTools primero, sin donar | "**El archivo de LuasTools pasa a ser la primera fuente de manifests** (`manifest.luastools.xyz/m/<depot>/<gid>`), para juegos y para workshop, por delante de los espejos de GitHub y de ManifestHub; el explorador de ficheros también lo prueba antes que Hubcap, así que ya no exige key para ver el árbol. Además: chunks en formato ZIP para depots antiguos (Assassin's Creed 15101) en su downloader nativo; botón *Remove Key* en el diálogo de key caducada; RAM en reposo de ~1 GB a ~650 MB dejando de precargar `games.json` y la base de 369k claves." "SFF se suma al archivo de donaciones … como **consumidor puro**: no hay ni una línea de donación en `sff/` (grep `donat`/`manifestcode`: cero)." | §11 |
-| M47 | (v6.9.0) | **changelog** 6.9.0 | 4/9/10/11 | Notas 6.9.0 | "repiten lo de §11 ("Unreleased" entonces): depots sin nombre, chunks ZIP, **manifests por LuasTools primero y los espejos de GitHub después, Hubcap al final** ("funciona sin clave de Hubcap"), botón "Remove Key", `InstalledDepots` en el ACF para que Celeste no salga "Content still encrypted", 650 MB de RAM en reposo. Nada nuevo respecto a §11." | §13.2 |
-| M53 | 2026-08-17 | fuente `provider.py` | 4/10 | Base de claves (primera cifra) | "SteaMidra empaqueta una base de 368.230 claves de depot alimentada por sus usuarios — `provider.py` recolecta y sube las del usuario con deduplicación por huella. Es una diferencia de modelo de datos, no de técnica." | Re-sweep 08-17 |
-| M56 | (6.6.6) | fuente `steam_client.py` (170 L); **LumaDeck** `steamcmd_app_info` | 4/10 | steamcmd.net primero | "mirror HTTP primero, Steam CM como fallback en un hilo dedicado, un solo login anónimo por sesión, `quick=True` con tope de 35 s. Ya vamos a steamcmd.net en `steamcmd_app_info`. Nada." | Re-sweep 09-12 |
-| M57 | (6.6.6) | fuente `move_manifests_to_depotcache` | 4/9 | Bug de tipo | "`move_manifests_to_depotcache` recibía un `PosixPath` en vez del dict: llevaba versiones sin mover manifests a depotcache. Nada." | Re-sweep 09-12 |
-| M62 | **2026-09-12** ("Medido el 2026-09-12"); último merge 2026-08-21 | fuente `sff/lua/fallback_depotkeys.json` (diff 70.902 líneas); repo `KoriaPolis/Steam-Depot` (raw + mirror R2, 66,9 MB) | 4/10 | La base pública de claves, contada | "Entradas 369.408; Con clave 190.465 (KoriaPolis) / 190.451 (copia empaquetada); De ellas DLC o depot de DLC 27.849; Depots nuestros de prueba con clave: Balatro, Brotato + DLC Abyssal Terrors (2868390), Vampire Survivors (3), Backpack Battles (3), Ubisoft Connect compartido (1716751)". Flujo: "`provider.py` sube las locales a `stea-provider-api.steamidra.workers.dev/submit`; Midrag las fusiona en `KoriaPolis/Steam-Depot`". | Re-sweep 09-12 base de claves |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08-17 / 09-12 | repo (`fallback_depotkeys.json`, `KoriaPolis/Steam-Depot`) | La base pública de claves, contada | 369408 entradas; 190465 con clave (190451 en la copia empaquetada, 66,9 MB); 27849 son DLC o depots de DLC; los depots de nuestras pruebas (Balatro, Brotato y sus DLC) están con clave. Desde `ed8a2a8` (09-07) no viaja en el build: se baja cada 6 h | §2.4 |
+| 2026-09-12 | changelog v6.8.0 (segunda mano) | Caída de los proveedores de códigos vista por ellos | "The public GMRC mirrors (steam.run, wudrm, opensteamtool) are gone; they now answer 403/404 everywhere"; `9033611` borró toda la familia de request codes externos y Tor | §2.4 |
+| 2026-09-14 | red | ¿Sirve la cadena gratis? | `fylsdy/ManifestHub/depotkeys.json` 404. `steamtoolsapp/ManifestHub` y `steamtools-games/ManifestHub3`: las 7 apps probadas existen (lua 200) pero 0 de 6 gids actuales (Lonely Mountains, Rust, Hades, Valheim, Vampire Survivors, Hades II); solo Balatro, sin update en meses; el gid de LMSR que tienen es anterior al build del 08-09. `qwe213312/…` igual. `api.luagen.revobd.club` no medible tras el proxy. Los mismos 6 gids estaban ese día en P-ToyStore, que el fork no usa | §2.4 |
+| 2026-09-15 | commit `f98c8e0` (perfilado de ellos, segunda mano) | Un add por "Free Providers" | 17 s con 2,8 s de red: parseaban dos veces la base local (67 MB, 370k entradas, 13,8 s) y escribían la contribución en línea (7,1 s). Ahora memoizan, escriben en un worker y precalientan a los 12 s | §2.4 |
+| 2026-10-08 | red (`curl`, tras un proxy) | Fuentes del fork hoy | `headcrab.sh` 206; `fylsdy/ManifestHub/depotkeys.json` 404; `KoriaPolis/Steam-Depot/fallback_depotkeys.json` 206; `api.github.com/…/releases/latest` 403 (el proxy); `manifest.luastools.xyz`, `api.luagen.revobd.club`, `headcrab.pages.dev`, `steamcmd.morrenus.net`, `api.steamcmd.net` bloqueados por el proxy, no medibles | §3.1 |
 
 #### Función 5 — Updates de juegos
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M21 | (fuente @ `92d6813`) | fuente `update_check.py`; changelog | 5/4 | Descarga, registro, updates | "DDMod o descargador nativo (chunks por CDN con login anónimo, que sigue vivo). ACF a mano y 444. `DisableUpdates: yes`. `update_check.py` compara lo guardado con PICS y solo avisa; actualizar es volver a bajar. El "manifest-pin helper" del changelog (`00_letupdate_override.lua`) es de LumaCore/Windows." | §4.3 |
-| M36 | (v6.8.0) | **changelog** v6.8.0 | 5 | Auto-update por defecto | "*"Games no longer auto-update by default — on Windows"*: el helper de pin de manifests se instala al arrancar. En Linux siguen con `DisableUpdates: yes` (§6 G7/G8)." | §10 |
-| M55 | (6.6.6) | fuente `download_bridge.py:1000-1016`, `writer.py:126,199`; changelog; **LumaDeck** 0.8.0 (`self_heal_acf_build`) | 5 | Downgrade escribe el build en el ACF | "`buildid` + `TargetBuildID` + los manifest IDs pineados en el `.acf`, con Steam cerrado; si el ACF no existe o Steam lo tiene abierto, cola persistente con reintento cada 30 s hasta 7 días (`download_bridge.py:1000-1016`, `writer.py:126,199`). Texto del changelog: "no MountedDepots, no AutoUpdateBehavior; LumaCore handles pinning". Es lo que quitamos en LumaDeck 0.8.0 (`self_heal_acf_build`): no editamos el ACF, Steam lo gestiona a partir del pin de `ManifestIds`. No se vuelve a meter." | Re-sweep 09-12 |
+Sin pruebas propias. Lo que el fork mide de sí mismo está en §5.3 (ACF con
+`InstalledDepots` vacío, 09-09 → 09-20).
 
 #### Función 6 — Fixes y DRM
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 7 — Logros, stats y tiempo de juego
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 8 — Cloud saves
 
-(ninguna medición en el doc anterior)
-
+Sin pruebas propias.
 
 #### Función 9 — Añadir y quitar un juego
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M18 | 09-09 (`46a421d`); 08-09 (`1cfb20a`) | fuente `acf_writer.py`, `linux_download.py`, `yaml_config.py`, `steam_process.py`, `flat_file_repair.py` | 9/4/5/11 | El resto de `sff/linux/` | "`acf_writer.py`: ACF a mano, **`InstalledDepots` siempre vacío** (`46a421d`, 09-09, "fixing update issue") y **modo 444**." "`linux_download.py`: lua del proveedor → depots con key → `run_download` (DDMod o nativo) → ACF → manifests a `<librería>/steamapps/depotcache` → `AdditionalApps`, `AppTokens` y `DlcData` (>64 DLC) con `yaml.dump` del fichero entero (pierde comentarios y orden). **Nunca escribe keys en Steam**. `add_manifest_id` existe pero `1cfb20a` (08-09) "drop version pinning": no se usa." "`yaml_config.py`: escrituras atómicas (`os.replace`), que el inotify viejo de SLSsteam no veía (`slssteam.md` §2.11, ya corregido en SLSsteam)." "`steam_process.py`: arranque `env LD_AUDIT=... steam`; accesos directos `.desktop` con el mismo `env`." "`flat_file_repair.py`: … Corre una vez al día." | §3.4 |
-| M27 | (2026-09-14) | fuente (`download_bridge.py` no leído; camino verificado) | 9 | Pasada adversaria: residual | "*"`download_bridge.py` no leído."* Se comprobó que el camino Linux acaba en `run_download` y `acf_writer`. Residual bajo." | §8.2 |
-| M30 | 14-sep | commit `3befc59`; **LumaDeck** `slssteam_ops.py:869` (`uninstall_game_full`) | 9 | Purga de manifests al borrar | "Borrar un juego con `mode=full` también elimina `<depot>_*.manifest` de `depotcache/`, `config/depotcache/` y su carpeta de staging (staging primero, porque su watcher restaura desde ahí). Motivo: una reinstalación releía el manifest del gid viejo y "Steam never offered the next update"." "**Convergido.** `uninstall_game_full` (LumaDeck `slssteam_ops.py:869`) ya purga los manifests de depotcache. Y en el modelo nativo 0.9 el manifest viejo en disco no bloquea nada". | §10 |
-| M40 | 20-sep | commit `8eaf238`; **LumaDeck** `downloads.py` (`seed`/`real`), `pins.py` (flip `4→6`), RESEARCH §12/§18 | 9/5 | Regresión `InstalledDepots {}` | "Para esconder la insignia de "actualización disponible" … los escritores de ACF de v6.8.0 escribían `InstalledDepots {}`; resultado, `StateFlags 36`, depots vacíos y Steam marcando el juego como *"Content still encrypted"* aunque los chunks estuvieran bien (Celeste 504230, verificado por ellos en 504231/504233). Ahora vuelven a escribir los manifests pineados. Además: su filtro por SO tiraba `.dll`/`.exe` de depots nativos de Linux (Celeste con Mono se quedaba sin `mscorlib.dll`), nombre de proceso `SteaMidra` vía `prctl` y `StartupWMClass` en el `.desktop`, progreso por tamaño total del depot." Nosotros: "LumaDeck nunca escribe un `.acf` "completo" a mano: la semilla es `StateFlags 1` sin `InstalledDepots` …; y "update required" es un flip `4→6` de un solo campo (`pins.py`), nunca vaciar los depots." | §11 |
-| M48 | (base 6.6.4, 2026-08-13) | fuente `Midrags/SFF` @ `6d2fb30` | 9/12 | Qué hace la parte Python de SteaMidra | "SteaMidra's Python GUI does the on-disk setup (writes `.lua` into `config/stplug-in/`, seeds `depotcache/`, manages ACFs — our Linux equivalent is `tools/steamidra_lite.py`); LumaCore is the in-process component". | Context (L48-52) |
-| M58 | (6.6.6; regresión 6.6.5) | fuente `_normalize_manifest_path`, `flat_file_repair.py`, `sff/zip.py`; **LumaDeck** extracción de fixes (`f67b4ec`) | 9/11 | Nombres con `\` en Linux | "el descargador CDN nativo unía nombres de manifest con `\` y creaba ficheros planos `Some\File\Name.exe` (regresión 6.6.5); ahora `_normalize_manifest_path` (`\`→`/`, guarda de `..`) y un `flat_file_repair.py` que repara instalaciones rotas una vez al día. `sff/zip.py` con `safe_extract_zip`/`safe_extract_7z` en todas las extracciones. Nuestra extracción de fixes ya tenía Zip Slip y desde `f67b4ec` resuelve mayúsculas." | Re-sweep 09-12 |
-| M59 | (6.6.6) | fuente (ACF writer) | 9 | ACF 444 sólo Linux | "ACF `chmod 0o444` solo en Linux (en Windows daba "Disk write error"). No marcamos ACFs de solo lectura. Nada." | Re-sweep 09-12 |
-| M61 | (6.6.6) | changelog | 9/6/11 | Resto Windows/launcher | "Migración de `config/lua` de SteamTools a `stplug-in`, cola de descargas, matching de cracks por prefijo de palabra, limpieza de memoria horaria: Windows/launcher. Nada." | Re-sweep 09-12 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08-21 (6.6.6) | changelog (segunda mano) | Nombres con `\` en Linux | El descargador nativo unía rutas con `\` y creaba ficheros planos `Some\File\Name.exe` (regresión 6.6.5); `_normalize_manifest_path` y `flat_file_repair.py` lo reparan | §2.9 |
+| 2026-09-14 | commit `3befc59` (segunda mano) | Por qué borrar "full" purga `depotcache/` | Una reinstalación releía el manifest del gid viejo y "Steam never offered the next update" | §2.9 |
+| 2026-09-20 | commit `8eaf238` (verificado por ellos en Celeste 504230) | `InstalledDepots {}` en el ACF | `StateFlags 36`, depots vacíos y Steam marcando "Content still encrypted" aunque los chunks estuvieran bien; vuelven a escribir los manifests. Además su filtro por SO tiraba `.dll`/`.exe` de depots nativos de Linux (Celeste con Mono se quedaba sin `mscorlib.dll`) | §2.9 |
 
 #### Función 10 — Credenciales y proveedores
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M34 | (v6.8.0); key del usuario caduca 21-sep | **changelog** v6.8.0; **LumaDeck** `manifests.py` (`_HUBCAP_ATTEMPTS`) | 10 | "Dead provider keys" | "comprueban las keys de Hubcap, Ryuu y DepotBox al arrancar y en cada descarga; una key rechazada abre un diálogo con el sitio del provider y ese provider deja de autoseleccionarse. Nosotros: `_HUBCAP_ATTEMPTS` en `manifests.py` registra los intentos y la cascada sigue; no hay diálogo. La key del usuario caduca el 21-sep." | §10 |
-| M60 | (6.6.6) | changelog; `store_metadata/`; `slsdeck-analysis.md` §16.1 | 10/4 | Lista de juegos sin API key | "Lista de juegos: "Valve rejected the bundled key again" → catálogo `store_metadata/` empaquetado (~190k apps) y mirrors GitHub. Mismo síntoma que la retirada de `GetAppList` vista en SLSDeck … decisión ya tomada: dejamos lo nuestro." | Re-sweep 09-12 |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-08 (6.6.6) | changelog (segunda mano) | Lista de juegos sin clave de Steam | "Valve rejected the bundled key again": catálogo `store_metadata/` empaquetado (~190k apps) y espejos en GitHub | §2.10 |
 
 #### Función 11 — Mantenimiento propio
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M5 | 09-09 (`45971f4`) | fuente `misc_bridge.py:1747` → `slssteam.py::setup_via_headcrab`; commit `45971f4` | 11/1 | "Linux Setup", paso 1: guarda de `.bashrc` | "Si es SteamOS y `~/.bashrc` tiene `[[ $- != *i* ]] && return` (la guarda estándar de bash en Arch y SteamOS), **se niega** y manda al usuario a editar el `.bashrc` (`45971f4`, 09-09)." | §3.1 |
-| M32 | (14–15 sep) | commits `13569b3`, `b4e77f7`, `46bbdde`, `3f72cdf` | 11/12 | Menores | "Fondos de la WebUI; retiran el nombre "oureveryday/midraeveryday" (queda "Free Providers"); silencian el aviso de registro de URI en Linux." "`3f72cdf` Tag v6.8.0 y changelog." | §10 |
-| M43 | 3-oct | commits `e4c6b65`, `da3108e`, `75829ee`, `3452345` | 11/12 | LumaCore sale del repo (lado SFF-app: de dónde descarga) | "`e4c6b65` lo convierte en submódulo, `da3108e` quita el submódulo y enlaza el repo nuevo, `75829ee` cambia `_LUMACORE_GITHUB_REPO` de `KoriaPolis/LumaCore` a `drappula/LumaCore` ("the inactive upstream"; las releases siguen numeradas por encima de V36 para que las instalaciones existentes actualicen hacia delante), `3452345` apunta la documentación." (El contenido del PR `8aaf3c5` —`CNetPacket`, `PackagePatch`, `entry.cpp`, proxies— es del DLL: queda para la relectura de LumaCore, ver §0.) | §13.1 |
-| M44 | (30-sep → 3-oct) | commit `0bf7b83` | 11/1 | Headcrab en el hilo de la GUI | "el chequeo de arranque lanzaba el instalador de **headcrab** en el hilo de la GUI con stdin heredado: minutos de ventana congelada, y un `sudo` sin responder la colgaba para siempre. Ahora en un hilo y con stdin a `DEVNULL` salvo desde terminal. Confirma lo que anotamos en §3: SteaMidra instala SLSsteam por headcrab (`curl \| bash` con sudo) en el arranque." | §13.2 |
-| M46 | (30-sep → 3-oct) | commits `c853985`, `5926f31`, `4159300` | 11/12 | Update check y CI | "`c853985`: el chequeo de actualizaciones (API de GitHub) también sale del hilo de la GUI." "CI (`5926f31`, `4159300`): la release publica **AppImage** de Linux (`SteaMidra-*-x86_64.AppImage`) además del zip, y etiqueta los assets por plataforma." | §13.2 |
-| M66 | 2026-09-28; release 6.8.0 (15-sep) | notas de release 6.8.0; fuente del lanzador | 11/1 | SteaMidra como alimentador de LumaCore (Windows) | "las notas de la release 6.8.0 (15-sep) lo tienen como motor por defecto en Windows ("Windows downloads use LumaCore again instead of the built-in downloader"), SteaMidra le precalienta la caché de patrones al arrancar tras un update de Steam y ofrece reiniciar el cliente para que los cargue, y el banner "No cached LumaCore support data" se limpia cuando el build actual queda cubierto." | Re-sweep 09-28 (L663-672) |
-| M69 | 3-oct | repo `drappula/LumaCore` CI `release.yml`; commit `75829ee` de SFF | 11 | De dónde descarga SteaMidra 6.9.0 el DLL | "crea la release con el **siguiente `V<n>`** (lee la última con `gh release list` y suma uno; "SteaMidra trata cualquier tag distinto como actualizable, así que la numeración sigue por encima del V36 de KoriaPolis"). SteaMidra 6.9.0 descarga de ahí (`75829ee`)." | Re-sweep 10-07 (L727-733) |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
+|---|---|---|---|---|
+| 2026-09-30 → 10-03 | commit `0bf7b83` (segunda mano) | headcrab en el hilo de la GUI | El chequeo de arranque lanzaba el instalador en el hilo de la GUI con stdin heredado: minutos de ventana congelada, y un `sudo` sin responder la colgaba para siempre. Ahora en un hilo con stdin a `DEVNULL` | §2.11 |
 
 #### Función 12 — Proyecto
 
-| # | Fecha (como estaba escrita) | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M1 | 2026-09-13 (commit de referencia); doc datado por "[measured] salida real de hoy (2026-09-14)" | commit `drappula/SFF` `main` @ `92d6813` | 12 | Referencia congelada y distancia al original | "`github.com/drappula/SFF`, `main` @ `92d6813` ("feat(linux): route slssteam setup through headcrab", 2026-09-13). Es `Midrags/SFF` `fa44fc9` (2026-08-21, nuestra referencia en `lumacore-findings.md`) + 67 commits. `Midrags/SFF` no se ha movido desde entonces: 0 commits nuevos. Autores del fork: mallusrgreat (54), Qiyrax (8, los de SteamOS), drappula (3 merges), St0Qx (1), wtfseanscool (1)." | §0 |
-| M2 | (2026-09-14) | fuente `sff/linux/` + diffs de 67 commits; **Headcrab** (`headcrab.sh`, `headcrab_native.sh` "bajados hoy") | 12 | Profundidad de lectura | "`sff/linux/` leído **entero** (13 ficheros, 3.125 líneas) porque ahí está lo que toca la Deck; el resto por diffs de los 67 commits y lectura dirigida de `sff/lua/{endpoints,provider}.py`, `sff/manifest/downloader.py`, `sff/downloads/native_downloader.py`, `sff/network/steam_client.py`." Fuera por decisión: "Windows/LumaCore, la GUI, el kit de DRM (Steamless, gbe_fork, unlockers, Crack Files, online-fix), logros, rclone." | §0 |
-| M3 | (2026-09-14) | fuente `sff/linux/` | 12/11 | Inventario con tamaños | "`slssteam.py` (699: Headcrab, parches, `steam-jupiter`, hash fix, migración), `yaml_config.py` (907: `config.yaml` de SLSsteam por regex, escritura atómica), `linux_download.py` (429: flujo de descarga e instalación), `steam_process.py` (274: kill/start con `LD_AUDIT`), `desktop_shortcuts.py` (196), `flat_file_repair.py` (134: repara un bug propio de 6.6.5), `acf_writer.py` (129), `steamless.py` (127), `slscheevo.py` (96), `permissions.py` (61), `depot_downloader.py` (35), `dotnet.py` (21)." | §2 |
-| M4 | (2026-09-14) | diff `fa44fc9`→`92d6813` fuera de `sff/linux/`; CI `.github/workflows/release.yml`; `third_party/` | 12/4/11 | Tamaño del fork, CI, blobs | "78 ficheros, 6.806 inserciones; las 2,3 M de líneas borradas son `sff/lua/fallback_depotkeys.json`, que ya no va embebido (se descarga de KoriaPolis cada 6 h). CI: `.github/workflows/release.yml` construye el AppImage en `ubuntu-24.04` y publica release. `third_party/`: DDMod, gbe_fork (+linux, +tools), Steamless, SteamAutoCrack, coldloader, rclone, fzf como blobs sin fuente." | §2 |
-| M14 | hilo abierto 2026-09-08; pegado 09-14; mensajes 08/09/10-09 | **Discord** hilo "Remove SteaMidra" (FMHY, canal `1546879201565610075`), "pegado entero por el usuario el 09-14"; [user report] | 12 | Qué dice el hilo | Apertura: "no hace la mayoría de lo que anuncia, o no correctamente"; "le dice a un LLM que haga las cosas"; "malfunciona en Linux, potencialmente dejando las instalaciones de los usuarios rotas sin forma de deshacerlo". "Ocho capturas adjuntas … **no incluidas en el volcado**." Otros: "siempre me ha destrozado las instalaciones de Steam en Linux"; en Windows "hacía falta bajar de versión Steam o copiar ficheros … ("el fix de migo3", los patrones de MigoReleases que el fork adoptó en `ffd70db`)". FMHY: "lo retira en la siguiente actualización de la wiki". Deck (10-09): "fue muy real" "Sin versión, sin log, sin síntoma." "Midrag desaparecido "algo más de dos semanas" el 08-09, "tres" el 10-09". "FMHY recomienda ACCELA en Linux y LuaTools en Windows." OpenValve: "release by the end of this month", "NoUI early access, 6 testers", "Sin repo conocido". "El fork `drappula/SFF` no aparece en ningún momento". [user report]: "El usuario probó el original en su Deck: sin crash, pero inusable (UI incomprensible)." | §3.3 |
-| M26 | (2026-09-14) | fuente `release.yml`, `third_party/`, `analytics.py`, `patch_steam_jupiter`; "[not read]" para el autoupdate | 12/10/11 | Confianza y riesgo | "AppImage desde `release.yml` en GitHub Actions; `third_party/` siguen siendo blobs." "Solo `patch_steam_jupiter` (sudo, `steamos-readonly disable`)." "Contributor opt-in (§4.4). `analytics.py` es local. Keys de proveedores validadas al arrancar. Scraping de SteamDB con la cookie de sesión del usuario para builds antiguos." "Headcrab filtrado por texto antes de ejecutar; un cambio de Headcrab puede romper el filtro en silencio. El hash fix ejecuta `headcrab.pages.dev/reset` y `headcrab.pages.dev` sin filtrar." "**Autoupdate de la app.** [not read] No localizado en `sff/`; los updaters encontrados son de SLSsteam, LumaCore, gbe_fork y gse (GitHub releases, sin firma)." "**Estado que deja.** `steam.sh` 644 reescrito; ACFs 444; `steam.cfg` bloqueando el cliente; `.bashrc` señalado como "roto"; opcionalmente `/usr` modificado y raíz en escritura." | §7 |
-| M28 | 2026-09-17 (barrido "sobre clones frescos"); tag v6.8.0 15-sep | clones `Midrags/SFF` (`fa44fc9`), `KoriaPolis/LumaCore` (`8a32798`), `drappula/SFF` (`92d6813`→`3f72cdf`); **issues** | 12 | Tamaño de la ventana | "`Midrags/SFF` sigue en `fa44fc9` (21-ago) y `KoriaPolis/LumaCore` en `8a32798` (18-may): parados. `drappula/SFF`: 7 commits después de `92d6813`, todos de mallusrgreat entre el 14 y el 15 de septiembre, cerrados con el tag **v6.8.0** (15-sep; el fork salta de 6.6.7d a 6.8.0). Leídos como diff completo `3befc59`, `7e34444`, `f98c8e0`; el resto al nivel de stat y changelog. Issues: el repo tiene la creación de issues restringida y no muestra ninguna." | §10 |
-| M38 | 2026-09-22 (barrido); commits 20-sep | clones `drappula/SFF` `main` @ `8eaf238`; `AGENTS.md` | 12 | Tamaño de la ventana y método del fork | "dos commits después de v6.8.0, ambos de mallusrgreat el 20-sep, sin tag (el CHANGELOG los lista bajo "Unreleased"). `Midrags/SFF` sigue en `fa44fc9` (21-ago)… Leídos como diff completo en las partes de manifests, downloader, ACF y Linux; UI al nivel de changelog. Novedad de método: el repo lleva ahora un `AGENTS.md` para "opencode", que obliga a tocar el CHANGELOG en cada commit y prohíbe "ejemplos de conversación" en comentarios de código: el fork se desarrolla con un agente de IA y lo dice." | §11 |
-| M41 | 2026-09-28 (clon fresco) | clon `drappula/SFF`; `CHANGELOG.md` | 12 | Sin commits | "`main` sigue en `8eaf238` (20-sep, "fix: process name, ACF depots, and linux mono filter"), único branch, último tag `v6.8.0` (`3f72cdf`, 15-sep). Sin issues (el repo no las tiene abiertas). El `CHANGELOG.md` lleva un bloque "Unreleased" posterior a 6.8.0 ya cubierto en §11". | §12 |
-| M42 | 2026-10-07 (barrido); commits 30-sep → 3-oct; tag v6.9.0 3-oct | clon `drappula/SFF` `main` @ `4159300`; PR #6 (`8aaf3c5`, 842 líneas, "por cabeceras y comentarios") | 12 | Tamaño de la ventana | "12 commits entre el 30-sep y el 3-oct (mallusrgreat, michelegoku3 por PR #6, drappula como merge), tag `v6.9.0` (`c83f4b5`, 3-oct). Diff leído entero en `sff/`, `Main_gui.py`, CI y notas; el PR de LumaCore (`8aaf3c5`, 842 líneas) leído por cabeceras y comentarios. `Midrags/SFF` (upstream original) sigue en `fa44fc9` (21-ago), muerto." | §13 |
-| M50 | 2026-08-17 (re-sweep); release 2026-08-16 | commit `a26a359` ("Release SteaMidra v6.6.5"); `git show a26a359 --stat -- LumaCore` | 12 | Ventana 6.6.4→6.6.5 | "Un solo commit nuevo … `a26a359` "Release SteaMidra v6.6.5" (2026-08-16). SFF aplasta cada release en un commit único, así que son 43.213 inserciones en 37 ficheros — pero `git show a26a359 --stat -- LumaCore` no devuelve nada: todo está en el launcher Python (`sff/`) y la web UI." | Re-sweep 08-17 |
-| M54 | 2026-09-12 (re-sweep); último commit 2026-08-21 | commits `0b7e846`, `ca99dd4`, `fddb164`, `fa44fc9` | 12 | Ventana 6.6.5→6.6.6 | "**Cuatro commits nuevos, el último del 2026-08-21. Nada después del día 9: Midrag no ha reaccionado en el repo a la caída de los request-code providers.**" "`0b7e846` (2026-08-21) "Release SteaMidra v6.6.6", 48 ficheros, 41.301 inserciones (release aplastada, como siempre)." "`ca99dd4` + `fddb164` (README: meta de Google site verification, puesta y quitada) y `fa44fc9` "check" (`googlef63bb3dabc2e56bf.html`). Nada." | Re-sweep 09-12 |
-| M64 | 2026-09-14; 2026-09-17 (notas al pie) | clones | 12 | Traspaso del barrido a `drappula/SFF` | "**2026-09-14:** `Midrags/SFF` no se ha movido desde `fa44fc9` (2026-08-21). El desarrollo de SteaMidra continúa en el fork `drappula/SFF` … (congelado en `92d6813`, 2026-09-13). El próximo barrido de SFF arranca ahí." "**2026-09-17:** sin cambios en `Midrags/SFF` (`fa44fc9`) ni en `KoriaPolis/LumaCore` (`8a32798`, 2026-05-18). `drappula/SFF` publicó v6.8.0 el 15-sep; delta en `steamidra-linux-analysis.md` §10." | L605-607 |
-
-#### Mediciones del lado lumalinux / LumaDeck que vivían en el doc anterior
-
-Son de nuestro stack, no de SteaMidra; se conservan aquí para no perderlas (la relectura de `nosotros.md` no las tomó de este doc). Se marcan **lumalinux** o **LumaDeck** en la columna Dónde.
-
-| # | Fecha | Dónde | F | Qué se midió | Resultado (literal) | Sección del doc anterior |
-|---|---|---|---|---|---|---|
-| M13 | (2026-09-14 "[read hoy]"; "validado en Deck") | **Headcrab** `headcrab.sh`; **lumalinux** `design/decouple-headcrab-plan.md` WS1.1/WS1.2 | 1 (lado lumalinux) | Quién toca `/usr` | "**Headcrab no toca `/usr`** (`headcrab.sh` [read hoy]), y nuestra pila tampoco: `steam.sh` queda vanilla, la inyección va en un wrapper propio alcanzado por el `Exec` de los `.desktop` en escritorio y por un drop-in de systemd en `steam-launcher.service` en modo juego, con un fail-safe que arranca vanilla al tercer crash seguido (… validado en Deck). El parche de `steam-jupiter` es innecesario para inyectar en modo juego." | §3.2 |
-| M17 | (v0.16.2; "[measured en nuestra pila, `RESEARCH.md` §17.3]") | **lumalinux** on-device (RESEARCH §17.3) | 1 (lado lumalinux) | Vector 1: mecanismo del "brickeo" | "**Steam en bucle de crash en modo juego → gamescope `short_session_recover` → borrado de `~/.local/share/Steam` → OOBE.** [measured en nuestra pila, `RESEARCH.md` §17.3, v0.16.2]. La Deck aparece "de fábrica", sin juegos: eso es lo que la gente llama brickeada." | §3.3 vector 1 |
-| M24 | 2026-09-14 | **LumaDeck** clones P-ToyStore `pts_<appid>` | 4 (lado LumaDeck) | Los mismos 6 gids en nuestra fuente | "Los mismos 6 gids estaban en P-ToyStore (nuestros clones `pts_<appid>`), que el fork no usa. Tampoco usa luastools. **La cadena gratis del fork no sirve hoy para ningún juego actualizado desde agosto**; para esos acaba en Hubcap o ManifestHub2 con key, como ASSella. No hay ninguna fuente nueva que adoptar." | §5 |
-| M49 | (base 6.6.4) | **lumalinux** `tools/steamidra_lite.py` (regexes) | 9/4 (lado lumalinux) | Cómo parseamos el `.lua` | "On our side the `.lua` is parsed by **`steamidra_lite.py` with four regexes** (`_DEPOT_NO_KEY_REGEX`, `_DEPOT_DEC_KEY_REGEX`, `_SETMANIFESTID_REGEX`, …) — it is **never executed.** … steamidra_lite's `setManifestid` regex mirrors LumaCore, capturing depot+gid and ignoring the size arg." | Finding 8 (L406-412) |
-| M51 | 2026-08-17 | fuente `sff/` (`prewarm_pattern_cache_if_missing`); **lumalinux** `main.cpp:428` | 1 (lado lumalinux) | Prewarm de patrones desde Python | "`prewarm_pattern_cache_if_missing` precalienta la caché de patrones desde Python. No nos aplica: `main.cpp:428` ya instala los hooks en un `std::thread(...).detach()`, así que la descarga del feed nunca estuvo en el camino del cargador." | Re-sweep 08-17 |
-| M52 | 2026-08-17 | fuente `sff/` (fallback `status.json`); **LumaDeck** `paths.py:756-769` | 11 (lado LumaDeck) | Versión por `status.json` | "Fallback de versión leyendo `status.json`. LumaDeck ya lo hace mejor — `paths.py:756-769` lo usa como fuente primaria, no como plan B." | Re-sweep 08-17 |
-| M63 | (2026-09-12) | **LumaDeck** `pins.py` `check_update`; P-ToyStore rama Brotato (`2868390_….manifest`, `listofdlc` en `appinfo.vdf`) | 4/5/3 (lado LumaDeck) | Dónde encajaría la base | "P-ToyStore trae los manifests de los DLC … **pero cero claves**. Las claves nos llegan solo del lua de Hubcap o del fix de LuaTools." "`pins.py` `check_update` ya detecta cada 30 min los depots nuevos (DLC nuevo) comparando steamcmd.net con `keys.txt`, pide el zip a Hubcap una vez al día y reinstala pineado. El único hueco es la clave cuando Hubcap no la trae: los mensajes `new depots [X] need a zip; no source returned one` y `zip is stale or lacks the new depots`." Contras: "claves aportadas por usuarios sin verificación …; 67 MB, a cachear en `~/.cache/lumadeck` y refrescar cada varios días, nunca por consulta. No toca el problema del día 9". | Re-sweep 09-12 base de claves |
-
-#### Verificaciones en el código y sondas HTTP, 2026-10-08 (`origin/main@4159300`)
-
-| Fecha | Dónde | F | Qué se midió | Resultado |
+| Fecha | Dónde | Qué se probó | Resultado | Detalle |
 |---|---|---|---|---|
-| 2026-10-08 | clon `/home/user/drappula/sff` | 12 | estado del clon | `git log -1` = `4159300 ci(release): label assets per platform on upload`; `is-shallow-repository` = false; raíz `32bd204` (2026-05-25); `midrags/main` = `fa44fc9` = merge-base; `midrags/main..origin/main` = 88 commits; 50 tags, `v6.6.7c` → `7e0f2d4` fuera de `main` |
-| 2026-10-08 | fuente `sff/linux/slssteam.py:253-285` | 1 | `patch_slssteam_config` | `marker = config_dir / ".headcrabd"`; `if marker.exists(): return False  # already patched by headcrab or us`; parches por regex `SafeMode: no`, `WarnHashMissmatch: no`, `NotifyInit: yes`, `Notifications: yes`, `DisableUpdates: yes`, `DisableCloud: yes`, `DisableFamilyShareLock: yes`; `_patch_missing_slssteam_fields`; `marker.write_text("patched by SteaMidra\n")` |
-| 2026-10-08 | fuente `slssteam.py:289-334` | 11 | versión instalada y check | `get_installed_version`: lee `VERSION_FILE`; si no existe y hay `SLSsteam.so` (flatpak o nativo) → `"unknown"`; `check_update_available`: `httpx.get(".../AceSLS/SLSsteam/releases/latest", timeout=10)`, `if latest and installed and installed != latest: update_available = True` |
-| 2026-10-08 | `grep -rn "VERSION_FILE" sff/linux/slssteam.py`; `git log -S"VERSION_FILE" -- sff/linux/slssteam.py`; `git show 92d6813 -- sff/linux/slssteam.py \| grep VERSION` | 11 | quién escribe `VERSION` | solo lecturas (`:36,298-299`); commits `92d6813`, `32bd204`; en `92d6813` se borran `VERSION_FILE.parent.mkdir(...)` y `VERSION_FILE.write_text(version, ...)` (líneas 463-464 del diff). Nadie la escribe desde entonces |
-| 2026-10-08 | fuente `slssteam.py:655-716` | 11/1 | `check_and_notify_update` | `needs_install = (not installed) or info.get("update_available")`; `if needs_install and steam_is_running(): return`; `if not installed: setup_via_headcrab(...)`; `if info.get("update_available"): setup_via_headcrab(...)` |
-| 2026-10-08 | fuente `Main_gui.py:520-548` | 11 | temporizador | `QTimer.singleShot(0, _kick_slssteam_update_check)`; `_slssteam_timer.setInterval(60 * 60 * 1000)`; hilo daemon `sff-slssteam-update-check` |
-| 2026-10-08 | `curl` → `headcrab.sh` (954 líneas, sha256 `caeca7e410a8949db8d48b70e126b7956526e953d0c5223044f7e54543088c9d`) | 1 | qué hace headcrab | `HeadcrabCompatibleClientVer=1788652215` (`:5`); `CheckHeadcrabCompatibility`: `if [[ "$versionnumber" == "$HeadcrabCompatibleClientVer" ]]; then clientinstall; else … clientdowngrade; fi` (`:212-226`); `clientdowngrade(){ prepdowngrade; overideupdate; }` con manifest de `Deadboy666/SteamTracking@headcrab` y `dgsc --port 1666` (`:494-534,706`); `editconfig`: SteamOS `sed -i "s/^SafeMode:.*/SafeMode: yes/"` + `NotifyInit: yes`, CachyOS `LogLevels: 0x3f` + `SafeMode: no`, resto `SafeMode: no`, siempre `echo "config patched" > .headcrabd` (`:835-850`); `createsteamcfg` (`BootStrapperInhibitAll=enable`, `BootStrapperForceSelfUpdate=disable`, solo si no existe, `:852-862`); `patchlocalsteam`: `wget -O client.sh "$Headcrab_Client"`, `chmod 777 steam.sh`, `rm steam.sh; wget -O steam.sh "$Headcrab_Native"`, `chmod 555 steam.sh`, `chmod +x client.sh` (`:876-926`); `downloadSLSsteam` (`github.com/AceSLS/SLSsteam/releases/latest` → `SLSsteam-Any-release.7z`) y `downloadnetsock` (`yesyes0649/steamnetsock-patch@builds/fix.so` → `~/.config/SLSsteam/tools/netsock/netsock.so`) (`:739-760`); `export_sls`: `LD_AUDIT=$HOME/.local/share/SLSsteam/library-inject.so:$HOME/.local/share/SLSsteam/SLSsteam.so "$@"` (`:762-770`); `nuketheclient(){ killall steam }`; `SetupHeadcrab_Updater` instala `headcrab.desktop` (`:99-110`) |
-| 2026-10-08 | fuente `sff/linux/acf_writer.py:68-124`; `git show 46a421d -- sff/linux/acf_writer.py` | 5/9 | `InstalledDepots` | hoy: `installed_depots[depot_id_str] = {"manifest", "size", "dlcappid"?}`, `"StateFlags": "4"`, `"AutoUpdateBehavior": "0"`, `"TargetBuildID": buildid`, `os.chmod(acf_path, 0o444)`; `46a421d` (2026-09-09, Qiyrax): `-"InstalledDepots": installed_depots,` / `+"InstalledDepots": {},`; `8eaf238` (09-20) lo revierte |
-| 2026-10-08 | `git show 8eaf238:sff/lumacore/lumacore_setup.py \| grep -n "MigoReleases\|KoriaPolis"` | 1 | feed de patrones en `8eaf238` | `:125 _LUMACORE_GITHUB_REPO = "KoriaPolis/LumaCore"`; `:163 _PATTERN_REPO_RAW = "https://raw.githubusercontent.com/michelegoku3/MigoReleases/pattern"`; `:164 # _PATTERN_REPO_CDN = ".../KoriaPolis/Steam-Auto-PT@pattern"`. Hoy `:125 = "drappula/LumaCore"`, `:163` igual |
-| 2026-10-08 | fuente `sff/ui/ui.py:1036-1080` | 2/3/5/4/9 | `process_from_store` | `sls_man.add_ids(parsed_lua)`; `sls_man.dlc_check(..., auto_add_depot_dlcs=True)`; `if manifest_override: add_manifest_id(self.sls_man.sls_config_path, ...)`; `patch_slssteam_config(detect_steam_type(), print)`; `config.add_decryption_keys_to_config(parsed_lua)`; copia a `saved_lua`; `write_manifest_pins_to_lua`; `install_lua_to_steam`; `apply_new_game_update_default` |
-| 2026-10-08 | fuente `sff/linux/linux_download.py:155-196` | 2/3 | `_add_to_slssteam` | `sls.add_ids(appid_int)`; `AppTokens` y `DlcData` con `yaml.safe_load` + `yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)`; `dlcs = [dp for dp in selected_depots if str(dp) != str(appid)]`; `if len(dlcs) > 64: app_entry[str(dlc_id)] = {}` |
-| 2026-10-08 | fuente `sff/linux/steam_process.py:170-177` | 1 | tercer fallback | `logger.info(f"Found SLSteam.so at default path: ...")`; `slssteam_path = _find_manual_steam_so("SLSteam.so", steam_path)` |
-| 2026-10-08 | `grep -rn PlayNotOwnedGames sff/ Main*.py`; `git log -S"PlayNotOwnedGames" -- sff` | 2 | `PlayNotOwnedGames` | única coincidencia: comentario `download_bridge.py:2319` ("Ensure PlayNotOwnedGames is enabled…" seguido de `patch_slssteam_config`); commits `f9abbf7` (6.6.1), `8690d66` (6.6.0), `32bd204` |
-| 2026-10-08 | fuente `sff/core/structs.py:399-403`; `sff/core/storage/settings.py:35,83,214-233` | 10/12 | default de contribución | `PROVIDER_CONTRIBUTE_KEYS = SettingItem("provider_contribute_keys", "Contribute clean provider keys every 3 hours", False, bool)`; `SETTINGS_VERSION = "1.1.0"`; `load_all_settings` → `settings = migrate_settings(settings)`; `migrate_settings`: `current_version = settings.get("_version", "0.0.0")`; `if current_version < "1.1.0": if "provider_contribute_keys" not in settings: settings["provider_contribute_keys"] = True` (ídem `provider_enrich_steam_metadata`) |
-| 2026-10-08 | fuente `sff/gui/bridges/misc_bridge.py:1835-1882` | 1 | Gaming Mode y SafeMode | `_bridge_patch_gaming_mode`: `if not is_steamos(): return (False, "This tool is only for SteamOS / Steam Deck.")`; `_bridge_enable_deck_safe_mode`: `update_yaml_boolean_value(config_path, "SafeMode", True)` con `get_user_config_path()` |
-| 2026-10-08 | `grep -n "fallback_depotkeys\|fetch_store" .github/workflows/release.yml`; `git show ed8a2a8 --stat` | 4 | BD de claves en el build | `release.yml` solo `tools/fetch_store_metadata.py` (`:24,65`); `ed8a2a8` (2026-09-07): `sff/lua/fallback_depotkeys.json \| 2340049 -`, `sff/lua/contributor_state.json \| 1547 -`, `.gitignore +9` |
-| 2026-10-08 | sondas HTTP tras un proxy (`curl -sS -o /dev/null -w "%{http_code}"`, `--max-time 20`) | 4/10/11 | fuentes del fork hoy | `raw.githubusercontent.com/Deadboy666/h3adcr-b/.../headcrab.sh` **206** (32.271 bytes); `raw.githubusercontent.com/fylsdy/ManifestHub/main/depotkeys.json` **404**; `raw.githubusercontent.com/KoriaPolis/Steam-Depot/main/fallback_depotkeys.json` **206** (responde); `api.github.com/repos/{AceSLS/SLSsteam,drappula/SFF,drappula/LumaCore}/releases/latest` **403** (378 bytes: el proxy); `manifest.luastools.xyz/m/1/1`, `api.luagen.revobd.club/2379780.zip`, `headcrab.pages.dev/reset`, `steamcmd.morrenus.net/api/2379780`, `api.steamcmd.net/v1/info/2379780` **000** (bloqueados por el proxy) |
-| 2026-10-08 | `wc -l` por paquete (`4159300`) | 12 | tamaño | `sff/linux` 13 ficheros / 3.125 líneas; `sff/lumacore` 4 / 1.123; `sff/core` 15; `sff/manifest` 9 / 3.947; `sff/downloads` 7 / 2.737; `sff/network` 6 / 1.654; `sff/lua` 9 / 3.501; `sff/game` 20 / 6.766; `sff/dlc_unlockers` 10 / 1.588; `sff/cloud` 3 / 2.332; `sff/gui` 25 (`web_bridge.py` 3.412, `download_bridge.py` 3.077, `misc_bridge.py` 2.867, `main_window.py` 2.049, `store_bridge.py` 1.869); `sff/ui/ui.py` 1.985; `sff/webui/index.html` 2.382; `third_party/` 1.806 ficheros; `CHANGELOG.md` 2.271; `headcrab.sh` 954 |
+| 2026-08-21 → 10-07 | repo | Upstream parado, fork vivo | `Midrags/SFF` no se mueve desde `fa44fc9` (08-21), sin reacción a la caída de proveedores del 09-09. `drappula/SFF`: 88 commits y 7 releases entre 09-04 y 10-03; sin commits desde el 10-03 | §5.3 |
 
 ### 5.3 Cronología
 
@@ -802,7 +678,7 @@ Linux, migración `config/lua` → `stplug-in`. Después solo `ca99dd4`/`fddb164
 **Ritmo.** Upstream ≈ un tag cada dos días con rachas de tres por día y dos
 pausas (05-31 → 06-28, 07-08 → 07-24). Fork: cinco tags en seis días
 (09-05 → 09-10), luego v6.8.0 (09-15) y v6.9.0 (10-03); desde el 10-03 sin
-commits (barrido de hoy). El lanzador Python recibe casi todo el trabajo; en
+commits. El lanzador Python recibe casi todo el trabajo; en
 la DLL solo entró el PR #6 y los arreglos de `FileExists`.
 
 **Lo que ya no está en el código y el doc anterior o el CHANGELOG daban por
