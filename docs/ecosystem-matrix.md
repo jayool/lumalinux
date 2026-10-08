@@ -123,7 +123,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 
 | Programa | Cómo | Fuente |
 |---|---|---|
-| **nosotros** | pin vivo = `ManifestIds` de SLSsteam (`keys.txt` gid/size dormido, BuildDep OFF). `pins.py`: pase local 60 s (heal, modelo up/down por `gmrc.json`), pase de update 30 min contra `api.steamcmd.net`, pin solo con todos los manifests; congelación por usuario, ficheros (fixes) o proveedores. Versión antigua: SteamDB (10 builds, BrowserView oculto) + `--set-pin` + `StateFlags|=2`; también por LuaTools. Update atascada: `UpdateResult=8` → Fix Update; sin cancelación. | `nosotros.md` §2.5 |
+| **nosotros** | pin vivo = `ManifestIds` de SLSsteam (`keys.txt` gid/size dormido, BuildDep OFF). `pins.py`: pase local 60 s (heal, modelo up/down por `gmrc.json`), pase de update 30 min contra `api.steamcmd.net`, pin solo con todos los manifests; congelación por usuario, ficheros (fixes) o proveedores. Versión antigua: SteamDB (10 builds, BrowserView oculto) + `--set-pin` + `StateFlags\|=2`; también por LuaTools. Update atascada: `UpdateResult=8` → Fix Update; sin cancelación. | `nosotros.md` §2.5 |
 | SLSsteam | `ManifestIds` para fijar o bajar de versión; `DisableUpdates: yes` (default) → `GetUpdateInfo` false para `AdditionalApps` o no poseídas de verdad (hot reload). La automática la decide Steam; no toca `buildId`; sin cancelación de updates en curso. | `slssteam.md` §2.5 |
 | SteaMidra/SFF | ? | |
 | LumaCore | ? | |
@@ -188,7 +188,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | Programa | Cómo | Fuente |
 |---|---|---|
 | **nosotros** | entradas: AppID, página abierta (CEF), nombre (tienda de Steam); sin zip local; sin elección de disco. Add: zip por `api.json` → `_process_and_install_lua` (orden del lua, depot Linux) → `steamidra_lite` (depotcache, `AdditionalApps`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`) → post-check → Proton forzado; sin reinicio (reconcile). Quitar: carpeta, `.acf` en todas las bibliotecas, compatdata/shadercache (raíz + biblioteca), depotcache, config de SLSsteam, claves (retiradas si poseído); deja `config.vdf`, `pins.json`, archivo propio. Bibliotecas: unión de los dos `libraryfolders.vdf` con tres puntos ciegos. | `nosotros.md` §2.9 |
-| SLSsteam | entrada: solo AppId en el YAML (a mano, por Lua `setAdditionalApps`, o `install|app|lib`/`uninstall|app` por el fichero de comandos); no escribe nada en disco; no limpia nada (tickets, `cdk_<n>`); `AppLicensesChanged_t` en caliente; bibliotecas por índice (`dumplibraries`); carpeta la decide Steam. | `slssteam.md` §2.9 |
+| SLSsteam | entrada: solo AppId en el YAML (a mano, por Lua `setAdditionalApps`, o `install\|app\|lib`/`uninstall\|app` por el fichero de comandos); no escribe nada en disco; no limpia nada (tickets, `cdk_<n>`); `AppLicensesChanged_t` en caliente; bibliotecas por índice (`dumplibraries`); carpeta la decide Steam. | `slssteam.md` §2.9 |
 | SteaMidra/SFF | ? | |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
@@ -220,7 +220,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | Programa | Cómo | Fuente |
 |---|---|---|
 | **nosotros** | QAM + Settings de Decky (pestaña Dev siempre visible); CLI `setup.sh`/`steamidra_lite.py`. Update propio: zip a `~/Downloads`. Componentes: versión del `.so` en disco (CloudRedirect, lumalinux), tag grabado (SLSsteam), GitHub con caché 6 h, aplicar = `setup.sh` entero. Salud: `status.json`, `gmrc.json`, crash guard, pin de headcrab; logs en lumalinux, SLSsteam y Decky. CI: tests, autotest de rederivación, smoke test nunca verde. | `nosotros.md` §2.11 |
-| SLSsteam | YAML con hot reload (inotify, `IN_CLOSE_WRITE|IN_MOVED_TO`; claves faltantes → toast, desconocidas ignoradas); fichero de comandos `/tmp/SLSsteam.API` (7 comandos; `API: no` en el YAML instalado; cualquier proceso del usuario puede escribirlo; roto 09-28→10-01); plugins Lua sin sandbox (`Plugins: no`, 0700 forzado, hot reload sin recrear estado en release); toasts por `notify-send`. Sin auto-update (`update.cpp` solo baja hashes). Versión = `VERSION` embebida (no sube en cada tag) + rama/commit en el log. Releases 7z/zip + PKGBUILD + Nix, sin strip. | `slssteam.md` §2.11 |
+| SLSsteam | YAML con hot reload (inotify, `IN_CLOSE_WRITE\|IN_MOVED_TO`; claves faltantes → toast, desconocidas ignoradas); fichero de comandos `/tmp/SLSsteam.API` (7 comandos; `API: no` en el YAML instalado; cualquier proceso del usuario puede escribirlo; roto 09-28→10-01); plugins Lua sin sandbox (`Plugins: no`, 0700 forzado, hot reload sin recrear estado en release); toasts por `notify-send`. Sin auto-update (`update.cpp` solo baja hashes). Versión = `VERSION` embebida (no sube en cada tag) + rama/commit en el log. Releases 7z/zip + PKGBUILD + Nix, sin strip. | `slssteam.md` §2.11 |
 | SteaMidra/SFF | ? | |
 | LumaCore | ? | |
 | LuaTools + BST | ? | |
@@ -262,7 +262,7 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 6 | SLSsteam | `LaunchOptions` por juego (`%command%`; comodines no poseídos / todos) | aparcado: no lo escribimos; nuestros fixes se aplican en disco | 2026-10-08 |
 | 2, 3 | SLSsteam | `AppIds`/`UseWhitelist` para excluir apps o DLC del unlock (con herencia por `parent`) | aparcado: no lo escribimos; LumaDeck gestiona DLC por `DisabledDLC` de Steam | 2026-10-08 |
 | 4 | SLSsteam | `CDKeys` (clave legacy inyectada o determinista) | aparcado: con `isSubscribed` true para nuestros juegos no se inyecta (`slssteam.md` §4.1-1); sin caso conocido | 2026-10-08 |
-| 9, 11 | SLSsteam | `install|app|lib`, `uninstall|app`, `setcompat` por `/tmp/SLSsteam.API` | descartado por ahora: canal sin autenticación, off por defecto y roto en 20260930144343; Proton lo fijamos en `localconfig.vdf` | 2026-10-08 |
+| 9, 11 | SLSsteam | `install\|app\|lib`, `uninstall\|app`, `setcompat` por `/tmp/SLSsteam.API` | descartado por ahora: canal sin autenticación, off por defecto y roto en 20260930144343; Proton lo fijamos en `localconfig.vdf` | 2026-10-08 |
 
 ### 3.2 Nosotros sí, ellos no
 

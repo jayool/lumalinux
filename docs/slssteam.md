@@ -720,7 +720,7 @@ SteamIDs, tickets. Caducidad: no detectada. Sin ninguna: unlock sí.
 ### 2.11 Mantenimiento propio
 
 **Superficie.** (1) `config.yaml` con hot reload: inotify sobre el directorio
-padre con `IN_CLOSE_WRITE|IN_MOVED_TO` filtrando por nombre
+padre con `IN_CLOSE_WRITE\|IN_MOVED_TO` filtrando por nombre
 (`filewatcher.cpp:14-78,115-149`; desde `1444fa5` también renames atómicos),
 `loadSettings()` y toast "Config reloaded!"; cada valor en un `MTVariable` que
 los hooks leen en cada llamada, salvo `SafeMode`/`WarnHashMissmatch`
@@ -733,7 +733,7 @@ creado y truncado en cada arranque con la umask del usuario, vigilado por
 inotify en `/tmp`; cada escritura relee el fichero entero y parsea cada
 línea `cmd|arg|arg` (`:31-57`); comandos `dumpcompat|app`, `getcompat|app`,
 `setcompat|app[|tool]` (Proton por app vía `IClientCompat`), `dumplibraries`,
-`install|app|lib`, `uninstall|app`, `reloadlua` (`:59-148`); salida solo al
+`install\|app\|lib`, `uninstall\|app`, `reloadlua` (`:59-148`); salida solo al
 log con nivel `API`; ops de compat y biblioteca encoladas bajo `cmdMutex` y
 ejecutadas en el hilo IPC en el siguiente `RunInterface`. Activación: `API:
 yes` (el YAML instalado lleva `no`; si la clave falta, el código asume `true`,
