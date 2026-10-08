@@ -658,8 +658,8 @@ v0.8.1.
 > (function-layer, SLSsteam-safe), not existence** — LumaCore reaches it on the
 > wire layer, which SLSsteam owns and lumalinux cannot touch. The table's LumaCore
 > column below is updated to the `6.6.4` wire-layer bridge. See
-> [`nosotros.md`](nosotros.md) §5 and [`lumacore-findings.md`](lumacore-findings.md)
-> Finding 1.
+> [`nosotros.md`](nosotros.md) §5 and [`lumacore.md`](lumacore.md)
+> §2.4.
 
 | | LumaCore 6.6.4 (wire-layer) | lumalinux |
 |---|---|---|
@@ -2241,7 +2241,7 @@ build-pinned probes, off by default; nothing of it is in main.
   2026-10-06) had neither its base depot 4078431 nor its DLC depot 4554460.
   So it cannot replace the Hubcap zip for a new DLC's key, but could fill
   the "zip is stale or lacks the new depots" gap some days later. Same
-  verdict as KoriaPolis' base (`lumacore-findings.md`): noted, not wired in
+  verdict as KoriaPolis' base (`steamidra.md` §4.4): noted, not wired in
   until a real log shows that message. A wrong key cannot harm (Steam just
   fails to decrypt); the risks are the dump vanishing and its lag.
 - LuaTools version "manifests" are bare luas (keys + `setManifestid`), no
