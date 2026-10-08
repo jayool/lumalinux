@@ -21,7 +21,7 @@ fecha conservadas de los docs anteriores y contraste con lo que afirmaban).
 | **Plataforma** | SteamOS (Steam Deck, Game Mode y Desktop). Port a CachyOS en curso (`cachyos-port.md`). Arch, Debian, Void contemplados en `setup.sh`. Steam Flatpak **no** soportado (`setup.sh:31`; LumaDeck solo lo detecta, `platform_info.py:252-278`). |
 | **Licencia y quién** | lumalinux: GPL-3.0-only (cabeceras SPDX en `src/`), con `src/update.cpp` tomado de SLSsteam (AGPL-3.0, `update.cpp:1-8`). LumaDeck: "Fork of DeckTools" (`package.json`), autor jayool; sin `LICENSE` en la raíz (leído del código, no de docs). SLSsteam: AGPL-3.0, AceSLS. Releases por tag con CI en los dos repos (`build.yml`, `release.yml`). |
 | **Relación con los demás programas** | Base técnica = SLSsteam (propiedad) + lumalinux (claves, package-0, códigos de manifest). Referencia histórica de lumalinux = LumaCore (los hooks se alinearon a él, `main.cpp:9-22`; `RESEARCH.md` §11). `steamidra_lite.py` nació de SteaMidra (parser del lua "verbatim", `steamidra_lite.py:106-144`). LumaDeck nació de DeckTools. |
-| **Lectura** | Cinco lecturas completas del código, una por bloque: `src/` de lumalinux; `setup.sh` + `tools/` + CI + devcontainers; backend de LumaDeck (37 módulos + `main.py`); frontend de LumaDeck (21 ficheros); y la extracción de todas las mediciones con fecha de los docs anteriores. Sin usar `docs/` para describir el código. Las funciones 7-12 de la biblioteca de lumalinux se completaron a mano desde `sls_achievement_unblock.cpp`, `cr_stats_fix.hpp`, `libcurl_pin.cpp`, `log.cpp`, `status.cpp`, `update.cpp`. Los `tests/` solo para confirmar una duda, y se dice. |
+| **Lectura** | Cinco lecturas completas del código, una por bloque: `src/` de lumalinux; `setup.sh` + `tools/` + CI + devcontainers; backend de LumaDeck (37 módulos + `main.py`); frontend de LumaDeck (21 ficheros); y la extracción de todas las mediciones con fecha de los docs anteriores. Sin usar `docs/` para describir el código. Cuatro de los cinco lectores agotaron el límite de uso **después** de escribir su informe en disco; el de la biblioteca de lumalinux (`src/`) se cortó a mitad de la función 7, sin llegar a escribir sus dependencias ni sus dudas: las funciones 7-12 de esa parte, sus dependencias (§4.2) y sus dudas (§4.1, 24-28) se completaron a mano desde `sls_achievement_unblock.cpp`, `cr_stats_fix.cpp/.hpp`, `libcurl_pin.cpp`, `log.cpp`, `status.cpp`, `update.cpp`, `curl.cpp`, `main.cpp`. Es la parte con menos segunda lectura; la relectura de SLSsteam volverá a pasar por `sls_achievement_unblock` y `lmhook`. Los `tests/` solo para confirmar una duda, y se dice. |
 
 **Lo que cambia respecto a los docs anteriores**, en una línea cada uno:
 
@@ -1151,6 +1151,30 @@ lo incoherente, luego lo muerto.
     y el runtime cuatro: la sonda no es espejo exacto.
 23. Hook `LoadPackage`: solo diagnóstico con `LUMA_LOADPKG_DEBUG`; la
     inyección la hace el finder. El patrón sigue en CI como DIAGNOSTIC.
+
+**Dudas de la biblioteca de lumalinux** (el lector de `src/` se cortó antes de
+escribirlas; sacadas a mano de `status.cpp`, `log.cpp`, `curl.cpp`,
+`libcurl_pin.cpp`, `main.cpp`, `patterns.cpp`)
+
+24. `status.json` y `gmrc.json` se escriben con `fopen("w")` directo, sin
+    fichero temporal ni `rename` (`status.cpp:62,79`): LumaDeck puede leer un
+    JSON a medias si coincide con la escritura. `gmrc.json` se reescribe en
+    cada lookup de código.
+25. `curl.cpp` no fija `CAINFO` ni toca `VERIFYPEER`: confía en el CA bundle
+    del libcurl que cargue. Por eso existe `libcurl_pin`: si el pin falla y
+    entra el libcurl 7.22 del Steam Runtime, las descargas del `.so` (SafeMode,
+    RVAs, códigos GMRC) pueden fallar por certificados. Es el aviso de Ace
+    sobre "libcurl dentro de Steam".
+26. El `.so` ejecuta `system("mkdir -p …")` y `system("notify-send …")` desde
+    dentro de Steam (`log.cpp:75-76,157-159`): un shell hijo por arranque y por
+    toast.
+27. `atexit(_exit(0))` en el constructor (`main.cpp:442`) evita un SIGABRT de
+    teardown entre SLSsteam y CloudRedirect, y de paso salta cualquier
+    destructor del proceso Steam al salir.
+28. Las entradas `LD_AUDIT` (`la_preinit`/`la_objopen`) siguen compiladas
+    aunque esa ruta corrompe el heap (medido, §5.2 F1); el wrapper no las usa.
+    Y `FindBuildDepotDependencyFunction` usa el primer match, no el único
+    (`patterns.cpp:94-118,210-212`): solo importa si alguien fuerza BuildDep.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
