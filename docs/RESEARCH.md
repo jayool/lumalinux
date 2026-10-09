@@ -1544,7 +1544,7 @@ Outcome: **13 were fixed in code** (everything that touched the resolution
 criterion, CI and triage), **6 were documented as accepted risk** in the
 `KNOWN LIMITS` block of `package_zero_finder.cpp` — real nits, but none with a
 fix worth its cost — and **1 remains open** because it has no cheap fix: the
-double role of `0xc58`. The result was validated on a real Deck (§13.5.b).
+double role of `0xc58`. The result was validated live on the SteamOS codespace (§13.5.b).
 
 | # | finding | judgement | status |
 |---|---|---|---|
@@ -1605,8 +1605,8 @@ runtime in both directions. All three are mechanical.
 
 #### 13.5.b Live validation of the rewritten locator (2026-09-08)
 
-Everything in §13.5.a was validated **on a real machine with Steam and a
-logged-in session**, not only in CI. It matters to write it down because it is
+Everything in §13.5.a was validated **on the SteamOS codespace, with Steam
+running and a logged-in session**, not only in CI. It matters to write it down because it is
 the only proof there is: `build.yml` compiles, `check_patterns.py` resolves on
 paper, and `verify-fix.yml` — the workflow that should start the `.so` — has
 never had a green run (its first real executions, that same day, all failed in
