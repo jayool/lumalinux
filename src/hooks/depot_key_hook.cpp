@@ -93,7 +93,7 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
         // ("Invalid content configuration") and Steam's "Shader Priority"
         // suspends the whole install. The keyless shader pre-cache can never
         // succeed (we have no key); instead of letting it run and fail, the
-        // ShaderDepot hook (path C, RESEARCH §13.9) makes Steam SKIP the shader
+        // ShaderDepot hook (path C, RESEARCH §13.10) makes Steam SKIP the shader
         // pre-cache for exactly these keyless games — per game, cleanly, using
         // Steam's own skip path — so no key needs to be faked here.
     }

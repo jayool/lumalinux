@@ -1419,7 +1419,7 @@ def main():
               f"(AppID {app_id} filtrado, no es un depot)")
         # NOTE: we deliberately DO NOT touch config.vdf's "DisableShaderCache".
         # It is the user's own Steam "Shader Pre-Caching" setting; the per-game
-        # ShaderDepot hook (v0.14, RESEARCH §13.9) handles keyless games inside the
+        # ShaderDepot hook (v0.14, RESEARCH §13.10) handles keyless games inside the
         # client without any global flag, so steamidra has no business writing it.
         # (Until v0.16.x we reverted a legacy 1->0 here, but that blindly stomped a
         # deliberate user-off — a real bug — so the revert was removed. A build

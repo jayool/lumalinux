@@ -187,7 +187,7 @@ bool InjectDepots(void* pInfo, const char* source) {
     if (depotIds.empty()) return false;
 
     // Seed everything into AppIdVec (+0x38) — Steam's per-depot license filter
-    // reads it (RESEARCH.md §"PackageId 0"). (The DepotIdVec experiment was
+    // reads it (RESEARCH.md §3 step 3, §13). (The DepotIdVec experiment was
     // removed: it did nothing without a license reconcile, which is the actual
     // no-restart mechanism — see the reconcile path.)
     std::vector<uint32_t> added;

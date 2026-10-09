@@ -170,7 +170,7 @@ inline constexpr const char* kGmrcFunctionPattern =
 // So returning 0 here for a keyless game makes Steam take its OWN clean skip
 // path, per-game, with no global DisableShaderCache and without breaking games
 // that ship a real shader key (those pass through and their shaders work). See
-// RESEARCH 13.9 for the full disassembly; this is the shipped form of "path C".
+// RESEARCH §13.9 for the disassembly (path B), §13.10 for this, the shipped "path C".
 //
 // SIGNATURE (cdecl, i386): returns the shader depot id (== app id by Steam
 // convention), 0 if none.
