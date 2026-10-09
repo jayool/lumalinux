@@ -1135,7 +1135,7 @@ lo incoherente, luego lo muerto.
     gris porque el verde solo se aplica a `doneRestartSteam`
     (`GameList.tsx:902`). Comentarios de código que describen el flujo viejo:
     reinicio de Steam al añadir (`downloads.py:1529,1608-1615`), "steam.sh"
-    en `GameList.tsx:448-450` y `SystemStatus.tsx:55,91,206`. Lista completa
+    en `GameList.tsx:448-450` y `SystemStatus.tsx:55,91,206`; la fuente "GitHub repo" ya retirada en `luatools_auth.py:684`; headcrab como instalador de netsock en `fixes.py`. La descripción de Steamless en `i18n.ts` dice que guarda un `.exe.bak` y el código guarda `<nombre>.original.exe` (`steamless.py:287`). Lista completa
     de la deriva de la UI frente a sus reglas en LumaDeck `DESIGN_UI.md`.
 19. El guard al latchear **borra `appcache/appinfo.vdf`** (`setup.sh:939-941`)
     sin comentario que lo explique.
