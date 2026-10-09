@@ -920,7 +920,7 @@ SLSsteam, `setup.sh` para aplicar. Salud: estados, guard, logs en tres sitios.
 ---
 ## §3 Superficies externas
 
-Sacadas con grep del código entero, no de memoria. Cada una con su función.
+Cada una con su función.
 
 ### 3.1 Hosts y URLs
 
@@ -1410,7 +1410,7 @@ el frontend.
 
 | Fecha | Dónde | Qué se probó | Resultado | Detalle |
 |---|---|---|---|---|
-| sin fecha | codespace | Claves en `config.vdf` de depots no poseídos | Steam las borra al cerrar (`grep -c DecryptionKey` pasa de 3 a 1 en un reinicio). Por eso `keys.txt` es la fuente | RESEARCH §6 |
+| sin fecha | codespace | Claves en `config.vdf` de depots no poseídos | Steam las borra al cerrar (las entradas `DecryptionKey` pasan de 3 a 1 en un reinicio). Por eso `keys.txt` es la fuente | RESEARCH §6 |
 | 2026-10-06 10:11-14:51 | codespace SteamOS | Lo mismo, con Verify | Sin claves en `config.vdf`: `Missing decryption key`. A las 10:14 habían vuelto tras un reinicio; a las 14:51 no estaban ni en disco ni en memoria. LumaDeck ya no edita ese fichero al desinstalar | — |
 | sin fecha (build `f92deb5e`) | codespace | Convar `@bClientTryRequestManifestWithoutCode` a 1 | El cliente pide sin código y el CDN lo exige igual ("No connection") | RESEARCH §6 |
 | sin fecha | codespace | Variación del código por sesión | El mismo gid recibió `15549905601718457808` y otro día `3261884576850880630`: el código es por petición | RESEARCH §7 |

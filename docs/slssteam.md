@@ -1138,14 +1138,14 @@ Además de lo listado en la cabecera del doc:
   autor en `dev`.
 - La concurrencia sobre los mapas sin mutex de `achievements.cpp`; el autor
   asume un solo hilo.
-- La forma de bytes del `.so` de release: el asset da 403 tras el proxy y
-  compilarlo no es reproducible, así que las anclas del parche de logros se
-  verifican sobre `.symtab` y la fuente, no sobre el binario publicado.
+- La forma de bytes del `.so` de release: compilarlo no es reproducible, así
+  que las anclas del parche de logros se verifican sobre `.symtab` y la
+  fuente, no sobre el binario publicado.
 
 ### 5.2 Pruebas y mediciones con fecha
 
-"Dónde": binario (inspección de un `.so` publicado), repo (un hecho sacado
-del repositorio con `git`, no una lectura de código), Deck, codespace, red,
+"Dónde": binario (inspección de un `.so` publicado), repo (historia del
+repositorio), Deck, codespace, red,
 Discord (segunda mano).
 
 #### Función 1 — Engancharse a Steam
@@ -1177,7 +1177,7 @@ claro) se mide en `slssteam-plugins-analysis.md`.
 |---|---|---|---|---|
 | 2026-07 | binario `SLSsteam.so` `20260705132808` | Codegen del bloqueo de updates v1 | `-flto=auto -O3` colapsa seis `&=` en un solo `and dword [reg+disp], 0xFFFFF8E5` (`~0x71A`); con el prefijo `81 /4` el ancla `E5 F8 FF FF` casa exactamente una vez. Base del contraparche de lumalinux (probado el 07-07, `nosotros.md` §5.2 F5) | lumalinux `RESEARCH.md` §16.2 |
 | 2026-07 | Discord (issue #20 de LumaDeck, segunda mano) | Síntoma del bloqueo v1 | "Update required" sin bajar nada; `UseWhitelist: yes` global rompía el unlock y los DLC (caso Cuphead) | §2.5 |
-| 2026-07-23 | repo (`20260723102618`) | ¿Queda el ancla v1? | `grep` de `0xFFFFF8E5` en la fuente: cero; el bloqueo es el hook de `GetUpdateInfo` con `DisableUpdates: yes` por defecto | §2.5 |
+| 2026-07-23 | repo (`20260723102618`) | ¿Queda el ancla v1? | `0xFFFFF8E5` ya no aparece en la fuente; el bloqueo es el hook de `GetUpdateInfo` con `DisableUpdates: yes` por defecto | §2.5 |
 
 #### Función 6 — Fixes y DRM
 

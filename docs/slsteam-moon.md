@@ -13,9 +13,9 @@ hacemos lo mismo está en `nosotros.md`.
 | | |
 |---|---|
 | **Qué es** | Un fork de SLSsteam (base: el upstream de mayo de 2026, `VERSION = 20260528151547`) que convierte el unlocker en una **pila completa de instalación nativa** dentro del mismo `.so` de 32 bits: lee los `.lua` de LuaTools (`<Steam>/config/stplug-in/<appid>.lua`) como fuente de juegos, inyecta los appIds y depotIds en el **package 0** real de Steam, provisiona el appinfo de apps no poseídas con un **cliente CM anónimo propio** y lo **empalma en `appcache/appinfo.vdf`** antes de que Steam lo abra, toma las claves de depot de los `.lua` (y sustituye la respuesta de Steam cuando falla), baja los manifests del **archivo público de LuaTools** (`manifest.luastools.xyz`) y los guarda en un store propio, aplica pins de manifest en el plan de descarga y en el reconcile, suprime updates según pins y proveedores, pide esquemas de logros con un **SteamID fijo** en vez de reseñadores, **dona** códigos de petición de manifest de los depots que la cuenta posee, integra Steamless (opt-in), desbloquea el control parental (opt-in), retira juegos de la biblioteca sin reiniciar, y recarga todo en caliente en el hilo IPC de Steam. Alrededor: un wrapper de 550 líneas con guard anti crash-loop, cobertura de `.desktop`, shim root del lanzador de la distro, guardian systemd, un helper nativo que baja **catálogos de patrones firmados** (Ed25519) por SHA-256 del `steamclient.so`, y tres satélites externos (Lumen, luatools-moon, cloudredirect-moon). 43 objetos de hook en `hooks.cpp` (32 detours, 11 VMT) más los que instalan las feats (package 0, UI de `steamui.so`, pipeline de depots, cuarentena, reconcile, parental, caché de appinfo). No tiene decompilador RTTI ni Lua de plugins: los índices de vtable son constantes. |
-| **Repos y commits leídos** | `swwayps/slsteam-moon` `origin/slsteam-moon@f50f28e` (2026-09-29, "revert(dlc): restore active-app gate on dlc checks"). Tags `v2.6` (06-30), `v2.6-millennium`, `v2.7` (07-02), `v2.8` (07-21), `v2.9` (09-19); 22 commits sin tag después de v2.9. Clon **superficial**: 349 commits visibles desde `0285cfb` (2026-06-04); sin ancestro común con upstream (77 commits de AceSLS cherry-pickeados). `src/` ≈ 47.000 líneas propias (15.100 núcleo, 30.500 `feats/`, 1.500 `sdk/` sin protobufs, 3.000 `utils/`), `tools/` 21.700 (97 tests unitarios), `setup.sh` 1433, `scripts/` 4.900. Ramas `beta` (09-04) y `millennium` (07-22) son **viejas**, no adelantadas. |
+| **Repos y commits leídos** | `swwayps/slsteam-moon` `origin/slsteam-moon@f50f28e` (2026-09-29, "revert(dlc): restore active-app gate on dlc checks"). Tags `v2.6` (06-30), `v2.6-millennium`, `v2.7` (07-02), `v2.8` (07-21), `v2.9` (09-19); 22 commits sin tag después de v2.9. 381 commits desde `84450ef` (2026-05-31, "chore: import upstream tree"); sin ancestro común con upstream (77 commits de AceSLS cherry-pickeados). `src/` ≈ 47.000 líneas propias (15.100 núcleo, 30.500 `feats/`, 1.500 `sdk/` sin protobufs, 3.000 `utils/`), `tools/` 21.700 (97 tests unitarios), `setup.sh` 1433, `scripts/` 4.900. Ramas `beta` (09-04) y `millennium` (07-22) son **viejas**, no adelantadas. |
 | **Plataforma** | Linux x86 de 32 bits dentro de `steam` (`ubuntu12_32`); helper `pattern-refresh` nativo x86_64. Distros nombradas en código: Debian/Ubuntu/Mint (`/usr/games/steam`), Arch/Fedora/Nobara (`bin_steam.sh`), openSUSE, Pop!_OS, SteamOS/Bazzite/Silverblue (inmutables), NixOS (bwrap), ChimeraOS. **Sin Flatpak**. Deck/Game Mode: solo si Game Mode invoca `steam` por PATH o por el shim; no hay drop-in de `steam-launcher.service`. Build "portable" en `ubuntu:22.04` (glibc ≤ 2.34). |
-| **Licencia y quién** | AGPL-3.0-only (ficheros nuevos con cabecera SPDX). Steamless redistribuido verbatim bajo CC BY-NC-ND 4.0. Autor principal `unplausible` (264 de 349 commits), organización `swwayps`; PRs de FATEx0 (pins, reconcile) y dankrr (presencia de shortcuts); 77 cherry-picks de Ace SLS. Ritmo ≈ 3,5 commits/día entre 06-04 y 09-29; 5 tags lightweight; `res/version.txt` **nunca cambia** (todo build embebe `20260528151547`). Soporte por issues de GitHub (#6 y #7 sin respuesta). |
+| **Licencia y quién** | AGPL-3.0-only (ficheros nuevos con cabecera SPDX). Steamless redistribuido verbatim bajo CC BY-NC-ND 4.0. Autor principal `unplausible` (296 de 381 commits), organización `swwayps`; PRs de FATEx0 (pins, reconcile) y dankrr (presencia de shortcuts); 77 cherry-picks de Ace SLS. Ritmo ≈ 3,1 commits/día entre 05-31 y 09-29; 5 tags lightweight; `res/version.txt` **nunca cambia** (todo build embebe `20260528151547`). Soporte por issues de GitHub (#6 y #7 sin respuesta). |
 | **Relación con los demás programas** | Fork de **SLSsteam** (§5.3). Pareja de **luatools-moon** (plugin que escribe los `.lua`, `luaappids.yaml` y `ManifestPins`), **Lumen** (sidecar que inyecta el frontend de LuaTools por el puerto CDP de CEF que moon le publica), **cloudredirect-moon** (CloudRedirect por `LD_PRELOAD` desde el wrapper), **steam-monitor** (catálogos de patrones firmados) y el espejo **jsdelivr** (releases). Manifests del **archivo de LuaTools**; el README acredita a Midrags/SFF/**LumaCore** ("Windows reference port for the LoadPackage patch logic") y a OpenSteamTool (ticket derivado de la app 7). **SLSDeck carga moon** y solo moon. Nosotros: el modelo de wrapper de `setup.sh` viene de moon; portamos su reconcile de licencias (v0.16.15) y `-fno-reorder-blocks-and-partition` (v0.16.9); rechazamos su SafeMode-off, su feed firmado, su donación de códigos y su shim root (§4.4). |
 
 **Lo que cambia respecto al doc anterior**, en una línea cada uno:
@@ -866,10 +866,10 @@ Versión: fija + build-ids. Salud: logs, guard, attestation.
 sin Flatpak; Deck solo por PATH/shim; Decky coexiste (CEF 8080).
 
 **Código abierto, licencia, quién, ritmo.** AGPL-3.0-only; Steamless
-CC BY-NC-ND redistribuido; un mantenedor (`unplausible`), ~3,5 commits/día,
+CC BY-NC-ND redistribuido; un mantenedor (`unplausible`), ~3,1 commits/día,
 5 tags lightweight, `version.txt` congelado, el zip "2.9" **resubido cuatro
-veces** bajo el mismo tag (§5.2 F11); historia truncada el 2026-06-04 (clon
-superficial); 77 cherry-picks de AceSLS con fecha original; README de 33
+veces** bajo el mismo tag (§5.2 F11); historia desde el 2026-05-31
+(`84450ef`, "chore: import upstream tree"); 77 cherry-picks de AceSLS con fecha original; README de 33
 líneas que remite a luatools-moon; issues #6 ("Upstreaming the moon
 branches") cerrada sin respuesta, #7 ("User controllable coverage") abierta.
 
@@ -1369,17 +1369,17 @@ Sin pruebas propias.
 | 2026-09-02 → 09-17 | repo | Silencio tras la caída de proveedores | Ni un commit entre el 09-04 y el 09-17 en ninguna rama; el 17 o después se empujan 106 commits de golpe sobre `cae57d2` (64 cherry-picks de upstream) hasta el 22, y el tag v2.9 el 19 | §5.3 |
 | 2026-08-17 / 09-07 | GitHub (issues) | Issues | #6 "Upstreaming the moon branches" (ItszFinn, 17-ago) cerrada el 7-sep sin respuesta visible; #7 "User controllable coverage" (yofukashino, 24-ago) abierta. Ninguna sobre proveedores | §5.3 |
 
-### 5.3 Cronología (desde 2026-06-04)
+### 5.3 Cronología (desde 2026-05-31)
 
-**Topología.** El clon es superficial: `.git/shallow` = `0285cfb` (2026-06-04,
-"chore(tools): add appinfo/provisioning dev helpers"), así que no hay
-historia visible anterior ni se sabe cuándo nació el fork; `res/version.txt`
-y `res/updates.yaml` no cambian en lo visible. Sin ancestro con upstream
+**Topología.** El fork nace el 2026-05-31 con `84450ef` ("chore: import
+upstream tree", 714 ficheros de golpe), seguido el mismo día de los
+primeros cambios propios (protocol handlers, exewrapper, pins de Lua);
+`res/version.txt` y `res/updates.yaml` no cambian en toda la historia. Sin ancestro con upstream
 (`git merge-base origin/slsteam-moon 049bbdd` vacío): 77 commits de Ace SLS
 están **cherry-pickeados** con su fecha de autor (por eso aparecen fechas de
-julio entre agosto y septiembre). Autores: `unplausible` 264, Ace SLS 77,
-FATEx0 4, swwayps 3, dankrr 1. 349 commits en `origin/slsteam-moon` (106
-jun, 87 jul, 99 ago, 57 sep). `beta` (46 propios, último 09-04) y
+julio entre agosto y septiembre). Autores: `unplausible` 296, Ace SLS 77,
+FATEx0 4, swwayps 3, dankrr 1. 381 commits en `slsteam-moon` (9 may,
+129 jun, 87 jul, 99 ago, 57 sep). `beta` (46 propios, último 09-04) y
 `millennium` (60 propios, último 07-22) van **por detrás** de main (229 y 323
 commits); lo único exclusivo de `beta` es `feat(themes): preload themes
 before SteamUI starts` y artefactos de release commiteados; `millennium` (UI
