@@ -1804,7 +1804,7 @@ plugin lo puede copiar, porque no es código: es una máquina de mantenimiento.
 > que los plugins de terceros también enganchan, y `LuaHook::place` de
 > SLSsteam **no recoloca un `jmp` ajeno** en su trampolín (sólo
 > `fixPICThunkCall`), luego un plugin ajeno encima del nuestro se cae en el
-> primer ticket (§[2026-09-29] de `assella-analysis.md`). Alternativa sin ese
+> primer ticket (`assella.md` §4.4 A5). Alternativa sin ese
 > choque: enganchar por la vtable, que lumalinux evita por diseño (`rtti.hpp`).
 >
 > **Decisión (29-sep): plugin.** El fichero de Ace byte a byte (sha256

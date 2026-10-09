@@ -2256,7 +2256,7 @@ repo tag → luastools → Hubcap zip (current build only, once a day per app).
 > `single` quota of 1,500/day, one attempt per depot+gid per day) → Hubcap zip.
 > The single manifest is the only online source left for an OLD build, which
 > is what moving a pin needs for the installed build's manifests. This was
-> F1 of `assella-analysis.md` §8, whose trigger ("P-ToyStore 404") has fired.
+> A1 of `assella.md` §4.4 (formerly F1), whose trigger ("P-ToyStore 404") has fired.
 > Measured 2026-10-07 10:54 (codespace, user key): `GET /generate/manifest?
 > depot_id=1942280&manifest_id=2046527723717816735` → 200,
 > `application/octet-stream`, 271 bytes, byte-identical to the file Steam had
@@ -2320,7 +2320,7 @@ Not exercised: the second half of the change (the update pass declining to move
 the pin when the installed manifest is in no source), which needs a real Valve
 update; and the case where the archive lacks the installed manifest, which
 falls through to P-ToyStore / luastools online, and past that to the Hubcap
-single-manifest plan B in `assella-analysis.md` §8-F1 (not implemented).
+single-manifest plan B in `assella.md` §4.4 A1 (not implemented at the time; done in LumaDeck `47f719a`).
 
 ## 20. The providers come back (2026-09-15/16) — two pools, the CDN check, GMRC on by default
 

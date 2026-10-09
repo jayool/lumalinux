@@ -1195,6 +1195,33 @@ lo incoherente, luego lo muerto.
     `0644`, legibles por cualquier usuario o proceso local. En una Deck de un
     solo usuario es poco; LuaTools cifra su sesión con DPAPI
     (`luatools.md` §2.10). Arreglo de una línea (`0600`). Sin decisión.
+31. **Un manifest que ya está en `depotcache/` se da por bueno.**
+    `resolve_manifest` devuelve el fichero si existe, sin validarlo
+    (`manifests.py:513-514`), y `place_in_depotcache` no escribe encima de uno
+    que exista (`:300-306`). Todo lo que LumaDeck trae de fuera se valida
+    (magia y depot/gid de dentro), pero lo que deja otro programa no. ASSella
+    copia a todos los `depotcache/` lo que le da Hubcap sin comprobarlo y
+    sobrescribiendo (`assella.md` §4.1-6). Con un fichero malo ahí, Steam falla
+    ese depot y LumaDeck no lo repone desde su archivo. Arreglo: pasar
+    `validate_manifest` también al fichero existente y reponerlo si no valida.
+    Sin decisión.
+32. **Los flags de SLSsteam solo se reponen al cargar el backend.**
+    `ensure_slssteam_flags` (`DisableUpdates: no`, `Plugins: yes`, el plugin
+    de spliced tickets) corre una vez por carga de Decky (`main.py:151-183`). Si
+    otro programa escribe `DisableUpdates: yes` o `Plugins: no` (ASSella lo hace
+    al guardar sus Ajustes, `assella.md` §4.1-2), los juegos añadidos no se
+    actualizan y el plugin no carga hasta el siguiente arranque, sin aviso.
+    Opciones: comprobarlos en el pase local de `pins.py` o enseñarlos en el
+    panel de estado. Sin decisión.
+33. **`_enrich_lua_with_linux_depot` puede pisar una clave buena.** Si el
+    manifest del depot Linux ya está en `depotcache/`, añade al final
+    `addappid(<linux>,1,"<primera clave del lua>")` sin mirar si el lua ya
+    trae ese depot (`downloads.py:781-803`). `steamidra_lite` guarda las claves
+    en un `dict` y gana la última línea, así que una clave correcta del depot
+    Linux se sustituye por la de otro depot. Que el manifest ya esté en
+    `depotcache/` es más probable con otro programa que siembra (ASSella copia
+    allí todo lo del zip, `assella.md` §2.4). Sin medir (apuntado el 2026-10-05).
+    Arreglo: no añadir la línea si el lua ya trae el depot. Sin decisión.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de

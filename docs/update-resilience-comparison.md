@@ -248,7 +248,7 @@ que moon espera su "nuevo sistema" para Linux: re-barrer entonces.
 - **ASSella.** No inyecta nada propio: Headcrab por `curl | bash`, `SafeMode: yes`
   heredado, sin `.desktop`, sin systemd, sin guard. Añadido en el eje 4: como
   descarga fuera de Steam y bloquea el update nativo, un build desconocido no
-  afecta a lo instalado, solo impide instalar. `assella-analysis.md`.
+  afecta a lo instalado, solo impide instalar. `assella.md`.
 - **CloudRedirect.** Contraste del eje 2: resuelve la vtable de
   `CClientUnifiedServiceTransport` **por nombre de clase RTTI** desde
   `/proc/self/maps`, sin patrones, sin feed, sin whitelist; 2.6.5 sigue
