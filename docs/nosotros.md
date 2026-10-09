@@ -743,8 +743,8 @@ disco** (`:377-379`; `downloads.py:1378-1381` la ignora).
    `oslist=linux` de steamcmd.net, solo si su manifest ya está en depotcache;
    añade `addappid(linux,1,<token windows>)`, `:733-812`); `steamidra_lite`
    con `--manifests-dir`, `--pin` si toca, `--dlc-of-owned` si poseído
-   (detectado por `--help`), `--name` (ignorado por el script moderno,
-   `steamidra_lite.py:1180-1185`); post-check: ≥1 clave extendida con
+   (detectado por `--help`); LumaDeck ya no pasa `--name` (2026-10-09; el
+   script lo sigue aceptando e ignorando, `steamidra_lite.py:1180-1185`); post-check: ≥1 clave extendida con
    `parent == appid` en `keys.txt` si el zip traía manifests, si no aborta
    "phantom install" (`:1214-1250`); `prune_retired_keys`.
 4. Lo que escribe `steamidra_lite` (`main`, `:1237-1458`): manifests a
@@ -790,8 +790,9 @@ en cualquiera; `sweep_orphan_stubs` al arrancar borra stubs de la raíz cuando
 hay manifest real en otra biblioteca (`downloads.py:1824-1930`). Límites:
 shadercache/compatdata solo raíz + biblioteca del juego;
 `get_installed_fixes` y `_find_game_dir_fallback` leen solo
-`config/libraryfolders.vdf`; `--pin-installed` solo la raíz. Análisis de los
-cinco defectos originales en `LumaDeck/docs/dev-multi-library.md` (issue #41).
+`config/libraryfolders.vdf`; `--pin-installed` solo la raíz. Los cinco defectos
+originales (issue #41) están arreglados; sus mediciones en §5.2 F9 y las
+decisiones en §4.4.
 
 **Lista de control.** Entradas: appid, página abierta, nombre; sin zip local;
 sin elección de disco. Escribe: lo de arriba. Quita: lo de arriba, con lo que
@@ -1356,6 +1357,35 @@ bien: `slssteam.md` §4.3.
 | C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-37) | 09-14 |
 | C5c — segundo mirror del feed (jsDelivr) | no mientras `raw.githubusercontent.com` funcione: un mirror ajeno obliga a firmar el feed (`design/rva-feed-design.md` §14) | 09-14 |
 
+#### Decisiones de diseño de LumaDeck (antes en LumaDeck `DESIGN.md`, borrado el 2026-10-09)
+
+Las que siguen vigentes, con la alternativa descartada y el motivo. La 11
+(watchdog de `.acf` atascados, #21) la sustituyó el trabajo de fondo de
+`pins.py` (§2.5).
+
+| Decisión | Alternativa descartada | Motivo |
+|---|---|---|
+| Descarga Steam, con los hooks de lumalinux | DepotDownloaderMod (DeckTools) | El disco queda como el de un juego comprado, Steam lo actualiza y muestra el progreso en su biblioteca |
+| Partir del backend de DeckTools y cambiar solo el motor de descarga | Reescribir desde cero | Frontend, operaciones de SLSsteam y fixes ya eran lo que se quería |
+| Se elige el juego por la tienda (AppID detectado), por nombre o por AppID; luego **Add game** e Install en Steam | Lista externa | Es el flujo natural y no exige saber el AppID |
+| Opciones avanzadas por juego (manifest, fixes, versión) | Solo un botón de instalar | Paridad con LuaToolsLinux |
+| Fuentes de manifests: Hubcap (clave) y Ryuu (cookie); Sushi y Spinoza en `api.json` pero apagadas | Solo Hubcap | Las espejo gratuitas van por detrás de los lanzamientos (`api_manifest.py:143-156`) |
+| Toda la pila con un solo `setup.sh` (modelo wrapper) | Instalación previa; headcrab | Un paso idempotente, sin parchear `steam.sh` ni orden de pasos |
+| Menú jerárquico (lista → detalle) | Una sola pantalla; pestañas | Aprovecha el espacio del QAM |
+| Reutilizar configs de DeckTools/LuaToolsLinux (`api.json`, cookies) | Pedirlo todo de nuevo | Evita trabajo a quien ya las tiene |
+| Solo Game Mode (salvo el hand-off a Desktop que se arma desde ahí) | Game Mode + Desktop | En Desktop ya están SFF y ASSella |
+| Pipeline DDL eliminado de `downloads.py` | Dejarlo como código muerto | El flujo nativo está probado; ~1250 líneas sobraban |
+| Repair appmanifest **borra** el `.acf` | Reconstruirlo | La reconstrucción lo dejaba en 0444 y Steam no podía actualizarlo |
+| Clave de Hubcap en cabecera `Bearer`, nunca en la URL | `?api_key=` | No acaba en los logs (`downloads.py:1420-1440`) |
+| Rutas `/lumadeck/*`, nombres y claves i18n de LumaDeck | Mantener los de DeckTools | Sin choques si conviven los dos plugins |
+| `steam -shutdown` como el usuario real | Como root | El IPC es por usuario; como root no llega (v0.3.0). Añadir un juego ya no reinicia Steam |
+| Añadir un juego no escribe `appmanifest` ni marcas de ACCELA | Stub `.acf` | El stub causaba la #41: Steam veía el juego como no instalado y lo bajaba otra vez (v0.7.4) |
+| Toda pregunta de "¿está instalado, dónde?" lee **todas** las bibliotecas por `_library_entries()` | Solo la raíz, con tres parseos distintos | Un juego en la SD o en otra partición salía mal |
+| Leer las dos copias de `libraryfolders.vdf` (`steamapps/` y `config/`) y unirlas | Solo la que carga Steam | Ninguna copia puede esconder una biblioteca; las entradas sin `steamapps/` se descartan |
+| Los stubs viejos se barren solos al cargar el plugin, solo si hay un `.acf` real en otra biblioteca | Botón manual | Nadie pulsaría un botón para un síntoma que no apunta al stub. Interruptor `LUMA_NO_ACF_SWEEP` o `~/.config/lumalinux/no_acf_sweep` |
+| Una sesión de LuaTools rechazada se marca, no se borra, y solo cuenta un 4xx | Borrarla ante cualquier fallo | Un 401 suelto puede ser Cloudflare; borrar tira un refresh token aún válido |
+| Borrar una credencial borra también su copia en el directorio de settings | Borrar solo el fichero | La copia se restaura en cada carga y deshacía el borrado (v0.7.5) |
+
 ---
 ## §5 Historial
 
@@ -1403,7 +1433,7 @@ cada prueba hecha con fecha, por función, con su resultado; la columna
 - **El AppID 2379780 es Mina the Hollower.** Es Balatro; la prueba de
   `method.md` §8 lo atribuía mal.
 - **`dev-backend-reference.md` de LumaDeck** describía la cadena con
-  P-ToyStore y `--pin` siempre; corregido en el doc de LumaDeck.
+  P-ToyStore y `--pin` siempre; el doc se borró el 2026-10-09 (el mapa es §1.3).
 
 **Lo que sigue sin medir** (y por tanto no se afirma en §2):
 
@@ -1578,8 +1608,8 @@ el frontend.
 | 2026-09-14 | codespace SteamOS, Balatro | Heal del manifest del build instalado | Pin a A, `rm` del manifest de B (instalado): 61 s después el fichero está de vuelta (`restored installed-build … from the archive`). No ejercitado: el pase negándose a mover el pin | RESEARCH §19.6 |
 | 2026-09-16 | codespace SteamOS (lumalinux 0.21.0, LumaDeck `be91d05`) | Release de pins con proveedores vivos (V1) | El pase deja en paz lo congelado por el usuario y por un fix de LuaTools; Auto-update on → `--unpin` inmediato, el depot sale de `ManifestIds`, el juego en "Play" | design/update-testing.md V1 |
 | 2026-09-16 13:33 | codespace (`LUMA_GMRC_URL` a un agujero negro) | Caída de proveedores (V3) y recuperación (V4) | `gmrc.json` → `down`; siguiente pase: siete juegos congelados a su build instalado con `reason: providers`; Balatro instala desde el manifest archivado sin ningún código en el reintento de 30 s. Con el proveedor de vuelta: `provider probe ok`, siete liberados, `ManifestIds` solo con los depots del fix | design/update-testing.md V3-V4 |
-| 2026-09-21 | codespace, Balatro | Qué hace que Steam aplique un pin cambiado | Pin + reinicio: nada. Pin + Verify: nada. Pin + `StateFlags 6` + reinicio: SLSsteam sustituye el gid, GMRC da el código, Steam baja el build de diciembre de 2024. De ahí `mark_update_required` | LumaDeck docs/dev-backend-reference.md |
-| 2026-09-21 | codespace (SteamDB) | Qué sirve Cloudflare a un cliente plano | El feed RSS sí; cada página, 403 con cuerpo vacío. Una tarde de sondas a `/api/` acabó en 403 y luego retos en todas las páginas, que se levantaron tras ~30 min de silencio. Con login OpenID, el historial de depot lista todos los manifests | LumaDeck docs/dev-backend-reference.md |
+| 2026-09-21 | codespace, Balatro | Qué hace que Steam aplique un pin cambiado | Pin + reinicio: nada. Pin + Verify: nada. Pin + `StateFlags 6` + reinicio: SLSsteam sustituye el gid, GMRC da el código, Steam baja el build de diciembre de 2024. De ahí `mark_update_required` | LumaDeck `pins.py` (`mark_update_required`) |
+| 2026-09-21 | codespace (SteamDB) | Qué sirve Cloudflare a un cliente plano | El feed RSS sí; cada página, 403 con cuerpo vacío. Una tarde de sondas a `/api/` acabó en 403 y luego retos en todas las páginas, que se levantaron tras ~30 min de silencio. Con login OpenID, el historial de depot lista todos los manifests | LumaDeck `game_versions.py`, `steamdb_reader.py` (docstrings) |
 | sin fecha | CI (`tests/fixtures/steamdb/`) | Traductor build → gids | 9 de 10 builds capturados casan al segundo | LumaDeck `tests/test_versions.py` |
 | 2026-10-05 | codespace SteamOS | Add de un juego poseído con `pin=True` | Ocurrió porque el codespace fresco no tenía `gmrc.json` (se escribe tras el primer lookup). Corregido en `pins.gmrc_state`. Si ese pin congela un juego poseído al salir un build sigue sin medirse | RESEARCH §21.4 |
 
@@ -1617,15 +1647,15 @@ convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
 | sin fecha | Deck (Proton) | Depots montados en Balatro | Solo 2379781 (64 MB); 2379782 (81 MB) no se descarga | RESEARCH §10 |
 | 2026-09-10/11 | devcontainer | Uninstall desde Steam | Borra los manifests del juego en `depotcache/` y el `.acf`, reescribe `config.vdf`, no toca `keys.txt`, el lua ni SLSsteam; reinstalar en la misma sesión falla hasta reponer el manifest | RESEARCH §19.3 |
 | 2026-09-16 | codespace, Into the Breach 590380 | Add nativo con proveedores vivos (V2) | `steamidra_lite` sin `--pin`, `ManifestIds` sin cambios, `CDN accepted` para el contenido y el shader, instala | design/update-testing.md V2 |
-| sin fecha | devcontainer SteamOS, Brotato y Vampire Survivors | El stub `.acf` en la raíz con el juego instalado en otra biblioteca (D4) | Tras reiniciar, "NOT INSTALLED"; pulsar Install vuelve a bajar el juego entero a la raíz (273 MB duplicados). Borrando solo el stub y reiniciando, "INSTALLED". El stub se reconoce por `StateFlags 1`, sin `InstalledDepots`, `SizeOnDisk 0` | LumaDeck docs/dev-multi-library.md |
-| sin fecha | devcontainer SteamOS, A Short Hike y Undertale | ¿Hace falta el stub? | Sin stub: botón Install, sobrevive un reinicio sin instalar, un solo `.acf`, instalado tras reiniciar. Con stub: dos manifests y "NOT INSTALLED". Un build, un entorno | LumaDeck docs/dev-multi-library.md |
-| sin fecha (×2) | devcontainer SteamOS | ¿Steam reescribe un `.acf` borrado? | Borrado con Steam abierto y reiniciado: no lo regenera | LumaDeck docs/dev-multi-library.md |
-| sin fecha | devcontainer SteamOS | Registrar una segunda biblioteca a mano | Cuatro intentos. `content_log.txt`: `Loaded Steam library folders configuration: …/steamapps/libraryfolders.vdf` (Steam carga `steamapps/`, no `config/`); `pgrep -x steam` no lo ve en Game Mode | LumaDeck docs/dev-multi-library.md |
-| sin fecha | test determinista (dos bibliotecas) | El patch de error del `.acf` y `hasGameFiles` con el juego en la biblioteca secundaria (D1, D2) | El patch creaba un stub en la raíz y dejaba intacto el `.acf` real (`UpdateResult=8`); la tarjeta salía en gris. Ambos corregidos leyendo todas las bibliotecas | LumaDeck docs/dev-multi-library.md |
-| sin fecha | Deck (9 `.acf`) + Windows (4) | Campos presentes en `.acf` reales (D5) | `StateFlags` y `ScheduledAutoUpdate` en 13/13; `UpdateResult` y `BytesToDownload` en 10/13; `FullValidateAfterNextUpdate` en 1/13. `ScheduledAutoUpdate` distinto de 0 en Proton 11.0 y en Halo (`StateFlags=6`). Por eso el patch no debe exigir campos que no existen | LumaDeck docs/dev-multi-library.md |
-| sin fecha | devcontainer SteamOS, Jump King | Add sin stub con el código enviado | `no .acf yet — Steam writes it on Install`; tras instalar, `StateFlags=4` y tamaño real | LumaDeck docs/dev-multi-library.md |
-| sin fecha | Discord (segunda mano), app 2111550 | `UpdateResult=8` | "content still encrypted" al lanzar; arreglado editando `StateFlags 36→4` y `UpdateResult 8→0`. Pista fuerte de fallo de descifrado, no prueba | LumaDeck docs/dev-multi-library.md |
-| sin fecha | Deck | `appworkshop_*.acf` | No existe ninguno en la Deck del autor; la medida de SteaMidra sobre `NeedsDownload` no aplica | LumaDeck docs/dev-multi-library.md |
+| sin fecha | devcontainer SteamOS, Brotato y Vampire Survivors | El stub `.acf` en la raíz con el juego instalado en otra biblioteca (D4) | Tras reiniciar, "NOT INSTALLED"; pulsar Install vuelve a bajar el juego entero a la raíz (273 MB duplicados). Borrando solo el stub y reiniciando, "INSTALLED". El stub se reconoce por `StateFlags 1`, sin `InstalledDepots`, `SizeOnDisk 0` | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | devcontainer SteamOS, A Short Hike y Undertale | ¿Hace falta el stub? | Sin stub: botón Install, sobrevive un reinicio sin instalar, un solo `.acf`, instalado tras reiniciar. Con stub: dos manifests y "NOT INSTALLED". Un build, un entorno | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha (×2) | devcontainer SteamOS | ¿Steam reescribe un `.acf` borrado? | Borrado con Steam abierto y reiniciado: no lo regenera | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | devcontainer SteamOS | Registrar una segunda biblioteca a mano | Cuatro intentos. `content_log.txt`: `Loaded Steam library folders configuration: …/steamapps/libraryfolders.vdf` (Steam carga `steamapps/`, no `config/`); `pgrep -x steam` no lo ve en Game Mode | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | test determinista (dos bibliotecas) | El patch de error del `.acf` y `hasGameFiles` con el juego en la biblioteca secundaria (D1, D2) | El patch creaba un stub en la raíz y dejaba intacto el `.acf` real (`UpdateResult=8`); la tarjeta salía en gris. Ambos corregidos leyendo todas las bibliotecas | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | Deck (9 `.acf`) + Windows (4) | Campos presentes en `.acf` reales (D5) | `StateFlags` y `ScheduledAutoUpdate` en 13/13; `UpdateResult` y `BytesToDownload` en 10/13; `FullValidateAfterNextUpdate` en 1/13. `ScheduledAutoUpdate` distinto de 0 en Proton 11.0 y en Halo (`StateFlags=6`). Por eso el patch no debe exigir campos que no existen | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | devcontainer SteamOS, Jump King | Add sin stub con el código enviado | `no .acf yet — Steam writes it on Install`; tras instalar, `StateFlags=4` y tamaño real | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | Discord (segunda mano), app 2111550 | `UpdateResult=8` | "content still encrypted" al lanzar; arreglado editando `StateFlags 36→4` y `UpdateResult 8→0`. Pista fuerte de fallo de descifrado, no prueba | — (informe de la #41, borrado el 2026-10-09) |
+| sin fecha | Deck | `appworkshop_*.acf` | No existe ninguno en la Deck del autor; la medida de SteaMidra sobre `NeedsDownload` no aplica | — (informe de la #41, borrado el 2026-10-09) |
 | 2026-10-06 | codespace SteamOS | Archivos fuera de todo manifest en una reinstalación | Steam volvió a bajar 861 MB con los archivos ya en disco: no reutiliza huérfanos | — |
 | 2026-10-07 09:59 | codespace SteamOS, Brotato | Uninstall de un juego añadido sin reiniciar | Fuera: carpeta, `.acf`, lua, claves, `AdditionalApps`. Quedan: compatdata (si no se marca), shadercache (hoy se borra), el archivo propio de zips y manifests, librarycache. El juego sigue en la biblioteca hasta reiniciar | — |
 | 2026-10-07 19:38 | codespace SteamOS | Búsqueda por nombre con la tienda, sin credencial | `storesearch?term=brotato` → 4 items (dos DLC y la banda sonora incluidos); la UI muestra 3 | LumaDeck `5bb8fdb` |
