@@ -224,10 +224,22 @@ Detalles del motor:
 **Códigos dentro de Steam.** Cuando Steam pide un código, lo responde
 `download.lua`:
 
-- Copia leída el 2026-10-01: `curl.downloadString` (fork de `/usr/bin/curl` sin
-  `--max-time`) dentro del hook de GMRC con el mutex global de Lua cogido.
+- **Lo que sirve R2 desde el 2026-10-05** (manifest `updated_at
+  2026-10-05T15:37:10Z`, `download.lua` 1.0.1, sha256 `8e822aec…`, 9.166 B) es
+  **byte a byte el `download.lua` original de Ace**, el mismo que `canary@6677a05`
+  restauró el 29-sep. Sustituye al `84d6c23f` del 30-sep (el que llevaba
+  `pcall`).
+- Hooks **sin `pcall`**. `curl.downloadString(url, 5)` (fork de `/usr/bin/curl`
+  sin `--max-time`) corre dentro del hook de GMRC con el mutex global de Lua
+  cogido, hasta 5 intentos por recursión.
 - Un solo servidor, `http://gmrc.wudrm.com/manifest/`, con el UA de `curl`.
-- Caché en memoria sin caducidad (§5.2).
+  Sin caché de códigos.
+- **Si wudrm devuelve un cuerpo vacío** (timeout, conexión caída), el
+  `log.warn("Failed to download manifest request code for " .. manifestId)`
+  concatena el `uint64_t`. LuaJIT lanza un error dentro del callback FFI, que
+  tumba Steam: el mismo fallo de la l.272 de §5.2, en otra rama. Con el reto de
+  Cloudflare el cuerpo no está vacío: va a `Invalid MRC response`, reintenta y
+  devuelve el resultado de Steam.
 
 `managers/mrc_config_manager.py` escribe un `mrc_config.lua/json` (wudrm por
 `http://`, ManifestDeX de rescate) para una versión de prueba del plugin; ningún
@@ -693,8 +705,7 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 9. **Dos `spliced-tickets` a la vez.** El de `beta` es el de Ace, igual al
    nuestro sin la cabecera, con la misma guarda global `SplicedTickets.setup`.
    Con los dos cargados, el segundo no engancha nada: sin daño. La copia de R2
-   que usa `canary` está sin leer. Si divergiera de la guarda, habría
-   dos hooks sobre la misma función.
+   que usa `canary` es la misma (sha256 `62f377e3…`, leída el 2026-10-09).
 
 ### 4.2 Dependencias y qué rompe si cambia
 
@@ -777,9 +788,6 @@ Además de lo listado en la cabecera:
 **Lo que sigue sin medir**:
 
 - §4.1-1 a -3 con las dos herramientas instaladas.
-- El `download.lua` y el `plugins_manifest.json` vivos de R2: la última
-  lectura es la del 2026-10-01 (`84d6c23f`).
-- Si el `spliced-tickets.lua` de R2 conserva la guarda global.
 - El efecto de `DisableUpdates: yes` en un juego de ASSella con build nueva.
 
 ### 5.2 Pruebas y mediciones con fecha
@@ -798,6 +806,7 @@ Además de lo listado en la cabecera:
 | 2026-09-30 | fork `jayool/ASSella` rama `fix/mrc-out-of-hook` (`2fd6ecf`, `81213c6`), Balatro 2379780 | (A) instalar desde Steam sin código ni manifest con el GMRC fuera del hook | Steam vivo, "Unknown error" normal | demostración: el problema es de arquitectura (red dentro del hook) |
 | 2026-09-30 | ídem | (B) instalar por la web con códigos precargados fuera de Steam (`curl_cffi`) | 3/3 códigos de wudrm, Steam baja 60 MB + 228989, `InstalledDepots` completo | después Steam pide el depot de shaders sin código → 401 y se rinde |
 | 2026-10-01 | `download.lua` de R2, sha256 `84d6c23f…`, 10.656 B | lectura | crash de l.272 arreglado, hooks en `pcall`; sigue `curl` dentro del hook con el mutex, un servidor, caché sin caducidad | |
+| 2026-10-09 | `plugins_manifest.json`, `download.lua` y `spliced-tickets.lua` de R2 | qué se sirve hoy | manifest del 2026-10-05; `download.lua` 1.0.1 `8e822aec…` = `canary@6677a05` (el original de Ace, sin `pcall`); `spliced-tickets.lua` `62f377e3…` = el de `beta`; `download-1.4.0-spacetest.lua` 404 aunque la pestaña AT0-M lo ofrece | el crash por `uint64` en la rama de respuesta vacía vuelve a estar servido (§2.4) |
 | 2026-10-01 | CI de lumalinux (`probe-steam`, runs 13-15) | patrones de `download.lua` en `.text` | `GetPackage` y `GMRC` únicos en Deck estable `bc54101b`, escritorio estable `237495b4` (1788652215) y beta `a3661f5b` (1790721607) | A y B mismo código, diferencia en datos |
 
 #### Función 4 — Claves y manifests
