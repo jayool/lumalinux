@@ -1653,4 +1653,4 @@ convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
 |---|---|---|---|---|
 | 2026-06-24 / 07-24 | ecosistema | Valve reordena los virtuals de `IClient*::RunIPCFrame` | SLSsteam tuvo que bumpear y un mes después borró esos hooks (`8de3384`). Límite de la resolución por RTTI: no es inmunidad | RESEARCH §15.4 |
 | 2026-09-13 | PC (`strings`, `pefile`) | `ManifestDeXCore.dll` | PDB en `C:\Users\berke\source\repos\OpenSteamTool`, mismos proxies `dwmapi.dll`/`xinput1_4.dll`, mismo hook (eMsg 151/147): OpenSteamTool rebautizado; no reporta códigos ni identidad | RESEARCH §20.2 |
-| 2026-08 | Codespace y devcontainer | KVM | `/dev/kvm` no existe en ninguno de los dos, sin `vmx`/`svm`: cualquier VM es TCG | LumaDeck docs/cachyos-vm-testing.md |
+| 2026-08 | Codespace y devcontainer | KVM | `/dev/kvm` no existe en ninguno de los dos, sin `vmx`/`svm`: cualquier VM es TCG; por eso no se puede reproducir Game Mode de CachyOS Handheld en una VM | — (el informe de viabilidad se borró el 2026-10-09) |

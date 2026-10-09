@@ -1,5 +1,9 @@
 # lumalinux and the CachyOS / multi-distro port
 
+> **PAUSED (2026-10-09).** The port is on hold; the plan and its status live in
+> LumaDeck's `docs/porting-cachyos.md`. Pending on this side when it resumes:
+> CloudRedirect's fixed 10 s wait for `steamclient.so` (last item below).
+
 > Companion to LumaDeck's `docs/porting-cachyos.md` (the master design doc).
 > This file tracks only the **lumalinux-side** items. Bottom line: the hooking
 > core does **not** need porting — the work here was small and mostly
