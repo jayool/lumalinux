@@ -179,7 +179,7 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   `LUMA_NO_SLS_UNBLOCK` was removed with the update-unblock patch in v0.16.18.)
 - `LUMA_NO_CR_STATS_FIX=1`: disable the CloudRedirect stats-sync cold-start fix
   (the interposed `HandleGetUserStats` then forwards untouched). See
-  `docs/cloudredirect.md`.
+  `docs/cloudredirect.md` §4.4 C2 (fixed upstream in 2.6.6; the stub is inert).
 - `LUMA_LOADPKG_DEBUG=1`: install the diagnostic LoadPackage hook (off by default;
   logs `PackageId + AppIdVec`). `LUMA_LOADPKG_IDX=N` picks a candidate.
 
@@ -253,8 +253,8 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 - [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,
   the package-0 finder, and the SLSsteam native-achievement patch (§17; the
   removed update-unblock is §16)
-- [`docs/cloudredirect.md`](docs/cloudredirect.md): running beside CloudRedirect,
-  and the `LD_PRELOAD` ordering
+- [`docs/cloudredirect.md`](docs/cloudredirect.md): what CloudRedirect does and
+  what it means for us; the `LD_PRELOAD` ordering is in `docs/nosotros.md` §2.1
 - [`docs/maintenance.md`](docs/maintenance.md): fixing things after a Steam client
   or SteamOS update
 
@@ -278,7 +278,8 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   clause applies to the combined binary; in practice inert for lumalinux because it
   is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
-  [`docs/cloudredirect.md`](docs/cloudredirect.md) for the `LD_PRELOAD` ordering.
+  [`docs/cloudredirect.md`](docs/cloudredirect.md) and `docs/nosotros.md` §2.1 for
+  the `LD_PRELOAD` ordering.
 - Manifest request codes are **not** fetched any more: the provider cascade
   (`manifest.opensteamtool.com`, `gmrc.wudrm.com`, `manifest.steam.run`; RESEARCH
   §7) died on 2026-09-09. Games install and update from manifests pre-seeded in

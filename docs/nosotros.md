@@ -680,7 +680,7 @@ Pendiente externo: Valve retira el endpoint de tienda de esquemas el
 2026-10-22; SLSsteam lleva el arreglo (`51724f5`) sin release.
 
 **Lista de control.** Almacén: Steam (`appcache/stats`) + CloudRedirect. Sincronización:
-blob de CloudRedirect en Drive/OneDrive/Dropbox, descargado una vez por
+blob de CloudRedirect en su proveedor (Drive, OneDrive, S3, R2 o carpeta), descargado una vez por
 arranque. Convivencia: SLSsteam contesta para añadidos gracias al guard;
 CloudRedirect contesta desde su almacén o deja pasar. Esquemas: generador de
 LumaDeck apagado; SLSsteam los consigue por reseñadores de la tienda
@@ -689,8 +689,8 @@ LumaDeck apagado; SLSsteam los consigue por reseñadores de la tienda
 ### 2.8 Cloud saves
 
 Delegado por completo en **CloudRedirect**: `cloud_redirect.so` por `LD_PRELOAD`
-intercepta los RPC de Steam Cloud y los sirve desde Google Drive, OneDrive o
-Dropbox. `setup.sh` lo trata como componente core: sin él aborta ("cloud
+intercepta los RPC de Steam Cloud y los sirve desde Google Drive, OneDrive,
+S3, R2 o una carpeta (`cloudredirect.md` §2.10). `setup.sh` lo trata como componente core: sin él aborta ("cloud
 enabled sin CloudRedirect es incoherente", `:1091-1103`), resuelve la última
 release que traiga `cloud_redirect.so` saltando las Windows-only (`:463-524`),
 instala la app flatpak `org.cloudredirect.CloudRedirect` para el login del
@@ -707,9 +707,10 @@ no el del Steam Runtime (`libcurl_pin.cpp:102-168`); con 2.6.6 estático solo
 afecta a lo nuestro, y se mantiene (opción A, 2026-10-07). Ninguna medición de
 un save sincronizado en nuestros docs; sí de logros (§2.7).
 
-**Lista de control.** Redirección: CloudRedirect, tres proveedores.
-Convivencia con Steam Cloud: `DisableCloud: no`; CloudRedirect inyecta cuota y
-changelists por app (su doc).
+**Lista de control.** Redirección: CloudRedirect, cinco proveedores.
+Convivencia con Steam Cloud: `DisableCloud: no`; CloudRedirect contesta los
+changelists de las apps de `AdditionalApps` (la inyección de cuota en el
+appinfo es solo de Windows, `cloudredirect.md` §2.8).
 
 ### 2.9 Añadir y quitar un juego
 
@@ -1233,10 +1234,20 @@ lo incoherente, luego lo muerto.
     `status.json`, que tampoco se escribiría) y nombrar al culpable si se ve su
     marca ("neutralised by SLSDeck" en el script, `.slsdeck-disabled`). Sin
     decisión.
+35. **El `.so` de CloudRedirect llega por dos caminos que no se coordinan.**
+    `setup.sh` (y LumaDeck al actualizar) baja `cloud_redirect.so` del asset de
+    la release de GitHub (`setup.sh:70-80,463-524`); la app Flatpak, que
+    instalamos de `gh-pages` y pedimos abrir para el login, trae el suyo y
+    ofrece reemplazar el desplegado si la versión difiere
+    (`cloudredirect.md` §4.1-6). LumaDeck compara la versión en disco con la
+    release (`components.py:87-114,165-181`): si la del Flatpak va por
+    delante o por detrás, cada lado ofrece volver a cambiarlo. Opciones: tomar
+    el `.so` del Flatpak igual que ya tomamos el CLI, o avisar en LumaDeck
+    cuando la versión en disco no sea la de la release. Sin decisión.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
-CloudRedirect); `target_library_path` se acepta y se ignora porque Steam elige
+CloudRedirect; sin efecto desde CloudRedirect 2.6.6, que oculta sus símbolos); `target_library_path` se acepta y se ignora porque Steam elige
 la biblioteca al instalar, no es un bug sino una función que no existe.
 
 **Comprobado contra los fallos de BetterSteamTools, opensteamtool-cn y LuaTools**

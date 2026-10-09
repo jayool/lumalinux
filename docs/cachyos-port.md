@@ -76,5 +76,5 @@ doc's "Non-regression invariants" section.
 `steamclient.so` esté mapeado y luego desiste sin enganchar nada. Moon lo subió
 a 120 s (`cloudredirect-moon` `2eee675` y siguientes) porque en Arch/CachyOS lo
 vio mapearse pasados los 10 s. Mientras instalemos el `.so` de Selectively11,
-CloudRedirect en CachyOS puede no arrancar; ver `cloudredirect.md`, re-barrido
-2026-09-28, caminos A/B/C. Requisito del port, no del núcleo de hooks.
+CloudRedirect en CachyOS puede no arrancar; ver `cloudredirect.md` §4.1-8 y
+§4.4 C11/C13. Requisito del port, no del núcleo de hooks.

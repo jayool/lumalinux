@@ -252,7 +252,7 @@ que moon espera su "nuevo sistema" para Linux: re-barrer entonces.
 - **CloudRedirect.** Contraste del eje 2: resuelve la vtable de
   `CClientUnifiedServiceTransport` **por nombre de clase RTTI** desde
   `/proc/self/maps`, sin patrones, sin feed, sin whitelist; 2.6.5 sigue
-  funcionando sin cambios (`cloudredirect.md:71-92`, campo 09-14). Nuestro
+  funcionando sin cambios (`cloudredirect.md` §2.1, campo 09-14). Nuestro
   DepotKey tiene ese camino como paracaídas; CloudRedirect como único.
 
 ---
