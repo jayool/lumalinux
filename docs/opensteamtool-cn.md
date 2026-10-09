@@ -289,6 +289,7 @@ Además de lo listado en la cabecera:
 |---|---|---|---|---|
 | 2026-09-16 07:03 UTC | `20770407`, `manifestdex`, `wudrm`, `steam.run` | código para un gid | los cuatro `CODE_VALID` | así se supo que wudrm y steam.run habían vuelto (el fork cambió a wudrm una hora después de que 20770407 diera 502) |
 | 2026-09-29 | `SDM` y `20770407` | Spacewar 481, gid `3183503801510301321` | el mismo código, `5726322088222453673`, en el mismo instante | mismo origen o uno cachea al otro |
+| 2026-09-29 | `depotcn.caigamer.cn/manifest/<gid>` (proveedor de códigos del lanzador chino SteamToolbox, que redistribuye una rama de este fork) | código para un gid, con nuestro UA, con UA de Chrome + `Accept: application/json` y con el de curl | **403** en los tres; en el mismo minuto `20770407` respondió | no es un filtro de UA: región o una clave que añade la app; inutilizable desde fuera de China, cerrado |
 
 ### 5.3 Cronología
 

@@ -1170,10 +1170,48 @@ lo incoherente, luego lo muerto.
     Y `FindBuildDepotDependencyFunction` usa el primer match, no el único
     (`patterns.cpp:94-118,210-212`): solo importa si alguien fuerza BuildDep.
 
+29. **Nada de lo que instalamos se comprueba por hash.** `setup.sh` baja por
+    HTTPS de GitHub, sin digest ni versión fijada, todo lo que acaba dentro de
+    Steam: el `.so` de lumalinux (`setup.sh:60,1121`), el `.7z` de SLSsteam
+    (`:1048`), `cloud_redirect.so` (`:1100`), el `fix.so` de
+    `yesyes0649/steamnetsock-patch` (`:84,1112`, cuenta de un tercero) y el
+    `steam.sh` "vanilla" de `SteamDatabase/SteamTracking@master` (`:266`).
+    LumaDeck ejecuta ese `setup.sh` de `main` sin fijar (`installer.py:49,
+    500-560`) y se actualiza a sí mismo con el `LumaDeck.zip` de la última
+    release sin comprobar el digest que GitHub publica (`self_update.py:80,160`).
+    Lo que lo hace morder: quien controle cualquiera de esas cuentas, o una
+    release rota, mete código en el proceso de Steam del usuario en el
+    siguiente `setup.sh`. Es el mismo modelo de confianza que el auto-update de
+    BetterSteamTools y LuaTools (`bettersteamtools.md` §2.11, `luatools.md`
+    §2.11); LuaTools al menos compara el digest del asset. Opciones: comprobar
+    ese digest (barato; protege de una descarga alterada, no de una cuenta
+    comprometida) o fijar versión y hash de los binarios de terceros. Sin
+    decisión.
+30. **Las credenciales se guardan con permisos por defecto.**
+    `credentials.json` (clave de Hubcap, cookie de Ryuu, sesión de LuaTools),
+    `luatools_session.json` y `api.json` se escriben con `open(…, "w")` desde
+    el backend de Decky, que corre como root (`api_manifest.py:43,70-71`;
+    `luatools_auth.py:55`; `utils.py:21-23`): quedan con el umask, normalmente
+    `0644`, legibles por cualquier usuario o proceso local. En una Deck de un
+    solo usuario es poco; LuaTools cifra su sesión con DPAPI
+    (`luatools.md` §2.10). Arreglo de una línea (`0600`). Sin decisión.
+
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
 CloudRedirect); `target_library_path` se acepta y se ignora porque Steam elige
 la biblioteca al instalar, no es un bug sino una función que no existe.
+
+**Comprobado contra los fallos de BetterSteamTools, opensteamtool-cn y LuaTools**
+(2026-10-09, LumaDeck `c4776ce`, lumalinux `0e7b7af`), sin hallazgo: LumaDeck no
+abre ningún puerto (el único servidor HTTP está en `tests/`); el CDP de `:8080`
+es el de Steam, que no abrimos nosotros; ninguna URL en HTTP salvo
+`gmrc.wudrm.com`, cuyo código solo se acepta tras aceptarlo el CDN
+(`gmrc_store.hpp:157`); ningún espejo de GitHub; los zips de fixes se extraen
+con contención de rutas (`fixes.py:165-173`); los manifests se validan antes de
+colocarlos; `headcrab.sh` solo se lee para sacar su versión, no se ejecuta
+(`headcrab_compat.py:136-151`); el `api.json` de `Star123451/LuaToolsLinux`
+(`config.py:13`) es una constante que ya no se usa, la lista de fuentes es la
+nuestra (`api_manifest.py:160-185`).
 
 ### 4.2 Dependencias de terceros y qué rompe si cae cada una
 
