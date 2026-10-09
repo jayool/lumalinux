@@ -271,11 +271,12 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   SLSsteam's `config.yaml`), its key/manifest chain and what it leaves behind.
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
-- [`docs/RESEARCH.md`](docs/RESEARCH.md): the dated research log — how each hook,
-  the RE workflow, the package-0 finder and the SLSsteam native-achievement patch
-  (§17; the removed update-unblock is §16) were found, entry by entry. Parts of it
-  describe states that have since changed; for how the stack works today read
-  [`docs/nosotros.md`](docs/nosotros.md) (Spanish)
+- [`docs/RESEARCH.md`](docs/RESEARCH.md): lumalinux internals at
+  reverse-engineering depth. Part I (§1-§10) is how it works today: each hook,
+  its signature and how it is located, Steam's install flow, loading, the RVA
+  feed and the re-derivation workflow. Part II (§11-§21) is the dated log of how
+  each piece was found and what broke. It opens with an index by topic; for the
+  whole stack read [`docs/nosotros.md`](docs/nosotros.md) (Spanish)
 - [`docs/cloudredirect.md`](docs/cloudredirect.md): what CloudRedirect does and
   what it means for us; the `LD_PRELOAD` ordering is in `docs/nosotros.md` §2.1
 - [`docs/maintenance.md`](docs/maintenance.md): fixing things after a Steam client

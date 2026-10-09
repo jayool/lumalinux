@@ -1,40 +1,81 @@
 # lumalinux — Research log & internals
 
-Detailed notes on how lumalinux works, how we found each piece, the dead-ends we
-hit, and the reverse-engineering workflow — so this can be extended later without
-repeating the whole journey.
+This document has two parts.
 
-Target binary during this research:
+- **Part I (§1-§10) — how lumalinux works today**, at reverse-engineering depth:
+  what each hook hooks, its signature and the structs it touches, how its target
+  is located on the current Steam build, how Steam's install flow runs and where
+  each piece acts. These sections are kept true to the current code; code is
+  cited as `file:line`.
+- **Part II (§11-§21) — the dated log**: how each piece was found, what broke and
+  what was measured. Each of those sections describes the code **as it was on its
+  date**; where it disagrees with Part I, Part I is current.
+
+For the stack-wide description (lumalinux + LumaDeck + SLSsteam/CloudRedirect,
+from the code, in Spanish) see [`nosotros.md`](nosotros.md); for the operational
+runbook (Steam updates, re-derivation, triage) see
+[`maintenance.md`](maintenance.md).
+
+Provenance: the first build studied was
 `~/.local/share/Steam/linux32/steamclient.so`, **ELF 32-bit i386**, ~48 MB,
-BuildID `f92deb5ee064a2cf28977bd86a6ed43f420cfcba` (SteamOS, ~May 2026).
-All RVAs/patterns in §4 and §7 are for that build — **re-derive on Steam
-updates** (§8.1 covers semi-automatic re-derivation).
+BuildID `f92deb5ee064a2cf28977bd86a6ed43f420cfcba` (SteamOS, ~May 2026). Addresses
+quoted below are labelled with the build they belong to. Nothing in the shipped
+library depends on one build's addresses: every target is resolved at runtime by
+the chain **RVA feed → byte pattern → rescue locator** (§4), and the per-build
+constants live in `res/rvas/<sha256>.yaml` (published by CI) and
+`src/patterns.hpp` (the compiled-in fallback).
 
-The package-0 injection path (§13) is the exception: it does NOT depend on
-per-build RVAs at all — the finder derives `GOTbase` and the cache-global
-offset at runtime from stable anchors, and has been verified on the
-post-May-2026 builds `7c4ac73e` and `db0d79c2` without code changes.
+## Index by topic
+
+Where each piece is described as it works today (Part I), and where its history
+is (Part II).
+
+| Topic | Today (Part I) | History (Part II) |
+|---|---|---|
+| Goal, components, who provides what | §1, §2 | — |
+| Steam's install flow and where each hook acts | §3 | §14 (auto-update, end to end) |
+| Resolution chain: RVA feed → pattern → rescue | §4 (intro) | §13.5.a, §15 |
+| DepotKey hook | §4 DepotKey | §11.3, §12 (crash and fix), §15 (RTTI rescue) |
+| BuildDep hook (off by default) | §4 BuildDep | §11.4, §19.3-§19.6 (pinned-manifest model) |
+| LoadPackage hook and the package-0 finder | §3, §4 LoadPackage | §11.2, §13.1-§13.7, §13.5.c (layout table) |
+| GMRC hook | §4 GMRC, §7 | §11.5, §19, §20 |
+| Request-code providers and the CDN check | §7 | §19 (providers die), §20 (they come back) |
+| ShaderDepot hook (per-game shader skip) | §4 ShaderDepot | §13.8-§13.11, §19.1 |
+| No-restart Add Game (license reconcile) | §4 Reconcile | §18 |
+| Loading: wrapper, `LD_PRELOAD` vs `LD_AUDIT` | §5 | — |
+| Patches over SLSsteam | §2, §4 Reconcile | §16 (update unblock, removed), §17 (achievement guard, `WriteRel32`) |
+| CloudRedirect coexistence | §2, §5 | — (see [`cloudredirect.md`](cloudredirect.md)) |
+| Re-deriving on a new Steam build | §8, §8.1 | §13.5.b, §15.2 |
+| Per-game data (`tools/steamidra_lite.py`) | §9 | §19.4, §20.6 |
+| DLC of an owned game | §9 | §21 |
+| Dead-ends | §6 | §13.2, §13.9, §19.2b |
+| Open items | §10 | §11.6 |
 
 ---
+
+# Part I — How lumalinux works today
 
 ## 1. The goal
 
 Make Steam's **native Install button** download and run a game you don't own
-(test case: Balatro, AppID 2379780), on a Steam Deck, **coexisting with
-SLSsteam** (no fork, no patch of SLSsteam).
+(first test case: Balatro, AppID 2379780), on a Steam Deck, **coexisting with
+SLSsteam** (no fork, no patch of SLSsteam's files — lumalinux only adjusts it in
+memory, see §2).
 
 ## 2. Division of labour (what each component provides)
 
 | Concern | Provided by |
 |---|---|
-| Ownership spoof (app shows as owned, license checks pass) | **SLSsteam** (`CUser::CheckAppOwnership`, `GetSubscribedApps`, cached tickets) |
-| Appinfo for unowned apps (so Steam sees the depot/manifest list) | **SLSsteam** ownership spoof (`CheckAppOwnership`) + lumalinux package-0 inject — these open it. `Apps::sendPICSInfoRequest` (eMsg 8903) can *also* attach an access token, but only as a **secondary** helper for apps Steam already queries; not load-bearing, and LumaDeck writes none |
+| Ownership spoof (app shows as owned, license checks pass) | **SLSsteam** (`CUser::CheckAppOwnership`, `GetSubscribedApps`, cached tickets). Which apps it spoofs comes from its `config.yaml` `AdditionalApps`, written by `steamidra_lite` / LumaDeck. lumalinux has no ownership hook (`main.cpp:21-22`) |
+| Appinfo for unowned apps (so Steam sees the depot/manifest list) | **SLSsteam** ownership spoof (`CheckAppOwnership`) + lumalinux package-0 injection — these open it. SLSsteam's `AppTokens` (attached by `Apps::sendPICSInfoRequest`, eMsg 8903) are a **secondary** helper, needed only for the subset of games whose appinfo Valve gates behind a token; LumaDeck writes one only when the game's lua carries an `addtoken()` line |
 | Family-share / offline bits | **SLSsteam** |
-| Surface the content depots into the download plan | **lumalinux** package-0 finder (see §13). The LoadPackage hook stays installed but is diagnostic-only since v0.13.0. |
-| Pin each depot to the right manifest (gid/size) | **SLSsteam** `ManifestIds` (since v0.16.10; lumalinux's BuildDep hook is **disabled** because SLSsteam 20260714 owns `BuildDepotDependency`) |
-| Provide the depot AES decryption keys | **lumalinux** DepotKey |
-| Provide the **manifest request code** (CDN download authorization) | **lumalinux** GMRC |
-| Skip the shader pre-cache for keyless games (per game, not global) | **lumalinux** ShaderDepot (§13.10) |
+| Surface the content depots into the download plan | **lumalinux** package-0 finder (§3 step 3). The LoadPackage hook is an opt-in diagnostic, not installed by default (§4) |
+| Pin each depot to the right manifest (gid) | **SLSsteam** `ManifestIds` (its own `BuildDepotDependency` hook; written by `steamidra_lite --pin-installed/--set-pin`). lumalinux's BuildDep hook is **off by default** (`LUMA_FORCE_BUILDDEP` turns it on, `main.cpp:175-186`) |
+| Provide the depot AES decryption keys | **lumalinux** DepotKey — the one **critical** hook (`main.cpp:192-201`) |
+| Provide the **manifest request code** (CDN download authorization) | **lumalinux** GMRC — on by default, not critical: a manifest pre-seeded in `depotcache/` needs no code |
+| Skip the shader pre-cache when it cannot succeed (per game, not global) | **lumalinux** ShaderDepot |
+| Refresh licenses after a game is added, without a Steam restart | **lumalinux** Reconcile (`CUser::NotifyLicensesUpdated`, called, not hooked) + the `keys.txt` watcher |
+| Coexistence fixes outside the install path | **lumalinux** in-memory patches `sls_achievement_unblock` (scopes SLSsteam's native-achievement guard, §17) and `cr_stats_fix` (CloudRedirect stats sync, [`cloudredirect.md`](cloudredirect.md)) (`main.cpp:303-340`) |
 
 SLSsteam gets you ownership + appinfo. lumalinux gets you the actual bytes.
 
@@ -52,118 +93,282 @@ Clicking Install kicks off, roughly:
    `failed to update ownership ticket (Access Denied)` — this is **non-fatal**;
    the install proceeds.
 2. **PICS appinfo** — Steam fetches the app's product info (depot list, manifest
-   ids). What actually opens this for an unowned app is SLSsteam's **ownership
-   spoof** (`CheckAppOwnership`) plus the **package-0 injection** — Steam then
-   queries the appinfo through its normal handshake. The access token SLSsteam
-   *can* attach (`Apps::sendPICSInfoRequest`) is a **secondary** helper, only for
-   apps Steam is already asking about; it is **not** the load-bearing piece, and
-   the lumalinux/LumaDeck flow writes **no** AppTokens. (Confirmed against
-   moon/LumaCore, whose source states ownership is established *purely* by the
-   package-0 `AppIdVec` injection + `CheckAppOwnership`.) The depot **list**
-   itself still has to come from this appinfo: lumalinux **cannot inject depots**
-   (doing so SIGSEGVs Steam — see §6); it only *patches* the GIDs of depots Steam
-   has already surfaced. So an appinfo that **carries the depot list is
-   required** — what is **not** required is the access **token** (the ownership
-   spoof + package-0 is what makes the CM return that appinfo). Everything
-   lumalinux adds (GID pin, key, pre-seeded manifest, request code) is
+   ids). What opens this for an unowned app is SLSsteam's **ownership spoof**
+   (`CheckAppOwnership`) plus the **package-0 injection** — Steam then queries
+   the appinfo through its normal handshake. An access token (SLSsteam
+   `AppTokens`) is needed only for the games Valve gates behind one; for the
+   rest it is not the load-bearing piece. (LumaCore's source states the same:
+   ownership is established by the package-0 `AppIdVec` injection +
+   `CheckAppOwnership`.) The depot **list** itself has to come from this
+   appinfo: lumalinux **cannot inject depots** (doing so SIGSEGVs Steam — see
+   §6); everything it adds (key, request code, shader decision) is
    **downstream** of Steam already knowing the depot list.
 3. **`PackageId == 0`** — the implicit "free apps everyone owns" package, which
    Steam's per-depot license filter consults. Our depot ids must be in its
    `AppIdVec` or the content depots are dropped (→ "0 target depots" → instant
-   "Fully Installed"/Play). → **package-0 finder** (since v0.13.0): walks the
-   `CPackageInfoCache` BST directly, locates the `PackageInfo*` for
-   `PackageId == 0`, and appends our depot ids in place. Runs on its own thread
-   and polls forever, so it works whether Steam loads the package fresh or
-   keeps it cached from a previous session (the LoadPackage hook can't see the
-   cached case — see §13). The LoadPackage hook is still installed on
-   `CPackageInfoCache::LoadPackage(PackageInfo*, sha1, cn, p4)` but it no
-   longer injects — diagnostic-only via `LUMA_LOADPKG_DEBUG`.
+   "Fully Installed"/Play). → **package-0 finder**
+   (`src/hooks/package_zero_finder.cpp`), not a hook but a thread started at
+   install time (`main.cpp:284-291`), and only if DepotKey installed — without
+   keys a forced download cannot complete, so nothing is injected
+   (`main.cpp:267-283`). It:
+   - resolves the global that holds the `CPackageInfoCache*`:
+     `cache_global = GOT + X`. The GOT base comes from the feed
+     (`finder.got_rva`) or, failing that, from the GMRC prologue tail
+     `05 <imm32>; 55 89 E5 57 56 53 81 EC ?? ?? 00 00 8B 7D 08 8B 4D 20`
+     (`GOT = addr(05) + imm32`, all sites must agree,
+     `package_zero_finder.cpp:196-279`); `X` comes from the feed
+     (`finder.cache_global_disp`) or from scanning for the cache-access idiom
+     `lea r1,[GOT+X]; mov r2,[r1]; mov r3,[r2+<root_off>]`, unique or nothing
+     (`:385-437`);
+   - walks the index-based search tree (root index at `cache+0xc58`, node array
+     at `cache+0xc6c` on the stable layout, `0xf90/0xfa4` on the 9cf4720f beta;
+     nodes 0x18 bytes: left `+0x00`, right `+0x04`, packageId `+0x10`,
+     `PackageInfo*` `+0x14`; `:24-76`) down to key 0, and refuses the object
+     unless its own `PackageId` (`+0x00`) is also 0 (`:486-560`);
+   - each pass first **retires** the ids it injected that are no longer in
+     `keys.txt`, then **appends** `KeyStore::GetAllDepotIds()` to `AppIdVec`
+     (`+0x38`) in place (`:806-807`; mechanics in §4 LoadPackage);
+   - polls every 2 s until package 0 first appears, then every 15 s forever
+     (re-injects if Steam rebuilt the package), and wakes at once when
+     `keys.txt` changes (`:139-140, 827`).
+
+   How the passive hook was replaced by this walker: §13.
+
+   **No-restart Add Game.** When `keys.txt` changes while Steam runs, the
+   watcher reloads the keys and flags the change; the finder, right after
+   re-injecting, calls **`CUser::NotifyLicensesUpdated`** (→ **Reconcile**, §4)
+   so Steam re-reads licenses and appinfo for the newly-owned depots without a
+   restart (`package_zero_finder.cpp:814-817`).
 4. **`CUserAppManager::BuildDepotDependency(...)`** — builds the depot list for
-   the app (`pDepotInfo`, `pSharedDepotInfo`, each a `CUtlVector<DepotEntry>`).
-   → **BuildDep hook**: PATCH the `ManifestGid`/`ManifestSize` of our depots to
-   pin the right manifest. **Patch only — never inject** (see dead-end §6).
-5. **`LoadDepotDecryptionKey(this, app_id, depot_id, out_buf)`** — Steam asks for
-   each depot's AES key. Valve refuses for unowned. → **DepotKey hook**: serve
-   the 32-byte key from `keys.txt`. (config.vdf can't hold these — see §6.)
-6. **`…BYieldingGetManifestRequestCode(...)`** — Steam asks Valve for a
-   per-manifest **request code** that authorizes the manifest download from the
-   CDN. Valve denies for unowned (`Failed to get manifest request code,
-   'Access Denied'` → surfaced to the UI as "No connection"). → **GMRC hook**:
-   fetch the code from the provider cascade and return it. Current order
-   (`src/gmrc_store.hpp:154-158`): 20770407 → manifestdex → wudrm → steamrun,
-   each code checked against Valve's CDN before Steam sees it (`CdnAcceptsCode`).
-   *[Corrected 2026-10-05: this line used to read "opensteamtool → wudrm →
-   steamrun", the pre-2026-09-09 cascade. opensteamtool is gone (Cloudflare 403
-   for any User-Agent, `gmrc_store.hpp:138`); §7 keeps the history.]* **This is the load-bearing piece** — without it nothing
-   downloads.
-7. Manifest downloads from the CDN (authorized by the code), chunks download by
-   SHA, are decrypted with the depot key, committed to
-   `steamapps/common/<game>`. Done.
+   the app (`pDepotInfo`, `pSharedDepotInfo`, each a `CUtlVector<DepotEntry>`),
+   applying the per-depot license filter that step 3 satisfies. Version pinning
+   happens here, by **SLSsteam**: its own detour on this function applies
+   `ManifestIds`. lumalinux's **BuildDep hook** (PATCH the `ManifestGid` of our
+   depots, never inject — dead-end §6) is off by default (§4).
+5. **`LoadDepotDecryptionKey`** — Steam asks for each depot's AES key; the
+   dispatcher builds the KeyValues path
+   `Software\Valve\Steam\Depots\<depot>\DecryptionKey` and reads it through an
+   inner accessor. Valve has none for unowned depots. → **DepotKey hook** on that
+   accessor: serve the 32-byte key from `keys.txt`. (config.vdf can't hold these
+   — see §6.)
+6. **`…BYieldingGetManifestRequestCode(...)`** — when the manifest is **not**
+   already in `depotcache/`, Steam asks Valve for a per-manifest **request code**
+   that authorizes the manifest download from the CDN. Valve denies for unowned
+   (`Failed to get manifest request code, 'Access Denied'` → surfaced to the UI
+   as "No connection"). → **GMRC hook**: fetch the code from the provider
+   cascade and return it. Order (`src/gmrc_store.hpp:154-159`): 20770407 →
+   manifestdex → wudrm → steamrun; a code reaches Steam only after Valve's CDN
+   accepted it (`CdnAcceptsCode`, `:296-323`). With the manifest pre-seeded by
+   LumaDeck/`steamidra_lite` Steam never asks, so a missing GMRC hook or a dead
+   cascade costs the native manifest fetch and the keyed shader pre-cache, not
+   the install (`main.cpp:192-200`). Provider history: §7, §19, §20.
+7. Manifest downloads from the CDN (authorized by the code, or read from
+   `depotcache/`), chunks download by SHA, are decrypted with the depot key,
+   committed to `steamapps/common/<game>`. Done.
+8. **Shader pre-cache**, a separate job (`CGetShaderDepotManifestJob`) that asks
+   `GetShaderCacheDepot(appinfo)` for the shader depot id (== app id) and, if
+   non-zero, downloads and decrypts that depot's manifest — which needs both its
+   key and a request code. → **ShaderDepot hook**: return 0 (Steam's own clean
+   "skipping because shader depot ID is invalid") when the pre-cache cannot
+   succeed.
 
 ## 4. The hooks (functions, signatures, how found)
 
-All hooks installed via libmem inline hooking (`LM_HookCode`) + a get_pc_thunk
-fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD**
-(see §5).
+**Install mechanics.** Every detour goes through `LmHook::Install`
+(`src/lmhook.cpp:129-162`): libmem `LM_HookCode`, then one of two trampoline
+fixups, chosen by the target's **original** first byte:
+
+- PIC prologue (the normal case): `FixPicThunk` (`:29-80`, port of SLSsteam's
+  `MemHlp::fixPICThunkCall`) finds the relocated `call __i686.get_pc_thunk.REG`
+  in the trampoline and replaces it with `mov REG, <return address in the
+  original>`, any register.
+- Prologue already starting with `E9` (another library detoured it first, e.g.
+  SLSsteam): `RelocateChainedJmp` (`:97-123`) re-computes the copied `jmp
+  rel32` so the trampoline still lands on the other hooker's target.
+
+Hooks install from `InstallHooks()` (`main.cpp:87-365`), reached from the
+`LD_PRELOAD` constructor once `steamclient.so` is mapped (§5). The SafeMode hash
+check against `res/updates.yaml` is **advisory** — a build not in the list only
+raises a toast (`main.cpp:120-127`); the real gate is per hook.
+
+| Piece | Installed | Kill-switch | If it fails |
+|---|---|---|---|
+| DepotKey | always | `LUMA_NO_DEPOTKEY` | **critical**: the finder is not started, nothing is injected, Steam behaves vanilla (`main.cpp:267-283`) |
+| ShaderDepot | always | `LUMA_NO_SHADERSKIP` | keyless shader pre-cache runs and fails (§13.8) |
+| GMRC | always (since v0.21.0) | `LUMA_NO_GMRC` | no native manifest fetch; installs from pre-seeded manifests |
+| BuildDep | only with `LUMA_FORCE_BUILDDEP` | `LUMA_NO_BUILDDEP` | reported `DISABLED` when not forced (`main.cpp:229-234`) |
+| LoadPackage | only with `LUMA_LOADPKG_DEBUG=1` | `LUMA_NO_LOADPKG` | diagnostic only |
+| Reconcile | resolved, not hooked | `LUMA_NO_RECONCILE` or `~/.config/lumalinux/no_reconcile` | add-without-restart needs a restart |
+| package-0 finder | thread, if DepotKey is active | `LUMA_NO_PKG0_FINDER` | no depot surfacing |
+
+Each outcome (`INSTALLED`/`DISABLED`/`FAILED`) goes to
+`$XDG_RUNTIME_DIR/lumalinux/status.json` for LumaDeck (`status.cpp:33-51`), and
+to the log as a machine-readable line
+`Hook install: name=… method=rva|pattern|byname(rescue)|xref(rescue) … outcome=installed|miss|hook_install_failed`
+(`Finder resolve: … outcome=resolved|miss` for the finder).
+
+**How each target is located today.** Each target has a chain of resolvers;
+each step runs **only** if the previous one returned 0 (resolution runs while
+Steam starts, so nothing is computed that cannot change the outcome —
+`depot_key_hook.cpp:134-137`), and every step is unique-or-nothing except where
+noted:
+
+| Target | 1. RVA feed key | 2. Byte pattern (`src/patterns.hpp`) | 3. Rescue |
+|---|---|---|---|
+| DepotKey | `DepotKey` | `kDepotKeyFnPattern` (`:40-41`), unique | RTTI by name: `21IClientConfigStoreMap` / `GetBinary` → `12CConfigStore` |
+| GMRC | `GMRC` | `kGmrcFunctionPattern` (`:150-151`), unique | string xref `ContentServerDirectory.GetManifestRequestCode#1` + `.eh_frame_hdr` (walk-back fallback) |
+| ShaderDepot | `ShaderDepot` | `kShaderCacheDepotPattern` (`:196-197`), unique | string xref `shadercachedepot` + `.eh_frame_hdr` |
+| BuildDep | `BuildDep` (CI never publishes it) | `kBuildDepotDependencyPattern` (`:62-63`), **first match** (`patterns.cpp:210-212`) | string xref `BuildDepotDependency` + `.eh_frame_hdr` |
+| Reconcile | `Reconcile` | `kNotifyLicensesUpdatedPattern` (`:227-228`), unique | callback-125 anchor |
+| LoadPackage | — | `kLoadPackagePattern` (`:115-116`), candidate by index | — |
+| finder | `finder.got_rva`, `finder.cache_global_disp`, `finder.cache_root_off/cache_nodes_off` | GMRC prologue tail (GOT, consensus) + cache-access idiom scan | — |
+
+- **RVA feed** (`src/rva_feed.cpp`). At first use the library SHA-256-hashes
+  the on-disk `steamclient.so`, fetches
+  `https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml`
+  (accepted only if the body contains `hooks:`), caches it in
+  `~/.cache/lumalinux/rvas/` and falls back to that cache offline
+  (`:62-72`). The URL is hardcoded; there is deliberately no env override, since
+  the feed decides where detours land (`:52-61`). Each RVA is a file vaddr
+  (image base 0), translated by `VaddrXlate` (ELF `PT_LOAD` → file offset →
+  `/proc/self/maps` offset column, correct under split mappings) and rejected
+  unless it lands in an `r-x` mapping of `steamclient.so` (`:229-250`). The
+  finder's values are read independently of `hooks:`; `got_rva` is translated and
+  checked against any mapping (`.got` is not executable), `cache_global_disp`
+  and the layout offsets are used as plain numbers (`:186-227`). The files are
+  written by CI (`tools/check_patterns.py --emit-rvas` in
+  `.github/workflows/watch-steam.yml`) only for non-BLOCKING builds and only for
+  targets it resolved uniquely; a commit there needs no release. Example,
+  build `bc54101b…`: DepotKey `0x11a4500`, ShaderDepot `0x1048840`, Reconcile
+  `0x188c950`, GMRC `0x1371ac0`, finder disp `0x3b7d4`, layout `0xc58/0xc6c`,
+  GOT `0x2f4a34c`. Except for Reconcile (below), there is no runtime cross-check
+  of the feed against the pattern; that belongs to CI.
+- **Byte pattern** (`src/patterns.cpp`). Scanned over the aggregated `r-x`
+  span of `steamclient.so`. `FindUniqueInSteamclient` (`:132-166`) refuses 0 or
+  ≥2 matches, so an ambiguous pattern falls to the next resolver instead of
+  detouring a plausible wrong address. BuildDep alone still takes the first
+  match (`FindInSteamclient`, `:94-118`); LoadPackage enumerates all candidates.
+- **String xref** (`src/gmrc_xref.cpp:81-158`, core in
+  `src/gmrc_xref_core.hpp`): (1) find the anchor string in a readable mapping
+  (with its NUL terminator for `FindFunctionByString`, so a longer string cannot
+  match first); (2) derive the module GOT base by consensus over PIC preambles
+  (`call get_pc_thunk; add reg,imm32`); (3) find the **unique**
+  `lea reg,[base + (S − GOT)]` in `.text`; (4) map that site to its function
+  entry with `.eh_frame_hdr`'s sorted function-start table (`EhFrame::FindFunction`,
+  `src/eh_frame.hpp`) — exact, and it rejects an address inside no function.
+  Only GMRC keeps a fallback for a build with no usable table, the backward
+  `WalkBackToPrologue` scan, whose known failure modes are documented at
+  `gmrc_xref.hpp:32-51`; ShaderDepot and BuildDep refuse instead.
+- **RTTI by name** (`Rtti::ResolveVtableSlotByName`, `src/rtti.cpp:289`): find
+  the method-name string, find which slot of the interface-map class's vtable
+  references it (on overloads, the **lowest** slot — `GetBinary` sits in map
+  slots 6 and 7, and 7 is a different function), then read that slot from the
+  concrete class's vtable, located by its RTTI type name. Reads no byte of the
+  target, so it survives a prologue change that defeats feed and pattern
+  together. On `bc54101b`: slot 6 → `0x11a4500`. How this was adopted: §15,
+  [`slssteam-plugins.md`](slssteam-plugins.md).
+- **Callback-125 anchor** (`src/reconcile_anchor_core.hpp:101-138`): see
+  Reconcile below.
+
+Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.py`,
+`tools/derive_python_first.sh` with Ghidra as second opinion); the technique is
+§8, the procedure is `maintenance.md`.
 
 ### DepotKey — `LoadDepotDecryptionKey` (inner KeyValues accessor, v1.0)
 - `int32_t LoadDepotDecryptionKey(void* pObject, uint32 foo, char* KeyName, char* Key, uint32 KeySize)`
-- Pattern: `patterns.hpp::kDepotKeyFnPattern`.
-- This is the INNER KeyValues accessor (the function LumaCore hooks), NOT the
-  outer dispatcher. `KeyName` = `"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
-- Hook: parse the depot id from `KeyName`; if in keystore and `KeySize >= 32`,
-  `memcpy(Key, key, 32); return 32`; otherwise passthrough.
-- Records `g_lastServedDepot` for GMRC correlation.
-- WHY this function and not the outer dispatcher: see §12. Hooking the outer
-  dispatcher and short-circuiting it corrupts Steam's heap on owned depots.
+  — cdecl, 5 stack args (`depot_key_hook.cpp:36-38`). `foo` is the KeyValues
+  value-type selector (1 for binary keys); returns bytes written (32) or 0.
+- This is the INNER KeyValues accessor — `CConfigStore`'s `GetBinary` (vtable
+  slot 6 on the builds checked), the function LumaCore hooks — NOT the outer
+  dispatcher. `KeyName` = `"Software\Valve\Steam\Depots\<depot>\DecryptionKey"`.
+- Located by: feed `DepotKey` → `kDepotKeyFnPattern`
+  (`55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 24 8B 44 24 44 8B 6C 24 38 8B 7C 24 3C 8B 74 24 40 89 44 24 10 8B 44 24 48 89 44 24 14`:
+  push run, `get_pc_thunk.bx`, `sub esp,0x24`, the five-argument load sequence),
+  unique → RTTI by name (`depot_key_hook.cpp:138-179`). Current address:
+  `res/rvas/<sha>.yaml` (`0x11a4500` on `bc54101b`).
+- Hook (`depot_key_hook.cpp:74-106`): parse the depot id out of `KeyName`
+  (digits between the backslash and `\DecryptionKey`); if `KeyStore::Lookup`
+  has a key and `KeySize >= 32`, `memcpy(Key, key, 32); return 32`; otherwise
+  call the original. Presence-only (keyless) `keys.txt` entries deliberately
+  fall through — a zero key would fail to decrypt the shader depot's manifest;
+  ShaderDepot handles those games instead (`:89-98`).
+- WHY this function and not the outer dispatcher: hooking the dispatcher and
+  short-circuiting it corrupts Steam's heap on owned depots; answering the
+  KeyValues query lets the dispatcher run its normal path for every depot, owned
+  or not. How this was found: §12.
 
 ### BuildDep — `CUserAppManager::BuildDepotDependency`
 
-> **STATUS (v0.16.10+): the BuildDep hook is DISABLED.** SLSsteam 20260714 hooks
-> `BuildDepotDependency` itself (for its `ManifestIds`/`DepotBlacklist` features)
-> and loads first (`LD_AUDIT` before our `LD_PRELOAD`), overwriting the prologue,
-> so our pattern scan can no longer match. Version pinning moved to SLSsteam's
-> `ManifestIds` (written by `steamidra_lite --pin-installed`). The hook is
-> pin-only and inert in the default no-pin flow, so nothing is lost. Re-enable
-> for testing with `LUMA_FORCE_BUILDDEP`. Everything below describes how the hook
-> worked while it was active.
+> **Off by default.** It is installed only with `LUMA_FORCE_BUILDDEP`
+> (`main.cpp:175-186`); otherwise `status.json` records it `DISABLED`. SLSsteam
+> (≥ 20260714) detours `BuildDepotDependency` itself for `ManifestIds` /
+> `DepotBlacklist` and is loaded first (`LD_AUDIT`, §5), so the prologue our
+> pattern expects is SLSsteam's jump, and version pinning is SLSsteam's
+> `ManifestIds`. The hook only patched gids and was inert in the no-pin flow, so
+> nothing is lost. The rest of this subsection describes what it does when
+> forced.
 
-- 8 args, cdecl; `pDepotInfo`/`pSharedDepotInfo` are `CUtlVector<DepotEntry>`.
-- `DepotEntry` = 32 bytes: `{u32 DepotId; u32 AppId; u64 ManifestGid; u64 ManifestSize; u32 DlcAppId; u8 LcsRequired; u8 bNotNewTarget; u8 SharedInstall; u8 pad}`.
-- `CUtlVector<T>` = 16-byte header `{T* m_pMemory; int m_nAllocationCount; int m_nGrowSize; u32 m_Size}`.
-- Pattern: `kBuildDepotDependencyPattern`.
-- Hook: after original, for each depot in the vectors matching our keystore,
-  patch `ManifestGid`/`ManifestSize` (keep original size if our override is 0,
-  like LumaCore). Never injects.
+- 8 args, cdecl (`depot_dependency_hook.cpp:16-24`, `patterns.hpp:52-61`):
+  `bool BuildDepotDependency(void* this [ebp+0x08], uint32 AppId [+0x0C], void* pUserConfig [+0x10], CUtlVector<DepotEntry>* pDepotInfo [+0x14], CUtlVector<DepotEntry>* pSharedDepotInfo [+0x18], void* pSteamApp [+0x1C], uint32* pBuildId [+0x20], bool* pbBetaFallback [+0x24])`.
+- `DepotEntry` = 32 bytes: `{u32 DepotId; u32 AppId; u64 ManifestGid; u64 ManifestSize; u32 DlcAppId; u8 LcsRequired; u8 bNotNewTarget; u8 SharedInstall; u8 pad}` (`steam_types.hpp:28-39`, size pinned by `static_assert`).
+- `CUtlVector<T>` = 16-byte header `{T* m_pMemory; int m_nAllocationCount; int m_nGrowSize; u32 m_Size}` (`steam_types.hpp:17-24`).
+- Located by: feed `BuildDep` (CI never publishes it) → `kBuildDepotDependencyPattern`
+  (`55 89 E5 57 56 E8 ?? ?? ?? ?? 81 C6 ?? ?? ?? ?? 53 81 EC 2C 02 00 00 8B 45 08 89 85`,
+  ESI as PIC base), first match → string xref `"BuildDepotDependency"`
+  (`depot_dependency_hook.cpp:151-169`). With SLSsteam loaded the pattern cannot
+  match; if the xref resolves the entry, `LmHook` sees the `E9` and chains
+  through SLSsteam's detour (`RelocateChainedJmp`).
+- Hook (`:84-145`): call the original; return at once if it returned false
+  (the vector may be half-built). For the depots `keys.txt` lists for `AppId`,
+  overwrite `ManifestGid` in **`pDepotInfo` only** when the stored gid is
+  non-zero and differs. `ManifestSize` is left as Steam computed it (LumaCore
+  forces size 0 for the same reason), `pSharedDepotInfo` is never touched
+  (shared redists belong to their own app; overwriting them corrupted the heap,
+  §11.4), and nothing is ever injected (§6).
 
 ### LoadPackage — `CPackageInfoCache::LoadPackage`
-- `bool LoadPackage(PackageInfo* pInfo, uint8 sha1[20], int32 cn, void* p4)`.
-- `PackageInfo` (Linux i386): `PackageId` at +0x00, `AppIdVec`
-  (`CUtlVector<AppId_t>`) at **+0x38**.
-- Pattern: `kLoadPackagePattern` (matches ~2 candidates; we use index 0,
-  overridable with `LUMA_LOADPKG_IDX`).
-- **Since v0.13.0 this hook is diagnostic-only.** It no longer injects depot
-  ids — the package-0 finder owns injection now (see §13 for the why). The
-  hook stays installed purely for `LUMA_LOADPKG_DEBUG`, which logs every
-  `PackageId + AppIdVec` triple it sees and is what told us, in v0.10.8, that
-  Steam was keeping `PackageId=0` cached and never re-calling LoadPackage.
-- The actual injection — done by the finder — uses `KeyStore::GetAllDepotIds`
-  (equivalent to LumaCore's `GetAllDepotIds`), with a Source-SDK-style grow
-  policy via `std::realloc` (Linux Steam uses raw libc realloc for
-  `CUtlMemory`; see §11.2 for the verification). Sanity check before any write:
-  the existing `AppIdVec` entries are real low app ids (observed
-  `{5,7,8,90,...}`) — bail if they look bogus (offset wrong on this build).
-- A multi-match on the pattern only affects the diagnostic site, not
-  injection: if a Steam update breaks `kLoadPackagePattern`, install still
-  works because the finder doesn't depend on it (see §11.6).
+- `bool LoadPackage(PackageInfo* pInfo, uint8 sha1[20], int32 cn, void* p4)` (`load_package_hook.cpp:16`).
+- `PackageInfo` (Linux i386, from LumaCore's `Structs.h`; `load_package_hook.hpp:69-85`):
+  `+0x00 PackageId`, `+0x04 ChangeNumber`, `+0x08 u64 PICS_token`,
+  `+0x10 BillingType`, `+0x14 LicenseType`, `+0x18 Status`, `+0x1C SHA_1_Hash[20]`,
+  `+0x30 pPackageInfoNodeBegin`, `+0x34 pExtendNodeBegin`,
+  **`+0x38 AppIdVec`** (`CUtlVector<AppId_t>`), `+0x48 DepotIdVec`.
+  Only `PackageId` and `AppIdVec` are used. No tool verifies these offsets on a
+  new build; the finder's `PackageId` cross-check is what stops a write through
+  a wrong one (`package_zero_finder.cpp:86-99, 546-560`).
+- **Not installed by default.** Only `LUMA_LOADPKG_DEBUG=1` adds it
+  (`main.cpp:187-189`), and then it only logs `PackageId` + `AppIdVec{mem,size,alloc}`
+  for the first 400 calls (`load_package_hook.cpp:40-53`). It never injects:
+  it cannot see a `PackageId=0` that Steam keeps cached and never reloads, which
+  is why the finder exists (§13).
+- Located by: `kLoadPackagePattern`
+  (`55 89 E5 57 E8 ?? ?? ?? ?? 81 C7 ?? ?? ?? ?? 56 53 81 EC 1C 01 00 00`) only —
+  no feed, no rescue. It matches several sites (three on the builds noted at
+  `patterns.hpp:94-98`); all are logged and index 0 is used, overridable with
+  `LUMA_LOADPKG_IDX` (`patterns.cpp:231-276`). The anchor strings near it belong
+  to `CPackageInfoCache::GetPackage`, not to this function (§13.2).
+- The injection the finder performs lives in this file and is shared code
+  (`load_package_hook.cpp:77-251`):
+  - `InjectDepots` appends `KeyStore::GetAllDepotIds()` (the depot ids,
+    LumaCore's `GetAllDepotIds` equivalent — not the app id) to `AppIdVec`.
+  - `AppendIdsToVec` bails if `m_Size > 4096` or if any of the first 8 existing
+    entries is 0 or > 50 000 000 (offset wrong on this build; real entries look
+    like `{5,7,8,90,…}`), filters out ids already present (idempotent), and grows
+    with raw `std::realloc` — first allocation ≥ 32, then doubling — because
+    `CUtlMemory` is malloc-backed on Steam Linux i386 (verification: §11.2).
+  - `RetireDepots` compacts out of `AppIdVec` only the ids this process
+    injected that are no longer in `keys.txt`; Steam's own entries are never
+    touched.
+  Only the finder thread writes the vector, so no lock is needed.
 
 ### GMRC — `…BYieldingGetManifestRequestCode` (the key find)
-- Ghidra name `FUN_012d3bd0`, **file vaddr 0x12c3bd0** (Ghidra image base 0x10000
-  → Ghidra addr 0x12d3bd0).
-- Signature (cdecl, i386):
+- On `f92deb5e`: Ghidra name `FUN_012d3bd0`, **file vaddr 0x12c3bd0** (Ghidra
+  image base 0x10000 → Ghidra addr 0x12d3bd0). Current address:
+  `res/rvas/<sha>.yaml` (`0x1371ac0` on `bc54101b`).
+- Signature (cdecl, i386; `gmrc_hook.cpp:14-20`):
   `int32 GetManifestRequestCode(void* this, u32 app_id, u32 depot_id, u32 manifest_lo, u32 manifest_hi, char* branch, uint64* out_code)`
   — args at `[ebp+0x08 .. +0x20]`; `out_code` at `[ebp+0x20]`.
-- Decompiled core (the part that matters):
+- Decompiled core (`f92deb5e`):
   ```c
   cVar3 = (**(code **)(*piVar6 + 0x10))(
             piVar6, "ContentServerDirectory.GetManifestRequestCode#1",
@@ -172,35 +377,88 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   else { *out_code = *(u64*)(response + 0x10);   // success: write the code
          return 1; }
   ```
-- Pattern: `kGmrcFunctionPattern`
-  (`E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20`).
-  Verified **unique** in this build.
-- Hook: `manifest_gid = manifest_lo | (manifest_hi << 32)`. If the gid is one of
-  our manifests (`KeyStore::HasManifestGid`), fetch the code from the provider
-  cascade (`gmrc_store.hpp`, §7), write `*out_code`, return 1. Else fall through
-  to original.
-- Uses `get_pc_thunk.ax` (PIC, eax-based). `FixPicThunk` handles any register
-  generically, so the trampoline works for the fallback path.
+  The job-name string in that call is the anchor of the xref rescue.
+- Located by: feed `GMRC` → `kGmrcFunctionPattern`
+  (`E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC ?? ?? ?? ?? 8B 7D 08 8B 4D 20`),
+  unique → job-name xref (`gmrc_hook.cpp:74-95`). The `sub esp,imm32` frame size
+  is wildcarded: it was 0x110 up to `bc54101b` and 0x120 on the `9cf4720f` beta,
+  locals only (`patterns.hpp:143-147`).
+- Hook (`gmrc_hook.cpp:23-59`): `manifest_gid = manifest_lo | (manifest_hi << 32)`.
+  It intervenes if the gid is registered in `keys.txt`
+  (`KeyStore::HasManifestGid`) **or** the depot is ours (`KeyStore::HasDepot`
+  — covers the shader depot, whose gid comes from PICS, not from the lua). Then
+  `Gmrc::GetCode(depot, gid)` runs the provider cascade (§7, `gmrc_store.hpp:334-417`):
+  per-gid cache, paced retries, dead providers skipped for a while, and a code
+  returned only after `CdnAcceptsCode` got HTTP 200/206 for
+  `/depot/<d>/manifest/<gid>/5/<code>`. On a code: write `*out_code`, return 1.
+  Otherwise fall through to the original (a manifest already in `depotcache/`
+  needs no code; otherwise the CDN denies it).
+- Uses `get_pc_thunk.ax` (PIC, eax-based); `FixPicThunk` handles it. The same
+  prologue (`05 <imm32>` after the thunk call) is where the finder derives the
+  GOT when the feed has no `got_rva` (§3 step 3) — it scans the tail after the
+  `05`, which survives our own 5-byte detour.
 
 ### ShaderDepot — `GetShaderCacheDepot` (per-game shader skip, v0.14)
-- `uint32_t GetShaderCacheDepot(void* appinfo)` — cdecl, 1 stack arg. Reads the
-  game's PICS appinfo KeyValues `appinfo.game.shadercachedepot` and returns that
-  depot id (== app id by convention), or 0 if the app isn't a game / has no
-  shader depot. File vaddr **0xfd9ca0** on build `7c4ac73e`.
+- `uint32_t GetShaderCacheDepot(void* appinfo)` — cdecl, 1 stack arg
+  (`CShaderCacheManager::GetShaderCacheDepot`). Reads the game's PICS appinfo
+  KeyValues `appinfo.game.shadercachedepot` and returns that depot id (== app id
+  by convention), or 0 if the app isn't a game / has no shader depot. File vaddr
+  0xfd9ca0 on `7c4ac73e`; current address in `res/rvas/<sha>.yaml`
+  (`0x1048840` on `bc54101b`).
 - **Sole caller** is `CGetShaderDepotManifestJob::BYieldingRunClientJob`: when it
   gets 0 back it logs `skipping because shader depot ID is invalid` and ends the
   shader pre-cache job cleanly (no error, no install pause, no retry loop).
-- Pattern: `kShaderCacheDepotPattern`
-  (`57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0`).
-  Verified **unique** in this build. The `mov eax,[ebx+0x2b758]` disp32 (a
-  GOT-relative offset that shifts per build) is **wildcarded** so a rebuild that
-  only moves that global doesn't break the hook (see §13.10).
-- Hook: call the original; if the returned id is one of OUR keyless games
-  (`KeyStore::IsPresenceOnly` — present in `keys.txt` with no key), return 0 so
-  Steam skips its shader pre-cache; otherwise pass the real id through (keyed
-  games and the user's owned games keep their shaders). This is the per-game
-  shader skip — see §13.10 (verified on Deck) for the full story and why it
-  replaced the global `DisableShaderCache`.
+- Located by: feed `ShaderDepot` → `kShaderCacheDepotPattern`
+  (`57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B 31 C0`),
+  unique → string xref `"shadercachedepot"` (`shader_depot_hook.cpp:102-119`).
+  The `mov eax,[ebx+disp32]` that loads the shader-manager global
+  (`0x2b758` on `7c4ac73e`) is a GOT-relative offset that shifts per build and is
+  **wildcarded**; the fixed anchors are the `57 56 53` prologue and the
+  `8B 40 44 85 C0 75 0D 5B 31 C0` tail (`patterns.hpp:179-195`).
+- Hook (`shader_depot_hook.cpp:57-96`): call the original, then decide per game:
+  - original returned 0 → 0;
+  - **keyless** (`KeyStore::IsPresenceOnly` — in `keys.txt` with no key) → 0:
+    the pre-cache could never decrypt;
+  - **not ours** (`!KeyStore::HasDepot`) → the real id; owned games keep their
+    shaders;
+  - **keyed, ours** → the job will need a request code for the shader manifest
+    (Hubcap zips never carry it): the real id only if the GMRC hook is installed
+    (`Hooks::Gmrc::Active()`) **and** a provider answers right now
+    (`Gmrc::ProvidersReachable()`: one paced request for depot 1 / gid 1 with
+    short timeouts, cached 15 s, `gmrc_store.hpp:433-472`); otherwise 0, which
+    avoids Steam's "No internet connection" popup and 30 s stall.
+
+  This replaced the global `DisableShaderCache`. History: §13.8 (the loop),
+  §13.9 (path B), §13.10 (this hook), §13.11 (the provider gate).
+
+### Reconcile — `CUser::NotifyLicensesUpdated` (called, not hooked)
+- `void NotifyLicensesUpdated(CUser* this)` — cdecl, one arg
+  (`license_reconcile.cpp:30`). Rebuilds the `LicensesUpdated_t` callback
+  (callback 125 = `0x7d`, `k_iSteamUserCallbacks + 25` in the public SDK) from
+  this user's license vector and posts it, so Steam re-reads ownership and
+  appinfo. No detour is installed: lumalinux **calls** the resolved address.
+- Located by (`license_reconcile.cpp:41-63`): feed `Reconcile` (if the pattern
+  also resolves to a different address, a drift warning is logged and the feed
+  wins) → `kNotifyLicensesUpdatedPattern`
+  (`55 89 E5 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 81 EC ?? ?? ?? ?? 8B 45 08 8B ?? ?? ?? 00 00 89 9D ?? ?? FF FF 85 ??`;
+  thunk, GOT imm, frame size, the `CUser` member offset, the spill offset and
+  the registers of the member load/test are masked, `patterns.hpp:204-228`),
+  unique → callback-125 anchor (`reconcile_anchor.cpp`): (c1) a
+  `push 0x7d; push eax; call rel32` site (`6A 7D 50 E8`, ~11 functions per
+  build), (c2) whose function, bounded by `.eh_frame_hdr`, first reads a field
+  of `this` (`mov eax,[ebp+8]; mov r,[eax+disp32]`, disp free), (c3) then bails
+  with `test r,r; jle` within 16 bytes. Exactly one function or 0. Addresses:
+  `0x188c950` on `bc54101b`, `0x1a0d010` on `9cf4720f`.
+- When it fires: from the finder thread, after an inject/retire pass, if the
+  `keys.txt` watcher flagged a change (`package_zero_finder.cpp:814-817`). The
+  `CUser*` is captured by `sls_ach_combined_guard`, the replacement that
+  `sls_achievement_unblock` points SLSsteam's achievement-guard call sites at
+  (`sls_achievement_unblock.cpp:60-64` → `LicenseReconcile::SetUser`); without
+  SLSsteam (or that patch), or before the guard has run once, the call is
+  skipped and a restart is still needed.
+- Status: `Reconcile` = `INSTALLED` (resolved) / `FAILED` (unresolved; LumaDeck
+  then holds back the premature library appearance) / `DISABLED` (kill-switch)
+  (`main.cpp:349-356`). How it was ported from moon and validated: §18.
 
 ## 5. Loading: LD_PRELOAD, not LD_AUDIT (important)
 
@@ -209,21 +467,43 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
   linker namespace and **corrupts the heap** — Steam dies on startup with
   `realloc(): invalid pointer`. (And at the 64-bit launcher level it's rejected
   with `wrong ELF class: ELFCLASS32` anyway.)
-- Setting it in **LD_PRELOAD** loads it in the normal namespace → works.
-- lumalinux supports both entry styles (`la_objopen`/`la_preinit` + a
-  `__attribute__((constructor))` fallback that polls `/proc/self/maps`), but
-  **LD_PRELOAD is the supported, working path**.
-- The injection point is **`~/.local/share/Steam/steam.sh`** — the
-  user-local launcher wrapper that Headcrab installs and maintains. It
-  defines `INJECT_SLS=LD_AUDIT=…` (and `INJECT_CR=LD_PRELOAD=…` if
-  CloudRedirect is enabled) and exports them inside `GameLauncher()`
-  before sourcing the vanilla Valve `client.sh`. `install.sh` inserts the
-  lumalinux `LD_PRELOAD` export right before that `source` line, with the
-  `${LD_PRELOAD:+:}${LD_PRELOAD:-}` preserve pattern so CR's `LD_PRELOAD`
-  survives. **`/usr/bin/steam` is not touched** — Headcrab doesn't edit
-  it, and our installer doesn't either; the system file stays vanilla and
-  survives `pacman -Syu steam`.
+- Setting it in **LD_PRELOAD** loads it in the normal namespace → works. The
+  `__attribute__((constructor))` (`main.cpp:429-469`) runs only in the `steam`
+  and `steamwebhelper` processes (`proc_filter.cpp:25-31`, fail-open if
+  `/proc/self/comm` can't be read), loads `keys.txt`, starts the `keys.txt`
+  watcher (unless the Reconcile kill-switch is set), and polls `/proc/self/maps` once a second (up to 300 times) until
+  `steamclient.so` is mapped, then calls `InstallHooks()`. The `la_version` /
+  `la_preinit` / `la_objopen` audit entry points are still compiled
+  (`main.cpp:393-419`) but are not the supported path.
+- **Injection point: the `setup.sh` wrapper.** `setup.sh` writes
+  `~/.local/share/SLSsteam/path/steam` (`setup.sh:1150-1202`), which resolves the
+  real Steam launcher (`LUMA_STEAM_BIN`, else `PATH` skipping itself, else
+  `/usr/bin/steam` and friends), runs the shared crash-loop guard, sets the loader
+  environment and `exec`s Steam. The environment (`luma_set_injection_env`,
+  `setup.sh:884-898`):
+  - `LD_AUDIT=library-inject.so:SLSsteam.so`, or `SLSsteam.so` alone when
+    `library-inject.so` is empty (as upstream ships it). SLSsteam therefore
+    hooks before lumalinux's constructor runs — which is why
+    `BuildDepotDependency` already starts with SLSsteam's jump (§4 BuildDep).
+  - `LD_PRELOAD=liblumalinux.so:cloud_redirect.so` — lumalinux **first**, on
+    purpose: `cr_stats_fix` interposes a CloudRedirect symbol and must precede it
+    (`cr_stats_fix.hpp:28`). CloudRedirect never goes in `LD_AUDIT` (it corrupts
+    the client heap, `setup.sh:1154-1156`). Under Wayland `libextest.so` is
+    appended.
 
+  The wrapper is reached from the rewritten `Exec=` of the Steam `.desktop`
+  entries plus a `PATH` drop-in (Desktop), and from a systemd drop-in on
+  `steam-launcher.service` (Game Mode); both go through the same guard, which
+  launches Steam vanilla (`env -u LD_AUDIT -u LD_PRELOAD`) after repeated startup
+  crashes. Details: `nosotros.md` §2.1.
+- **`steam.sh` stays vanilla.** Steam re-extracts it whenever its size differs
+  from its manifest, so an injection there does not survive Steam updates;
+  `setup.sh` restores a vanilla `steam.sh` if Headcrab or the old installer had
+  modified it (`neutralize_steam_sh`, `setup.sh:264-333`). `/usr/bin/steam` is
+  not touched either.
+- `install.sh` is the legacy installer (it inserted an `LD_PRELOAD` export into
+  Headcrab's `~/.local/share/Steam/steam.sh`). It is still in the repository and
+  the build artifact, but neither `setup.sh` nor LumaDeck uses it.
 ## 6. Dead-ends & lessons (so we don't repeat them)
 
 - **config.vdf depot keys get pruned.** Writing `DecryptionKey` into
@@ -291,259 +571,527 @@ fixup (`lmhook.cpp::FixPicThunk`) for the PIC prologue. Loaded via **LD_PRELOAD*
 The endpoint returns a **request CODE** (a bare uint64 number), **not** the
 manifest file. The code only *authorises* Steam to download the `.manifest` from
 Valve's CDN; the file itself always comes from the CDN (or from `depotcache/` if
-pre-seeded). opensteamtool/wudrm/steamrun are **code sources, not file mirrors** —
-don't confuse "the manifest" (file) with "the manifest request code" (token).
+pre-seeded, in which case Steam never asks for a code at all). The providers below
+are **code sources, not file mirrors** — don't confuse "the manifest" (file) with
+"the manifest request code" (token).
 
-> **Current table (v0.21.0, 2026-09-16) — see §20 for how it got here.**
-> Four live providers behind two pools of licensed accounts; every code is
-> checked against Valve's CDN before Steam sees it; a dead provider is skipped
-> for a minute; the hook is on by default again.
->
-> | Order | Provider | URL | Pool | Notes |
-> |---|---|---|---|---|
-> | 1 | 20770407 | `https://20770407.xyz/manifest/{depot}/{gid}` | A | honest `Unauthorized` for what it lacks; home-hosted; 10 req/10 s |
-> | 2 | manifestdex | `https://manifest.manifestdex.com/{gid}` | B | needs `User-Agent: ManifestDeX/1.0`; a number for ANY gid |
-> | 3 | wudrm | `http://gmrc.wudrm.com/manifest/{gid}` | B | back 09-16; JS-challenges the `curl` UA only |
-> | 4 | steamrun | `https://manifest.steam.run/api/manifest/{gid}` | B | back 09-16; JSON `{"content":…}` |
-> | — | opensteamtool | `https://manifest.opensteamtool.com/{gid}` | ? | dead: Cloudflare 403 for every UA |
->
-> The rest of this section is the 2026-07 state, kept for the history.
+**What a code is.** A bearer token: Valve signs it for one (depot, manifest) pair
+and the CDN serves the manifest to whoever presents it. The CDN GET is anonymous,
+so a code minted on one machine works from any other. Valve's check happens **at
+issue time**: since 2026-09-09 it only mints a code for an account that holds a
+licence for the app. So every live provider runs a pool of accounts that own
+the games, and a game nobody in a pool owns gets no code from that pool
+(`src/gmrc_store.hpp:8-20`). Codes rotate on Valve's side (~15–20 min measured,
+`gmrc_store.hpp:86-87`), so fetch them fresh and never persist them. How the old
+providers died on 09-09 and how the current ones came back on 09-15/16 is in
+Part II, §19 and §20.
 
-Since **v0.15.8** lumalinux tries a **3-provider cascade** (mirroring
-OpenSteamTool's own `kProviders` table in `ManifestClient.cpp`); first usable
-code wins:
+### The getter and the hook
 
-| Order | Provider | URL | Body format |
-|---|---|---|---|
-| 1 | opensteamtool | `https://manifest.opensteamtool.com/{gid}` | plain uint64 |
-| 2 | wudrm | `http://gmrc.wudrm.com/manifest/{gid}` | plain uint64 |
-| 3 | steamrun | `https://manifest.steam.run/api/manifest/{gid}` | JSON `{"content":"<uint64>"}` |
+- Target: `BYieldingGetManifestRequestCode`, the function that issues the
+  `"ContentServerDirectory.GetManifestRequestCode#1"` IPC job. Signature (cdecl,
+  i386), unchanged since it was found (`src/hooks/gmrc_hook.cpp:14-20`,
+  `src/patterns.hpp:129-137`):
+  `int32 GetManifestRequestCode(void* this, u32 app_id, u32 depot_id, u32 manifest_lo, u32 manifest_hi, char* branch, uint64* out_code)`.
+  It writes the code to `*out_code` and returns 1. For content the account does
+  not own, the server denies the request and the function returns 0. §4 has
+  the decompiled core.
+- Resolution, each step only if the previous one came up empty
+  (`gmrc_hook.cpp:65-101`): the RVA feed (`RvaFeed::Resolve("GMRC")`), then the
+  byte pattern `kGmrcFunctionPattern`
+  (`E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 57 56 53 81 EC ?? ?? ?? ?? 8B 7D 08 8B 4D 20`,
+  `patterns.hpp:150-151`), then `xref(rescue)`. The rescue takes the job-name
+  string, finds the unique GOT-relative `lea` that loads it, and resolves the
+  entry from `.eh_frame_hdr`'s function table (`src/gmrc_xref.hpp:7-30, 62-68`).
+  A backward walk to the PIC preamble remains, but only as the fallback for a
+  build without a usable table. The `sub esp` frame size in the pattern has been
+  wildcarded since v0.22.0: the frame grew 0x110 → 0x120 on the 9cf4720f beta
+  and nothing else changed (`patterns.hpp:141-145`).
+- Interface-map lookup by name does not apply to GMRC: the getter is not a
+  virtual of any `*IClient…Map` (all 52 swept on bc54101b, 2026-09-07,
+  `gmrc_xref.hpp:53-64`), so the string xref is its only prologue-free locator.
+- Hook body (`gmrc_hook.cpp:23-59`): `gid = manifest_lo | manifest_hi << 32`. It
+  acts only when `KeyStore::HasManifestGid(gid) || KeyStore::HasDepot(depot_id)`.
+  The second test covers the shader depot, whose gid comes from PICS rather than
+  from the `.lua`. In that case it calls `Gmrc::GetCode(depot, gid)`, writes
+  `*out_code` and returns 1. With no code it falls through to the original, and
+  Steam's own path either finds the manifest in `depotcache/` or gets
+  `Access Denied` from the CDN. Everything else goes straight to the original.
+- **On by default since v0.21.0**, off with `LUMA_NO_GMRC` (`src/main.cpp:158-173`).
+  The old opt-in `LUMA_GMRC` is no longer read. GMRC is **non-critical**. It is
+  not part of the critical-hook gate (`main.cpp:192-198, 261-266`), and in CI it is
+  a NONCRITICAL constant with a `gmrc=ok|moved` capability token
+  (`tools/check_patterns.py:155-168`). If it is missing, Steam cannot fetch a
+  manifest natively and a keyed game loses its shader pre-cache. Installs still
+  work from the manifests LumaDeck pre-seeds in `depotcache/`.
 
-- Transport is now **libcurl** (`Curl::getString`, `dlopen`'d at runtime —
-  `src/curl.cpp`, compiled **unconditionally** since v0.15.8, not only in
-  SafeMode) because opensteamtool/steam.run are **HTTPS**. The pre-v0.15.8
-  raw-socket plain-HTTP path (wudrm only) is gone.
-- **Cloudflare / User-Agent gate — verified on-device 2026-07, and non-obvious:**
-  `manifest.opensteamtool.com` sits behind Cloudflare whose WAF **challenges the
-  default `curl`/libcurl User-Agent** (serves the "Just a moment…" JS
-  interstitial) but **lets any other UA straight through** to the plain code.
-  `curl -A "OpenSteamTool/1.0" …/{gid}` returns the code where a bare `curl` gets
-  the challenge. It is **not** TLS/JA3 or IP-based — a residential Steam Deck
-  gets the same challenge with bare curl, and OpenSteamTool's own WinHTTP client
-  has zero Cloudflare-solving code; it simply opens with UA `OpenSteamTool/1.0`.
-  So `gmrc_store.hpp` sends `User-Agent: OpenSteamTool/1.0`. **⚠ Do not strip
-  that UA** or opensteamtool regresses to always-challenged (a non-numeric HTML
-  body → parser rejects → cascade falls through).
-- Endpoint status observed 2026-07 from the Deck: **wudrm 502** (flaky/down),
-  **steam.run 404** (dead path — the old LumaCore endpoint), **opensteamtool
-  works** (with a non-curl UA). The cascade means one provider being down no
-  longer blocks installs — that single-source fragility (wudrm 502 + wudrm being
-  the *only* provider) was the root cause of the recurring Silksong "No
-  connection" popup on depot 1030300 (the base/shader depot, whose manifest is
-  not in the Hubcap zip, so its code is fetched live).
-- `Curl::getString` returns 0 on transport success **without** checking the HTTP
-  status, so a Cloudflare challenge page / 502 / 404 all arrive as a non-numeric
-  body; each provider's parser (`ParsePlainUint` / `ParseSteamRunJson`) rejects
-  those and the loop tries the next provider.
-- **The code is session/time-dependent**: the same gid returned different codes
-  on different days (e.g. gid 3512319404653808464 → 15549905601718457808, then
-  3261884576850880630). So fetch fresh; don't hardcode/persist across sessions.
-- Confirmed working values (Balatro, for reference only):
-  - depot 2379781, gid 3512319404653808464
-  - depot 2379782, gid 1898957422191678575
-  - depot 228989 (Steamworks redist, genuinely owned), gid 3514306556860204959
+### The provider cascade (`src/gmrc_store.hpp`)
+
+Four live providers in `kProviders` (`gmrc_store.hpp:154-159`), asked in this
+order; the first code the CDN accepts wins. Behind them are **two pools** of
+licensed accounts, not four: wudrm, steam.run and manifestdex often hand out the
+same code for the same manifest, while 20770407 never matches them (42 depots
+measured, 2026-09-15/16, `:132-138`).
+
+| Order | Provider | URL template | Pool | User-Agent sent | Body |
+|---|---|---|---|---|---|
+| 1 | 20770407 | `https://20770407.xyz/manifest/{depot}/{gid}` | A | `lumalinux/<ver>` | plain uint64; `Unauthorized` when the pool lacks it or the gid is bad |
+| 2 | manifestdex | `https://manifest.manifestdex.com/{gid}` | B | `ManifestDeX/1.0` (the only UA it answers) | plain uint64 — for **any** gid, a made-up one included |
+| 3 | wudrm | `http://gmrc.wudrm.com/manifest/{gid}` | B | `lumalinux/<ver>` | plain uint64 (plain HTTP) |
+| 4 | steamrun | `https://manifest.steam.run/api/manifest/{gid}` | B | `lumalinux/<ver>` | JSON `{"content":"<uint64>"}` |
+
+`opensteamtool` (`manifest.opensteamtool.com`) is gone: Cloudflare returns 403
+for every User-Agent.
+
+- **User-Agents.** `kUserAgentLuma = "lumalinux/" LUMALINUX_VERSION_STRING` and
+  `kUserAgentMdx = "ManifestDeX/1.0"` (`gmrc_store.hpp:66-67`). A non-`curl` UA
+  is still required: Cloudflare-fronted endpoints JS-challenge the default
+  `curl`/libcurl UA (wudrm does today; opensteamtool did in 2026-07). lumalinux
+  identifies as itself, not as `OpenSteamTool/1.0`, so it does not share OST's
+  bucket if an operator ever filters or rate-limits by client (`:56-64`). The
+  OpenSteamTool UA survives only in an outdated comment in `src/curl.hpp:14-18`.
+- **Transport.** `Curl::getString` (libcurl `dlopen`'d at runtime, `src/curl.cpp:73`)
+  returns 0 on transport success **without** failing on HTTP status. The status
+  comes back through an out-param (`curl.hpp:27-31`), and `Classify`
+  (`gmrc_store.hpp:211-223`) sorts each answer:
+  a parsed non-zero uint64 is CODE (`ParsePlainUint` / `ParseSteamRunJson`,
+  `:99-120`); 429 or `error code: 1015` is RATE_LIMITED; ≥500 or `Service
+  temporarily unavailable` is TRANSIENT; 401/403 or `Unauthorized` is DENIED;
+  anything else is NO_CODE, and a curl error is TRANSPORT. Timeouts are 5 s
+  connect and 10 s total (`:96-97`).
+- **Pacing and retries** (`GetCode`, `:334-417`). At most one provider request
+  per second across all threads (`kMinGapMs`, `Pace()`, `:73, 235-247`), which
+  stays under 20770407's published 10 req/10 s. Each provider gets up to 3
+  attempts: wait 10 s after RATE_LIMITED, 5 s after TRANSIENT. DENIED moves on
+  to the next provider at once, and so do TRANSPORT and NO_CODE.
+- **CDN check before Steam sees a code** (`CdnAcceptsCode`, `:282-323`). It
+  issues a one-byte ranged GET (`Range: 0-0`) of
+  `/depot/<depot>/manifest/<gid>/5/<code>` on `steampipe.akamaized.net`, falling
+  back to `fastly.cdn.steampipe.steamcontent.com`. Only 200/206 counts as
+  accepted. A rejected code counts as that provider's DENIED, is remembered as
+  a denial, and the cascade moves on. This check matters because a wrong code
+  is not a soft failure. If Steam injects a code the CDN 401s, it cancels the
+  install with "Unspecified Error", parks it in Update Paused and never
+  retries (measured 2026-09-15 with a bogus code via `LUMA_GMRC_URL`; the
+  wudrm failure of 09-10). The check needs it because manifestdex answers a
+  number for every gid.
+- **Skip-on-down.** A provider whose last outcome was TRANSPORT, NO_CODE, or
+  RATE_LIMITED/TRANSIENT after the third attempt is marked down for
+  `kProviderDownSec = 60` s (`:85, 172-175, 404-406`). Without this, every
+  depot of an install paid ~12 s on a dead first provider. A DENIED or a
+  CDN-rejected code is an answer, not an outage, so it does not mark the
+  provider down.
+- **Cache.** Results are cached per gid for `kCacheTtlSec = 120` s (`:93`),
+  denials included, so a job that retries does not spend the budget again. The
+  TTL is short on purpose: a long-lived code is a stale code.
+- **`gmrc.json`.** `Status::RecordGmrc` writes
+  `{"providers": "up"|"down", "at": "<ISO-8601 UTC>"}` after every lookup, next
+  to `status.json` (`src/status.cpp:87-95`, `status.hpp:29-37`). "up" means some
+  provider answered with a code or an honest denial. "down" means every
+  provider was dead or skipped, because a game no pool owns is not an outage.
+  LumaDeck reads this file to freeze unpinned games while no provider can serve
+  a code.
+- **Liveness probe for ShaderDepot** (`ProvidersReachable`, `:433-472`). It sends
+  one paced request for depot 1 / gid 1 with 3 s/5 s timeouts and caches the
+  result for 15 s. Any answer except TRANSPORT/TRANSIENT means "up" (the
+  throwaway request is DENIED by design). ShaderDepot lets a keyed game's
+  shader pre-cache run only when the GMRC hook is installed **and** this probe
+  says up (`src/hooks/shader_depot_hook.cpp:80-95`, §13.11).
+- **`LUMA_GMRC_URL=<template>`** replaces the whole table with one provider whose
+  template takes two `%llu` (depot, gid) (`:177-187`). Use it for testing: point
+  it at a black hole to exercise the pre-seeded-manifest fallback, or at a
+  local server that answers a bogus number to exercise the CDN check.
+
+The probe script `tools/gmrc_probe.py` still lists five providers, opensteamtool
+included, so it is not an exact mirror of the runtime table (§10).
+
+Reference values used by `tools/gmrc_probe.py` (Balatro; the gids are stale by
+now but still a fair "does the provider know this manifest" test):
+depot 2379781 gid 3512319404653808464; depot 2379782 gid 1898957422191678575;
+depot 228989 (Steamworks redist, owned by every account) gid 3514306556860204959.
+The same gid returned different codes on different days (for 3512319404653808464:
+15549905601718457808, later 3261884576850880630), which is the rotation noted
+above.
 
 ## 8. Reverse-engineering workflow (how to find these on a new build)
 
-What worked, after a lot of what didn't:
+**The binary.** The hooked library is the 32-bit `steamclient.so` from
+`~/.local/share/Steam/ubuntu12_32/` (the `steamdeck_stable_ubuntu12` package),
+**not** `linux32/`. That is a different binary with a different hash, and
+lumalinux never loads or hashes it. You don't need the Deck to get it:
+`tools/fetch_steamclient.py --output steamclient.so` downloads it from Valve's
+public client CDN with no login. The default is the `steamdeck_stable` manifest;
+set `LUMA_STEAM_MANIFEST` to pick another channel. It prints the SHA-256 that
+keys `res/updates.yaml` and `res/rvas/`. The library is ~50 MB (49.8 MB stable,
+53.5 MB on the 2026-09-19 beta). Internal C++ methods are not symbolized,
+and string references are PIC (per-function `get_pc_thunk` base), so
+`objdump`/`grep` and radare2 5.5 fail to resolve, or only partly resolve, the
+string xrefs. Ghidra resolves them. So does the GOT-consensus + `lea` scan that
+the Python tools and the runtime rescue share (§8.1). *History:* the 2026-05
+workflow pulled `linux32/steamclient.so` (~48 MB, ~826 exported symbols, build
+f92deb5e) off the Deck and moved it through a throwaway git branch. Both steps
+are obsolete.
 
-1. **Get the binary off the Deck.** `~/.local/share/Steam/linux32/steamclient.so`
-   (~48 MB). It has only ~826 exported symbols; internal C++ methods are **not**
-   symbolized, and string references are PIC (per-function get_pc_thunk base), so
-   `objdump`/`grep` and even `radare2 5.5` (`aar`/`aaa`/`aae`) **fail or only
-   partially resolve** string xrefs.
-2. **Transfer for analysis.** We pushed it to a throwaway branch of a GitHub repo
-   (`git push …:refs/heads/scbin`) and fetched it on a machine with proper tools.
-   (Delete that branch after — it's a Valve binary.)
-3. **Use Ghidra** (it resolves i386 PIC string xrefs that r2 5.5 misses). Headless:
-   ```sh
-   analyzeHeadless <proj> <name> -import steamclient.so \
-     -scriptPath . -postScript find_gmrc.py
-   ```
-   where the postScript finds the anchor strings and decompiles the referencing
-   functions:
-   - `"CDepotDownloadMgr::BYldRequestDepotManifest("` (the GMRC consumer)
-   - `"ContentServerDirectory.GetManifestRequestCode#1"` (the job name → the
-     getter function)
-   - `"bClientTryRequestManifestWithoutCode"` (the convar)
-   Analysis of 48 MB takes ~5–15 min; bump Ghidra `MAXMEM` to ~8G.
-4. **Extract a unique byte pattern** from the function prologue (with `??`
-   wildcards over the PIC `add`/get_pc_thunk rel32 and the GOT offset) and verify
-   it matches once in the binary. That becomes the runtime finder
-   (`patterns.cpp::FindInSteamclient`, which scans the `r-x` `steamclient.so`
-   mappings in `/proc/self/maps`).
-5. **Note:** patterns are build-specific. On a Steam update, re-run the Ghidra
-   pass and re-derive the patterns.
+**How a hook is resolved at runtime**, which is what a re-derivation has to
+keep working. Every hook tries three steps, each only if the previous one missed
+(`docs/maintenance.md` A.2 table):
+
+1. `rva`: the per-build RVA feed `res/rvas/<sha256>.yaml`, fetched from `main`
+   on every boot (`src/rva_feed.hpp`).
+2. `pattern`: the byte pattern in `src/patterns.hpp`, accepted only if it
+   matches exactly once.
+3. A rescue that reads no prologue byte:
+   - DepotKey uses `byname(rescue)`: RTTI class name →
+     `IClientConfigStoreMap` slot → `CConfigStore` vtable
+     (`src/hooks/depot_key_hook.cpp:138-176`).
+   - GMRC, ShaderDepot and BuildDep use `xref(rescue)` on their anchor string
+     (`gmrc_hook.cpp:87-94`, `shader_depot_hook.cpp:110-119`,
+     `depot_dependency_hook.cpp:160-165`).
+   - Reconcile uses `anchor(rescue)`, its callback-125 anchor
+     (`src/reconcile_anchor.cpp`).
+
+So a Steam update that moves only a prologue keeps working on the Deck through
+the rescue, and through the feed once CI publishes it. The fixes below refresh
+the pattern and the feed. They are not what keeps the Deck alive in the
+meantime.
+
+**Anchors per hook** (the strings and facts every derivation path starts from):
+
+| Hook | Anchor | Notes |
+|---|---|---|
+| GMRC | string `"ContentServerDirectory.GetManifestRequestCode#1"` | job name; exactly one `lea` loads it |
+| BuildDep | string `"BuildDepotDependency"` | diagnostic since SLSsteam 20260714 hooks it first |
+| ShaderDepot | string `"shadercachedepot"` | PICS key read inside `GetShaderCacheDepot` |
+| DepotKey | `IClientConfigStoreMap` method `"GetBinary"` → map slot → `12CConfigStore` vtable | no usable string inside the function; the old route was the dispatcher's `CALL [reg+0x18]` (§12.5) |
+| Reconcile | the function that does `push 0x7d ; push eax ; call`, reads a field of `this` and bails on `<= 0` | posts callback 125 by number, never touches `LicensesUpdated_t`'s type_info |
+| LoadPackage | none | opt-in diagnostic (`LUMA_LOADPKG_DEBUG=1`); multi-match by design |
+| package-0 finder | cache-access idiom per known `CPackageInfoCache` layout + the GMRC prologue tail | not in `patterns.hpp`; a miss is a code fix in `package_zero_finder.cpp` (§13.5) |
+
+**By hand**, when CI cannot do it (§8.1 says when), the steps are:
+
+1. Fetch the binary as above.
+2. Run `tools/check_patterns.py steamclient.so`.
+3. Run the derivation chain `tools/derive_python_first.sh steamclient.so <consts> derived.json`.
+4. Run `tools/apply_derived_pattern.py --derived derived.json --only <consts>`.
+5. Re-run `check_patterns.py` until it reports CLEAN.
+6. Rebuild and tag a release (`docs/maintenance.md` A.2 steps 4–5).
+
+If the Python locator itself fails, open the binary in Ghidra and work from the
+anchor. For DepotKey, the manual vcall route is in `maintenance.md` A.3 and
+§12.5. Whatever you derive by hand, check that it is unique, and if you
+wildcarded anything, run `tools/verify_mask.py` too: a loosened pattern can be
+unique at the *wrong* site.
 
 ### 8.1 Semi-automatic re-derivation — `tools/derive_patterns.py`
 
-To turn step 4 from a full RE session into a single command, `derive_patterns.py`
-is a Ghidra **headless postScript** that re-locates each hook and prints a fresh,
-correctly-wildcarded pattern. Run it against the *new* `steamclient.so`:
+*Title kept for its citations.* Since 2026-09-22 the Ghidra postScript
+`derive_patterns.py` is the **second opinion**, not the deriver. The chain that
+runs is Python first, and on every build measured so far Ghidra never has to
+start.
+
+**The CI chain.**
+
+1. **`watch-steam.yml`** runs daily at 07:17 UTC.
+   - A cheap version gate (`fetch_steamclient.py --version-only` + an Actions
+     cache key) stops the run when nothing changed.
+   - On a new version it downloads the binary and skips it if the hash is
+     already whitelisted.
+   - Otherwise it runs
+     `check_patterns.py steamclient.so --json result.json --emit-rvas res/rvas`.
+2. **`check_patterns.py`** (pure Python, parses `src/patterns.hpp` at run time)
+   sets the exit code (`tools/check_patterns.py:1125-1135`):
+   - **0 CLEAN**: the critical (DepotKey) is UNIQUE, the finder anchors are
+     UNIQUE and every non-critical is UNIQUE. The workflow opens the hash-bump
+     PR (`res/updates.yaml` + `res/rvas/<sha>.yaml`) and auto-merges it.
+   - **2 NONCRITICAL_MOVED**: ShaderDepot, Reconcile and/or GMRC moved
+     (`NONCRITICAL`, `:155-159`). The same hash PR goes out, with
+     `# caps: shader=… reconcile=… gmrc=…`. Then the moved constants
+     (`noncritical_moved_consts`) go through the derivation chain. If that
+     works, a `fix(patterns)` PR follows that needs a release; if not, an
+     issue is opened.
+   - **3 BLOCKING**: one of three things failed. (a) The DepotKey pattern. (b)
+     DepotKey's RTTI checks: exactly one `CConfigStore` vtable slot must match
+     the pattern (`:961-1000`), and the by-name resolver must not disagree with
+     it (`:1002-1028`). (c) A finder anchor (`finder:cache_idiom`,
+     `finder:gmrc_tail`, `:1074-1123`). The build is not whitelisted.
+     `tools/blocking_constants.py` keeps the constants a re-derive can fix and
+     prints nothing for a finder anchor, so that case goes straight to an
+     issue. If the chain plus re-validation come back CLEAN, a
+     `fix(patterns)` PR follows with a new SafeMode group.
+   - **1**: usage or I/O error.
+   - BuildDep and LoadPackage are DIAGNOSTIC and never block.
+
+   The GMRC xref rescue is also derived here. If it disagrees with the pattern,
+   the run is BLOCKING; if it fails to resolve, that is reported but does not
+   block. The header comment at `:31-33` still calls GMRC diagnostic. The code
+   below it is right.
+3. **`tools/derive_python_first.sh <so> <consts> <out.json>`** is the one chain
+   every leg runs (`tools/derive_python_first.sh:11-25`). Per constant:
+   - `kDepotKeyFnPattern` → `derive_depotkey_byname.py`: RTTI name → vtable
+     slot, the same resolver the Deck uses as its last resort.
+   - `kNotifyLicensesUpdatedPattern` → `derive_reconcile_byanchor.py`: callback
+     125 + `this` read + `jle`, which leaves exactly one function on bc54101b
+     and 9cf4720f.
+   - `kGmrcFunctionPattern`, `kBuildDepotDependencyPattern` and
+     `kShaderCacheDepotPattern` → `derive_bytext.py`: string → GOT by consensus
+     → unique `lea` → function from `.eh_frame_hdr`, the runtime rescue's own
+     locator.
+
+   All three locators hand the address to `derive_from_address.py`, the shared
+   masking core: one mini-decoder, one rule set, one growth loop (rules below).
+   Only a constant that has no Python result goes to
+   `tools/run_ghidra_derive.sh`. That script runs Ghidra **11.2.1** headless:
+   it is the last release bundling Jython, it runs with `MAXMEM=6G`, and it uses
+   a fresh `-import` each run (`run_ghidra_derive.sh:22-29, 47-61`). Its UNIQUE
+   results are merged in, and a Ghidra result never overwrites a Python one.
+   Exit status is 0 when every requested constant has `matches == 1`, and 3
+   otherwise.
+4. **`tools/apply_derived_pattern.py --derived derived.json --only …`** rewrites
+   only constants that already exist in `patterns.hpp` and only from UNIQUE
+   entries. It exits 4 if a constant cannot be applied.
+5. **Re-validation and feed emission.** `check_patterns.py --emit-rvas res/rvas`
+   runs again on the patched header. Only a CLEAN result produces a PR, and only
+   a non-BLOCKING verdict writes `res/rvas/<sha>.yaml` (`:1207-1210`), which
+   contains three things:
+   - hook RVAs for UNIQUE non-diagnostic hooks only;
+   - `depotkey_rtti`;
+   - the finder's `cache_global_disp`, `cache_root_off`, `cache_nodes_off` and
+     `got_rva` (`emit_rvas_file`, `:48-130`).
+
+   Merging the PR fixes the build on deployed `.so`s at next boot through the
+   feed. The release is still needed for the patterns on every other build.
+
+**Testing the chain without a real move.** `watch-steam-selftest.yml` corrupts
+patterns on a live binary and asserts that the real chain gets back to CLEAN.
+It has three targets:
+
+- `shaderdepot` (default) checks the exit-2 path.
+- `criticals` corrupts DepotKey and checks the exit-3 path through
+  `blocking_constants.py`.
+- `ghidra` runs the postScript alone and asserts that it agrees with
+  `derive_bytext.py` on GMRC, BuildDep and ShaderDepot.
+
+The selftest also runs on any PR that touches the derivation tools. Its header
+still calls GMRC diagnostic. **`probe-steam.yml`** (manual) runs the same check
+and chain against any client channel, such as a Deck or desktop beta, before
+promotion. It works on the runner's copy only: no PR, no issue, no feed. Since
+2026-10-01 it also prints the GNU build-id.
+
+**What Ghidra still does, and what it cannot do.** `derive_patterns.py`
+(`tools/derive_patterns.py:10-44`) derives the three string-anchored hooks and
+**validates** the DepotKey and Reconcile literals. It reads them from
+`patterns.hpp` and never keeps its own copy. It also verifies the two finder
+anchors. Its old indirect walks never worked headless:
+
+- For DepotKey, headless Ghidra **never resolves the dispatcher's
+  `CALL [reg+0x18]`** on any build tried (`watch-steam-selftest.yml` run #7,
+  2026-09-14). While the script still carried a stale DepotKey literal, that
+  failed walk "validated" it as UNIQUE at RVA `0x189fca0`, a function that is
+  not DepotKey (the accessor is `0x11a4500` on bc54101b).
+- `NotifyLicensesUpdated` never references `LicensesUpdated_t`'s type_info
+  (2026-09-22).
+
+Run it by hand like this:
 
 ```sh
-# one-time import (analysis ~5–15 min):
-analyzeHeadless <proj> <name> -import steamclient.so
-# then, any time, re-derive:
+analyzeHeadless <proj> <name> -import steamclient.so \
+    -scriptPath tools -postScript derive_patterns.py [--json out.json]
+# or, on an already analysed project:
 analyzeHeadless <proj> <name> -process steamclient.so \
     -noanalysis -scriptPath tools -postScript derive_patterns.py
 ```
 
-It works two ways per hook, because **not every function has a usable anchor**:
+Analysis takes roughly 5–30 min; CI allows ~20. `tools/ghidra_find_gmrc.py`,
+the original GMRC-only finder, is kept for reference.
 
-| Piece | Anchor | How the tool handles it |
-|---|---|---|
-| **BuildDep** | string `"BuildDepotDependency"` | string → referencing function → fresh prologue pattern (PIC `call` rel32 + GOT `add reg,imm32` auto-wildcarded). **Fully auto.** |
-| **GMRC** | string `"ContentServerDirectory.GetManifestRequestCode#1"` | same. **Fully auto**, e.g. `E8 ?? ?? ?? ?? 05 ?? ?? ?? ?? 55 89 E5 …`. |
-| **ShaderDepot** | string `"shadercachedepot"` (referenced directly inside `GetShaderCacheDepot`) | string → referencing function → fresh prologue pattern. **Fully auto** (since v0.14.1). `extract_pattern` additionally wildcards the `mov eax,[picbase+0x2b758]` global-load disp32 (it shifts per build, §13.10). A miss is non-critical — only the per-game shader skip is lost, installs are fine. |
-| **DepotKey** | indirect: dispatcher refs `"Software\Valve\Steam\Depots\"`, then virtual call (§12.5) | tries to follow the dispatcher's `CALL [reg+0x18]` to reach the inner accessor and emit a fresh pattern. If that vcall walk fails (Ghidra didn't resolve it on this build), falls back to validating the current pattern. |
-| **LoadPackage** | *none* — and **diagnostic-only since v0.13.1** | validates current pattern. A miss does NOT break installs (the package-0 finder injects); only `LUMA_LOADPKG_DEBUG=1` is affected. The script output flags this explicitly so a maintainer doesn't waste time on it. |
-| **package-0 finder** anchors (§13.5) | none — **runtime-derived**, not in `patterns.hpp` | verifies the two anchors are still present: (a) the cache-access idiom `8D ?? disp32 8B ?? 8B ?? 58 0C 00 00`, anchored on the `0xc58` tree-root offset; prints `disp32` (= the X used at runtime). (b) The GMRC prologue tail `55 89 E5 57 56 53 81 EC 10 01 00 00 8B 7D 08 8B 4D 20`. If either says NOT FOUND → the fix is in `src/hooks/package_zero_finder.cpp`, not in `patterns.hpp`. |
+**Masking rules (still load-bearing).** `derive_from_address.wildcard_prologue`
+(`tools/derive_from_address.py:166-232`) and Ghidra's `extract_pattern`
+(`derive_patterns.py:210-262`) apply the same base rules:
 
-What you get end-to-end: the **string-anchored** hooks (BuildDep, GMRC) and
-DepotKey-via-vcall are auto-derived. LoadPackage is treated as best-effort
-diagnostic. The **finder anchors** are auto-validated against any new binary so
-a Steam update that moves the runtime-derivation contract surfaces immediately
-(without it, you'd only notice when installs silently fail). For the rare cases
-the tool can't resolve (e.g. DepotKey if the vcall walk fails on a future
-build), the output is explicit about WHICH piece needs manual work and where
-in the source tree the fix lives.
+- Always wildcard the PIC `call` rel32 and the GOT `add reg,imm32` after it.
+  That `add` has two encodings, `0x05` (`add eax,imm32`, 5 bytes) and
+  `0x81 /0` (`add r/m32,imm32`, 6 bytes), and both imm32s must be masked. GMRC
+  uses the short form; BuildDep, LoadPackage, ShaderDepot and DepotKey use
+  `0x81`.
+- Always wildcard any `mov/lea r32,[picbase+disp32]`. These GOT-relative global
+  offsets shift on almost every build: the package-0 cache global moved
+  `0x3a1bc→0x3967c` (§13.5), and the shader-manager global moved the same way
+  (§13.10).
+- Python only: `mask_frame` wildcards the `sub esp,imm32` (`81 EC`) imm32.
+  `derive_bytext.py` turns it on for its three hooks
+  (`tools/derive_bytext.py:64-65`).
+- Python only: `mask_disp32` also wildcards every other `[reg+disp32]` and the
+  register choice of the load/`test`. Reconcile uses it, because its member
+  offset drifted `0x1b14→0x1b10` and its temporary changed register on the
+  9cf4720f beta.
+- Every derivation then grows by whole instructions from 28 bytes until the
+  pattern matches **exactly once**. The decoder refuses an opcode it does not
+  know rather than guess.
 
-**The wildcarding gotcha** (worth knowing if you extend the tool): the
-get_pc_thunk-relative `add` has two encodings — `0x05` (`add eax,imm32`, 5 bytes)
-and `0x81 /0` (`add r/m32,imm32`, 6 bytes). Both must have their imm32 masked;
-GMRC uses the short `0x05` form, BuildDep/LoadPackage the `0x81` form.
+**The frame-size rule, then and now.** On 2026-06-24 (§13.10 audit) the rule
+was "do NOT wildcard `sub esp, imm32`". At a fixed 28-byte length, wildcarding
+it left GMRC unique but made BuildDep and LoadPackage collide (6 matches each on
+7c4ac73e). Issue #16 re-measured it on 2026-07-06 with
+`tools/experiment_framesize_mask.py` and got 70 and 222. That is still true of
+*fixed-length* patterns: BuildDep's and LoadPackage's shipped literals keep
+their frame size, and DepotKey's `83 EC 24` (imm8) is never masked. What
+changed is the growth loop. A frame-masked prologue that collides at 28 bytes
+is extended until it is unique, so the frame is now masked where it actually
+moved: GMRC since v0.22.0, and Reconcile. Any newly loosened literal still has
+to pass `verify_mask.py` (same site, not just unique).
 
-**Jython quirk noticed during the v0.13.1 verification pass**: `Memory.findBytes`
-with full-byte wildcards in short patterns returned zero hits even when the
-bytes existed. The finder-anchor check sidesteps this by searching for the
-unambiguous trailing literal first and verifying the surrounding bytes via
-`mem.getByte()`. Keep that in mind if you ever add another anchor verification.
+**Jython quirk, still worked around.** In Ghidra 11.2.1's Jython,
+`Memory.findBytes` with full-byte wildcards in short patterns returned zero hits
+even when the bytes existed (seen in the v0.13.1 verification pass). The
+finder-anchor checks search for an unambiguous literal first and verify the
+surrounding bytes with `mem.getByte()` (`derive_patterns.py:295-308, 364-381`).
+Do the same if you add another anchor check to the postScript. The Python tools
+do not have this problem.
 
-**Which immediates to wildcard, and which are load-bearing** (robustness audit,
-2026-06-24, after the ShaderDepot hardening — RESEARCH §13.10). `extract_pattern`
-wildcards exactly the bytes that move between Steam builds *for reasons unrelated
-to the function's identity*:
+**Robustness, most to least robust.**
 
-- the PIC `call` rel32 and the GOT `add reg,imm32` — **always** wildcard;
-- any `mov/lea r32,[picbase+disp32]` global-load disp32 — **wildcard** (these
-  GOT-relative offsets shift on almost every build, the package-0 cache global
-  moved `0x3a1bc→0x3967c`, §13.5). This was the ShaderDepot fragility; auto since
-  v0.14.1. Audited: BuildDep/GMRC/DepotKey load **no** GOT global in their
-  captured prologue, so the rule is a no-op for them (verified — they re-derive
-  byte-identical and still UNIQUE).
+1. The string-anchored trio (GMRC, ShaderDepot, BuildDep): a stable Steam
+   string leads to the function, at runtime and in CI alike.
+2. DepotKey by name: it reads no prologue byte, but it depends on the RTTI
+   names and the `GetBinary` map slot.
+3. Reconcile by behaviour anchor.
+4. LoadPackage: diagnostic, with no anchor at all.
 
-But do **NOT** wildcard the **stack-frame size** (`sub esp, imm32`) even though it
-*looks* build-specific. Verified empirically on `7c4ac73e`: wildcarding it leaves
-GMRC unique but makes **BuildDep collide (6 matches) and LoadPackage (6)** — the
-frame size is genuinely part of those functions' byte-identity, and the string
-anchor finds the *function* but the runtime finder still needs a *unique* pattern.
-Frame sizes have survived at least one build transition (`f92deb5e→7c4ac73e`)
-intact, so they're an acceptable, non-removable anchor — not a bug to "fix".
-
-**Robustness ranking of the derivations** (most → least): the string-anchored
-trio (BuildDep, GMRC, ShaderDepot) is the most robust — a stable Steam string →
-the function → an auto-wildcarded prologue. **DepotKey *was* the least robust as
-a byte-sig**: no in-function anchor, so the tool walked the dispatcher's `CALL
-[reg+0x18]` (hardcoded vtable slot `0x18`, relying on Ghidra resolving the
-vtable), which could fail. **Since 2026-07-06 DepotKey no longer depends on that
-at runtime**: the shipped hook resolves via RTTI (`CConfigStore` slot 6, §15)
-with the byte pattern kept only as a validated fallback — so a Ghidra vcall-walk
-miss no longer breaks the hook; the derivation below just refreshes that
-fallback. LoadPackage is diagnostic-only (multi-match by design). All current
-shipped patterns were re-confirmed UNIQUE (DepotKey/BuildDep/GMRC) or
-expected-multi (LoadPackage) on `7c4ac73e`.
-
-Paste the printed `UNIQUE` patterns into `src/patterns.hpp`, rebuild, redeploy.
-(`tools/ghidra_find_gmrc.py` is the original GMRC-only finder kept for reference.)
+The package-0 finder's anchors are not patterns. When they move, the fix is
+code in `src/hooks/package_zero_finder.cpp` (`maintenance.md` §C).
 
 ## 9. Per-game data (handled by tools/steamidra_lite.py)
 
-For a game you have a `.lua` + `.manifest` set for (e.g. ManifestHub zip):
-- Copies `.manifest` files into `Steam/depotcache/` **and** `Steam/config/depotcache/`
-  (Steam reads either; syncing both avoids intermittent "missing manifest").
-- Writes `~/.config/lumalinux/keys.txt` in the extended format:
-  `depot_id;parent_app_id;manifest_gid;manifest_size;hexkey`. `parent_app_id` is
-  the app for all content depots (so `GetDepotsForApp` covers them); manifest gid
-  and size come from the `.lua` (`setManifestid`) and the `.manifest` binary
-  (`cb_disk_original`, protobuf metadata magic `0x1F4812BE`, field 5).
-- Adds the app + depot ids to SLSsteam's `config.yaml` `AdditionalApps`.
-- **Ecosystem interop** (best-effort, beyond SteaMidra's flow): copies the
-  `.lua` to `config/stplug-in/<appid>.lua`.
+What `tools/steamidra_lite.py` writes, its CLI, the three `keys.txt` line formats
+and `retired_keys.txt` are documented in one place: `docs/manual-install.md`. The
+facts that matter for reverse engineering, and that the hooks rely on:
 
-  It used to also write ACCELA-compatible markers — an in-game
-  `.DepotDownloader/` dir in `steamapps/common/<installdir>/` plus a
-  `~/.local/share/ACCELA/depots/<appid>.depot` tracker, which ACCELA's scanner
-  (`game_manager.py:_get_accela_marker_path`) checks for existence next to real
-  content without parsing. **Both are gone in practice.** They are derived from
-  the `installdir`, which only the `.acf` knows, and since the deploy stopped
-  seeding an `.acf` there is nothing to read at that point. `--accela-mark
-  <appid>` still recreates them from a real post-install manifest, but nothing
-  invokes it — LumaDeck removed its caller along with the stub (its issue #41).
+- Manifests go to `<steam>/depotcache/` **only**. Steam does not read
+  `config/depotcache/`. Measured 2026-09-11: with the manifest only there, Steam
+  still asks Valve for a request code (§19.3, `steamidra_lite.py:10-11`).
+- The manifest size in an EXTENDED `keys.txt` line is `cb_disk_original`. It is
+  read from the `.manifest` binary, from the metadata block with protobuf magic
+  `0x1F4812BE`, field 5 (varint) (`steamidra_lite.py:219-220, 273-298`). The
+  gid comes from the `.lua`'s `setManifestid`. Those `gid`/`size` fields only
+  fed the BuildDep hook, which is off by default. Pinning is SLSsteam
+  `ManifestIds`.
+- `config.vdf` `DecryptionKey`s are pruned by Steam on shutdown for unowned
+  depots (§6), so `keys.txt` is the source the DepotKey hook serves from.
+  `tools/vdf_inject_keys.py` is only a belt-and-suspenders helper.
 
-`tools/vdf_inject_keys.py` writes keys into `config.vdf` without the `vdf` python
-module — but those get pruned (§6), so it's only a belt-and-suspenders helper.
+The ACCELA/ASSella markers (`.DepotDownloader/`,
+`~/.local/share/ACCELA/depots/<appid>.depot`) and the `--accela-mark` flag were
+removed on 2026-10-06 (`steamidra_lite.py:820-822`).
 
 ## 10. Open items / ideas for extension
 
-- **Only depot 2379781 mounted** for Balatro (64 MB) — the game runs. Depot
-  2379782 (81 MB) wasn't downloaded; likely the other-OS depot Steam doesn't need
-  on the Deck (Proton). If a game needs multiple depots and some don't mount,
-  investigate why Steam isn't requesting their manifest (OS filter / branch).
-- **Headcrab Updater regenerates `~/.local/share/Steam/steam.sh`** on
-  every run and the lumalinux block goes with it. Workaround today is
-  manually re-running `install.sh` after Headcrab updates. Better fixes
-  would be (a) upstream Headcrab learning to read a sidecar
-  `~/.config/lumalinux/inject.env` and emit the export itself, or (b)
-  LumaDeck wrapping Headcrab + lumalinux installs together so the user
-  hits one button.
-- `RelocateChainedJmp` (lmhook.cpp) is dormant infra for hooking a function
-  SLSsteam already detoured; no current hook needs it.
-- Consider prefetching all keystore gids' codes at startup (background) instead
-  of lazily in the hook, if the first-manifest stall is noticeable.
-- **Async finder ↔ Steam read race on `CPackageInfoCache`** (theoretical, no
-  observed crash). The package-0 finder (§13) reads `CPackageInfoCache` and the
+Open as of 2026-10-09. The project-wide list is `docs/nosotros.md` §4.1, and what
+has been decided is in its §4.4. This section keeps the reverse-engineering ones.
+
+- **Async finder ↔ Steam read race on `CPackageInfoCache`** (theoretical; no
+  crash observed). The package-0 finder (§13) reads `CPackageInfoCache` and the
   `PackageInfo*` it returns from its own thread, while Steam can mutate them
-  from its threads. Already protected against the easy modes: every dereference
-  goes through a `/proc/self/maps` readability check (so a freed-and-unmapped
-  address yields `nullptr` + a log line, not SIGSEGV), and `InjectDepots`
-  sanity-checks `AppIdVec` (rejects clearly bogus entries like `0` or
-  `> 50M`). NOT protected against a "freed-and-still-mapped" use-after-free:
-  Steam destroys `PackageId=0` (re-login / licence refresh) → finder grabs
-  the stale `PackageInfo*` in the gap → realloc on dangling `m_pMemory` =
-  heap corruption. In practice the tree is built once at login and stays
-  stable; rebuilds are rare and the window is microseconds. Mitigation
-  options if it ever surfaces, cheapest first:
-  (a) drop the post-hit re-inject loop entirely — only the first-hit window
-      exists, no slow watch at all;
-  (b) double-read — read the `PackageInfo*` twice with ~10 ms between, abort
-      and retry if it changed; tightens the window without true atomicity;
-  (c) atomic CAS on `m_pMemory` via `__atomic_compare_exchange_n` — true
-      guarantee, but bets that Steam keeps using libc realloc for
-      `CUtlMemory` (§11.2). Leave alone until there's a real repro;
-  speculative concurrency fixes tend to introduce more bugs than they fix.
-  **Update 2026-09-08 — a fourth, cheaper mitigation shipped**, and it is none
-  of the three above: `FindPackage0` now cross-checks the tree node's key
+  from its own threads.
+
+  What is already protected:
+  - Every dereference goes through a `/proc/self/maps` readability check
+    (`IsReadable`, `src/hooks/package_zero_finder.cpp:463, 486-520`). A
+    freed-and-unmapped address yields `nullptr` and a log line, not a SIGSEGV.
+  - `AppendIdsToVec` rejects an implausible `AppIdVec`: `m_Size > 4096`, or
+    entries that are `0` or `> 50M` (`src/hooks/load_package_hook.cpp:77`).
+
+  What is not protected is a freed-but-still-mapped use-after-free. Steam
+  destroys `PackageId=0` (re-login or licence refresh), the finder grabs the
+  stale `PackageInfo*` in that gap, and the realloc on a dangling `m_pMemory`
+  corrupts the heap. In practice the tree is built once at login and stays
+  stable; rebuilds are rare and the window is microseconds.
+
+  **Shipped 2026-09-08:** `FindPackage0` cross-checks the tree node's key
   against the `PackageInfo`'s own `PackageId` (+0x00) and refuses to return the
-  object when they disagree. It does not narrow the race window at all — it
-  makes a walk that landed on the wrong object end in a refusal plus a log line
-  instead of a write. Note what it does NOT catch, which is exactly the
-  dangerous case above: a STALE `PackageInfo` for the real package 0 still
-  reports id 0 and passes. Same for `AppendIdsToVec`'s existing sanity checks,
-  which test plausibility (`m_Size > 4096`, entries `0` or `> 50M`), not
-  identity. The (a)/(b)/(c) options remain the answer if a repro ever appears.
+  object when they disagree (`package_zero_finder.cpp:525-565`). This does not
+  narrow the window. It turns a walk that landed on the wrong object into a
+  refusal and a log line instead of a write. It does NOT catch the dangerous
+  case: a STALE `PackageInfo` for the real package 0 still reports id 0 and
+  passes. The same goes for the plausibility checks above, which test
+  plausibility, not identity.
+
+  If a repro ever appears, the remaining options, cheapest first:
+  - (a) Drop the post-hit re-inject watch, so only the first-hit window
+    exists.
+  - (b) Double-read the `PackageInfo*` ~10 ms apart and retry on change.
+  - (c) An atomic CAS on `m_pMemory` (`__atomic_compare_exchange_n`). This bets
+    that Steam keeps using libc realloc for `CUtlMemory` (§11.2).
+
+  Leave it alone until there is a real repro: speculative concurrency fixes
+  tend to introduce more bugs than they fix. Five of the finder's seven struct
+  offsets are still verified by no tool (`package_zero_finder.cpp:86-97`); the
+  identity check is the mitigation for that too.
+- **The re-derivation chain has never run on a real move.** Since June, Valve
+  has not moved a shipped pattern. The chain has only been exercised with
+  deliberately corrupted patterns (§8.1). The cron watches only
+  `steamdeck_stable`, so a beta recompile is invisible until promotion unless
+  someone runs `probe-steam.yml`. A second cron job on `steamdeck_publicbeta`
+  was noted and deferred (nosotros §4.1-36, §4.4 C2).
+- **Hash is advisory; a hook can resolve UNIQUE at the wrong site and still
+  install.** The defence is the crash-loop guard, not a block. `status.json`
+  says `installed` but cannot tell "installed" from "installed and serving". A
+  per-hook hit counter (~30 lines) is the noted candidate (nosotros §4.1-37,
+  §4.4 C5b).
+- **Masking left undecided:** the `0x44` in ShaderDepot's
+  `mov eax,[eax+0x44]`. Mask it only if a build ever moves it, and validate with
+  `verify_mask.py` (nosotros §4.4 C1).
+- **Call-site anchors need a convergence rule first.** `classify_hit_count`
+  (`tools/check_patterns.py:494`) marks any n>1 AMBIGUOUS. Before any hook is
+  anchored on a call site, it has to accept N hits that converge on one target
+  (nosotros §4.4).
+- **GMRC xref walk-back retirement.** `WalkBackToPrologue` stays only for builds
+  without a usable `.eh_frame_hdr`. Delete it if real logs never show
+  `.eh_frame_hdr unavailable — falling back to the walk-back`
+  (`src/gmrc_xref.hpp:72-77`, `gmrc_xref.cpp:152`).
+- **Comments that contradict the code** (no runtime effect; they mislead whoever
+  debugs):
+  - `src/curl.hpp:14-18` still describes the `OpenSteamTool/1.0` UA.
+  - `src/hooks/depot_key_hook.cpp:113-123` says "RTTI first, slot derived from
+    the pattern", a resolver that no longer exists.
+  - `tools/check_patterns.py:31-33` and the `watch-steam-selftest.yml` header
+    call GMRC diagnostic.
+  - `tools/blocking_constants.py:20-22` says DepotKey is derived by the Ghidra
+    vcall walk.
+  - `watch-steam.yml`'s PR and issue bodies name only `derive_patterns.py`, and
+    it says SafeMode "keeps blocking".
+  - `tools/gmrc_probe.py` lists five providers, opensteamtool included.
+
+  (nosotros §4.1-22, -39.)
+- **`RelocateChainedJmp`** (`src/lmhook.cpp:97-123`) is wired into
+  `LmHook::Install` and runs whenever a target's first byte is already `0xE9`
+  (another hooker's detour, `:138-156`). None of the default hooks targets a
+  function another library detours. BuildDep, which SLSsteam hooks, is off. So
+  the code path is untested on a real build.
+- **Only depot 2379781 mounted for Balatro** (2026-06; 64 MB, the game runs).
+  2379782 (81 MB) was not downloaded, most likely the other-OS depot that Steam
+  doesn't need under Proton. Not re-examined since. If a multi-depot game has
+  depots that don't mount, check whether Steam requests their manifests at all
+  (OS filter, branch).
+- Prefetching the keystore's codes at startup (background) instead of on
+  demand: never built and never decided. Against it today: codes rotate, the
+  cache is deliberately 120 s, every code costs a CDN check, and 20770407
+  allows 10 req/10 s (`gmrc_store.hpp:69-93`), so a prefetch would spend the
+  budget on codes that may go stale before Steam asks for them.
+
+Closed since the previous version of this list:
+- The Headcrab `steam.sh` re-patching problem is gone. `setup.sh` injects
+  through a wrapper at `~/.local/share/SLSsteam/path/steam` and restores a
+  vanilla `steam.sh` (`setup.sh:18-26, 244-261`; nosotros §2.1).
+# Part II — Log
+
+Each section below describes the code as it was on its date and is not rewritten afterwards.
+Where something changed later, the section starts with a "> **Since then:** …" note that says what is true today and where it is documented.
 
 ## 11. lumalinux vs LumaCore — verified divergences
+
+*(2026-05-31, rewritten 2026-06-05 against v0.8.1; §11.5 updated for v0.15.8, 2026-07-01, and on 2026-08-13)*
+
+> **Since then:** this section is a snapshot of LumaCore and of lumalinux as of its date. The current reading of LumaCore is [`lumacore.md`](lumacore.md) (§2.4, §4.3), and today's lumalinux internals are in [`nosotros.md`](nosotros.md) §2.
 
 Side-by-side comparison of the equivalent pieces, derived from reading both
 codebases. Useful as a map when something breaks and we need to decide
@@ -618,6 +1166,8 @@ latent overrun.
 
 ### 11.4 BuildDep hook (`ManifestBind::BuildDepotDependency`)
 
+> **Since then:** the BuildDep hook is off by default since v0.16.10 (SLSsteam hooks `BuildDepotDependency` itself; `LUMA_FORCE_BUILDDEP` turns ours back on, `src/main.cpp:175-186`), and version pinning is SLSsteam's `ManifestIds`; see [`nosotros.md`](nosotros.md) §2.1 and §2.5.
+
 | | LumaCore | lumalinux |
 |---|---|---|
 | Hooked function | `BuildDepotDependency(this, AppId, ..., pDepotInfo, pSharedDepotInfo, ...)` | Same signature |
@@ -646,6 +1196,8 @@ v0.8.1.
 
 ### 11.5 GMRC hook (`ManifestBind::FetchSteamRun`)
 
+> **Since then:** the lumalinux column is out of date. Since v0.21.0 the cascade has four providers (20770407 → manifestdex → wudrm → steamrun, opensteamtool dropped), every code is checked against Valve's CDN before Steam sees it (`CdnAcceptsCode`), and the User-Agents are `lumalinux/<version>` and `ManifestDeX/1.0` (`src/gmrc_store.hpp:66-67, 154-159`); see §20.3 and [`nosotros.md`](nosotros.md) §2.4. The gating (`HasManifestGid || HasDepot`, `src/hooks/gmrc_hook.cpp:43`) is unchanged.
+
 > **Correction (verified 2026-08 against SFF `6.6.4`).** An earlier note here said
 > LumaCore had **no `GetManifestRequestCode` hook at all**. That is now **stale**.
 > LumaCore runs a runtime GMRC bridge at the **wire layer** —
@@ -658,7 +1210,7 @@ v0.8.1.
 > (function-layer, SLSsteam-safe), not existence** — LumaCore reaches it on the
 > wire layer, which SLSsteam owns and lumalinux cannot touch. The table's LumaCore
 > column below is updated to the `6.6.4` wire-layer bridge. See
-> [`nosotros.md`](nosotros.md) §5 and [`lumacore.md`](lumacore.md)
+> [`nosotros.md`](nosotros.md) §2.4 and [`lumacore.md`](lumacore.md)
 > §2.4.
 
 | | LumaCore 6.6.4 (wire-layer) | lumalinux |
@@ -686,45 +1238,11 @@ pre-cache entirely). v0.8.1 widened the gating with `|| HasDepot(depot_id)`.
 
 ### 11.6 Suspect list for future crashes / regressions
 
-The historical divergences with LumaCore that motivated this section have all
-been resolved by v0.8.1 (see the subsections above). The current order of
-suspicion, no longer using LumaCore parallels as anchors, is:
-
-1. **Stale Patterns after a Steam update** — a single byte change in any
-   hooked function's prologue silently uninstalls that hook. This matters
-   most for **DepotKey and GMRC**: those are pattern-anchored inline hooks,
-   and if they break, install breaks. (**BuildDep** was in this set until
-   v0.16.10; it is now disabled — SLSsteam owns `BuildDepotDependency` — so a
-   BuildDep pattern miss no longer matters and `check_patterns.py` treats it as
-   diagnostic.) **LoadPackage is much less critical now**: since v0.13.0 it's
-   diagnostic-only, and depot
-   injection runs through the package-0 finder, which derives its addresses
-   at runtime and doesn't depend on `kLoadPackagePattern` (so even a broken
-   LoadPackage pattern still leaves installs working — only the
-   `LUMA_LOADPKG_DEBUG` diagnostic stops firing). **ShaderDepot (§13.10) is
-   also non-critical**: a `kShaderCacheDepotPattern` miss only stops the
-   per-game shader skip — installs still work, and keyless games merely
-   regress to the §13.8 shader loop (the global `DisableShaderCache` remains a
-   manual fallback). It does show FAILED in the startup toast, so a miss is
-   visible.
-2. **All GMRC providers down at once** — since v0.15.8 there are three
-   (opensteamtool → wudrm → steamrun, §7), so a single one being down (e.g.
-   wudrm's frequent 502s) is survivable. Still no *offline* fallback: if all
-   three are unreachable, a manifest FILE not already in `depotcache/` can't be
-   fetched. Symptom: new installs failing in a loop with "Access Denied" → "No
-   connection" in the UI. Only affects depots whose manifest isn't pre-seeded
-   from the zip (typically the base/shader depot). Note the Cloudflare UA gate
-   (§7): if opensteamtool alone starts failing, first suspect a stripped/changed
-   `User-Agent` in `gmrc_store.hpp`, not the endpoint being down.
-3. **Race in `Log::Init`** — only realistic if the LD_AUDIT preinit, the
-   LD_PRELOAD ctor and a worker thread coincide within microseconds
-   (Issue #5).
-4. **The Headcrab Updater regenerates** `~/.local/share/Steam/steam.sh` and
-   the lumalinux block goes with it — there is no automatic re-apply today,
-   so `install.sh` has to be re-run.
-
+> **Since then:** the list that stood here is superseded. Which hook is critical and what breaks when each one fails is now the "Si falla" ("if it fails") column of the hook table in [`nosotros.md`](nosotros.md) §2.1 (today only DepotKey and the package-0 finder are critical; every hook resolves feed → pattern → rescue). The one item not covered there, a possible race in `Log::Init` (Issue #5), was not re-checked.
 
 ## 12. The DepotKey hook crash and its fix (Formula Legends)
+
+*(2026-06-02, v0.8.x)*
 
 Full investigation, reproduced on real Steam Linux (codespace Ubuntu 24.04,
 Xvfb+noVNC, SLSsteam + lumalinux). Not hypothesis.
@@ -815,13 +1333,11 @@ up; it doesn't block Play.
 
 ### 12.7 Implication for §11.3
 
-The §11.3 divergence ("DepotKey hook without `KeySize` validation") is
-resolved: the v1.0 hook DOES validate `KeySize` (like LumaCore) because it
-now hooks the KeyName-based variant that receives the size. The crash was
-not about the buffer (32 bytes fit in 128) but about short-circuiting the
-dispatcher — fixed by hooking the inner accessor instead.
+Same conclusion as the "History" paragraph of §11.3: the v1.0 hook validates `KeySize`, and the crash came from short-circuiting the dispatcher, not from the buffer.
 
 ## 13. The package-0 finder — from a passive hook to an active walker
+
+*(2026-06-15, v0.10.9–v0.13.0; §13.5 and §13.7-§13.11 carry their own later dates)*
 
 (Origin: v0.10.9 – v0.10.11. Promoted to the sole, default-on injector in
 v0.13.0.)
@@ -869,6 +1385,8 @@ Corollary: relying on an *event* (the hook firing) for a structure that may
 already exist is brittle. The robust thing is to go and **find** the structure.
 
 ### 13.4 The fix — an active cache walker
+
+> **Since then:** the legacy LoadPackage hook is no longer installed at all unless `LUMA_LOADPKG_DEBUG` is set (`src/main.cpp:187-188`); the finder knows two cache layouts, `0xc58/0xc6c` and `0xf90/0xfa4` (`kCacheLayouts`, §13.5.c); it also removes from package 0 the ids that left `keys.txt` (`src/hooks/load_package_hook.cpp:227-247`); and its 2 s / 15 s wait is cut short by a `keys.txt` change (`LicenseReconcile::WaitForKeysChangeOr`, `src/hooks/package_zero_finder.cpp:827`). See [`nosotros.md`](nosotros.md) §2.1 and §2.2.
 
 `PackageZeroFinder` (detached thread, **on by default** since v0.13.0;
 disable with `LUMA_NO_PKG0_FINDER`, and `LUMA_PKG0_FINDER=diag` leaves it in
@@ -941,7 +1459,198 @@ Same philosophy as `derive_patterns.py` (§8) but **at runtime**: zero
 per-build offsets, everything reconstructed from stable anchors (the
 hook-surviving GMRC prologue tail and the class-layout root offset).
 
-**13.5.b The layout table (2026-09-22).** The root offset is not one number
+**So why the feed does not break that.** Since 2026-09-08 both numbers come
+first from the RVA feed, and the scan runs only if the feed does not carry them,
+which seems to contradict the paragraph above. It does not, because what had to
+be avoided was not *computing cold*: it was **baking a constant into
+`liblumalinux.so`**, which is what forces a release for every Steam build. The
+feed bakes nothing —
+
+- it is **indexed by the SHA-256 of the loaded `steamclient.so`**
+  (`rva_feed.cpp`, `getFileSHA256` over the real module), so a new build
+  simply has no feed entry and **is scanned**: the case "old number applied to
+  a new binary" does not exist;
+- it is computed by **the same algorithm**, running in CI instead of on the Deck
+  (`check_patterns.py` reproduces the runtime predicates, and
+  `tools/test_cache_idiom.py` fails if they stop agreeing);
+- it is **downloaded from the repo at every start**; it does not travel inside
+  the binary.
+
+So it is a **cache of the live computation**, not a substitute for it. The
+property that mattered — *a new Steam build does not force a lumalinux release*
+— still stands, and is in fact reinforced: before, a broken scan required a
+release; now it is fixed by publishing the number.
+
+And the finder still derives live everything the feed does not cover, which is
+most of it: walking the tree, finding package 0, cross-checking its identity,
+injecting. That depends on Steam's live state, not on the binary, and cannot be
+precomputed.
+
+**The cost, which is real:** the scan becomes the rare path — it only runs in
+the hours between Valve publishing and the cron passing — and code that almost
+never runs rots without warning. It is accepted for two reasons: it is the same
+deal DepotKey and GMRC already took when they went RVA-first, and the scan
+**does** run daily, in the nightly `check_patterns.py` against the real binary
+and in the synthetic tests on every push. It runs in CI, not on the Deck.
+
+What there is **not** is a runtime check of the feed against the scan, and that
+is deliberate (`ec9e840` removed exactly that check from DepotKey): checking it
+would cost the very scan being saved. Two safety nets remain: the feed only
+publishes what CI resolved **UNIQUE**, and if the resulting pointer does not
+lead to a coherent package 0, `FindPackage0`'s identity cross-check refuses to
+write.
+
+**Since 2026-09-08 both derivations are UNIQUE-or-nothing** (§13.5.a): if the
+scan cannot name a single answer it returns none and the finder stands down,
+rather than taking the first match. The two classify on **different axes**, and
+the distinction matters:
+
+- the **idiom** classifies over distinct `disp32`. Several matching sites are
+  normal and healthy — the current build has two, at rva `0xfdd2dd` and
+  `0x18964e5` — as long as they name the same `X`.
+- the **GOT** classifies over the **derived GOT base**, not over the site
+  count. A second PIC prologue of the same shape computes the *same* GOT, so
+  counting sites would flag a healthy binary; comparing the derived base does
+  not.
+
+Two more properties worth stating, because both were decisions:
+
+- **The base register is deliberately not pinned.** The recogniser requires the
+  three instructions to be *chained* (`reg(lea) == rm(mov1)`,
+  `reg(mov1) == rm(mov2)`) but does not demand a particular register, because
+  the two real sites on the current build use different ones (`esi` and `eax`).
+  Pinning `ebx` — the textbook PIC GOT register — would have missed both.
+- **The scan runs once.** The bytes it reads are final the moment
+  `steamclient.so` is mapped, so a failure cannot become a success by trying
+  again: it resolves once and gives up on failure. (The *tree walk* is the
+  opposite — genuinely transient, since the cache is populated
+  asynchronously — so that one does retry; see §10.)
+
+Scale note, since it justifies preferring the RVA feed: the `r-x` span being
+scanned is a **single** `LOAD R E` segment of `0x1ffe574` bytes ≈ **32 MB**.
+Both derivations are **feed-first** since 2026-09-08 (`finder.cache_global_disp`
+and `finder.got_rva`), each falling back to its own scan, so on a build the CI
+has already seen neither scan runs at all.
+
+#### 13.5.a Audit of the locator (2026-09-08)
+
+The locator above was audited in full: the nine functions of
+`package_zero_finder.cpp`, its CI surface and the log strings that
+`maintenance.md` uses for triage. The initial audit had 3 findings; the full
+sweep turned up 20. The list is recorded **with a judgement of usefulness**,
+because they do not weigh the same.
+
+Outcome: **13 were fixed in code** (everything that touched the resolution
+criterion, CI and triage), **6 were documented as accepted risk** in the
+`KNOWN LIMITS` block of `package_zero_finder.cpp` — real nits, but none with a
+fix worth its cost — and **1 remains open** because it has no cheap fix: the
+double role of `0xc58`. The result was validated on a real Deck (§13.5.b).
+
+| # | finding | judgement | status |
+|---|---|---|---|
+| 1 | `FindCacheGlobalDisp` kept the **first** `disp32` when several disagreed, and built the address it writes to from that number | future-proofing; the measured build was already unique | **done** |
+| 2 | the log came out **identical** with agreeing and disagreeing sites, so nobody could tell which case they were in | real: it is why 1 stayed invisible | **done** |
+| 4 | nothing checked that the three instructions were **chained**, only their shape | needed together with 1 | **done** |
+| 5 | the two branches of the `else` were identical: the "ambiguous" distinction was documented and did not exist | symptom of 1 | **done** |
+| 6 | a ~32 MB rescan **every 2 s, forever**, when the scan did not resolve | only on the failure path | **done** |
+| 10 | the `maintenance.md` triage quoted log strings that the changes had deleted | self-inflicted | **done** |
+| 3 | CI did not compare the `disp32` values it collected: `AMBIGUOUS` passed green | **high** — CI is the only continuous watchman | **done** |
+| 9′ | CI recognised **less** than the runtime (opcodes only), and so did `derive_patterns.py`: they approved what the Deck rejects | **high** | **done** |
+| 7 | `DeriveGotBase` also returns the **first** match, without requiring uniqueness — and it is **upstream** of 1 | future-proofing | **done** — same treatment as 1, but classifying over the **derived GOT**, not over the site count (see below) |
+| 8 | the CI comment justifies not blocking with *"DeriveGotBase finds the right one at runtime"*, which the code does not do | pending with 7 | **done** — both halves: CI blocks (`finder:gmrc_tail:…`) and the runtime fails closed, so the comment now describes the truth |
+| 11 | triage searched for `outcome=pattern_miss`, which only `LoadPackage` emitted; DepotKey and GMRC say `outcome=miss` → **it did not catch the two critical hooks**. And it was not one row: there were **five** references in `maintenance.md`, four of them to hooks that never emitted that string | **real, today** | **done** — vocabulary unified on `miss` |
+| 12 | the finder does not emit the structured `name=/method=/outcome=` line that the hooks do emit | cosmetic, but it broke `grep outcome=` as a health check: the only injector was invisible | **done** — `Finder resolve: name=PKG0Finder method=… outcome=resolved\|miss` |
+| 13 | `PackageInfo` was reached by following seven offsets through a live structure without checking the object's **identity**; the id itself was already read **for the log** and not used: two independent sources, one wasted. *(Nuance: the write path was not bare — `AppendIdsToVec` already rejected an implausible `AppIdVec`. That is plausibility, not identity.)* | **unique to the live path** | **done** — `FindPackage0` cross-checks the id and retries if it disagrees; mitigation of [14] and a fourth option for §10 |
+| 14 | five of the seven class offsets are validated by nobody — and they **cannot be validated** in a binary without symbols | accepted risk | see KNOWN LIMITS |
+| 15,16,17,19,20,21 | walk consistency, `"r-x"` as a substring, `lo..hi` with gaps, dead branch, maximum depth, magic `0x50` | nits | see KNOWN LIMITS |
+| — | `0xc58` plays a **double role**: it identifies the idiom *and* it is the offset we read afterwards. If Steam moves the field, both fail at once and the diagnosis will say "not found" | structural | open |
+
+**The asymmetry with the hooks, half closed (2026-09-08).** DepotKey and GMRC
+resolve `feed → pattern (unique or nothing) → rescue`; the finder did not read
+the feed at all, even though CI published `finder.cache_global_disp` in every
+`res/rvas/*.yaml`, `design/rva-feed-design.md` documented it and steamflipper
+corroborated it by another method (the SteamFlipper analysis, a doc retired on
+2026-10-08 with the project gone). `grep -rn cache_global_disp src/` returned
+nothing: 32 MB were scanned per start to recompute a number already written
+down. Now the finder does `feed → scan` (`RvaFeed::CacheGlobalDisp()`), with the
+same rule of not revalidating the feed against the scan that was set in
+`ec9e840` for DepotKey.
+
+**And the other half, closed too (2026-09-08).** That left the GOT, which was
+still derived by scanning because the feed published no RVA for it. Now it does
+(`finder.got_rva`, from `verify_gmrc_got`/`distinct_got`) and the finder reads
+it through `RvaFeed::GotBase()`. On a build with a complete feed entry the
+finder **does not scan code at all**.
+
+The detail that is not symmetric, and where the easy mistake was: the `disp` is
+a constant used as is, but the GOT is an **address**, so it has to be translated
+through `VaddrXlate` just like a hook RVA. And even so it is not a hook: it falls
+in `.got`, which is mapped and writable but **not executable**, so the
+`inSteamclientExec()` guard of `Resolve()` would reject every correct value.
+`GotBase()` translates like `Resolve()` and validates against the module's
+**whole** mapping. Getting that wrong would not have failed loudly: it would
+have produced a plausible-looking cache pointer built on a file offset.
+
+The two keys are published **separately**, each according to the verdict of its
+own anchor: a build with an ambiguous idiom can have a unique GOT, and
+publishing the half we are sure of is better than publishing nothing. The
+runtime falls back to the scan number by number, not all or nothing.
+
+**Lesson of method**, because the pattern of the findings says it on its own:
+the initial audit looked at **one function**, not the subsystem. The ten that
+were missing did not turn up over time — they were all there, and were stumbled
+on one by one during the implementation. What was missing was sweeping the
+whole file, checking code against documentation, and comparing CI against
+runtime in both directions. All three are mechanical.
+
+#### 13.5.b Live validation of the rewritten locator (2026-09-08)
+
+Everything in §13.5.a was validated **on a real machine with Steam and a
+logged-in session**, not only in CI. It matters to write it down because it is
+the only proof there is: `build.yml` compiles, `check_patterns.py` resolves on
+paper, and `verify-fix.yml` — the workflow that should start the `.so` — has
+never had a green run (its first real executions, that same day, all failed in
+the harness before reaching any assertion).
+
+Recipe: SteamOS codespace, stack installed normally from LumaDeck
+(`setup.sh`), and then **only** `liblumalinux.so` replaced by the branch's
+build. It is written step by step in `maintenance.md` §C.
+
+The session's `steamclient.so`: `237495b4…`. What came out of the log:
+
+```
+PKG0_FINDER: GOT UNIQUE — 1 site(s), got=0x…
+PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
+Finder resolve: name=PKG0Finder method=… got=0x… disp=0x3b7d4 … outcome=resolved
+PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{size=196}
+```
+
+and the injected appids starting with `{5,7,8,90}`. That is: both anchors
+resolved unique, the new identity cross-check (finding 13) passed —
+`PackageId=0` read from the object matches the node's key — and the injection
+went through to the end with a plausibly sized `AppIdVec`. `3/3 hooks active`
+on the same start, so none of this broke DepotKey, GMRC or ShaderDepot.
+
+**What is still not exercised, and it has to be said:** everything validated is
+the success path. The failure paths — `method=rva` (reading the `disp32` from
+the feed instead of scanning), the two `AMBIGUOUS` branches, the thread ending
+after a failed scan, and the finder's `outcome=miss` — have been run by nobody
+but the synthetic tests in `tools/test_cache_idiom.py`. They are precisely the
+ones only seen on the day Steam breaks something, so the synthetic test is the
+only thing that covers them.
+
+**How the test harness itself was verified.** The four scans of the idiom
+(runtime, `check_patterns`, `derive_patterns`, the probe) were checked against
+a synthetic ELF and agree. And to rule out that the tests were decorative,
+**mutation** was done: altering the predicates one by one, the tests fail
+(8/2/1 failures depending on the mutation) instead of passing green. A test
+that does not bite when you break what it guards is not a test, and that
+mistake had already been made in this repo — `verify-fix.yml` had been "green"
+for months because the run being cited belonged to a different workflow.
+
+#### 13.5.c The layout table (2026-09-22)
+
+The root offset is not one number
 any more. The `1790036264` beta (`9cf4720f…`, desktop and Deck public-beta
 manifests ship the same file) recompiled `steamclient.so` (49.8 → 53.5 MB) and
 both anchors came back NOT_FOUND. Measured with
@@ -979,196 +1688,6 @@ on. `Reconcile`'s pattern broke on the same build for an unrelated reason: it
 pinned the register of one temporary (`edi`); the two ModRM bytes are
 wildcarded now and the pattern is UNIQUE on both builds (stable `0x188c950`,
 beta `0x1a0d010`, the latter agreeing with steam-monitor's locator).
-
-**Y entonces por qué la ficha no rompe eso.** Desde 2026-09-08 los dos números
-salen primero del RVA feed y sólo se escanea si la ficha no los trae, lo cual
-parece contradecir el párrafo de arriba. No lo hace, porque lo que había que
-evitar no era *calcular en frío*: era **hornear una constante dentro de
-`liblumalinux.so`**, que es lo que obliga a una release por cada build de Steam.
-La ficha no hornea nada —
-
-- está **indexada por el SHA-256 del `steamclient.so` cargado**
-  (`rva_feed.cpp`, `getFileSHA256` sobre el módulo real), así que un build nuevo
-  simplemente no tiene ficha y **se escanea**: no existe el caso "número viejo
-  aplicado a binario nuevo";
-- la calcula **el mismo algoritmo**, corriendo en CI en vez de en la Deck
-  (`check_patterns.py` reproduce los predicados del runtime, y
-  `tools/test_cache_idiom.py` falla si dejan de coincidir);
-- **se descarga del repo en cada arranque**, no viaja dentro del binario.
-
-O sea que es una **caché del cálculo en caliente**, no un sustituto suyo. La
-propiedad que importaba —*un build nuevo de Steam no obliga a una release de
-lumalinux*— sigue en pie, y de hecho se refuerza: antes, un escaneo roto exigía
-release; ahora se arregla publicando el número.
-
-Y el finder sigue derivando en caliente todo lo que la ficha no cubre, que es la
-mayor parte: recorrer el árbol, encontrar el paquete 0, cruzar su identidad,
-inyectar. Eso depende del estado vivo de Steam, no del binario, y no se puede
-precalcular.
-
-**El coste, que es real:** el escaneo pasa a ser el camino raro — sólo corre en
-las horas entre que Valve publica y el cron pasa — y el código que casi no se
-ejecuta se pudre sin avisar. Se acepta por dos motivos: es el mismo trato que ya
-tomaron DepotKey y GMRC al pasar a RVA-first, y el escaneo **sí** se ejecuta a
-diario, en el `check_patterns.py` nocturno contra el binario real y en los tests
-sintéticos de cada push. Se ejecuta en CI, no en la Deck.
-
-Lo que **no** hay es una comprobación en runtime de la ficha contra el escaneo,
-y es deliberado (`ec9e840` quitó exactamente esa comprobación de DepotKey):
-comprobarla costaría el escaneo que se está ahorrando. La red que queda son dos:
-la ficha sólo publica lo que el CI resolvió **UNIQUE**, y si el puntero
-resultante no lleva a un paquete 0 coherente, el cruce de identidad de
-`FindPackage0` se niega a escribir.
-
-**Since 2026-09-08 both derivations are UNIQUE-or-nothing** (§13.5.a): if the
-scan cannot name a single answer it returns none and the finder stands down,
-rather than taking the first match. The two classify on **different axes**, and
-the distinction matters:
-
-- the **idiom** classifies over distinct `disp32`. Several matching sites are
-  normal and healthy — the current build has two, at rva `0xfdd2dd` and
-  `0x18964e5` — as long as they name the same `X`.
-- the **GOT** classifies over the **derived GOT base**, not over the site
-  count. A second PIC prologue of the same shape computes the *same* GOT, so
-  counting sites would flag a healthy binary; comparing the derived base does
-  not.
-
-Two more properties worth stating, because both were decisions:
-
-- **The base register is deliberately not pinned.** The recogniser requires the
-  three instructions to be *chained* (`reg(lea) == rm(mov1)`,
-  `reg(mov1) == rm(mov2)`) but does not demand a particular register, because
-  the two real sites on the current build use different ones (`esi` and `eax`).
-  Pinning `ebx` — the textbook PIC GOT register — would have missed both.
-- **The scan runs once.** The bytes it reads are final the moment
-  `steamclient.so` is mapped, so a failure cannot become a success by trying
-  again: it resolves once and gives up on failure. (The *tree walk* is the
-  opposite — genuinely transient, since the cache is populated
-  asynchronously — so that one does retry; see §10.)
-
-Scale note, since it justifies preferring the RVA feed: the `r-x` span being
-scanned is a **single** `LOAD R E` segment of `0x1ffe574` bytes ≈ **32 MB**.
-Both derivations are **feed-first** since 2026-09-08 (`finder.cache_global_disp`
-and `finder.got_rva`), each falling back to its own scan, so on a build the CI
-has already seen neither scan runs at all.
-
-#### 13.5.a Auditoría del localizador (2026-09-08)
-
-El localizador de arriba se auditó entero: las nueve funciones de
-`package_zero_finder.cpp`, su superficie de CI y las cadenas de log que
-`maintenance.md` usa para el triaje. La auditoría de partida traía 3 hallazgos;
-el barrido completo sacó 20. Se apunta la lista **con el juicio de utilidad**,
-porque no pesan igual.
-
-Cierre: **13 se arreglaron con código** (todo lo que tocaba al criterio de
-resolución, al CI y al triaje), **6 se documentaron como riesgo asumido** en el
-bloque `KNOWN LIMITS` de `package_zero_finder.cpp` — nits reales, pero ninguno
-con un arreglo que compense — y **1 queda abierto** porque no tiene arreglo
-barato: el doble papel de `0xc58`. El resultado se validó en una Deck real
-(§13.5.b).
-
-| # | hallazgo | juicio | estado |
-|---|---|---|---|
-| 1 | `FindCacheGlobalDisp` se quedaba con el **primer** `disp32` cuando varios discrepaban, y con ese número construía la dirección donde escribe | seguro futuro; el build medido ya era único | **hecho** |
-| 2 | el log salía **idéntico** con sitios coincidentes y discrepantes, así que nadie podía saber en qué caso estaba | real: es por lo que el 1 estuvo invisible | **hecho** |
-| 4 | no se comprobaba que las tres instrucciones estuvieran **encadenadas**, sólo su forma | necesario junto al 1 | **hecho** |
-| 5 | las dos ramas del `else` eran idénticas: la distinción "ambiguo" estaba documentada y no existía | síntoma del 1 | **hecho** |
-| 6 | reescaneo de ~32 MB **cada 2 s, eterno**, cuando el escaneo no resolvía | sólo en el camino de fallo | **hecho** |
-| 10 | el triaje de `maintenance.md` citaba cadenas de log que los cambios borraron | autoinfligido | **hecho** |
-| 3 | el CI no comparaba los `disp32` que recogía: `AMBIGUOUS` pasaba en verde | **alto** — el CI es el único vigilante continuo | **hecho** |
-| 9′ | el CI reconocía **menos** que el runtime (sólo opcodes), y `derive_patterns.py` igual: aprobaba lo que la Deck rechaza | **alto** | **hecho** |
-| 7 | `DeriveGotBase` también devuelve la **primera** coincidencia, sin exigir unicidad — y está **aguas arriba** del 1 | seguro futuro | **hecho** — mismo trato que el 1, pero clasificando sobre el **GOT derivado**, no sobre el número de sitios (ver abajo) |
-| 8 | el comentario del CI justifica no bloquear con *"DeriveGotBase finds the right one at runtime"*, que el código no hace | pendiente con el 7 | **hecho** — las dos mitades: el CI bloquea (`finder:gmrc_tail:…`) y el runtime falla cerrado, así que el comentario ya describe la verdad |
-| 11 | el triaje buscaba `outcome=pattern_miss`, que sólo emitía `LoadPackage`; DepotKey y GMRC dicen `outcome=miss` → **no cazaba los dos hooks críticos**. Y no era una fila: eran **cinco** referencias en `maintenance.md`, cuatro de ellas a hooks que nunca emitieron esa cadena | **real, hoy** | **hecho** — vocabulario unificado en `miss` |
-| 12 | el finder no emite la línea estructurada `name=/method=/outcome=` que sí emiten los hooks | cosmético, pero rompía `grep outcome=` como comprobación de salud: el único inyector era invisible | **hecho** — `Finder resolve: name=PKG0Finder method=… outcome=resolved\|miss` |
-| 13 | se llegaba al `PackageInfo` navegando siete offsets por una estructura viva sin comprobar la **identidad** del objeto; el propio id ya se leía **para el log** y no se usaba: dos fuentes independientes, una desperdiciada. *(Matiz: el camino de escritura no estaba desnudo — `AppendIdsToVec` ya rechazaba un `AppIdVec` inverosímil. Eso es plausibilidad, no identidad.)* | **único del camino vivo** | **hecho** — `FindPackage0` cruza el id y reintenta si discrepa; mitigación de [14] y cuarta opción para §10 |
-| 14 | cinco de los siete offsets de clase no los valida nadie — y **no son validables** en un binario sin símbolos | riesgo asumido | ver KNOWN LIMITS |
-| 15,16,17,19,20,21 | consistencia del recorrido, `"r-x"` como subcadena, `lo..hi` con huecos, rama muerta, profundidad máxima, `0x50` mágico | nits | ver KNOWN LIMITS |
-| — | `0xc58` hace **doble papel**: identifica el idiom *y* es el offset que leemos después. Si Steam mueve el campo, fallan a la vez y el diagnóstico dirá "no encontrado" | estructural | abierta |
-
-**La asimetría con los hooks, cerrada a medias (2026-09-08).** DepotKey y GMRC
-resuelven `ficha → patrón (único o nada) → rescate`; el finder no leía la ficha
-en absoluto, aunque el CI publicaba `finder.cache_global_disp` en cada
-`res/rvas/*.yaml`, `design/rva-feed-design.md` lo documentaba y steamflipper lo
-corroboraba por otro método (`steamflipper-analysis.md` (doc retirado el 2026-10-08, proyecto desaparecido) §735). `grep -rn
-cache_global_disp src/` daba cero: se escaneaban 32 MB por arranque para
-recalcular un número ya escrito. Ahora el finder hace `ficha → escaneo`
-(`RvaFeed::CacheGlobalDisp()`), con el mismo criterio de no revalidar la ficha
-contra el escaneo que se fijó en `ec9e840` para DepotKey.
-
-**Y la otra mitad, cerrada también (2026-09-08).** Quedaba el GOT, que se seguía
-derivando escaneando porque la ficha no publicaba ningún RVA para él. Ya lo
-publica (`finder.got_rva`, desde `verify_gmrc_got`/`distinct_got`) y el finder lo
-lee por `RvaFeed::GotBase()`. En un build con ficha completa el finder **no
-escanea código en absoluto**.
-
-El detalle que no es simétrico, y donde estaba el error fácil: el `disp` es una
-constante que se usa tal cual, pero el GOT es una **dirección**, o sea que hay que
-traducirla por `VaddrXlate` igual que un RVA de hook. Y aun así no es un hook:
-cae en `.got`, que está mapeada y es escribible pero **no ejecutable**, así que la
-guarda `inSteamclientExec()` de `Resolve()` rechazaría todos los valores
-correctos. `GotBase()` traduce como `Resolve()` y valida contra el mapeo
-**entero** del módulo. Equivocarse ahí no habría fallado en voz alta: habría
-producido un puntero de caché de aspecto plausible construido sobre un offset de
-fichero.
-
-Las dos claves se publican **por separado**, cada una según el veredicto de su
-propia ancla: un build con el idiom ambiguo puede tener el GOT único, y publicar
-la mitad de la que estamos seguros es mejor que no publicar nada. El runtime cae
-al escaneo por número, no todo o nada.
-
-**Lección de método**, porque el patrón de los hallazgos lo dice solo: la
-auditoría inicial miró **una función**, no el subsistema. Los diez que faltaban
-no fueron apareciendo — estaban todos ahí, y se fueron tropezando de uno en uno
-al implementar. Lo que faltó fue barrer el fichero entero, contrastar código
-contra documentación, y comparar CI contra runtime en los dos sentidos. Las tres
-cosas son mecánicas.
-
-#### 13.5.b Validación en vivo del localizador reescrito (2026-09-08)
-
-Todo lo de §13.5.a se validó **en una máquina real con Steam y sesión
-iniciada**, no sólo en CI. Importa dejarlo escrito porque es la única prueba
-que existe: `build.yml` compila, `check_patterns.py` resuelve sobre papel, y
-`verify-fix.yml` — el workflow que debería arrancar el `.so` — nunca ha dado un
-run verde (sus primeras ejecuciones reales, ese mismo día, fallaron todas en el
-arnés antes de llegar a ninguna aserción).
-
-Receta: codespace de SteamOS, stack instalado normalmente desde LumaDeck
-(`setup.sh`), y luego **sólo** `liblumalinux.so` sustituido por el build de la
-rama. Está escrita paso a paso en `maintenance.md` §C.
-
-`steamclient.so` de la sesión: `237495b4…`. Lo que salió del log:
-
-```
-PKG0_FINDER: GOT UNIQUE — 1 site(s), got=0x…
-PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
-Finder resolve: name=PKG0Finder method=… got=0x… disp=0x3b7d4 … outcome=resolved
-PKG0_FINDER: HIT pkg=… PackageId=0 AppIdVec{size=196}
-```
-
-y los appids inyectados empezando por `{5,7,8,90}`. Es decir: las dos anclas
-resolvieron únicas, el cruce de identidad nuevo (hallazgo 13) dio conforme
-—`PackageId=0` leído del objeto coincide con la clave del nodo— y la inyección
-llegó hasta el final con un `AppIdVec` de tamaño plausible. `3/3 hooks active`
-en el mismo arranque, o sea que nada de esto rompió DepotKey, GMRC ni
-ShaderDepot.
-
-**Lo que sigue sin ejercitarse, y hay que decirlo:** todo lo validado es el
-camino de éxito. Las rutas de fallo — `method=rva` (leer el `disp32` de la
-ficha en vez de escanear), las dos ramas `AMBIGUOUS`, la terminación del hilo
-tras un escaneo fallido, y el `outcome=miss` del finder — no las ha ejecutado
-nadie más que los tests sintéticos de `tools/test_cache_idiom.py`. Son
-precisamente las que sólo se ven el día que Steam rompe algo, así que el test
-sintético es lo único que las cubre.
-
-**Cómo se verificó el propio arnés de pruebas.** Los cuatro escaneos del idiom
-(runtime, `check_patterns`, `derive_patterns`, la sonda) se contrastaron contra
-un ELF sintético y coinciden. Y para descartar que los tests fueran decorativos
-se hizo **mutación**: alterando los predicados uno a uno, los tests fallan
-(8/2/1 fallos según la mutación) en vez de pasar en verde. Un test que no
-muerde cuando rompes lo que vigila no es un test, y ese error ya se había
-cometido en este repo — `verify-fix.yml` llevaba meses "en verde" porque el run
-que se citaba era de otro workflow distinto.
 
 ### 13.6 End-to-end verification (Brotato, 1942280)
 
@@ -1393,6 +1912,8 @@ for the RE session and has since been deleted.
 
 ### 13.10 Path C — the per-game shader skip that actually shipped (v0.14.0)
 
+> **Since then:** the failure mode below no longer holds as written: since 2026-09-22 ShaderDepot resolves feed → pattern → string-anchor rescue on `"shadercachedepot"` (`src/hooks/shader_depot_hook.cpp`, `Install`), and CI re-derives the pattern on new builds. The hook also has a fourth branch: a keyed game of ours returns 0 when the GMRC hook is not installed (§13.11 adds the provider check). See [`nosotros.md`](nosotros.md) §2.1.
+
 Path B asked "how do we make the keyless shader manifest *decrypt*?" — the wrong
 question. The right one is "how do we stop Steam from *trying* for this one
 game?" Continuing the RE up the call stack from §13.9 answered it.
@@ -1540,14 +2061,18 @@ not shipped — the probe covers the overwhelming majority).
 
 ## 14. Auto-update end-to-end validation (2026-06, Balatro + Vampire Survivors)
 
+*(2026-06-18, v0.13.5)*
+
 Validated, on the canonical stack (native Arch Steam + SLSsteam via
 enter-the-wired/Headcrab + lumalinux v0.13.5 **release** loaded by the
 `install.sh` `steam.sh` patch — not env-var injection), that a game installed
 **pinned to an old manifest** auto-updates to Valve's current version once the
 pin is removed. Build `7c4ac73e`. This is the concrete proof behind
-[`nosotros.md`](nosotros.md) §6's "Auto-update by unpinning".
+[`nosotros.md`](nosotros.md) §2.5 (game updates).
 
 ### 14.1 The recipe that worked
+
+> **Since then:** this is not how pinning works any more. A pin is SLSsteam's `ManifestIds` (depot → gid), written by `steamidra_lite --pin`/`--set-pin`/`--unpin` and managed by LumaDeck's `pins.py`; the BuildDep hook that read the gid from `keys.txt` is off by default (v0.16.10), and Steam does not read `config/depotcache/` (§19.3). See [`nosotros.md`](nosotros.md) §2.5.
 
 Per content depot: (1) `keys.txt` gid+size → `0` (key kept); (2) comment
 `--setManifestid` in `config/stplug-in/<appid>.lua` (interop); (3) **delete the
@@ -1593,6 +2118,10 @@ and no update happens.
   content + 1794685 Linux) on a Linux install; both pinned, both auto-updated.
 
 ## 15. RTTI-based update-resilient resolution (CloudRedirect's technique)
+
+*(2026-06-26, v0.15.x; DepotKey slot derivation added 2026-07-06 and 2026-07-23, v0.16.x)*
+
+> **Since then:** the "Status" paragraph, §15.3's "IMPLEMENTED" item and the end of §15.4's note no longer describe the runtime. `ResolveVtableSlotBySignature` was removed on 2026-09-08 (it was the byte pattern under another name); DepotKey now resolves RVA feed → `kDepotKeyFnPattern` → `Rtti::ResolveVtableSlotByName` as the last-resort rescue (`src/hooks/depot_key_hook.cpp:128-176`, `src/rtti.cpp:289`). See [`nosotros.md`](nosotros.md) §2.1. The technique (§15.1), the f5eb8bd3 measurements (§15.2) and the caveat (§15.4) remain valid as history.
 
 **Context.** CloudRedirect's June-2026 release stopped needing an update per
 Steam client build ("CR no longer requires an update for every Steam client
@@ -1654,6 +2183,8 @@ Evidence:
 
 ### 15.3 What this buys, and the cost
 
+> **Since then:** the first item ("✅ IMPLEMENTED") is no longer true: the signature-derived slot was removed from the runtime on 2026-09-08 and RTTI is used only by name, as DepotKey's last-resort rescue after the feed and the pattern (see the note at the top of §15).
+
 - **DepotKey → RTTI vtable, slot DERIVED by signature — ✅ IMPLEMENTED.**
   `src/rtti.cpp` `ResolveVtableSlotBySignature` (built on the same
   `FindVtableByRTTIName`-style walk as CR, resolve-only) finds `CConfigStore`'s
@@ -1694,7 +2225,11 @@ build" for "update rarely" — what CR advertises.
 > `IClient*::RunIPCFrame` hook** (`8de3384`), so the specific precedent no longer
 > exists upstream — it navigates `CSteamEngine → CUser →` member offsets instead.
 > The caveat itself is unaffected, and arguably reinforced: the reorder is part of
-> *why* Ace moved off those hooks. See `slssteam.md` §5.3 (2026-07-24). **DepotKey now closes even the
+> *why* Ace moved off those hooks. See `slssteam.md` §5.3 (2026-07-24).
+
+> **Since then:** the paragraph below describes `ResolveVtableSlotBySignature`, removed from the runtime on 2026-09-08. A vtable reorder is now handled by the by-name rescue (`Rtti::ResolveVtableSlotByName`, `src/rtti.cpp:289`), which reads the slot from the method name rather than from the prologue; see the note at the top of §15.
+
+**DepotKey now closes even the
 reorder gap**: instead of trusting a fixed index it DERIVES the slot by matching
 the accessor's prologue signature inside the vtable (`ResolveVtableSlotBySignature`),
 so a reorder is *handled* — the accessor is found at its new slot — and a
@@ -1705,6 +2240,8 @@ decompiler; DepotKey's accessor is a generic KeyValues call with no distinctive
 string, so the prologue signature is the discriminant.)
 
 ## 16. SLSsteam's update-block (20260705) and lumalinux's runtime unblock
+
+*(2026-07-07, v0.16.x; patch removed in v0.16.18, 2026-07-23)*
 
 > **⚠️ SUPERSEDED / REMOVED (v0.16.18, 2026-07-23).** This section documents the
 > `sls_update_unblock` in-memory patch, which targeted the **20260705** update-block
@@ -1796,8 +2333,7 @@ Env override `LUMA_NO_SLS_UNBLOCK=1` skips it entirely (the A/B control). Nothin
 else in SLSsteam is touched: the game stays in AdditionalApps; ownership, DLC
 surfacing, depot keys, tokens all behave exactly as before. The only removed
 behaviour is the flag-clearing. This is the **first place lumalinux modifies
-SLSsteam** rather than just coexisting with it (frontier note, slssteam.md §4.3, formerly slssteam-analysis
-§5 / §7.1).
+SLSsteam** rather than just coexisting with it (frontier note, slssteam.md §4.3).
 
 ### 16.4 End-to-end validation (2026-07-07, Balatro, clean codespace)
 
@@ -1807,8 +2343,8 @@ built from `main` and wired through `install.sh`'s `steam.sh` LD_PRELOAD patch.
 every Steam launch (exactly one anchor found each time; e.g. `insn=0xf57a77b0`).
 
 - **Phase A (pin old):** built an "old" Balatro zip (depot 2379781 repinned to old
-  gid `3742336026811834465`, old `.manifest` swapped in — docs/design/update-testing.md
-  recipe), deployed `steamidra_lite --pin`. Steam installed the old version: `.acf`
+  gid `3742336026811834465`, old `.manifest` swapped in — the old-zip recipe of the update-testing
+  procedure of the time, since retired; its dated results are in nosotros.md §5.2), deployed `steamidra_lite --pin`. Steam installed the old version: `.acf`
   `InstalledDepots 2379781 → 3742336026811834465`, `StateFlags 4`. Logs:
   `BuildDep: PATCH … 3512319404653808464 -> 3742336026811834465` and
   `LoadDepotKey: SERVED … depot 2379781`.
@@ -1828,6 +2364,8 @@ Coexistence held throughout: SLSsteam and lumalinux both mapped in the same clie
 (disjoint hook sets, §11 / slssteam.md §2.1), no heap corruption.
 
 ## 17. Native achievements — scoping SLSsteam's borrow guard (`sls_achievement_unblock`), and the atomic-rel32 OOBE fix
+
+*(2026-07-12, v0.16.2–v0.16.7; updated 2026-07-23 and 2026-08-13)*
 
 **Context.** SLSsteam's 2026-07 releases added *native achievement support*: when
 a game asks Steam for its achievement stats and the account does **not** own the
@@ -1923,8 +2461,8 @@ SLSsteam.so:
    > `…sendAndRecvGetUserStatsE…S3_j` stopped matching the real `…S3_4EMsg`, and
    > since the resolve is all-or-nothing `Apply()` **silently no-op'd on every Deck
    > that had updated SLSsteam** — native achievements OFF, and (because the
-   > licence-reconcile's `CUser` is captured *only* inside this guard, see §"license
-   > reconcile" / `license_reconcile.cpp`) the **no-restart Add path died with it**.
+   > licence-reconcile's `CUser` is captured *only* inside this guard, see §18 /
+   > `license_reconcile.cpp`) the **no-restart Add path died with it**.
    > Prefix matching survives parameter-type changes; the `.dynsym` fallback
    > survives a future `.symtab` strip. Symbols were all still present (`GLOBAL
    > DEFAULT`) — only the one hardcoded string was stale. Root-caused + fixed on a
@@ -2043,6 +2581,10 @@ On-device (v0.16.4 armed, then v0.16.7 default-on):
 
 ## 18. No-restart Add Game — the license reconcile (v0.16.15)
 
+*(2026-07-21, v0.16.15–v0.16.16; addendum 2026-09-04)*
+
+> **Since then:** `NotifyLicensesUpdated` is no longer resolved by moon's byte pattern alone: the chain is RVA feed → `kNotifyLicensesUpdatedPattern` → callback-125 anchor rescue (`src/license_reconcile.cpp:37-57`, `src/reconcile_anchor_core.hpp`), and CI re-derives the pattern from that anchor (`tools/derive_reconcile_byanchor.py`), not from the `17LicensesUpdated_t` RTTI string. See [`nosotros.md`](nosotros.md) §2.1 and `maintenance.md` A.2.
+
 **Problem.** A game added while Steam is *running* clears all six gates
 (ownership, package-0 depot injection, keys, GMRC) yet still won't download until
 a **Steam restart**. Symptom in `content_log.txt`: `has no changes, 0 active: 0
@@ -2096,23 +2638,23 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
   on its own thread **after** re-injecting the new depots (correct ordering).
 - **Hang**: none observed. The cold-cache PICS-re-request hang doesn't apply — the
   finder injects after login (warm cache), exactly moon's prediction.
-  **[AMPLIADO 2026-09-04 — la inmunidad es MÁS ancha que este párrafo.]** Se
-  ejecutó el estrés dirigido que este razonamiento no cubría
-  (`tools/experiment_cold_cache.sh`, cliente `1788400362`): tres brazos — caché
-  caliente + reconcile, caché **fría** + reconcile, y un segundo disparo
-  consecutivo — inyectando ids de depot **inexistentes**, que nunca resuelven
-  appinfo. **En los tres, `APPENDED` y `Reconcile: broadcast` caen en el mismo
-  segundo y la UI responde con normalidad.** O sea: **tampoco se cuelga en frío**,
-  así que el argumento de la caché caliente es suficiente pero no necesario —
-  coherente con la conclusión de más abajo (*"lo sobrevaloramos"*, y OST publica
-  su anti-cuelgue desactivado **y funciona en campo**: LuaToolsLinux lo usa y el
-  port a Windows `madoiscool/BetterSteamTools` también, sin cuelgues).
-  Dato lateral: `AppIdVec` sale `size=196 alloc=202` **idéntico en frío y en
-  caliente** — el conjunto de licencias viene del servidor, no del `appcache`.
-  **Límites**: disparo sintético (la verificación con juego real de 2026-07-20,
-  más abajo, es mejor evidencia), un solo build, y `Reconcile: broadcast`
-  retornando sólo prueba que `NotifyLicensesUpdated` volvió, **no** que
-  `ProcessPendingLicenseUpdates` terminase (es asíncrono). Detalle en
+  **[EXTENDED 2026-09-04 — the immunity is WIDER than this paragraph.]** The
+  targeted stress test this reasoning did not cover was run
+  (`tools/experiment_cold_cache.sh`, client `1788400362`): three arms — warm
+  cache + reconcile, **cold** cache + reconcile, and a second consecutive
+  trigger — injecting **non-existent** depot ids, which never resolve
+  appinfo. **In all three, `APPENDED` and `Reconcile: broadcast` land in the same
+  second and the UI responds normally.** That is: **it does not hang cold either**,
+  so the warm-cache argument is sufficient but not necessary —
+  consistent with the conclusion further down (*"we over-weighted it"*, and OST ships
+  its anti-hang disabled **and it works in the field**: LuaToolsLinux uses it and
+  so does the Windows port `madoiscool/BetterSteamTools`, without hangs).
+  Side data point: `AppIdVec` comes out `size=196 alloc=202` **identical cold and
+  warm** — the licence set comes from the server, not from the `appcache`.
+  **Limits**: synthetic trigger (the real-game verification of 2026-07-20,
+  further down, is better evidence), a single build, and `Reconcile: broadcast`
+  returning only proves that `NotifyLicensesUpdated` returned, **not** that
+  `ProcessPendingLicenseUpdates` finished (it is asynchronous). Details in
   [`slssteam-plugins.md`](slssteam-plugins.md) §5.2.
 
 **Did the hang matter for us?** No. We over-weighted it. moon's own note: the hang
@@ -2140,6 +2682,8 @@ anchor `"17LicensesUpdated_t"` — see `docs/maintenance.md` A.2.
 
 ## 19. The request-code providers die (2026-09-09) — what still works
 
+*(2026-09-09 to 2026-09-14, lumalinux v0.20.0–v0.20.1; §19.2b written 2026-09-21, §19.4 notes 2026-10-07)*
+
 All three GMRC providers (`manifest.opensteamtool.com`, `gmrc.wudrm.com`,
 `manifest.steam.run`) stopped serving codes on 2026-09-09; the tools built on
 them (KeySteam, SteaMidra, the LuaTools Windows client) broke the same day and
@@ -2148,6 +2692,8 @@ below was measured on the SteamOS devcontainer between 2026-09-10 and
 2026-09-11, one change at a time.
 
 ### 19.1 What actually broke in lumalinux: the shader depot
+
+> **Since then:** v0.21.0 reversed both v0.20.0 rules below. GMRC is on by default again (off only with `LUMA_NO_GMRC`; `LUMA_GMRC` is no longer read, `src/main.cpp:158-173`), and ShaderDepot lets a keyed game's shader pre-cache run when the GMRC hook is installed and a provider answers, skipping otherwise (`src/hooks/shader_depot_hook.cpp`); see §20.3 and [`nosotros.md`](nosotros.md) §2.1.
 
 Installs from a Hubcap zip never needed a code — the content manifests are
 pre-seeded. What produced "Unknown error" was the **shader pre-cache**: Steam
@@ -2171,7 +2717,7 @@ their shader manifest anonymously and non-Workshop games (Lethal Company,
 Silksong, Vampire Survivors) don't. Content depots are always denied. A gid
 Valve has never seen (e.g. 1) is granted, which makes it useless as a probe.
 
-### 19.2b Two doors that do not lead anywhere (2026-09-09, branch `claude/lumadeck-lumalinux-context-chlkmw`, deleted)
+### 19.2b Two doors that do not lead anywhere (2026-09-09, on an experiment branch since deleted)
 
 Two more attempts at minting codes without a provider, both measured and
 both dead, so nobody repeats them:
@@ -2324,10 +2870,12 @@ single-manifest plan B in `assella.md` §4.4 A1 (not implemented at the time; do
 
 ## 20. The providers come back (2026-09-15/16) — two pools, the CDN check, GMRC on by default
 
+*(2026-09-16, v0.21.0; §20.2 note 2026-10-05, §20.6 written 2026-09-22)*
+
 Continuation of §19. Everything measured from the SteamOS codespace, with
 `tools/gmrc_probe.py` (one request per second, every code taken to the CDN)
-and the hook itself; the pass/fail table of the runtime tests is in
-`docs/design/update-testing.md` Part 3.
+and the hook itself; the dated results of the runtime tests are in
+[`nosotros.md`](nosotros.md) §5.2 (functions 4 and 5).
 
 ### 20.1 What 09-09 was, seen from the providers' side
 
@@ -2427,6 +2975,19 @@ which of the four has a commercial reason to disappear.
   "verify integrity" does not): two shader manifests, both `via 20770407`,
   CDN accepted, `shadercache/1966720/` populated, no popup.
 
+### 20.5 What this changes upstream of lumalinux
+
+> **Since then:** implemented. LumaDeck's `backend/pins.py` follows exactly this model: native (no pin) while `gmrc.json` says `up`, every unfrozen game frozen to its installed build on `down` and released on `up`, user and LuaTools freezes kept; with no `gmrc.json` yet it counts as `up` when the GMRC hook is installed (§21.4). See [`nosotros.md`](nosotros.md) §2.5.
+
+With a live provider Steam can fetch any manifest it needs, so the pinned
+model of §19 (every managed game frozen to a build whose manifests we hold)
+stops being the system and becomes the fallback. LumaDeck's `pins.py` is to
+move to: no pin while `gmrc.json` says `up` (Steam installs and updates like
+an owned game), freeze every unpinned game to its installed build when it
+says `down` and release them when it says `up` again; explicit pins stay for
+Auto-update-off, LuaTools fixes and #43. Keys still only come from Hubcap
+zips; a new DLC depot still needs one. Not implemented at the time of writing.
+
 ### 20.6 Where the archives' codes come from: owners donate them (seen 2026-09-22)
 
 `slsteam-moon` 2.9 (`f40d35b`, a port of `madoiscool/BetterSteamTools@4a97d9d`,
@@ -2451,20 +3012,11 @@ asks, exactly the §19 pinned model, and only tells the user to wait when the
 archive has not got the gid yet. LumaDeck is a reader of that archive and
 not a donor; whether it should donate (the user's Steam minting codes every
 30 s for manifests it is not installing) is a decision to put to the user,
-not a default. Details in `slsteam-moon.md` §2.4 (donante) and §5.2 M90.
-
-### 20.5 What this changes upstream of lumalinux
-
-With a live provider Steam can fetch any manifest it needs, so the pinned
-model of §19 (every managed game frozen to a build whose manifests we hold)
-stops being the system and becomes the fallback. LumaDeck's `pins.py` is to
-move to: no pin while `gmrc.json` says `up` (Steam installs and updates like
-an owned game), freeze every unpinned game to its installed build when it
-says `down` and release them when it says `up` again; explicit pins stay for
-Auto-update-off, LuaTools fixes and #43. Keys still only come from Hubcap
-zips; a new DLC depot still needs one. Not implemented at the time of writing.
+not a default. Details in `slsteam-moon.md` §2.4 (donor) and §5.2 M90.
 
 ## 21. DLC of a game you own — what grants what (measured 2026-10-05)
+
+*(2026-10-05, lumalinux and LumaDeck `main` of that day, after v0.22.1; §21.4 update 2026-10-06)*
 
 *Codespace SteamOS (`.devcontainer/steamos/`, user `deck`), stack installed by
 LumaDeck's Quick Install: SLSsteam `main@9c829a7` (release build), lumalinux
@@ -2483,7 +3035,7 @@ Sources: `content_log.txt`, `~/.SLSsteam.log`, `~/.cache/lumalinux/lumalinux.log
 | Question | Answered by | Needs |
 |---|---|---|
 | Is this app yours? (library, "Your stuff", Play) | SLSsteam `Apps::checkAppOwnership` (`src/feats/apps.cpp:93-136`) | the AppID in `AdditionalApps` |
-| May this depot be downloaded? | Steam's per-depot licence filter → **package 0** `AppIdVec` (§2.3), filled by lumalinux with every id in `keys.txt` (`key_store.cpp:246`, `load_package_hook.cpp:171-182`); then the key (`LoadDepotKey`) | the depot in `keys.txt` with its key — **not** `AdditionalApps` |
+| May this depot be downloaded? | Steam's per-depot licence filter → **package 0** `AppIdVec` (nosotros.md §2.3), filled by lumalinux with every id in `keys.txt` (`key_store.cpp:246`, `load_package_hook.cpp:171-182`); then the key (`LoadDepotKey`) | the depot in `keys.txt` with its key — **not** `AdditionalApps` |
 | Does the running game have the DLC? | SLSsteam `DLC::shouldUnlockDlc` (`src/feats/dlc.cpp:8-27`), wired into `CheckAppOwnership`, `IsAppDlcInstalled`, `BIsDlcEnabled`, `IsUserSubscribedAppInTicket` | nothing: *yes* for any not-owned, not-excluded DLC while a game is running |
 
 The depot list of a DLC comes from the **base game's** appinfo (the DLC depots

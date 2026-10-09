@@ -1328,8 +1328,19 @@ lo incoherente, luego lo muerto.
     (`package_zero_finder.cpp:583`). En CI, `watch-steam.yml` sigue diciendo que
     SafeMode "keeps blocking" (comentario del exit 3, ~`:343`, y el cuerpo de la
     issue, ~`:503`), y sus PR e issues solo nombran `derive_patterns.py` (Ghidra)
-    aunque la cadena es Python primero. Sin efecto en el uso normal; confunde al
-    depurar.
+    aunque la cadena es Python primero. Más comentarios del mismo tipo:
+    `load_package_hook.hpp:9-18` llama "crítico" a un hook que solo se instala
+    con `LUMA_LOADPKG_DEBUG` y cita `KeyStore::GetForcedAppIds()`, que ya no
+    existe; `patterns.hpp:109-111` da LoadPackage por fijo en la RVA
+    `0x14b780`; `main.cpp:301,308`, `sls_achievement_unblock.hpp:15` y
+    `tools/test_update_feed_guard.cpp:14` citan `docs/slssteam-analysis.md`,
+    retirado (hoy `slssteam.md`); `tools/check_patterns.py:31-33` y la cabecera
+    de `watch-steam-selftest.yml` (`:23`) llaman "diagnóstico" a GMRC, que va
+    activo por defecto desde v0.21.0; `tools/blocking_constants.py:20-22` dice
+    que DepotKey sale del recorrido de vcall de Ghidra (hoy, rescate por RTTI);
+    y `curl.hpp:14-18` justifica el User-Agent con
+    `manifest.opensteamtool.com`, proveedor que ya no está en la cascada. Sin
+    efecto en el uso normal; confunde al depurar.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
