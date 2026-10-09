@@ -5,7 +5,7 @@ BetterSteamTools y a su antepasado OpenSteamTool, a `bettersteamtools-findings.m
 sus mediciones con fecha están en §5.2, lo que afirmaba y el código ya no
 sostiene en §5.1, y sus decisiones con el estado de hoy en §4.4. El fork chino
 (`huanyuejue/OpenSteamTool`) tiene su propio doc, `opensteamtool-cn.md`. La app
-LuaTools, que usa BST como motor en Windows, va en `luatools-app-analysis.md`.
+LuaTools, que usa BST como motor en Windows, va en `luatools.md`.
 Cómo **nosotros** hacemos lo mismo está en `nosotros.md`.
 
 ---

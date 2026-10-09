@@ -65,7 +65,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | Windows: proxies `xinput1_4.dll` (principal) + `dwmapi.dll` junto a `steam.exe`, que cargan `LumaCore.dll` desde un hilo; engancha el `steamclient64.dll` original (aserción de ruta) con 32 Detours + 2 `int3`/VEH. Localiza por TOML por SHA-256 (`name`/`rva`/`sig`) de `michelegoku3/MigoReleases` (caché primero → raw → jsDelivr → gitflic), **sin comparar la firma** (`ByteSearch` = base+rva) y con firma RSA de módulo ceros (nunca verifica; el feed no publica `.sig`). Al actualizar Steam: sin TOML los hooks faltan limpio, `status.json` + `MessageBoxA`; sin gate, sin kill-switch, sin crash guard. Solo `steam.exe`. Cuatro hooks `_STR` nunca se instalan con el feed de hoy. | `lumacore.md` §2.1 |
 | BetterSteamTools | Windows: proxies `dwmapi.dll` + `xinput1_4.dll` que cargan `OpenSteamTool.dll` en su `DllMain` (solo en `steam.exe`); 13 detours vivos + 5 capturas `int3` + trampa de `SpawnProcess` sobre el `steamclient64.dll`/`steamui.dll` originales. Localiza por TOML por SHA-256 de `madoiscool/steam-monitor` (copia cada 15 s de un repo oculto), **red primero** y caché solo si fallan los tres espejos; **RVA sin comparar bytes** (la firma solo si no hay RVA, y el feed siempre trae RVA); sin firma. Al actualizar Steam: sin TOML, aviso y el módulo entero sin hooks; layout de `CNetPacket` detectado en vivo. Sin gate, sin kill-switch, sin crash guard; logs solo en Debug. | `bettersteamtools.md` §2.1 |
 | opensteamtool-cn | como BST en la entrada (proxies, Detours, `int3`), pero **engancha una copia** del cliente (`bin\diversion64.dll`) y redirige `LoadModuleWithPath` y `GetModuleHandle*` hacia ella (integridad de Denuvo/RE Engine); TOML por SHA **caché primero**, jsDelivr → GitHub, de `OpenSteam001/steam-monitor`, **parado desde 09-06**: sin hooks en cualquier cliente posterior al estable 1788652215; `CNetPacket` fijo (sin el +8 de la beta). Sin gate, sin crash guard. | `opensteamtool-cn.md` §2.1 |
-| LuaTools | ? | |
+| LuaTools | no se engancha: **instala** BetterSteamTools (zip de releases + hash de `latest.toml`), un OST nocturno propio o nada (`Custom`), y le pone `[lua] paths = config/stplug-in`; pone además su loader `winmm.dll` (LTSP, sin fuente) que la arranca con cada Steam, y abre el CDP de Steam en `:8080` con un marcador-junction para inyectar su plugin en la tienda. | `luatools.md` §2.1 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -83,7 +83,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | package 0 en memoria (`LoadPackage`/`GetPackageInfo` + `CUtlMemoryGrow`, reintento 150×) + `CheckAppOwnership` (dueño para todo id del `.lua`) + `GetSubscribedApps` (solo raíces) + refresco en caliente `MarkLicenseAsChanged`+`ProcessPendingLicenseUpdates` con reconcile completo; `bReloadAll` forzado. Poseídos: Steam dice dueño con >1 paquete → no se toca. Family sharing: vacía `NotifyRunningApps` y `SharedLibraryLockStatus/StopPlaying`. Tokens PICS de `addtoken()` en cada petición. Redists 228980 nunca pineados. | `lumacore.md` §2.2 |
 | BetterSteamTools | package 0 (token fijo) con todos los ids del `.lua` + `MarkLicenseAsChanged`/`ProcessPendingLicenseUpdates`; `CheckAppOwnership` dueño para todo id del `.lua` (`bOwnsLicense`, `bFreeLicense=false`); poseído = ya dueño y en >1 package (`MarkOwned`), depots cruzados por el mapa de `BuildDepotDependency`; lista de licencias 780 leída para el donante. Family sharing: vacía `NotifyRunningApps` y 9406 (todas las cuentas con OST). Sin trato de depots compartidos. | `bettersteamtools.md` §2.2 |
 | opensteamtool-cn | como BST, más family sharing en los dos sentidos: todo juego prestado (del `.lua` o no) desbloqueado y dado por poseído; hacia Valve, `owner_id` del prestador → 1, `NotifyRunningApps` saneado, 9405 descartado; `m_Size` reescrito tras `Grow`. | `opensteamtool-cn.md` §2.2 |
-| LuaTools | ? | |
+| LuaTools | n/a: lo hace el unlocker (`bettersteamtools.md` §2.2). | `luatools.md` §2.2 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -101,7 +101,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | DLC = ids `addappid` del `.lua` en el package 0, dueño por `CheckAppOwnership`; sin lista ni límite (no usa `DlcData`); comprado de verdad = criterio de poseído (>1 paquete); sin depot = igual; se quita borrando la línea/el `.lua` (refcount + refresco en caliente). | `lumacore.md` §2.3 |
 | BetterSteamTools | todo id del `.lua` es dueño, DLC incluido, sin límite; DLC sin depot basta el id; comprado = regla de >1 package; se quita borrando la línea. | `bettersteamtools.md` §2.3 |
 | opensteamtool-cn | como BST. | `opensteamtool-cn.md` §2.3 |
-| LuaTools | ? | |
+| LuaTools | DLC = `.lua` generado por lua.tools (`/api/dlc/generate`, con sesión); activar/desactivar cada `addappid` desde Builds. | `luatools.md` §2.3 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -119,7 +119,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | claves solo del `.lua` (64 hex exactos, si no se ignoran) por **tres** caminos: `LoadDepotDecryptionKey` y dos detours de `ConfigStoreGetBinary`; nada en `config.vdf`. Manifests: no los baja (SteaMidra). Códigos: puente **por el cable** (`GetManifestRequestCode#1` retenido) → funciones Lua `fetch_manifest_code(_ex)` → opensteamtool → steam.run → wudrm (los que SteaMidra retiró), **sin comprobar en el CDN**, `trusted_hosts` sin efecto, 12 s para toda la cadena. | `lumacore.md` §2.4 |
 | BetterSteamTools | claves del `.lua` (64 hex) por `ConfigStoreGetBinary`; manifests del archivo `manifest.luastools.xyz` precargados en `depotcache` en `YldLoadDepotManifest` (validación solo por magia; también Workshop); códigos: `fetch_manifest_code(_ex)` del `.lua` → **un** proveedor (`opensteamtool`, `wudrm` http, `steamrun`), sin CDN, esperando hasta 12 s en el hilo de recepción. **Donación on por defecto**: acuña con la sesión del usuario los depots poseídos que pide `manifestwanted` y sube los códigos de **todas** sus descargas. | `bettersteamtools.md` §2.4 |
 | opensteamtool-cn | claves y pin como BST; **sin** archivo de manifests ni donación; códigos: `.lua` → **seis proveedores en failover** (`20770407`, `SDM`, `manifestdex`, `wudrm`, `steamrun`, `opensteamtool`), enfriamiento 60 s, presupuesto 15 s, en paralelo; sin CDN. | `opensteamtool-cn.md` §2.4 |
-| LuaTools | ? | |
+| LuaTools | zips de lua+manifests por fuente: lua.tools `/api/manifest/download?source=` (sesión, 25/día) o Hubcap con la clave del usuario; **sin validar** el contenido (todo `.lua` → `stplug-in`, todo `.manifest` → `depotcache`); manifest suelto `givemethemanifestpunk` (sesión) para descargar depots fuera de Steam con DepotDownloaderMod anónimo; **dona por defecto** todas las claves de `config.vdf` por HTTP a una IP. Sin códigos de manifest (los pide el unlocker). | `luatools.md` §2.4 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -137,7 +137,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | pin por `BuildDepotDependency` (gid del vector, activo) desde `setManifestid` + barrido de texto que re-pinea literales; auto-update por depot con `skipManifestPin`, redists o `_originals` (patrón `00_LetUpdate`); versión antigua = `setManifestid` con gid viejo (lo escribe SteaMidra); nada para updates empezadas. | `lumacore.md` §2.5 |
 | BetterSteamTools | pin por `setmanifestid` en `BuildDepotDependency`; sin pase de updates ni rollback; hace fallar `BuildDepotDependency` si la lista de depots de un juego del `.lua` vuelve vacía en un refresco (evita el "instalado sin descargar"). | `bettersteamtools.md` §2.5 |
 | opensteamtool-cn | pin por `setmanifestid` (`pinapp` sin registrar, como en BST); sin la guarda de depots vacíos de BST. | `opensteamtool-cn.md` §2.5 |
-| LuaTools | ? | |
+| LuaTools | "Auto Update Apps" (on por defecto) comenta los `setManifestid` al instalar, salvo fixes y luas `<x>_<buildid>`; Builds guarda variantes por build y fija o suelta depots; sin pase de updates. | `luatools.md` §2.5 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -155,7 +155,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | tickets en el registro (`Apps\<id>`) y **forjados** con el ticket firmado de la app 7; `GetSteamID` = registro/ticket/carpeta `userdata`/cuenta activa; ETicket del registro. Denuvo: sin ventana viva (código muerto), `forcedenuvo` sin efecto. SteamStub: sondeo + preflight de ticket en cada lanzamiento, ruta dedicada apagada por defecto. `-onlinefix` → ruta 480 con `LumaCorePayload.dll` (EOS Device ID, sin presencia de lobby) inyectado en el juego suspendido. `RequiresLegacyCDKey` → falso. Sin Goldberg ni Steamless. | `lumacore.md` §2.6 |
 | BetterSteamTools | SteamStub: ticket forjado con el de la app 7 (off-by-four). Denuvo: tickets del registro (`setappticket`/`seteticket`, `extract_tickets`, canje `bst://` a `luastools.xyz` sin confirmación), `GetSteamID` suplantado, ventana de autorización, 858 suplantado, ETicket por nonce a un backend (vacío en el release; cacheado por sesión). Clave legacy 730 en local. Ruta 480 con `-onlinefix` (Input/overlay/amigos con el appid real, `-realappid`). `[[inject]]` en juegos. Sin Steamless, Goldberg ni EOS. | `bettersteamtools.md` §2.6 |
 | opensteamtool-cn | como OST (SteamStub forjado, tickets del registro, ruta 480, clave legacy, `[inject]` x86/x64); **ventana de Denuvo por plazos** (300 ms al arrancar y tras cada ticket; 2,5 s/3 s con `dauth2`), identidad guardada también para prestados; presencia para amigos como juego no-Steam (primer acceso directo). Sin ETickets por backend ni canje. | `opensteamtool-cn.md` §2.6 |
-| LuaTools | ? | |
+| LuaTools | fixes de Denuvo de lua.tools (catálogo sin sesión, descarga firmada con sesión) extraídos sobre el juego con `.bak`, registro y revert por hash; Steamless, SteamAutoCrack (solo GUI), opciones de lanzamiento en `appinfo.vdf` con Steam cerrado. Sin online-fix (es del plugin de Millennium). | `luatools.md` §2.6 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -173,7 +173,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | sin almacén: reescribe `Player.GetUserStats`/`ClientGetUserStats` con SteamID de **donante** (`setStat` o pool de 15 incrustado, rotando) y borra sus stats de la respuesta (solo esquema); `ClientStoreUserStats2` sale al CM tal cual. Sincronización: lo que acepte el CM (sin medir). Tiempo de juego: sin tratamiento (480 en la ruta). | `lumacore.md` §2.7 |
 | BetterSteamTools | stats con SteamID de donante (`setstat` → `stats.opensteamtool.com` → fijo `76561198028121353`) reescrito en el cable, consulta HTTP dentro del hook de envío; con CloudRedirect, logros de CloudRedirect en la 819. Sin almacén propio. | `bettersteamtools.md` §2.7 |
 | opensteamtool-cn | como OST: SteamID de donante en el cable. | `opensteamtool-cn.md` §2.7 |
-| LuaTools | ? | |
+| LuaTools | n/a: lo hace el unlocker. | `luatools.md` §2.7 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -191,7 +191,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | sin redirección: **apaga** Steam Cloud para apps del `.lua` no poseídas ni compartidas (`IsCloudEnabledForApp` false, sync = 2, AutoCloud anulado); fuerza la nube en family sharing; en la ruta 480 lee los saves del juego real desde `userdata/<id>/<real>/remote` (hook sin instalar hoy). | `lumacore.md` §2.8 |
 | BetterSteamTools | con `[cloud] enabled` (off) carga `cloud_redirect.dll` y le pasa las RPC `Cloud.*` de los juegos del `.lua`, contestadas en local y suprimidas hacia Valve. | `bettersteamtools.md` §2.8 |
 | opensteamtool-cn | como OST (CloudRedirect), que recibe la copia del cliente por la redirección de módulos. | `opensteamtool-cn.md` §2.8 |
-| LuaTools | ? | |
+| LuaTools | complemento CloudRedirect para OST/BST: baja `cloud_redirect.dll` y cambia `[cloud] enabled`. | `luatools.md` §2.8 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -209,7 +209,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | entrada: `.lua` en `config/stplug-in` (los escribe SteaMidra), ejecutados en Lua 5.5 con sandbox; el nombre numérico registra la app. Añadir: nada en disco, en caliente (watcher → package 0 → licencias → SteamUI). Quitar: borrar el `.lua` → baja del package 0 y de la biblioteca en caliente; quedan tickets del registro y ACF de 480. Bibliotecas e `installdir`: Steam. | `lumacore.md` §2.9 |
 | BetterSteamTools | solo `.lua` en `stplug-in` (+ `[lua] paths`), en caliente: alta y baja del package 0 y de la biblioteca (`MarkAppChange`), fecha de compra = `mtime`; no descarga ni escribe ACF; al quitar quedan tokens, tickets del registro y SteamIDs; tablas y `lua_State` sin lock. | `bettersteamtools.md` §2.9 |
 | opensteamtool-cn | como BST, en `config\lua` (no `stplug-in`). | `opensteamtool-cn.md` §2.9 |
-| LuaTools | ? | |
+| LuaTools | tienda de Steam, appid, arrastrar enlace o fichero, `luatools://install[/silent]/<id>`, botón en la tienda; escribe solo `<appid>.lua` y `.manifest` (recarga en caliente por el unlocker); borrar = solo el `.lua`. Servidor `127.0.0.1:6767` con CORS `*` sin auth: cualquier web puede borrar, descargar o reiniciar Steam. | `luatools.md` §2.9 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -227,7 +227,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | ninguna propia: sesión de Steam del usuario (y su ticket de la app 7), proveedores de códigos sin clave, SteamIDs de donantes incrustados, tickets que traiga el `.lua`; la URL de ETicket no tiene efecto. | `lumacore.md` §2.10 |
 | BetterSteamTools | ninguna; usa sin autenticarse feed, archivo, proveedor de códigos y stats; la cuenta del usuario es la que **aporta** (donación). | `bettersteamtools.md` §2.10 |
 | opensteamtool-cn | ninguna; seis proveedores sin autenticación. | `opensteamtool-cn.md` §2.10 |
-| LuaTools | ? | |
+| LuaTools | lua.tools por Discord (OAuth PKCE o código del bot), tokens con DPAPI; Hubcap con clave en claro en `settings.json` y en la URL; sin cuenta: buscar y gestionar. | `luatools.md` §2.10 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -245,7 +245,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | sin UI: `lumacore.toml` (recarga en handshake), `status.json` atómico (dice `V36` en el binario `V37`), popup de diagnóstico; lo instala y actualiza SteaMidra por tag; TOML cacheada nunca se refresca; logs por módulo solo en Debug. | `lumacore.md` §2.11 |
 | BetterSteamTools | sin UI: `.toml` en caliente, avisos `MessageBox`, `manifest_probe.txt`; **auto-update on** desde la rama `updates` (raw → jsDelivr → git.lua.tools), versión distinta = update, SHA del mismo puntero (sin firma), reinicio por PowerShell; compilable sin updater. | `bettersteamtools.md` §2.11 |
 | opensteamtool-cn | sin UI ni auto-update (lo actualiza Fluent-Steam-Lua); el `.toml` de ejemplo repite `[manifest] url` y no parsea: la DLL sigue con los defaults sin avisar. | `opensteamtool-cn.md` §2.11 |
-| LuaTools | ? | |
+| LuaTools | app de escritorio con bandeja; se **actualiza sola y sin preguntar** (Velopack) cada vez que el loader la arranca con Steam, y después el plugin (mata Steam si cambia el DLL); con GitHub caído, espejos de terceros sirven hash y fichero. | `luatools.md` §2.11 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -263,7 +263,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | LumaCore | Windows x64. GPL-3 (Midrag); fork `drappula` desde 09-04 (wtfseanscool, michelegoku3/Aether, mallusrgreat CI); sin tests; release sin checksums en cada push. Depende de MigoReleases (una persona), gitflic, tres proveedores de códigos; build con `lua.org` sin TLS y Detours sin fijar. Sin telemetría. Riesgo de detección alto: reescribe mensajes del CM, forja tickets, apaga la nube; estado de Lua sin mutex. | `lumacore.md` §2.12 |
 | BetterSteamTools | Windows; GPL-3.0; un mantenedor (mendy-tools = operador de LuaTools/luastools), 18 commits sobre OST (08-11 → 09-21), parado desde v1.0.4. Terceros: steam-monitor (origen oculto), jsDelivr, git.lua.tools, luastools.xyz, opensteamtool.com, wudrm, steam.run. Privacidad: SHA del cliente en cada arranque, appids de stats, `HEAD` por depot poseído pedido, códigos de cada descarga; Lua sin sandbox (`os`, `io`). | `bettersteamtools.md` §2.12 |
 | opensteamtool-cn | Windows; GPL-3.0; un mantenedor (huanyuejue), ráfagas (25 commits desde 08-11, tres el 10-09); front-end Fluent-Steam-Lua. Terceros: feed `OpenSteam001` (parado), jsDelivr, seis proveedores, `stats.opensteamtool.com`. No dona ni sube códigos; cambia el `owner_id` de los prestados hacia Valve. | `opensteamtool-cn.md` §2.12 |
-| LuaTools | ? | |
+| LuaTools | Windows; MIT; un mantenedor principal (mendy-tools = operador de lua.tools/BST), 32 commits 08-13 → 09-25. Terceros: lua.tools/db/analytics, Hubcap, backend Ryuu por IP (HTTP), GitHub + 3 espejos, `1.1.1.1`, Steam, steamcmd.net, morrenus. Privacidad: ping a Umami en cada arranque sin opción, claves donadas por HTTP. | `luatools.md` §2.12 |
 | ASSella | ? | |
 | SLSDeck | ? | |
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
@@ -321,6 +321,12 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 4 | opensteamtool-cn | enfriamiento de 60 s por proveedor tras un fallo | sin acción: referencia si la cascada paga timeouts en serie (`opensteamtool-cn.md` §4.1-2) | 2026-10-09 |
 | 1 | opensteamtool-cn | enganchar una copia del cliente y redirigir módulos (integridad de Denuvo/RE Engine) | no aplica: Windows; bajo Proton el juego no ve `steamclient.so` | 2026-10-09 |
 | 2, 6 | opensteamtool-cn | family sharing sin bloqueo del prestador; ventana de Denuvo por plazos; presencia como juego no-Steam | descartado: capa de mensajes/IPC de SLSsteam (`bettersteamtools.md` §4.4 D0) | 2026-10-09 |
+| 4 | LuaTools | `givemethemanifestpunk` (manifest suelto por depot/gid con sesión de lua.tools) | descartado 2026-10-07 por el usuario: exige login en lua.tools (`luatools.md` §4.4 L2) | 2026-10-09 |
+| 4, 10 | LuaTools | donación de las claves de `config.vdf` (on por defecto) | rechazado: no se dona (`luatools.md` §4.4 L4) | 2026-10-09 |
+| 4 | LuaTools | descarga de depots fuera de Steam (DepotDownloaderMod anónimo) | descartado por diseño: Steam descarga (`nosotros.md` §2.4) | 2026-10-09 |
+| 6 | LuaTools | revert de fixes por hash antes/después | aparcado: referencia si hacemos revert; hoy reinstalamos (`luatools.md` §4.1-5) | 2026-10-09 |
+| 6 | LuaTools | opciones de lanzamiento editadas en `appinfo.vdf` | descartado: no escribimos `appinfo.vdf`; parser de lectura aparcado (`luatools.md` §4.4 L7) | 2026-10-09 |
+| 9 | LuaTools | `appdetails` anclado por `data.steam_appid` | aparcado: no se reproduce; receta si un juego con DLC pierde nombre o DLC (`luatools.md` §4.1-2) | 2026-10-09 |
 
 ### 3.2 Nosotros sí, ellos no
 
@@ -360,7 +366,7 @@ dice en su columna Fuente; hasta entonces es `?`.
 | LumaCore (drappula) | `lumacore.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`drappula/LumaCore@33c36e9`, V37) y el feed `MigoReleases@61988bc`; `lumacore-findings.md` absorbido (mediciones en §5.2, afirmaciones en §5.1, decisiones en §4.4) | 3 |
 | BetterSteamTools (+ OpenSteamTool) | `bettersteamtools.md` | 2026-10-07 | **hecha 2026-10-09** desde el código (`main@4747385`, v1.0.4), la rama `updates@bfa812e` y el feed `madoiscool/steam-monitor` (`pattern@6fd7961`); `bettersteamtools-findings.md` absorbido y borrado (mediciones en §5.2, afirmaciones en §5.1, decisiones en §4.4; Fluent-Steam-Lua y SteamToolbox quedan fuera de momento) | 4 |
 | opensteamtool-cn (huanyuejue) | `opensteamtool-cn.md` | 2026-10-07 | **hecha 2026-10-09** contra BST desde el código (`main@d2a18f8`, 25 commits propios desde `c3d89e9`) y el feed `OpenSteam001/steam-monitor`; sus deltas de `bettersteamtools-findings.md` absorbidos | 4b |
-| LuaTools | `luatools-app-analysis.md` | 2026-10-07 | pendiente | 4c |
+| LuaTools | `luatools.md` | 2026-10-07 | **hecha 2026-10-09** desde el código (`main@9461259`, v1.3.2); `luatools-app-analysis.md` absorbido y borrado (mediciones en §5.2, afirmaciones en §5.1, decisiones en §4.4); el binario v1.2.6 sigue en `luatools-desktop-app/` | 4c |
 | ASSella | `assella-analysis.md` | 2026-10-07 | pendiente | 5 |
 | SLSDeck | `slsdeck-analysis.md` | 2026-10-05 | pendiente | 6 |
 | SteamFlipper | (ninguno: `steamflipper-analysis.md` borrado el 2026-10-08) | 2026-09-28 | **retirado**: el proyecto ya no existe | — |
