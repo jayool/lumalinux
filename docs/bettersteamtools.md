@@ -287,7 +287,7 @@ de autorización (primer pipe del proceso hasta el segundo handshake,
 (`Hooks_IPC_ISteamUser.cpp:51-93`); el mensaje de red 858 recibe el mismo ticket
 o uno acuñado (`Hooks_NetPacket.cpp:608-678`). Con una URL de backend
 (`seteticketurl()` o `-DOST_ETICKET_URL`, vacía en el release:
-`.github/workflows/main.yml:23`), `RequestEncryptedAppTicket` hace un POST
+`Utils/Tickets/EticketClient.cpp:31-33`, valor por defecto vacío, que el workflow de release no sobreescribe), `RequestEncryptedAppTicket` hace un POST
 **síncrono en el hilo IPC** con el nonce del juego para acuñar un ETicket
 fresco "pinned to the same pool account" (`Hooks_IPC_ISteamUser.cpp:98-148`;
 `Utils/Tickets/EticketClient.cpp:123-227`). Detección: secciones heredadas

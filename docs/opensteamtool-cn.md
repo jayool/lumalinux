@@ -56,7 +56,7 @@ Solo lo que difiere de `bettersteamtools.md` §1 (en el estado de OST al
 No tiene: `ManifestCache`, `ManifestDonor`, `Mirror`, `AppUpdater`,
 `TokeerBridge`, `EticketClient`, `Steam/NetPacket.h`, la guarda de depots vacíos
 ni `YldLoadDepotManifest`, ni las funciones Lua `addprocess`, `forcedenuvo` y
-`seteticketurl`. Sí registra `pinapp`.
+`seteticketurl`. `lua_pinApp` existe, pero su registro está comentado como en BST (`Utils/Config/LuaConfig.cpp:294,486`): ningún `.lua` puede llamarlo.
 
 ---
 
@@ -117,7 +117,7 @@ en el CDN. `[manifest] failover = false` deja solo el configurado.
 
 ### 2.5 Updates de juegos
 
-Como OST: pin por `setmanifestid` y `pinapp` registrado. Sin la guarda de BST
+Como OST: pin por `setmanifestid`; `pinapp` no se registra (`Utils/Config/LuaConfig.cpp:486`). Sin la guarda de BST
 contra la configuración de depots vacía.
 
 ### 2.6 Fixes y DRM
@@ -191,7 +191,7 @@ ETickets, **más**:
 | `<Steam>\config\lua\*.lua` | `dllmain.cpp:89` | entrada |
 | `<Steam>\userdata\*\config\shortcuts.vdf` | `Hook/Hooks_NetPacket.cpp:947-975` | `game_id` para la presencia |
 | `[manifest] url` (`20770407`), `failover` (`true`); `[remote] order` (`jsdelivr-first`); `[presence] display` (`spacewar`) | `Utils/Config/Config.cpp:16-25` | |
-| `.lua`: `dauth2(appid)`, `pinapp(appid)` | `Utils/Config/LuaConfig.cpp:447-458` | |
+| `.lua`: `dauth2(appid)` | `Utils/Config/LuaConfig.cpp:447-458` | |
 
 ---
 

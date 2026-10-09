@@ -136,7 +136,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | SteaMidra/SFF | freeze: ACF a mano 0444 (`StateFlags 4`, `buildid`/`TargetBuildID` public, `AutoUpdateBehavior 0`, `InstalledDepots` reales desde `8eaf238`) + `DisableUpdates: yes` + `ManifestIds` y `setManifestid` si el usuario eligió versión + `steam.cfg` (cliente). Sin comprobación periódica; "Update" = refetch + rebajar; "Lure Fix" = ACF con gids actuales sin descargar. Versión antigua: historial (CM → morrenus → árbol GitHub → tokens; SteamDB off), DepotBox build-details (token embebido), HTML de SteamDB; `_sync_acf_downgrade` o cola de 7 días. Windows: `00_LetUpdate_override.lua`. | `steamidra.md` §2.5 |
 | LumaCore | pin por `BuildDepotDependency` (gid del vector, activo) desde `setManifestid` + barrido de texto que re-pinea literales; auto-update por depot con `skipManifestPin`, redists o `_originals` (patrón `00_LetUpdate`); versión antigua = `setManifestid` con gid viejo (lo escribe SteaMidra); nada para updates empezadas. | `lumacore.md` §2.5 |
 | BetterSteamTools | pin por `setmanifestid` en `BuildDepotDependency`; sin pase de updates ni rollback; hace fallar `BuildDepotDependency` si la lista de depots de un juego del `.lua` vuelve vacía en un refresco (evita el "instalado sin descargar"). | `bettersteamtools.md` §2.5 |
-| opensteamtool-cn | pin por `setmanifestid`, `pinapp` registrado; sin la guarda de depots vacíos de BST. | `opensteamtool-cn.md` §2.5 |
+| opensteamtool-cn | pin por `setmanifestid` (`pinapp` sin registrar, como en BST); sin la guarda de depots vacíos de BST. | `opensteamtool-cn.md` §2.5 |
 | LuaTools | ? | |
 | ASSella | ? | |
 | SLSDeck | ? | |
