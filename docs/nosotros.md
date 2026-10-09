@@ -1127,8 +1127,16 @@ lo incoherente, luego lo muerto.
 17. `verify-fix.yml` nunca ha pasado, usa el tag `linux-test` de `h3adcr-b`
     que `setup.sh` abandonó y un `config.yaml` con claves obsoletas; el
     devcontainer instala SLSsteam vía headcrab y no vía `setup.sh`.
-18. pt-BR sin las claves de ayuda ni `showMoreResults`; cadenas en inglés
-    fuera del diccionario; la pestaña Dev mezcla castellano e inglés.
+18. pt-BR sin las claves de ayuda ni `showMoreResults`, `sysAlignUpSwitching`,
+    `sysAlignUpManual`; cadenas en inglés fuera del diccionario (login de Ryuu
+    y LuaTools en `Settings.tsx`, textos de fixes en `GameDetail.tsx`, toasts de
+    `useLuatoolsConnect.ts`); la pestaña Dev mezcla castellano e inglés. El
+    resultado "DLC added…" de un juego poseído (`ownedDlcNextStart`) sale en
+    gris porque el verde solo se aplica a `doneRestartSteam`
+    (`GameList.tsx:902`). Comentarios de código que describen el flujo viejo:
+    reinicio de Steam al añadir (`downloads.py:1529,1608-1615`), "steam.sh"
+    en `GameList.tsx:448-450` y `SystemStatus.tsx:55,91,206`. Lista completa
+    de la deriva de la UI frente a sus reglas en LumaDeck `DESIGN_UI.md`.
 19. El guard al latchear **borra `appcache/appinfo.vdf`** (`setup.sh:939-941`)
     sin comentario que lo explique.
 
