@@ -129,7 +129,7 @@ bool Install() {
     // RVA feed first: the CI publishes DepotKey's RVA per build (keyed by the
     // steamclient.so hash), and it is prologue-independent — it survives a
     // recompile that would break the byte pattern. RTTI/pattern below is the
-    // fallback for builds the feed hasn't published yet. docs/rva-feed-design.md.
+    // fallback for builds the feed hasn't published yet. docs/design/rva-feed-design.md.
     //
     // Each step runs ONLY if the previous came up empty. Resolution is a hot path
     // — it runs while Steam is starting — so a resolver that cannot change the

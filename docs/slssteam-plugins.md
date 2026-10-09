@@ -11,7 +11,7 @@ Leído desde el código el 2026-10-09. Cubre dos cosas:
 Sustituye a `slssteam-plugins-analysis.md`: sus mediciones con fecha están en
 §5.2, lo que afirmaba y el código ya no sostiene en §5.1, y sus accionables con
 el estado de hoy en §4.4. Su anexo sobre cómo localiza funciones cada proyecto
-no trataba de los plugins y está ahora en `design/locator-anchors.md`. El resto
+no trataba de los plugins; su contenido vigente está en `nosotros.md` §2.1 y §4.4. El resto
 de SLSsteam está en `slssteam.md`; quién despliega estos plugins, en
 `assella.md`; nuestra pila, en `nosotros.md`.
 
@@ -361,7 +361,7 @@ no defenderse).
 
 | Función | Plugins | Nosotros | Notas |
 |---|---|---|---|
-| 1 | índice de vtable por nombre; sitio de llamada + `getJmpTarget` | por nombre en DepotKey (K, hecho); patrón + feed + `.eh_frame` en GMRC | `design/locator-anchors.md` |
+| 1 | índice de vtable por nombre; sitio de llamada + `getJmpTarget` | por nombre en DepotKey (K, hecho); patrón + feed + `.eh_frame` en GMRC | `nosotros.md` §2.1 |
 | 2 | captura del paquete 0 por `GetPackage`, sin offsets de build | finder activo con offsets (`0xc58`, `0xc6c`, nodo `0x18`) y reconcile | |
 | 4 | GMRC: mirar `pOutMRC[0]` en vez del retorno | cascada de cuatro con UA propio, caché, validación en el CDN, solo depots de `keys.txt` | |
 | 6 | spliced tickets | lo instalamos como plugin (§4.4 P5) | |
@@ -380,7 +380,7 @@ no defenderse).
 | P7 | R: probar el derivador automático de Reconcile contra una corrida real | 2026-09-07 | abierto |
 | P8 | G: refrescar el snapshot embebido de `slssteam_schema.py` con `Plugins`, `SmartTickets`, `LaunchOptions` | 2026-09-07 | **abierto**: la referencia viva se baja de `res/config.yaml` de upstream y las trae, pero el snapshot de reserva (`_BUNDLED_YAML`, `slssteam_schema.py:58`) sigue sin ninguna de las tres; solo importa sin red |
 | P9 | C: `Plat_Realloc`/`Plat_Free` de `libtier0_s.so` en vez de `realloc` de libc | 2026-09-04 | abierto (sin uso de `Plat_*` en `src/`) |
-| P10 | 3 y 3ª: ancla de cadena en runtime para los demás hooks; sitio de llamada como tercer resolvedor (exige convergencia en el auditor) | 2026-09-07 | abierto (`design/locator-anchors.md`) |
+| P10 | 3 y 3ª: ancla de cadena en runtime para los demás hooks; sitio de llamada como tercer resolvedor (exige convergencia en el auditor) | 2026-09-07 | abierto; requisito de convergencia en `nosotros.md` §4.4. El ancla de cadena en runtime ya existe para GMRC, ShaderDepot y BuildDep |
 | P11 | Portar lumalinux a plugin | 2026-09-03 | **no**: sin versionado ni contrato de desmontaje, sin `steamwebhelper`, sin aislamiento; reabrir si la API trae versionado |
 | P12 | §12 de ASSella: sin acción por el choque con `download.lua`; opciones (1)-(5) | 2026-09-29 | vigente (`assella.md` §4.4 A5), con la corrección de release frente a debug de §4.1-1 |
 

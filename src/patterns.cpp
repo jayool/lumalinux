@@ -203,7 +203,7 @@ uintptr_t FindDepotKeyFunction() {
     // whatever matched first". Note the two remaining paths can still succeed
     // where this one bails: a pattern that is ambiguous across the whole module
     // may still be unique WITHIN CConfigStore's vtable, which is exactly the
-    // constraint docs/rva-feed-design.md §13 describes.
+    // constraint docs/design/rva-feed-design.md §13 describes.
     return FindUniqueInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 

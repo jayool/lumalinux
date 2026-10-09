@@ -13,7 +13,7 @@ name: Runtime smoke test (WIP — has never passed, do not rely on it)
 # not cite it.
 #
 # The one thing that DOES validate a change end to end today is the manual
-# on-device procedure in docs/design/update-testing.md, Part 2 — a SteamOS box with a
+# on-device procedure in docs/maintenance.md §C — a SteamOS box with a
 # logged-in Steam. That is what validated the 2026-09-08 finder rework.
 #
 # THE GAP IT AIMS AT: nothing in CI ever RUNS the .so. build.yml compiles and

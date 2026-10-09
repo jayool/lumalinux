@@ -170,6 +170,13 @@ tarde, en el primer `RunInterface` del IPC, cuando ya existe el `CUser`
    `CSteamEngine::{GetServerPipe, SetAppIdForCurrentPipe, ProcessIPCFrame, m_ClientUtils, m_pUser}`,
    `CUser::{CheckAppOwnership, GetSubscribedApps, PostCallback, PostCallbackToAppId, SpawnGameId, UpdateAppOwnershipTicket, m_ClientUser, m_UserAppInfo, m_UserAppmanager}`,
    `CUserAppManager::BuildDepotDependency`, `IClientUtils::m_PipeIndex`.
+   La mayoría son **firmas cortas del cuerpo** de la función, no de su prólogo
+   (5 bytes como `0F 45 F8 85 ED` en `TraceIPC` o `0F 94 C2 08 51` en
+   `CheckAppOwnership`, `patterns.cpp:56,135`), con `SigFollowMode` para caminar
+   hasta el inicio o seguir un salto; las de offset (`m_ClientUtils`, `m_pUser`)
+   extraen el desplazamiento de un acceso. Así sobreviven a recompilaciones y a
+   que otro programa parchee antes el prólogo (comparación con lumalinux en
+   `nosotros.md` §2.1).
    `patternScan` (`memhlp.cpp:64-120`) recorre `.text` byte a byte usando los
    límites del ELF parseado y se queda con la **última** coincidencia (log si
    hay más de una). Tres modos (`memhlp.hpp:21-26`): `None` (la dirección es

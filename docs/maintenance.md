@@ -14,9 +14,10 @@ boot: DepotKey's `outcome=installed` and the finder's `outcome=resolved`.
 **Nothing in CI proves those two lines.** `build.yml` compiles and runs the
 `tools/test_*.py` unit tests; `check_patterns.py` resolves addresses on paper.
 Neither loads the `.so` into a Steam process. `verify-fix.yml` ("Runtime smoke
-test") is meant to, and its header claims it does, but **it has never produced
-a green run** — its first real executions (2026-09-08) all failed in the
-harness, before any assertion. Treat it as work-in-progress, not as a gate.
+test") is meant to, but by its own header (and its name, "WIP — has never
+passed, do not rely on it") **it has never produced a green run** — its first
+real executions (2026-09-08) all failed in the harness, before any assertion.
+Treat it as work-in-progress, not as a gate.
 
 So after touching hooking code or a resolver, the validation that actually
 proves anything is **manual, on a SteamOS box with a logged-in Steam** — the
@@ -29,7 +30,7 @@ by default again since v0.21.0; BuildDep is not in the default set). What to gre
 
 | Grep finds… | Diagnosis | Go to |
 |---|---|---|
-| `SafeMode` mismatch / `Curl Res` + the hash isn't whitelisted | Steam shipped a new `steamclient.so`; patterns probably still match | **A.1** Hash bump |
+| `hash not in the verified list` (the toast; in the log as a `NOTIFY:` line, next to `steamclient.so hash is <sha>`) | Steam shipped a new `steamclient.so`; patterns probably still match. Advisory only: hooks still install if they resolve. (`Curl Res: N` prints on every boot and tells you nothing) | **A.1** Hash bump |
 | `Hook install: name=<HOOK> … outcome=miss` | **Nothing** resolved that hook — the RVA feed, the byte pattern *and* the rescue resolver all missed (`method=none` says the same). Until 2026-09-08 this row said `outcome=pattern_miss`, which only `LoadPackage` ever emitted, so it caught the one diagnostic hook and missed DepotKey and GMRC | **A.2** / **A.3** Re-derive patterns |
 | `Hook install: … outcome=hook_install_failed` | The address resolved fine; libmem could not write the detour. Not a pattern problem, and no section below covers it — capture the log and the `target=` address | — |
 | `Finder resolve: name=PKG0Finder method=none outcome=miss` | The package-0 finder resolved no cache address, so **nothing is injected** — the finder is the sole injector. The cause is on the line above it (see the finder row) | **C** Finder anchors |
@@ -38,7 +39,8 @@ by default again since v0.21.0; BuildDep is not in the default set). What to gre
 | `PKG0_FINDER: cache-access idiom NOT_FOUND` / `… AMBIGUOUS` (grep `cache-access idiom`; anything but `UNIQUE` means no injection) or `GOT NOT_FOUND` | The package-0 finder can't locate its anchors; it now says so once and ends (it no longer retries — the bytes are final) | **C** Finder anchors |
 | No `lumalinux … preinit` banner at all from that boot | lumalinux isn't loading — the wrapper wasn't reached (coverage lost) or the crash-loop fail-safe booted vanilla | **B** Wrapper not reached |
 | `SLS-ach: could not resolve SLSsteam symbols` / `guard pattern not found` (native cheevos silently off) | SLSsteam was stripped/renamed/re-shaped; the achievement patch fail-closed | **D** SLSsteam in-memory patch |
-| `CR-stats: FAILED — …` (CloudRedirect loaded, fix not armed; `status.json` → `CrStatsFix: failed`) | A CloudRedirect release changed `HandleGetUserStats` (symbol gone → `loaded; … not exported … patch not needed`, which is the normal state since CloudRedirect 2.6.6; no `ret $4` → return convention changed) or `cloud_redirect.so` now precedes lumalinux in `LD_PRELOAD`. Nothing is patched in that state — games CloudRedirect has never seen are back to zero achievements. Read the line: it names which of the three self-checks failed | `docs/cloudredirect.md` §2.7, §4.4 C2 |
+| `CR-stats: CloudRedirect … loaded; HandleGetUserStats is not exported … — patch not needed` (`status.json` → `CrStatsFix: disabled`) | **Normal** on CloudRedirect ≥ 2.6.6: the empty-store bug is fixed upstream and the symbol is hidden, so there is nothing to interpose. Not a failure | — nothing to do |
+| `CR-stats: FAILED — …` (CloudRedirect loaded, fix not armed; `status.json` → `CrStatsFix: failed`) | Only reachable with a CloudRedirect ≤ 2.6.5 that still exports `HandleGetUserStats`: either `cloud_redirect.so` now precedes lumalinux in `LD_PRELOAD`, or the function changed shape (no usable symbol size, no `ret $4` epilogue → return convention changed), or the `process_vm_readv` self-probe failed. Nothing is patched in that state — games CloudRedirect has never seen are back to zero achievements. Read the line: it names which check failed | `docs/cloudredirect.md` §2.7, §4.4 C2 |
 
 If install is broken but you can't tell which row from a single line, do this
 in order: B → A.1 → A.2/A.3 → C. They're listed by frequency: B and A.1 are
@@ -82,7 +84,8 @@ How it works (`src/main.cpp`, `src/update.cpp`, `src/rva_feed.cpp`,
   deployed lumalinux binary on user Decks does NOT need to be replaced for a
   hash bump to reach them — they pick it up automatically on next launch.
 
-> **Build note (0.15.0+).** Releases ship with the gate ON — `build.yml` passes
+> **Build note (0.15.0+).** Releases ship with the SafeMode hash check compiled
+> in (advisory: it logs and toasts, never blocks) — `build.yml` passes
 > `-DLUMA_NO_UPDATE=OFF`. This is only safe because 0.15.0 removed SafeMode's
 > hard link on libcurl/libcrypto: `src/sha256.cpp` is now a self-contained
 > SHA-256, and `src/curl.cpp` `dlopen()`s libcurl lazily at runtime. The result
@@ -90,7 +93,9 @@ How it works (`src/main.cpp`, `src/update.cpp`, `src/rva_feed.cpp`,
 > the game `reaper` (the `CURL_OPENSSL_4` brick that forced the gate OFF by
 > default in 0.13.6–0.14.x). **Do NOT re-link libcurl/libcrypto** — keep the
 > dlopen/self-hash approach, or the reaper brick comes back. The `LUMA_NO_UPDATE`
-> option still defaults ON for gate-less validation builds (`verify-fix.yml`).
+> option still defaults ON for check-less validation builds (`verify-fix.yml`),
+> and so does any manual `cmake` without the flag: such a build skips the hash
+> check and logs `SafeMode update-check compiled out (LUMA_NO_UPDATE)`.
 
 Maintainer fix:
 
@@ -137,13 +142,13 @@ v0.20.x and is **non-critical** since v0.21.0, like ShaderDepot and Reconcile:
 a `miss` opens an issue and auto-derives but does not block; the only blocking
 re-derive trigger is DepotKey. The package-0 finder still derives its GOT from
 the GMRC *prologue tail*, §C, independent of the hook.)
-**DepotKey is different since 2026-07-06**: the shipped hook resolves via RTTI
-first (`CConfigStore` slot 6, RESEARCH §15), so its byte pattern is only a
-fallback — a DepotKey miss (`method=none`) means BOTH the RTTI walk AND the
-pattern failed (rare; read the `RTTI:` log lines first). You only re-derive
-DepotKey's pattern to refresh that fallback, using the indirect anchor below.
-To tell which of the two broke, `tools/experiment_rtti_depotkey.py` compares the
-RTTI walk against the byte pattern on the new binary (see E).
+**DepotKey** resolves feed → `kDepotKeyFnPattern` → `byname(rescue)` (RTTI
+class name → `IClientConfigStoreMap` slot → `CConfigStore` vtable; it reads no
+prologue byte), each step only if the previous missed
+(`src/hooks/depot_key_hook.cpp`). A DepotKey miss (`method=none`) means all
+three missed (rare; read the `DepotKey:` / `RTTI:` log lines first). You only
+re-derive DepotKey's pattern to refresh the second step, with
+`tools/derive_depotkey_byname.py` (below).
 
 **What the Deck itself tries before you do anything** (the `method=` field of
 the `Hook install:` line, in order; each step runs only if the previous missed):
@@ -196,7 +201,9 @@ is still the fix, the rescue only keeps the Deck working until it lands.
 > immediately, LumaDeck won't offer it until the matching release ships. Deployed
 > `.so`s are unaffected too: each keys on its **own compiled** group
 > (`src/update.cpp`: `clientHashMap[VERSION]`) and never sees the new group's hash,
-> so SafeMode keeps blocking that build — correctly — until the user updates.
+> so on that build it keeps showing the "not in the verified list" toast
+> (advisory) and hooks only if its patterns or the RVA feed still resolve, until
+> the user updates.
 
 > **Ahead of time (`probe-steam.yml`, manual).** The daily monitor only watches
 > `steamdeck_stable`, so a beta that recompiles `steamclient.so` (2026-09-19,
@@ -205,8 +212,8 @@ is still the fix, the rescue only keeps the Deck working until it lands.
 > (`steam_client_steamdeck_publicbeta_ubuntu12`, `steam_client_publicbeta_ubuntu12`,
 > `steam_client_ubuntu12`, or the stable itself; any other name through the
 > free-text `manifest_custom` input), runs `check_patterns.py`, and on
-> a moved pattern runs the same Ghidra + by-name re-derivation on the runner's
-> working copy only. It never opens a PR or an issue and never touches
+> a moved pattern runs the same re-derivation chain as the monitor
+> (`tools/derive_python_first.sh`) on the runner's working copy only. It never opens a PR or an issue and never touches
 > `updates.yaml`, `res/rvas` or `patterns.hpp` on any branch: the verdict, both
 > reports, `derived.json` and the would-be `patterns.hpp` diff land in the job
 > summary and an artifact. Finder anchors (§C) are reported, not derived.
@@ -244,7 +251,8 @@ is still the fix, the rescue only keeps the Deck working until it lands.
      BuildDep doesn't block installs).
    - **GMRC** anchors on
      `"ContentServerDirectory.GetManifestRequestCode#1"` → auto.
-   - **DepotKey** (only its fallback pattern — runtime uses RTTI, §15) is
+   - **DepotKey** (its pattern is the second step, after the feed and before
+     `byname(rescue)`) is
      **not derived by Ghidra**. The postScript used to try the *indirect*
      anchor (the dispatcher refs `"Software\Valve\Steam\Depots\"`, then
      `CALL [reg+0x18]` to the inner accessor, RESEARCH §12.5); headless Ghidra
@@ -296,14 +304,11 @@ is still the fix, the rescue only keeps the Deck working until it lands.
      just disables the no-restart path → **Add Game falls back to needing a Steam
      restart** (the old behaviour). It NEVER blocks installs and NEVER crashes.
      Default ON since v0.16.16 (kill-switch `LUMA_NO_RECONCILE`), so a break
-     silently falls back to the restart path. Re-derive via the RTTI anchor: the
-     string `"17LicensesUpdated_t"`
-     (the callback type's `type_info` name) is referenced right before the
-     function posts callback `0x7d`; find that xref, walk to the enclosing
-     function prologue, and mask the volatile bytes (get_pc_thunk rel, PIC add
-     imm, frame size, the `mov edi,[eax+0x1bXX]` CUser member offset that drifts,
-     the spill offset) — exactly moon's pattern in `patterns.hpp`
-     (`kNotifyLicensesUpdatedPattern`). Ported from slsteam-moon; keep the
+     silently falls back to the restart path. Re-derive with
+     `tools/derive_reconcile_byanchor.py <so>` → `tools/derive_from_address.py`
+     (what CI runs, see the Reconcile bullet above). The Deck itself falls back
+     to the same anchor at runtime (`method=anchor(rescue)`,
+     `src/reconcile_anchor.cpp`). Ported from slsteam-moon; keep the
      unique-match requirement so a re-derive that isn't unique bails safely.
 
 3. Paste the printed `UNIQUE` patterns into `src/patterns.hpp`.
@@ -314,6 +319,8 @@ is still the fix, the rescue only keeps the Deck working until it lands.
    mkdir -p build && cd build && cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release
    ninja
    ```
+   (Release builds add `-DLUMA_NO_UPDATE=OFF`, as `build.yml` does; without it
+   the hash check is compiled out.)
 
 5. **`res/version.txt` + a fresh group** — *the auto PR already did this step*; on
    the manual path, bump `res/version.txt` to a new timestamp (a real bump this
@@ -330,7 +337,7 @@ is still the fix, the rescue only keeps the Deck working until it lands.
    so never omit it. Users that re-run `setup.sh` (or LumaDeck's reinstall
    action) pick up the new binary.
 
-   > Only a **critical** move bumps the group (per `CMakeLists.txt`). A
+   > Only a **critical** move bumps the group (the `watch-steam.yml` policy). A
    > non-critical re-derive (ShaderDepot / Reconcile) keeps the **same** group —
    > the build already works, so its hash stays whitelisted where it is, just with
    > a `# caps:` note; that release does not bump `version.txt`.
@@ -340,7 +347,7 @@ is still the fix, the rescue only keeps the Deck working until it lands.
 Since 2026-09-14 this is a **last resort**: run
 `tools/derive_depotkey_byname.py` first (A.2). It fails only if the by-name
 resolver itself cannot find the accessor (`by-name did not resolve`) — which
-is also the day the Deck's RTTI rescue stops working, so treat that as a
+is also the day the Deck's `byname(rescue)` stops working, so treat that as a
 code problem in `src/rtti.cpp`, not a pattern problem. Two things to know
 about its output before you go manual:
 
@@ -418,7 +425,8 @@ then fail, it wasn't B — go to A.
 
 > In the old model this row meant "Headcrab regenerated `steam.sh` and dropped
 > lumalinux's `LD_PRELOAD` block". That can't happen now: `steam.sh` is left vanilla
-> and the wrapper is the injection point (see `docs/design/decouple-headcrab-plan.md`).
+> and the wrapper is the injection point (`setup.sh` even restores a headcrab-patched
+> `steam.sh` to vanilla; see `docs/nosotros.md` §2.1, in Spanish).
 
 ---
 
@@ -429,13 +437,19 @@ then fail, it wasn't B — go to A.
 giving up:
 
 ```
-PKG0_FINDER: cache-access idiom NOT_FOUND (anchor 0xc58) — CPackageInfoCache layout changed? Not injecting
+PKG0_FINDER: cache-access idiom NOT_FOUND for every known layout (anchors 0xc58 0xf90) — CPackageInfoCache layout changed? Not injecting
 ```
 
 or, when the idiom is there but the sites disagree on the address:
 
 ```
-PKG0_FINDER: cache-access idiom AMBIGUOUS — 5 site(s), 3 distinct disp32: 0x3b7d4 0x18240 0x2c9e0 — refusing to guess, not injecting
+PKG0_FINDER: cache-access idiom AMBIGUOUS — layout stable-0xc58, 5 site(s), 3 distinct disp32: 0x3b7d4 0x18240 0x2c9e0 — refusing to guess, not injecting
+```
+
+or, when more than one known layout has sites at all:
+
+```
+PKG0_FINDER: cache-access idiom AMBIGUOUS-LAYOUT — 2 of 2 known layouts have sites — refusing to guess, not injecting
 ```
 
 or, when the upstream anchor is the one missing — or present but disagreeing with itself:
@@ -457,18 +471,20 @@ A healthy boot instead shows:
 
 ```
 PKG0_FINDER: GOT UNIQUE — 1 site(s), got=0x…
-PKG0_FINDER: cache-access idiom UNIQUE — 2 site(s), disp=0x3b7d4
+PKG0_FINDER: cache-access idiom UNIQUE — layout stable-0xc58, 2 site(s), disp=0x3b7d4
 ```
 
 **Cause**: the finder doesn't use a byte pattern. It derives the address of
 the live package cache at runtime from two stable anchors (RESEARCH §13.5):
 
 - the cache-access idiom `lea r1,[GOT+X] ; mov r2,[r1] ; mov r3,[r2+0xc58]`,
-  anchored on the **`0xc58` root-offset** of `CPackageInfoCache`;
+  anchored on the **root offset** of `CPackageInfoCache` (`0xc58` on stable,
+  one row per known layout, see the Fix below);
 - the **GMRC prologue tail** (`05 add eax,imm32` plus the
   `55 89 E5 …` that follows).
 
-If Steam moves `0xc58` (a class-layout change in `CPackageInfoCache`) or the
+If Steam moves the root offset to a value not in `kCacheLayouts` (today
+`0xc58` / `0xf90`; a class-layout change in `CPackageInfoCache`) or the
 GMRC prologue tail (`55 89 E5 …` register choreography differs), the
 runtime derivation fails and the finder never seeds package 0. **No hook
 pattern is broken**, but installs are still dead.
@@ -610,20 +626,28 @@ a `NOT_FOUND` on either becomes a feed fix rather than a release. The limit is
 there is nothing to fall back to — which is the point, not a gap.
 
 **Manual on-device validation** (the procedure that validated the 2026-09-08
-rework; do this before releasing a finder change — no CI job covers it,
-see `docs/design/update-testing.md`):
+rework; do this before any release, and after touching hooking code, a
+resolver or the finder — no CI job covers it):
 
 1. On a SteamOS box or codespace, install the stack normally from LumaDeck
    (`setup.sh`), so every other piece is the shipped one.
-2. Build the branch and swap only the library:
+2. Build the branch and swap only the library, **with Steam stopped**:
 
    ```bash
    ./tools/fetch_libmem.sh                      # 32-bit libmem, once per clone
    mkdir -p build && cd build
    cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release && ninja && cd ..
-   file build/liblumalinux.so   # must say: ELF 32-bit LSB shared object, Intel 80386
+   file build/liblumalinux.so   # must say: ELF 32-bit LSB shared object, Intel 80386 (or Intel i386)
+   # quit Steam first — replacing the .so under a running Steam crashes it
    cp build/liblumalinux.so ~/.local/share/lumalinux/liblumalinux.so
    ```
+
+   Replacing the library while Steam runs makes it dump (`assert_…dmp`) the
+   next time it passes through a hook (measured 2026-10-06, `docs/nosotros.md`
+   §5.2 F1), and that dump can count towards the crash-loop guard (§B). Add
+   `-DLUMA_NO_UPDATE=OFF` to the `cmake` line if you want the hash check (and
+   its toast) exactly as a release has it; without it the log says
+   `SafeMode update-check compiled out`.
 
    The `file` line is not ceremony: a host-native 64-bit build copies over
    cleanly and then simply never loads (`ELF file class ELFCLASS32 incorrect`
@@ -649,6 +673,36 @@ see `docs/design/update-testing.md`):
 
 Worth opening an issue with the failing log line so the diagnostic landing
 in the next release is sharper.
+
+**What the device run does not cover, and what does:**
+
+- **Every failure path.** The device run exercises the success path only. The
+  branches that run the day Steam breaks something (`AMBIGUOUS`, a finder that
+  ends, `outcome=miss`, a value read from the feed instead of scanned) run
+  nowhere but the synthetic `tools/test_*.py` tests, which `build.yml` runs on
+  every push. Run them locally too
+  (`for t in tools/test_*.py; do echo "== $t"; python3 "$t"; done`), and make
+  sure a new test bites: break what it guards and confirm it goes red before you
+  trust it.
+- **The C++ selftests in `tools/` are run by no workflow** (neither `build.yml`
+  nor any other; the `tools/test_*.py` glob does not pick up `.cpp`). Run the
+  ones that cover what you touched, by hand; each file's header has the exact
+  build line:
+  `tools/gmrc_xref_selftest.cpp` and `tools/reconcile_anchor_selftest.cpp`
+  (the rescue locators against a real `steamclient.so`),
+  `tools/vaddr_xlate_test.cpp` (`src/vaddr_xlate.cpp`),
+  `tools/test_update_feed_guard.cpp` (the `updates.yaml` body guard in
+  `src/update.cpp`; needs `-lyaml-cpp`), and
+  `tools/cr_stats_fix_selftest/run.sh` (`src/cr_stats_fix.cpp` against a fake
+  `cloud_redirect.so`; needs gcc-multilib).
+- **The re-derivation chain** has its own manual test,
+  `.github/workflows/watch-steam-selftest.yml` (Actions → *Run workflow*): it
+  corrupts shipped patterns in the runner's checkout (`target=shaderdepot` /
+  `criticals`), runs the real `derive_python_first.sh` →
+  `apply_derived_pattern.py` → `check_patterns.py` chain and asserts CLEAN;
+  `target=ghidra` runs the Ghidra postScript alone and checks it agrees with
+  the Python locators. Dispatch it after touching any of those tools; it opens
+  no PR.
 
 ---
 
@@ -747,15 +801,15 @@ a re-derive. Test: `tools/test_experiment_framesize.py`.
 ### `experiment_rtti_depotkey.py` — do RTTI and the byte pattern agree?
 
 This was the ground-truth gate for the DepotKey→RTTI migration, and that
-migration **shipped** (2026-07-06, RESEARCH §15) — the hook resolves via RTTI
-first today, with the byte pattern as fallback (see A.2). The tool walks Itanium
-RTTI on the static file (type-name string → `type_info` → vtable header → slot 6)
-and asserts it lands on the same RVA the byte pattern finds.
+migration **shipped** (2026-07-06, RESEARCH §15) and was later replaced by
+feed → pattern → `byname(rescue)` (see A.2); the slot-6 RTTI walk no longer
+runs at install. The tool walks Itanium RTTI on the static file (type-name
+string → `type_info` → vtable header → slot 6) and asserts it lands on the same
+RVA the byte pattern finds.
 
-So its use now is diagnostic rather than exploratory: when DepotKey reports
-`method=none`, both the RTTI walk and the pattern failed, and this tells you
-which of the two broke on the new build instead of leaving you to guess. Test:
-`tools/test_experiment_rtti.py`.
+So its use now is diagnostic rather than exploratory: it is still the quickest
+way to see whether the slot-6 RTTI walk and the byte pattern agree on a new
+binary. Test: `tools/test_experiment_rtti.py`.
 
 ### `experiment_cache_idiom.py` — what does the finder see on this binary?
 
@@ -784,8 +838,10 @@ The **tools** stay out of CI deliberately: they need a real `steamclient.so` and
 they guard code nothing else executes, so running them on every push buys a
 signal that can only change when someone edits the tool. The rule this repo
 follows is `watch-steam-selftest.yml`'s — fire when the thing being protected is
-edited; that workflow covers the production chain (`run_ghidra_derive.sh` →
-`apply_derived_pattern.py` → `check_patterns.py`), and these three are not in it.
+edited; that workflow covers the production chain (`derive_python_first.sh` →
+`apply_derived_pattern.py` → `check_patterns.py`; `target=ghidra` runs
+`run_ghidra_derive.sh` alone as the second-opinion check), and these three are
+not in it.
 
 Their **tests** are a different matter, and the old rule here ("whoever edits the
 tool can run the test in the same second") turned out to be wishful: until
@@ -807,7 +863,7 @@ knowing:
 
 1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
    or the crash-loop fail-safe latched vanilla → the real issue is usually A).
-2. **`SafeMode` mismatch but `check_patterns.py` is CLEAN on that binary** →
+2. **`hash not in the verified list` but `check_patterns.py` is CLEAN on that binary** →
    A.1 (hash bump in `updates.yaml`, no rebuild).
 3. **`outcome=miss` on DepotKey** → A.2 / A.3
    (re-derive patterns, rebuild, new release). A miss on GMRC or ShaderDepot is

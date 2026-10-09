@@ -164,7 +164,7 @@ void InstallHooks() {
     // are live providers with licensed accounts behind them (two pools, see
     // the table there). Validated end to end in the SteamOS codespace on
     // 2026-09-15/16: native install without local manifests, keyed shader
-    // pre-cache, dead provider, bogus code (docs/update-testing.md Part 3).
+    // pre-cache, dead provider, bogus code (docs/nosotros.md §5.2 F4, 2026-09-15/16).
     // With no provider alive the hook falls through and Steam behaves as in
     // v0.20.x: installs from the manifests LumaDeck pre-seeds in depotcache/.
     std::vector<HookSpec> specs = {

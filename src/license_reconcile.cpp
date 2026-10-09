@@ -37,7 +37,7 @@ using NotifyFn = void (*)(void*);
 // RVA feed first (prologue-independent, keyed by the steamclient.so hash), else
 // the byte pattern. FindNotifyLicensesUpdatedFunction requires a UNIQUE match
 // and returns 0 otherwise, so a wrong-build pattern caches 0 -> the feature
-// no-ops rather than firing at a garbage address. docs/rva-feed-design.md.
+// no-ops rather than firing at a garbage address. docs/design/rva-feed-design.md.
 uintptr_t ResolveAddr() {
     static const uintptr_t addr = []() -> uintptr_t {
         if (uintptr_t feed = RvaFeed::Resolve("Reconcile")) {
