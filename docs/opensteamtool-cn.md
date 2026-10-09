@@ -216,8 +216,8 @@ Aparcados el 2026-10-09. Numeración propia de este doc.
    Fluent-Steam-Lua con un cliente posterior al 09-06, la DLL arranca sin
    hooks. No nos afecta; es la tercera prueba de que un feed de terceros puede
    pararse sin aviso (las otras: `Steam-Auto-PT`, `lumacore.md` §5.2, y la de
-   las funciones `_STR` de MigoReleases). Va con
-   `update-resilience-comparison.md`.
+   las funciones `_STR` de MigoReleases). Dato a favor de producir el feed
+   en nuestro repo (`nosotros.md` §2.1); sin acción.
 
 ### 4.2 Dependencias y qué rompe si cambia
 

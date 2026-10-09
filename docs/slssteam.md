@@ -1154,6 +1154,7 @@ Discord (segunda mano).
 |---|---|---|---|---|
 | 2026-08-23 | shell | `LD_AUDIT` con un `.so` de 0 bytes, como queda `library-inject.so` | `ld.so: object '…/empty.so' cannot be loaded as audit interface: file too short; ignored`, salida 0: la entrada se ignora y el resto del `LD_AUDIT` carga | `nosotros.md` §2.1 |
 | 2026-09-17 → 10-07 | red (feed `res/updates.yaml`, tracker `swwayps/steam-monitor`) | Qué clientes tienen hash en el feed | Último hash el 3-sep (`237495b4`, versión `1788400362`); el stable de escritorio del 5-sep (`1788652215`) lleva el mismo `steamclient.so` (el tracker cambió solo la versión el 09-18); Deck en `1788291500` (`bc54101b`) desde el 2-sep. Ninguna beta posterior (18-sep a 6-oct) con hash. `res/version.txt` sigue en `20260903114323` | §2.1 |
+| 2025-12-20 → 2026-07-25 | historial git | Commits que tocan patrones | 20-12-2025 "Fix for latest stable Steam client version" (12 líneas + hooks); 10-03 (6, grupo `20260310103750`); 28-05 (3, `20260528151547`); 30-06 "Add more wildcards" (2); 22-07 (5, `20260722152506`, build `dd3ca9f5`); 25-07 "Refine patterns" + `VFTIndexes` (9). Nada después hasta el 09-14 | lumalinux, en la misma ventana: 0 (`nosotros.md` §5.2 F1) |
 
 #### Función 2 — Propiedad y licencias
 
@@ -1219,6 +1220,7 @@ Sin pruebas propias.
 | 2026-09-22 | repo (`diff`) | `res/config.yaml` frente al YAML embebido en `config_default.hpp` | Idénticos byte a byte; el `.hpp` sale del repo ese día y LumaDeck pasa a leer `res/config.yaml` | §2.11 |
 | 2026-10-07 | repo (`git show <tag>:res/version.txt`), Deck | Versión embebida de las dos últimas releases | `20260930144343` y `20261001163836` llevan `20260903114323`: el gate de SafeMode usa esa entrada (hashes `bc54101b`, `237495b4`). En la Deck, `.slssteam.version` = `20261001163836` y el log arranca con `SLSsteam (main -> 42568f0)` | §2.11 |
 | 2026-10-08 | repo | Tamaño | 11 972 líneas en `src/` sin los protobufs generados | §0 |
+| 2026-07-22 → 09-02 | historial git | Retraso del hash en `res/updates.yaml` frente a nuestro whitelist | 07-22 el mismo día, 07-25 tres días, 07-28, 08-04 y 09-02 el mismo día; commit a mano agrupado por versión de SLSsteam | nuestro PR automático tarda segundos (`nosotros.md` §5.2 F11) |
 
 #### Función 12 — Proyecto
 

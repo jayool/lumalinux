@@ -1244,6 +1244,26 @@ lo incoherente, luego lo muerto.
     delante o por detrás, cada lado ofrece volver a cambiarlo. Opciones: tomar
     el `.so` del Flatpak igual que ya tomamos el CLI, o avisar en LumaDeck
     cuando la versión en disco no sea la de la release. Sin decisión.
+36. **La rederivación automática nunca ha corrido sobre un movimiento real.**
+    Desde junio Valve no ha movido ningún patrón nuestro (§5.2 F1); la cadena
+    solo se ha ensayado con patrones corrompidos a propósito, y el ensayo del
+    2026-09-14 destapó tres huecos en un día que 75 runs del cron no habían
+    visto. Ghidra headless no deriva DepotKey (solo el camino por nombre) y el
+    cron solo mira `steamdeck_stable`: una beta que recompila el cliente es
+    invisible hasta que llega a estable (§5.2 F1, 2026-09-19). Lo que pasará
+    el día que Valve mueva DepotKey de verdad sigue sin ensayar. Sin decisión.
+37. **El hash es consultivo: un patrón que resuelva UNIQUE en el sitio
+    equivocado se engancha igual.** La defensa es el guard anti crash-loop, no
+    un bloqueo (`main.cpp:107-126`; §4.1-16). `status.json` dice `installed`
+    pero no distingue "instalado" de "instalado y sirviendo" (`status.cpp`, sin
+    contadores). Candidato anotado: un contador por pieza (§4.4, C5). Sin
+    decisión.
+38. **El pin de build de LumaDeck sigue saliendo de Headcrab.**
+    `HeadcrabCompatibleClientVer` del `headcrab.sh` de `Deadboy666/h3adcr-b`
+    (`headcrab_compat.py:36`) alimenta la chapa "compatible" y el desbloqueo
+    tras un `downgrade.sh` (`target > current AND lumalinux_ready`). Issue
+    #26 abierta desde el 2026-09-14; la variante sin Headcrab está anotada en
+    §4.4 (C3). Si Headcrab desaparece o fija un build raro, la chapa miente.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
@@ -1301,7 +1321,7 @@ almacén local de logros (con nuestro parche del guard), su hook de
 `WarnHashMissmatch`. Qué hace SLSsteam con cada una y si alguna nos vendría
 bien: `slssteam.md` §4.3.
 
-### 4.4 Decisiones ya tomadas (2026-10-05 → 10-08)
+### 4.4 Decisiones ya tomadas (2026-09-14 → 10-08)
 
 | Qué | Decisión | Fecha |
 |---|---|---|
@@ -1320,6 +1340,13 @@ bien: `slssteam.md` §4.3.
 | Ryuu como proveedor completo (login verificado, orden del lua, búsqueda por tienda, sesión viva, borrado de la clave de Hubcap) | hecho (v0.11.0) | 10-07 |
 | Versión de componentes desde el `.so` de disco; Settings y panel con la misma comprobación | hecho (v0.11.0) | 10-08 |
 | Mensaje de `CR-stats` con CloudRedirect mapeado y símbolo oculto | hecho (v0.22.2) | 10-08 |
+| C1 — máscara de bytes de layout en `patterns.hpp` (moon M1.1) | ya hecha donde tiene sentido (disp32 de ShaderDepot; frame, miembro de `CUser` y spill en Reconcile) y refutada donde no (issue #16, 07-06: comodín al frame deja BuildDep con 70 coincidencias y LoadPackage con 222). Único byte sin decidir: el `0x44` de `mov eax,[eax+0x44]` en ShaderDepot; enmascararlo si un día se mueve por él, validando con `verify_mask.py` | 09-14 |
+| C2 — segundo job del cron sobre `steamdeck_publicbeta` (`LUMA_STEAM_MANIFEST`, `fetch_steamclient.py:65`) | anotado, no ahora: el usuario no usa beta; `probe-steam.yml` sondea a mano | 09-14 |
+| C3 — cerrar #26 sin Headcrab: `stack_target` = build más nuevo con hash en nuestro `updates.yaml` y en el de SLSsteam (~20 líneas en LumaDeck, Headcrab de respaldo) | anotado, no ahora: solo actúa tras una rotura real con downgrade | 09-14 |
+| C4 — anclas de texto (VProf) como segunda vía automática | anotado: la técnica ya existe para GMRC (`gmrc_xref`); #13 y `b599366` midieron que no sirve para DepotKey ni LoadPackage. Reabrir si un patrón con ancla se mueve | 09-14 |
+| C5a — `fencepost` / comprobación del slot en runtime (BST) | no: la clave por hash y el resolvedor por nombre ya lo cubren | 09-14 |
+| C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-37) | 09-14 |
+| C5c — segundo mirror del feed (jsDelivr) | no mientras `raw.githubusercontent.com` funcione: un mirror ajeno obliga a firmar el feed (`design/rva-feed-design.md` §14) | 09-14 |
 
 ---
 ## §5 Historial
@@ -1435,6 +1462,9 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-01 | CI (`probe-steam.yml`, `readelf -n`) | Canales de Steam contra nuestros patrones | Deck stable y escritorio stable dicen `1788652215` y sirven binarios distintos (`bc54101b`/`a577b836` frente a `237495b4`/`29734b56`); Deck beta y escritorio beta `1790721607` comparten `a3661f5b`. Los cuatro limpios; la beta cae en el layout `beta-0xf90`. Solo existen `steamdeck_stable` y `steamdeck_publicbeta`; `main`, `preview` y `beta` dan 404 | maintenance §A.2 |
 | 2026-10-07 22:16 | Deck | Update de CloudRedirect desde LumaDeck (`setup.sh`) | `.so` y última línea de `cr_debug.log` en `2.6.6+3434d9d`, `DoInit: SUCCESS`, `cloud_redirect.so` mapeado seis veces en `steam`. lumalinux v0.22.1 decía "cloud_redirect.so not loaded" porque el símbolo ya va oculto; texto corregido en v0.22.2 | lumalinux `e92b763` |
 | 2026-10-08 | build local | `liblumalinux.so` con el `cr_stats_fix` de v0.22.2 | Compila; `cr_stats_fix_selftest/run.sh` 6/6; las únicas cadenas de versión del binario son `lumalinux v0.22.1 preinit` y `lumalinux/v0.22.1` | `tools/cr_stats_fix_selftest/` |
+| 2026-06-11 → 09-14 | CI + historial git | Cuántas veces ha roto Valve un patrón nuestro | **Ninguna rederivación** en 11 builds: un solo grupo SafeMode (`20260611150000`); las huellas de DepotKey, BuildDep, GMRC y LoadPackage son byte a byte las de mayo. Cron desde el 07-01: 75 runs programados, 75 verdes, 5 hash bumps automáticos (07-22, 07-23, 07-28, 08-04, 09-02), 0 "moved". Única máscara preventiva: ShaderDepot el 06-24 (disp32 de global), el día de su creación | en la misma ventana SLSsteam tocó firmas 4 veces y moon 5 (`slssteam.md`, `slsteam-moon.md` §5.2 F1): enganchamos prólogos que Valve no reordena, ellos despachadores IPC |
+| 2026-09-14 | CI (`watch-steam-selftest.yml`, build `bc54101b`) | Nueve runs del autotest sobre el binario estable real | #4 (shaderdepot, exit 2) verde en 15 min: Ghidra rederiva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve ("type_info not referenced by any function") y no bloquea. #5 rojo: corromper BuildDep+GMRC (diagnósticos) daba CLEAN y nunca llegaba a Ghidra (`dda90dc`). #6 rojo: `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y un DepotKey movido iba a issue (`63a5a0a`). #7 rojo en 20 min: Ghidra no resuelve el `CALL [reg+0x18]` y `derive_patterns.py` validaba una copia rancia. #8 rojo: `KeyError` en un `print` de la herramienta nueva. **#9 verde en 23 s**: exit 3 → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → aplicar → revalidar con RTTI y nombre de acuerdo, sin Ghidra | hasta el #9 el camino del único crítico no era autónomo; la Deck no se habría roto (rescate RTTI desde 07-06) |
+| 2026-09-14 | estático | Requisitos de versión del `.so` | `liblumalinux.so` exige GLIBCXX 3.4.32 / GLIBC 2.38 | dato de portabilidad; SteamOS lo cumple |
 
 #### Función 2 — Propiedad y licencias
 
@@ -1615,6 +1645,7 @@ convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
 | sin fecha | código | Regresión de sesión para CachyOS | Una revisión anterior metía CachyOS en la familia ChimeraOS y le enviaba `desktop`, que CachyOS rechaza; corregido (verificado en `CachyOS/gamescope-session`) | LumaDeck docs/porting-cachyos.md |
 | 2026-10-07 | Deck | Versiones de componentes que mostraba Settings | CloudRedirect: `.so` en `2.6.5+870afdb-dirty`, caché de releases en `v2.6.6`, pero Settings leía 2.6.3 porque tomaba la primera línea de un `cr_debug.log` acumulativo desde agosto. SLSsteam `20261001163836`, lumalinux v0.22.1. Corregido leyendo la versión del `.so` en disco | LumaDeck `c4776ce`, `be36d92` |
 | 2026-10-08 06:51 | CI | Releases lumalinux v0.22.2 y LumaDeck v0.11.0 | `build.yml` run 534 con `liblumalinux.so` (9,5 MB) y `version.txt`; `release.yml` run 143 estampa `0.11.0` del tag | — |
+| 2026-07-22 → 09-02 | CI | Latencia del whitelist automático | PR #22 creado 06:03:32 y mergeado 06:03:35; #27 12:08:50 → 12:08:53. SLSsteam en los mismos builds: 07-22 el mismo día, 07-25 tres días después, 07-28, 08-04, 09-02 el mismo día | `slssteam.md` §5.2 F11 |
 
 #### Función 12 — Proyecto
 

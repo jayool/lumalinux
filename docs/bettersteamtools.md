@@ -500,8 +500,8 @@ Aparcados el 2026-10-09. Numeración propia de este doc.
    es una petición. Dato, sin acción.
 3. **El archivo es un solo operador y un solo host.** `manifest.luastools.xyz`
    está escrito en el código de BST, sin espejo ni opción; si cambia, BST
-   necesita release y LumaDeck pierde su paso 3. Va con el balance de
-   `update-resilience-comparison.md`.
+   necesita release y LumaDeck pierde su paso 3. Sin acción: nuestra cadena
+   de manifests tiene más eslabones (`nosotros.md` §2.4).
 4. **El feed de patrones copia un repositorio que no se ve.** Si queremos
    usar `madoiscool/steam-monitor` como señal de beta de escritorio (lo es:
    mediana 52 min tras cada build, §5.2), hay que contar con que su origen es
@@ -623,6 +623,8 @@ Además de lo listado en la cabecera:
 | 2026-10-09 | `pattern@6fd7961` | contenido | 27 commits (07-28 → 10-08), 32 TOML de `steamclient` y 32 de `steamui`; la última de `steamclient`, 26 entradas, la de `steamui`, 10, **todas con `rva` y `sig`** | la firma nunca se usa (`PatternLoader.cpp:237`) |
 | 2026-10-09 | `pattern@6fd7961` vs `src/` | nombres que la DLL resuelve frente a la última TOML | presentes los 29 de `INSTALL_HOOK`/`RESOLVE`/`ARM_*` salvo `FindOrCreateKey` y `ReadAsBinary` (los del módulo KeyValues, muerto); `YldLoadDepotManifest` aparece por primera vez en la TOML del 09-03 | cobertura completa de lo vivo |
 | 2026-10-09 | `pattern` (26 commits sin el de relleno) | latencia build de Steam → commit | mínima 7 min, mediana 52 min, máxima 4.337 min (~3 días) | estable 1788652215 (09-05), beta 1791415817 (10-07 23:30 UTC, publicada 10-08 01:22) |
+| 2026-05-17 → 09-14 | historial git | Patrones de BST | 05-17 tres commits a mano en `Patterns.h` (estable `1778281814`, beta `1778803745`; 18 + 12 + 3 líneas); 05-25 pasan al feed remoto y **no hay más commits de patrones** | desde entonces todo depende del feed |
+| 2026-09-11/14 | red (`madoiscool/steam-monitor`, rama `pattern`) | Cadencia del feed | rama desde el 07-28 con backfill; 15 commits, 4 estables; el estable `1788652215` compilado el 05-09 se publicó el 10-09 (al promocionarse a canal) | sin Linux: solo `steamclient64.dll` y `steamui.dll` |
 
 #### Función 4 — Claves y manifests
 

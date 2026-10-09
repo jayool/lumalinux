@@ -514,7 +514,7 @@ Aparcados el 2026-10-08. Numeración propia de este doc.
    LumaCore no se instalan con ninguna TOML de MigoReleases (§5.2). No nos
    afecta (Windows); es la segunda prueba de que un feed de terceros puede
    cubrir el SHA y no las funciones (la primera, `Steam-Auto-PT` parado,
-   §5.2). Va con el balance de `update-resilience-comparison.md`.
+   §5.2). Dato a favor de producir el feed en nuestro repo (`nosotros.md` §2.1); sin acción.
 7. **MigoReleases como señal de beta de escritorio.** Publica TOML para cada
    beta de Windows en horas (cuatro betas entre 09-29 y 10-08, §5.2). Sigue
    siendo la mejor señal externa de "ha salido una beta"; no la consumimos.
@@ -616,6 +616,7 @@ Además de lo listado en la cabecera:
 | 2026-10-07 | MigoReleases | refresco | 27 ficheros, `state/stable.txt = 1788652215`, `state/beta.txt = 1791249696`; betas 1790545198 (09-29), 1790721607 (09-30), 1790904859 (10-02), 1791249696 (10-06) | el tracker de slsteam-moon estaba parado, no Steam (corregido en `slssteam.md` y `slsteam-moon.md`) |
 | 2026-10-08 | MigoReleases `@61988bc` | refresco y contenido | 31 ficheros (7 `steamclient`, 7 `steamui`, 7 `steamclientipc`, 8 `bundle`, 2 `state`); beta nueva 1791415817 (10-08 01:03); **0 ficheros `.sig`**; cada TOML de `steamclient`, 40 nombres (54 secciones en seis de ellas, con alias) | firma: imposible aunque la DLL la pidiera |
 | 2026-10-08 | MigoReleases `@61988bc` vs `source/` | nombres que la DLL busca frente a los de la TOML estable `caba4826…` | presentes todos los de `LM_INSTALL`/`LM_BIND`/`LM_CAPTURE`/`SpawnProcess` salvo `CConfigStore::FlushToDisk`, `CConfigStore::SetString`, `IClientRemoteStorage::FileExists`, `IClientRemoteStorage::Dispatch`; los cuatro faltan en **las siete** TOML | esos hooks/binds no se instalan nunca; `status.json` queda en `hooks-missed` |
+| 2026-09-14 | red (`KoriaPolis/Steam-Auto-PT`, `michelegoku3/MigoReleases`) | Qué builds de Windows tienen TOML | Steam-Auto-PT parado desde el 08-19 (último estable 08-03); MigoReleases (`ffd70db`) tiene el beta del 03-09 (`caba4826`) y **no** el estable del 10-09 (`ea23997e`) ni el beta del 11-09: 1 de 4 | LumaCore en el estable de Windows sin patrones desde el 10-09: el "Windows tampoco funciona" del hilo de FMHY |
 
 #### Función 2 — Propiedad y licencias
 

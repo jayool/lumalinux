@@ -470,7 +470,7 @@ Propuestas anteriores y su estado:
 | P19 | downgrade escribiendo `buildid`/`TargetBuildID` en el ACF | **rechazado** (LumaDeck 0.8.0 `self_heal_acf_build`), sin cambio; SFF lo sigue haciendo (`_sync_acf_downgrade`, cola de 7 días) |
 | P20 | steamcmd.net primero, `PosixPath`, ACF 444, migración `config/lua` | **nada**, sin cambio |
 | P21 | catálogo `store_metadata/` ante la clave Web API rechazada | **rechazado**, sin cambio; SFF lo regenera en CI |
-| P23 | feed `Steam-Auto-PT` muerto → `update-resilience-comparison.md` | **pendiente**; es del DLL/ecosistema (va con `lumacore.md`) |
+| P23 | feed `Steam-Auto-PT` muerto → `update-resilience-comparison.md` | **hecho**: medido en `lumacore.md` §5.2 F1 (09-14, 09-23); el doc de comparación se absorbió y se borró el 2026-10-09 |
 | P24 | `fix_hash_mismatch` "sujeta el cliente y apaga la puerta del hash" | **contexto, precisado**: sujeta el cliente (reset) y **no** apaga la puerta (el marcador impide reescribir `SafeMode`); lo que apaga la puerta en no-SteamOS es headcrab |
 | P25 | fuentes de SFF como candidatas | **rechazado** (09-14), sin cambio: hoy sus fuentes son las nuestras (LuasTools, Hubcap) más dos espejos congelados y una BD pública |
 | P26 | ACF 444 como idea para nuestro freeze | **rechazado**, sin cambio |
@@ -554,6 +554,7 @@ Además de lo listado en la cabecera del doc:
 | 2026-08 / 09 | Discord (servidor de SLSsteam, capturas transcritas el 09-14; segunda mano) | Seis máquinas rotas tras SteaMidra, causa candidata por el código | Deck que no arranca Steam tras reinstalar con headcrab (`steam.cfg` + `steam-jupiter` editado + raíz desbloqueada); Deck formateada (OOBE o rendición); Bazzite sin updates de Steam, Decky roto, solo offline (`BootStrapperInhibitAll` + entorno del AppImage); ROG Ally con Steam que no arranca (`steam.sh` en 644); "aunque desinstale, todos mis juegos dicen comprar" (`yaml.dump` del `config.yaml` entero o `steam.sh` re-extraído); "Steam borra la carpeta entera del juego" (ACF a mano sin claves ni manifests). Los daños sobreviven a desinstalar SteaMidra; qué parche rompió cada máquina no se confirma | §4.4 |
 | 2026-09-08 → 09-14 | Discord (hilo "Remove SteaMidra" en FMHY; segunda mano) | Qué dice la comunidad | "No hace la mayoría de lo que anuncia, o no correctamente", "le dice a un LLM que haga las cosas", "malfunciona en Linux, dejando instalaciones rotas"; el fork no aparece en el hilo | §4.4 |
 | 2026-10-08 | red (`curl`) | `headcrab.sh` tal como lo ejecuta SFF | 954 líneas, sha256 `caeca7e4…88c9d4`; `HeadcrabCompatibleClientVer=1788652215`; instala o rebaja el cliente según esa versión; sustituye `steam.sh` entero por `headcrab_native.sh` y guarda el de Valve como `client.sh` | §2.1 |
+| 2026-09-14 | `headcrab.sh` bajado ese día | Qué build fija Headcrab | El manifest de Deck pineado es `1788291500` y `HeadcrabCompatibleClientVer` dice `1788652215` (el de escritorio); en una Deck no cambia nada. Hoy (2026-10-08) la variable sigue en `1788652215` | `slsdeck.md` §5.2 F1 (10-01) |
 
 #### Función 2 — Propiedad y licencias
 

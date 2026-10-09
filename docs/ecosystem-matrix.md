@@ -292,6 +292,12 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 4 | slsteam-moon | claves observadas de respuestas legítimas y sustitución de la respuesta 5439 | hook de mensaje rechazado 2026-06-23 (coexistencia); captura en el passthrough pendiente desde 2026-06-23 | 2026-10-08 |
 | 4 | slsteam-moon | síntesis de `depots`/`launch`/`installdir` para apps token-locked | cerrado 2026-07-05: `--token`/`add_game_token` | 2026-10-08 |
 | 1 | slsteam-moon | crash guard con latch al primer crash si cambió `steamclient.so` (y borrado de `appinfo.vdf`) | aparcado; el nuestro latchea tras N crashes sin mirar el cliente | 2026-10-08 |
+| 1 | slsteam-moon | máscara de bytes de layout en las firmas (M1.1) | ya hecha donde sirve, refutada donde no (issue #16); nada más (`nosotros.md` §4.4 C1) | 2026-09-14 |
+| 1 | slsteam-moon, BST | vigilar el canal beta | anotado, no ahora: sin uso de beta; `probe-steam.yml` a mano (`nosotros.md` §4.4 C2) | 2026-09-14 |
+| 1 | BST | `fencepost` / comprobación del slot de vtable en runtime | no: hash + resolvedor por nombre (`nosotros.md` §4.4 C5a) | 2026-09-14 |
+| 11 | slsteam-moon | atestación de hooks (`res/runtime-probes.toml`: resuelto, instalado, invocado) | anotado: contador por pieza en `status.json` como candidato (`nosotros.md` §4.4 C5b, §4.1-37) | 2026-09-14 |
+| 1 | SLSsteam, BST, slsteam-moon | segundo mirror del feed (jsDelivr) | no mientras GitHub raw funcione (`nosotros.md` §4.4 C5c) | 2026-09-14 |
+| 1 | SteamFlipper (retirado) | derivar funciones por cadenas de VProf + `.eh_frame` | anotado: ya existe para GMRC (`gmrc_xref`), medido que no sirve para DepotKey ni LoadPackage (`nosotros.md` §4.4 C4) | 2026-09-14 |
 | 1 | slsteam-moon | catálogo de patrones firmado (Ed25519, solo RVAs) y shim root en el PATH | rechazados 2026-08-18 y 2026-09-01 (feed sin firma deliberado; nada de root) | 2026-10-08 |
 | 7 | slsteam-moon | esquema de logros con un owner fijo (sin reseñadores) | aparcado; dato para cuando muera el endpoint de reseñas (2026-10-22) | 2026-10-08 |
 | 4, 10 | slsteam-moon | donación de códigos de manifest con la sesión real (`Donate`, on por defecto) | rechazado por el usuario 2026-09-28: no se dona | 2026-10-08 |
