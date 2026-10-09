@@ -9,22 +9,36 @@ vaddrs, image base 0) that the CI derived and validated for that exact binary:
 
 ```yaml
 steamclient_sha256: "<sha256>"
-steam_version: 1785187029
-hooks:                    # UNIQUE, non-diagnostic hooks only
-  DepotKey: "0x118c1f0"
-  GMRC: "0x4d9f00"
-  BuildDep: "0xfe1bf0"
-  ShaderDepot: "0x1b3e90"
-depotkey_rtti:            # CConfigStore vtable slot (reorder-drift detection)
-  class: "12CConfigStore"
+steam_version: 1788652215   # optional, informational; not read at runtime
+hooks:                      # UNIQUE, non-diagnostic hooks only (DepotKey, ShaderDepot,
+                            # Reconcile, GMRC; BuildDep/LoadPackage are diagnostic, never emitted)
+  DepotKey: "0x11a4500"
+  ShaderDepot: "0x1048840"
+  Reconcile: "0x188c950"
+  GMRC: "0x1371ac0"
+depotkey_rtti:              # CI record of CConfigStore's vtable slot (drift detection);
+  class: "12CConfigStore"   # informational, not read by the .so
   slot: 6
-  rva: "0x118c1f0"
-finder:                   # package-0 finder's per-build cache-global disp
-  cache_global_disp: "0x3967c"
+  rva: "0x11a4500"
+finder:                     # package-0 finder's per-build values
+  cache_global_disp: "0x3b7d4"
+  cache_root_off: "0xc58"   # root/nodes offsets only appear next to a UNIQUE disp
+  cache_nodes_off: "0xc6c"
+  got_rva: "0x2f4a34c"
 ```
 
 The runtime resolver (see `docs/design/rva-feed-design.md`) consumes these **RVA-first**,
 translating the file vaddr to a live address via `xlate` (ELF program headers +
 `/proc/self/maps` file offsets, correct under split-mapping loads). A build with
 no file here — or a hook omitted from `hooks:` — falls back to the byte pattern
-in `src/patterns.hpp`. Only whitelist-able (non-BLOCKING) builds get a file.
+in `src/patterns.hpp`, and so does a hook RVA that doesn't land in steamclient's
+executable mapping. Each `finder` field is used on its own, even when `hooks:` is
+empty or unusable; a missing one makes the finder scan for it. Only whitelist-able
+(non-BLOCKING) builds get a file.
+
+The `.so` fetches its build's file from
+`https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml`
+at every Steam start (no rebuild or release needed), caches it in
+`~/.cache/lumalinux/rvas/`, and uses the cache when offline. The URL is hardcoded
+on purpose: there is no env override. Because the file is fetched at runtime, not
+built in, a commit that only touches this directory does not trigger `build.yml`.

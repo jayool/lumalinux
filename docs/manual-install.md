@@ -10,7 +10,7 @@ deployed and loaded through the **wrapper** at `~/.local/share/SLSsteam/path/ste
 (the model `setup.sh` installs, or LumaDeck's Quick Install). This replaces the old
 Headcrab-patched `steam.sh` model: `steam.sh` is left vanilla and injection comes
 from the wrapper (see the [README Installation](../README.md#installation) and
-[`design/decouple-headcrab-plan.md`](design/decouple-headcrab-plan.md)). Note `steamidra_lite.py`
+[`nosotros.md`](nosotros.md) §2.1). Note `steamidra_lite.py`
 below is about **installing a game** into that stack; it is independent of how the
 `.so`s are injected. Run every command with **Steam closed**.
 
@@ -18,15 +18,20 @@ below is about **installing a game** into that stack; it is independent of how t
 
 `python3 tools/steamidra_lite.py <appid>.zip` performs the six pieces SteaMidra
 Linux's `process_lua_full` does, plus a 7th lumalinux-specific ecosystem-interop
-step. The conceptual "why" of each is in [`nosotros.md`](nosotros.md) §3; this is the
-operational "what".
+step. The conceptual "why" of each is in [`nosotros.md`](nosotros.md) §2.9 (add/remove)
+and §2.4 (keys and manifests); this is the operational "what".
 
-1. **Extracts `.manifest` files** into both `~/.local/share/Steam/depotcache/` and
-   `~/.local/share/Steam/config/depotcache/` (Steam reads either; writing both
-   avoids intermittent "missing manifest").
+1. **Extracts `.manifest` files** into `~/.local/share/Steam/depotcache/` only.
+   (The `config/depotcache/` copy SteaMidra writes was dropped in 2026-09: tested,
+   Steam does not read it.) In the default no-pin mode the run also deletes older
+   manifests of this game's content depots from `depotcache/`, keeping only the
+   zip's, so a manifest left by an earlier pinned install can't hold the game back
+   and Steam can follow Valve's current one. Shared depots and other games'
+   manifests are left alone.
 
 2. **Adds the AppID** (only the main one, not the depots) to
-   `~/.config/SLSsteam/config.yaml` under `AdditionalApps:`.
+   `~/.config/SLSsteam/config.yaml` under `AdditionalApps:`. (With
+   `--dlc-of-owned`: only the DLC AppIDs; the owned base game stays out.)
 
 3. **Writes `~/.config/lumalinux/keys.txt`.** Every keyed depot, whether a content
    depot or a shared one (VC Redist, etc.), is written in the **EXTENDED** format
@@ -53,7 +58,8 @@ operational "what".
    without any global flag.
 
 5. **AppToken** (optional, `--token APPID:HEX`, repeatable) for games whose PICS
-   appinfo Valve won't return without a token. Most games don't need it.
+   appinfo Valve won't return without a token. Written to the same SLSsteam
+   `config.yaml`, under `AppTokens:`. Most games don't need it.
 
 6. **Resets the `.acf` error state** (`appmanifest_<appid>.acf`), only if one
    already exists: patches the error-state fields back to clean (`UpdateResult` /
@@ -61,7 +67,8 @@ operational "what".
    bit of `StateFlags`). Stale state here is what surfaces as "NO INTERNET
    CONNECTION", not a real network problem. `ScheduledAutoUpdate` and
    `FullValidateAfterNextUpdate` are left alone — they are work Steam scheduled
-   for itself, not error residue.
+   for itself, not error residue. Skipped entirely with `--dlc-of-owned` (the base
+   game is the account's own and Steam manages it).
 
    **If there is no `.acf`, nothing is written.** Steam creates it when you click
    Install, in whichever library you pick. We used to seed a stub here; it was
@@ -72,19 +79,16 @@ operational "what".
    copies the parsed `.lua` to `~/.local/share/Steam/config/stplug-in/<appid>.lua`
    so SteaMidra-style scanners and LumaDeck's library list find the game.
 
-   The ACCELA markers (`.DepotDownloader/` in the game folder + a
-   `~/.local/share/ACCELA/depots/<appid>.depot` tracker) are **skipped at this
-   point**: both are derived from the `installdir`, which only the `.acf` knows,
-   and at add time there is no `.acf` yet. `--accela-mark` still recreates them
-   once the game's files exist, but nothing calls it — LumaDeck dropped its
-   caller with the stub (issue #41).
+   The ACCELA/ASSella markers (`.DepotDownloader/` in the game folder, and
+   `~/.local/share/ACCELA/depots/<appid>.depot`) are no longer written at all
+   (removed 2026-10-06): they made games the account owns look like ACCELA
+   installs, and running both tools on one Deck is unsupported.
 
 **Backups.** Files that already exist get a `.bak` next to the original before any
 change: `config.yaml`, `config.vdf`, and (when pre-existing) the stplug-in `.lua`.
 The `.acf` gets one only when the error-state patch actually changes something —
 an already-clean manifest is left alone, so a run no longer litters `.acf.bak`
-files. `keys.txt` is merged in place without a `.bak`. The `.depot` tracker isn't
-written at add time any more (see step 7), so nothing backs it up either.
+files. `keys.txt` is merged in place without a `.bak`.
 
 Start Steam again and press **Install** on the game; it downloads natively, with
 progress shown in the Steam library.
@@ -102,16 +106,26 @@ to a restart — `LUMA_NO_RECONCILE` forces that old behaviour on purpose.)
 
 ## Pinning: auto-update vs frozen
 
+The live pin is SLSsteam `config.yaml` `ManifestIds` (depot → manifest gid).
+
 By **default (no `--pin`)** the EXTENDED entries are written with `gid` and `size`
-set to `0` (no pin), so with nothing pinning the depot the game **auto-updates**
-like an owned title. Pass **`--pin`** to write the zip's exact `gid`/`size` into
-`keys.txt` (and keep `setManifestid` uncommented in the stplug-in `.lua`) — but
-note that `keys.txt`'s only consumer was the **BuildDep hook, which is disabled by
-default**, so the zip `--pin` no longer freezes anything on its own. The supported
-freeze is `--pin-installed`, which writes SLSsteam `config.yaml` `ManifestIds`
-(see below); the zip `--pin` write only takes effect if you launch Steam with
-`LUMA_FORCE_BUILDDEP=1`. The tradeoffs, and how to move a pinned game to a new
-version, are in [`nosotros.md`](nosotros.md) §6.
+set to `0`, any `ManifestIds` entries this game's content depots had are removed,
+stale manifests are pruned from `depotcache/` (step 1), and the `setManifestid`
+lines in the stplug-in `.lua` are commented out — so the game **auto-updates**
+like an owned title.
+
+**`--pin`** freezes the game at the zip's version: it writes the zip's gids into
+`ManifestIds` (shared redistributables, depot 228980, are never pinned), keeps
+`setManifestid` uncommented in the stplug-in `.lua`, and also writes the zip's
+`gid`/`size` into `keys.txt` — that last part is inert unless Steam is launched
+with `LUMA_FORCE_BUILDDEP=1`, since the BuildDep hook that reads it is disabled by
+default. Every `ManifestIds` write merges with what is there, so other games' pins
+are kept.
+
+To freeze an already-installed game at its *installed* version use
+`--pin-installed`; to move a pin to specific gids (a new build whose manifests are
+already in `depotcache/`), `--set-pin`; to go back to auto-update, `--unpin`. The
+tradeoffs are in [`nosotros.md`](nosotros.md) §2.5.
 
 ## CLI reference
 
@@ -121,8 +135,9 @@ Main install (zip in, full deploy):
 |---|---|
 | `<appid>.zip` | Hubcap-style zip (`.lua` + `.manifest` files). The default input. |
 | `--manifests-dir <dir>` | Legacy input: a loose `.lua` + manifests directory instead of a zip. |
-| `--pin` | Write the zip's manifest gid into `keys.txt` (default is no-pin, which auto-updates). Note: this no longer freezes on its own — its only consumer, the BuildDep hook, is disabled by default; the supported freeze is `--pin-installed` via SLSsteam `ManifestIds`. |
-| `--name <name>` | **Accepted and ignored.** It fed the `installdir` of the `.acf` stub, which we no longer write (Steam writes the manifest on Install). Still accepted because LumaDeck caches per session whether this script supports the flag, so removing it would break an add on a Deck that updated lumalinux without reloading the plugin. |
+| `--pin` | Freeze at the zip's version: writes the zip's gids into SLSsteam `ManifestIds` (and into `keys.txt`, inert while BuildDep is off). Default (no `--pin`) is auto-update: it clears this game's `ManifestIds` entries and prunes its older manifests from `depotcache/`. |
+| `--dlc-of-owned` | DLC for a game the account already owns. Parses a keyless `.lua`, adds only the DLC AppIDs to `AdditionalApps` (the base game stays out) and leaves the game's `.acf` alone. The `.lua` must carry only DLC depots; LumaDeck filters it before calling. Background: RESEARCH §21. |
+| `--name <name>` | **Accepted and ignored.** It fed the `installdir` of the `.acf` stub, which we no longer write (Steam writes the manifest on Install). |
 | `--token APPID:HEX` | AppToken for a game that needs one (repeatable). |
 | `--no-vdf` | Skip the `config.vdf` DecryptionKeys injection. |
 | `--steam-root <dir>` / `--sls-config <file>` / `--luma-keys <file>` | Override the default Steam root, SLSsteam config, and `keys.txt` locations. |
@@ -131,10 +146,10 @@ Modes that operate on an **already-deployed** game (no zip, install nothing new)
 
 | Mode | Effect |
 |---|---|
-| `--accela-mark <appid>` | Recreate the ACCELA `.DepotDownloader` marker + `.depot` tracker once the game's files exist. Reads the real `installdir` from the `.acf` and recovers the depot/manifest from the stplug-in `.lua`. Idempotent. **No caller left** — LumaDeck stopped invoking it when the `.acf` stub went away; kept for manual use. |
 | `--pin-installed <appid>` | Freeze an already-installed game to its current manifest by writing its depot→gid map into SLSsteam `config.yaml` `ManifestIds` (touches none of `keys.txt` / stplug-in / depotcache). |
-| `--unpin <appid>` | Un-freeze an installed game so it auto-updates again. |
-| `--pin-status <appid>` | Report whether an installed game is pinned. |
+| `--set-pin <appid> <depot>:<gid> [<depot>:<gid> …]` | Merge those gids into SLSsteam `ManifestIds` (how LumaDeck moves a pin to a new build once its manifests are in `depotcache/`). Refuses gid `0`; refuses, writing nothing, if any depot has no key in `keys.txt`; never pins shared redistributables. |
+| `--unpin <appid>` | Un-freeze a game so it auto-updates again: removes its content depots (per `keys.txt`) from `ManifestIds`. |
+| `--pin-status <appid>` | Print JSON `{"appid", "pinned", "depots"}` from SLSsteam `ManifestIds`, restricted to the app's content depots in `keys.txt` (for LumaDeck). |
 
 ## keys.txt formats
 
@@ -150,6 +165,12 @@ Modes that operate on an **already-deployed** game (no zip, install nothing new)
 - **presence-only** (the app id, no key): `app_id;` (empty key field). Listed so
   the finder injects the id; the DepotKey hook passes through; the ShaderDepot hook
   uses it to skip the shader pre-cache.
+
+**`retired_keys.txt`**, next to `keys.txt`, uses the same line format. LumaDeck
+moves an owned game's DLC lines there when it uninstalls them: Steam still needs
+those keys to delete the depot's files, so the DepotKey hook serves them, but they
+carry no licence (nothing in it is injected by the finder or used for manifests).
+`steamidra_lite.py` does not write it.
 
 `tools/vdf_inject_keys.py` is the same VDF logic as step 4 in a standalone script
 (its own text parser, no `vdf` module) if you need to inject keys into `config.vdf`

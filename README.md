@@ -45,8 +45,9 @@ For driving lumalinux directly with Hubcap-style zips.
    curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
    ```
 
-   One idempotent script: fetches SLSsteam + `library-inject` + CloudRedirect +
-   netsock + `liblumalinux.so`, writes the injection **wrapper** at
+   One idempotent script: fetches SLSsteam (its `library-inject.so` has been an
+   empty placeholder since SLSsteam 20260903, and the wrapper skips it while it
+   is empty) + CloudRedirect + netsock + `liblumalinux.so`, writes the injection **wrapper** at
    `~/.local/share/SLSsteam/path/steam`, and wires coverage (patched `*steam*.desktop`
    for Desktop, a PATH drop-in for terminals, and a systemd drop-in on
    `steam-launcher.service` for Game Mode). Your `steam.sh` and `/usr/bin/steam` stay **vanilla**.
@@ -99,6 +100,16 @@ game you configured locally:
   install. Without a live provider the hook falls through and installs rely
   on the manifests LumaDeck pre-seeds into `depotcache/`; provider health is
   written to `gmrc.json` next to `status.json` for LumaDeck
+- **no-restart Add Game** (on by default since v0.16.16): a `keys.txt` watcher
+  plus a license reconcile (`NotifyLicensesUpdated`, the Reconcile entry in
+  `status.json`) let a game added while Steam is running show up without a
+  restart; if the reconcile can't resolve on a build it no-ops and a restart
+  still works
+- a **libcurl pin**: bare `libcurl*` `dlopen`s are sent to the system libcurl
+  instead of the Steam Runtime's old copy, so lumalinux's own fetches (SafeMode
+  hash list, GMRC, RVA feed) use a current TLS stack — the job SLSsteam's
+  `library-inject.so` did before it shipped empty. CloudRedirect 2.6.6 and later carry
+  their own static libcurl, so the pin no longer affects them
 - an **active package-0 finder** (a worker thread) that seeds depot ids into
   Steam's per-depot licence filter so content depots aren't dropped
 
@@ -120,12 +131,15 @@ ones (opt-out via env var):
 ### Alongside CloudRedirect
 
 CloudRedirect owns cloud saves, playtime and achievement sync for lua-added games.
-Since v0.21.1 lumalinux also fixes one CloudRedirect bug from the outside, without
-patching a byte of it (plain `LD_PRELOAD` symbol interposition; opt-out via env var):
-
-| Fix | What it does | Off with |
-|---|---|---|
-| **stats-sync cold start** (`cr_stats_fix`) | CloudRedirect ≤ 2.6.5 answers a game's `GetUserStats` from its own store even when that store is **empty**, so a game it has never seen never receives its achievement schema and stays at zero achievements forever. lumalinux interposes `StatsHandlers::HandleGetUserStats`, clears the 2-byte "empty store" answer, and CloudRedirect takes its own passthrough branch — SLSsteam's schema borrow runs, achievements unlock, CloudRedirect captures and syncs them from then on ([docs/cloudredirect.md](docs/cloudredirect.md)). | `LUMA_NO_CR_STATS_FIX=1` |
+lumalinux carries a dormant fix (`cr_stats_fix`, v0.21.1) for a CloudRedirect
+≤ 2.6.5 bug: it answered a game's `GetUserStats` from its own store even when that
+store was empty, so a game it had never seen stayed at zero achievements. The fix
+interposes `StatsHandlers::HandleGetUserStats` (plain `LD_PRELOAD` symbol
+interposition, no byte of CloudRedirect patched). CloudRedirect 2.6.6 fixed the bug
+upstream and hides that symbol, so on current installs the fix logs
+`CR-stats: … patch not needed` and does nothing (`CrStatsFix: disabled` in
+`status.json`). Off with `LUMA_NO_CR_STATS_FIX=1`; details in
+[docs/cloudredirect.md](docs/cloudredirect.md) §4.4 C2.
 
 > The old **update-unblock** (`sls_update_unblock`) patch was **removed in v0.16.18**:
 > SLSsteam reverted its update-block mechanism on `20260714131044`, so the
@@ -142,15 +156,10 @@ With lumalinux loaded, configure a game from a Hubcap-style zip (`.lua` +
 python3 tools/steamidra_lite.py <appid>.zip
 ```
 
-Restart Steam; the game appears ready to **Install** and downloads natively. That
-one command does the full deploy (depotcache manifests, `keys.txt`, the SLSsteam
-`AdditionalApps` entry, `config.vdf` keys, and the `stplug-in` lua). It writes **no
-`appmanifest`**: Steam creates that when you press Install, in whichever library you
-pick — if one already exists the run only resets its error state. The ACCELA markers
-are skipped for the same reason (both derive from the `installdir`, which only the
-`.acf` knows); `--accela-mark` still recreates them once the game's files exist, but
-nothing calls it. The step-by-step and every flag are in
-[`docs/manual-install.md`](docs/manual-install.md).
+Restart Steam; the game appears ready to **Install** and downloads natively. What
+that command writes, the pinning modes and every flag are in
+[`docs/manual-install.md`](docs/manual-install.md), the single reference for the
+`steamidra_lite.py` CLI and the `keys.txt` formats.
 
 If you use **LumaDeck**, the plugin calls this for you when you tap "Download
 Manifest"; you don't run it by hand.
@@ -177,11 +186,19 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
 - `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam native-achievement patch.
   `LUMA_SLS_ACH_TRACE=1` traces the achievement guard. (The former
   `LUMA_NO_SLS_UNBLOCK` was removed with the update-unblock patch in v0.16.18.)
-- `LUMA_NO_CR_STATS_FIX=1`: disable the CloudRedirect stats-sync cold-start fix
-  (the interposed `HandleGetUserStats` then forwards untouched). See
-  `docs/cloudredirect.md` §4.4 C2 (fixed upstream in 2.6.6; the stub is inert).
+- `LUMA_NO_CR_STATS_FIX=1`: disable the CloudRedirect ≤ 2.6.5 stats-sync
+  cold-start fix. Inert on CloudRedirect ≥ 2.6.6 anyway (fixed upstream; the log
+  says `patch not needed`). See `docs/cloudredirect.md` §4.4 C2.
 - `LUMA_LOADPKG_DEBUG=1`: install the diagnostic LoadPackage hook (off by default;
-  logs `PackageId + AppIdVec`). `LUMA_LOADPKG_IDX=N` picks a candidate.
+  logs `PackageId + AppIdVec`). `LUMA_LOADPKG_IDX=N` picks a candidate, and
+  `LUMA_NO_LOADPKG` skips the hook again even with `LUMA_LOADPKG_DEBUG` set.
+- `LUMA_NO_RECONCILE=1` (or the marker file `~/.config/lumalinux/no_reconcile`):
+  turn off no-restart Add Game (no `keys.txt` watcher, no reconcile); a game added
+  while Steam runs then needs a Steam restart, as before v0.16.16.
+- `LUMA_NO_LIBCURL_FIX=1`: turn off the libcurl pin (bare `libcurl*` loads then
+  resolve through Steam's library path as usual).
+- `LUMA_PROCESS_ANY=1`: debug only. Load lumalinux in any process, not just
+  `steam` / `steamwebhelper`.
 
 ### Something's wrong
 
@@ -193,8 +210,9 @@ Almost always a Steam client or SLSsteam update. The log tells the cases apart, 
   drop-in was dropped). Reinstall the components (see [After a Steam update](#after-a-steam-update)).
 - **`X/Y hooks … FAILED`**: a byte pattern moved after a Steam update (maintenance
   §A). DepotKey (plus the package-0 finder) failing breaks installs; GMRC is
-  opt-in and non-critical, BuildDep is disabled by default, and ShaderDepot is
-  cosmetic.
+  on by default but non-critical (a miss costs the native manifest fetch and the
+  keyed shader pre-cache, not the install), BuildDep is disabled by default, and
+  ShaderDepot is cosmetic.
 - **Install hangs at "0 target depots"**: the package-0 finder couldn't locate its
   anchors (maintenance §C).
 - **Native achievements off / `SLS-ach: could not resolve`**: SLSsteam changed;
@@ -216,8 +234,10 @@ ninja -C build             # -> build/liblumalinux.so (32-bit ELF i386)
 
 `fetch_libmem.sh` downloads a pinned `rdbo/libmem` release (version + SHA256 pinned
 in the script); the fetched files are gitignored, not vendored. CI
-(`.github/workflows/build.yml`) runs exactly these steps on every push to `main`
-and publishes a release on each `v*` tag.
+(`.github/workflows/build.yml`) runs these steps (plus the `tools/test_*.py` unit
+tests) on every push to `main` that touches code — data-only commits to
+`res/updates.yaml` / `res/rvas/` are skipped — and publishes a release on each `v*`
+tag.
 
 ## How it works
 
@@ -225,7 +245,8 @@ lumalinux is 32-bit and hooks 32-bit `steamclient.so`. It loads via **`LD_PRELOA
 not `LD_AUDIT` (which lands it in a separate linker namespace and corrupts the heap).
 The injection point is the **wrapper** at `~/.local/share/SLSsteam/path/steam`
 (`setup.sh`'s model, from `slsteam-moon`): it exports `LD_AUDIT` for SLSsteam and
-`LD_PRELOAD` for CloudRedirect + lumalinux, then `exec`s the real Steam. The wrapper
+`LD_PRELOAD` for lumalinux **then** CloudRedirect (order matters, see
+`docs/nosotros.md` §2.1), then `exec`s the real Steam. The wrapper
 is reached by patched `*steam*.desktop` files (Desktop), a PATH drop-in (terminals),
 and a systemd drop-in on `steam-launcher.service` (Game Mode) — never by editing
 `steam.sh` or `/usr/bin/steam` — so those stay vanilla and coverage survives Steam
@@ -250,9 +271,11 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   SLSsteam's `config.yaml`), its key/manifest chain and what it leaves behind.
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
   hand, every step, flag, and `keys.txt` format
-- [`docs/RESEARCH.md`](docs/RESEARCH.md): every hook's signature, the RE workflow,
-  the package-0 finder, and the SLSsteam native-achievement patch (§17; the
-  removed update-unblock is §16)
+- [`docs/RESEARCH.md`](docs/RESEARCH.md): the dated research log — how each hook,
+  the RE workflow, the package-0 finder and the SLSsteam native-achievement patch
+  (§17; the removed update-unblock is §16) were found, entry by entry. Parts of it
+  describe states that have since changed; for how the stack works today read
+  [`docs/nosotros.md`](docs/nosotros.md) (Spanish)
 - [`docs/cloudredirect.md`](docs/cloudredirect.md): what CloudRedirect does and
   what it means for us; the `LD_PRELOAD` ordering is in `docs/nosotros.md` §2.1
 - [`docs/maintenance.md`](docs/maintenance.md): fixing things after a Steam client
@@ -280,10 +303,11 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
   [`docs/cloudredirect.md`](docs/cloudredirect.md) and `docs/nosotros.md` §2.1 for
   the `LD_PRELOAD` ordering.
-- Manifest request codes are **not** fetched any more: the provider cascade
-  (`manifest.opensteamtool.com`, `gmrc.wudrm.com`, `manifest.steam.run`; RESEARCH
-  §7) died on 2026-09-09. Games install and update from manifests pre-seeded in
-  `depotcache/` and pinned in SLSsteam's `ManifestIds`, which LumaDeck keeps
-  current (RESEARCH §19).
+- Manifest request codes come from the provider cascade described in
+  [What it does](#what-it-does) (`20770407.xyz`, `manifest.manifestdex.com`,
+  `gmrc.wudrm.com`, `manifest.steam.run`; RESEARCH §19 for the 2026-09-09 outage,
+  §20 for their return). With no provider alive, games install and update from
+  manifests pre-seeded in `depotcache/` and pinned in SLSsteam's `ManifestIds`,
+  which LumaDeck keeps current.
 - Research / educational. Use with your own Steam account and content. Do not
   redistribute Valve binaries.
