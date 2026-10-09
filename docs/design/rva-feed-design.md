@@ -416,6 +416,9 @@ line 251:  git add src/patterns.hpp                   <- non-critical moved (exi
 line 398:  git add src/patterns.hpp version.txt updates.yaml   <- critical moved (exit 3)
 ```
 
+(Line numbers as of before the change. Today all three `git add`s include
+`res/rvas`.)
+
 That inverted the feed's whole point. On a CLEAN build the feed is redundant (the
 byte pattern resolved — that is *how* the RVA was derived). On a moved-pattern
 build, where a data-only fix would actually help, the feed was empty and every
@@ -427,30 +430,59 @@ and commit `res/rvas` alongside `patterns.hpp`. Two lines per path, plus `VER` i
 each step's `env`. `check_patterns` self-gates (`if args.emit_rvas and
 result["verdict"] != "BLOCKING"`), so a re-validation that fails writes nothing.
 
+**How the patterns are re-derived today.** Both legs (exit 2 and exit 3) run
+the same chain, `tools/derive_python_first.sh`: a **Python locator first**
+(seconds, deterministic) for each moved constant, and Ghidra headless
+(`run_ghidra_derive.sh` → `derive_patterns.py`) **only** for the constants the
+Python locators could not derive. A Python result is never overwritten by
+Ghidra's; Ghidra's are merged in only when UNIQUE. Then
+`apply_derived_pattern.py`, then the `check_patterns` re-validation above.
+
+| Constant | Python locator | Anchor |
+|---|---|---|
+| `kDepotKeyFnPattern` | `derive_depotkey_byname.py` | RTTI **by name**: `21IClientConfigStoreMap` / `"GetBinary"` → map slot → `12CConfigStore` vtable |
+| `kNotifyLicensesUpdatedPattern` (Reconcile) | `derive_reconcile_byanchor.py` | the function that posts **callback 125**, reads a field of `this` and bails on `<= 0` |
+| `kGmrcFunctionPattern`, `kShaderCacheDepotPattern`, `kBuildDepotDependencyPattern` | `derive_bytext.py` | the UNIQUE `lea` of its string → function via `.eh_frame_hdr` |
+
+Each Python locator is the runtime's own rescue for that hook (§7), so CI and
+the Deck find the function the same way. The pattern itself is fabricated from
+the located address by `derive_from_address.py` and grown until UNIQUE.
+
 **Why unreviewed publication is acceptable here** — this was the open question,
 and the existing pipeline already answers it. Reaching the commit step requires
 `check_patterns` to return CLEAN against the patched header, and CLEAN is not
 merely "the pattern matches somewhere":
 
-- Ghidra's derivation (`derive_patterns.py`) anchors on **stable Steam strings** —
+- The text-anchored hooks are located by **stable Steam strings** —
   `"BuildDepotDependency"`, `"ContentServerDirectory.GetManifestRequestCode#1"`,
-  `"shadercachedepot"`. The anchor *is* the function's identity.
-- DepotKey has no in-function anchor, so it is the weak one: dispatcher → the
-  `"Software\Valve\Steam\Depots\"` KeyValues path → follow `vtable[+0x18]`. But
-  `check_patterns` cross-checks it: `rtti_derive_slot` walks `CConfigStore`'s
-  vtable and requires **exactly one slot** whose target matches the re-derived
-  pattern. `NO_SLOT_MATCH`, `AMBIGUOUS` and `VTABLE_WALK_FAILED` all append to
-  `blocking` ⇒ exit 3 ⇒ `applied=false` ⇒ issue, no PR.
+  `"shadercachedepot"` — in `derive_bytext.py` as in Ghidra's
+  `derive_patterns.py`. Reconcile is located by **what it does** (posting
+  callback 125), with no layout number and no prologue shape in the criteria;
+  zero or two candidates is a refusal. The anchor *is* the function's identity.
+- DepotKey has no in-function anchor, so it is the weak one. Ghidra's path
+  (dispatcher → the `"Software\Valve\Steam\Depots\"` KeyValues path → follow
+  `vtable[+0x18]`) has never resolved on headless Ghidra (selftest #7,
+  2026-09-14), which is why DepotKey is now derived **by name** in Python and a
+  DepotKey-only move never starts Ghidra. `check_patterns` then constrains it:
+  `rtti_derive_slot` walks `CConfigStore`'s vtable and requires **exactly one
+  slot** whose target matches the re-derived pattern, and the by-name check must
+  agree with that slot and RVA. `NO_SLOT_MATCH`, `AMBIGUOUS`,
+  `VTABLE_WALK_FAILED` and a by-name disagreement all append to `blocking` ⇒
+  exit 3 ⇒ `applied=false` ⇒ issue, no PR.
 
 Be precise about what that buys: RTTI takes the **same** `patstr`, so it is a
 *constraint* ("the function this pattern finds must be a CConfigStore virtual"),
 not an independent second derivation. It catches a pattern derived from a function
-outside that vtable — which is the realistic Ghidra failure — not a mis-derivation
-that happens to land on another slot of the same vtable.
+outside that vtable — which is the realistic failure — not a mis-derivation
+that happens to land on another slot of the same vtable. And when DepotKey was
+itself derived by name, the by-name agreement check re-asks the locator that
+produced the address, so it confirms consistency, not identity; the identity
+comes from the interface-map name and the `"GetBinary"` string.
 
 Note also what CLEAN does **not** prove: it answers "does this pattern match
 exactly once?", never "is this the right function?". The confidence comes from the
-string anchors and the RTTI constraint, not from uniqueness alone.
+anchors (strings, callback 125, the RTTI name) and the RTTI constraint, not from
+uniqueness alone.
 
 **The behavioural change on the critical path, stated plainly.** The feed is keyed
 only by the steamclient.so SHA-256 and is **not scoped by SafeMode group**, so a
@@ -465,6 +497,10 @@ from, while `patterns.hpp` is the fallback for every other build.
 
 **Stale comment fixed in passing.** The exit-3 block claimed deployed `.so`s stay
 inert because "SafeMode keeps blocking". lumalinux's hash check is **advisory**
-(`main.cpp:150` toasts and proceeds to the pattern scan); what actually keeps them
-inert is that their compiled-in patterns no longer resolve. Same outcome, wrong
-mechanism, and the difference matters now that the feed bypasses it.
+(`main.cpp`, the hash-check block at ~107-126, toasts and proceeds to the pattern
+scan); what actually keeps them inert is that their compiled-in patterns no longer
+resolve. Same outcome, wrong mechanism, and the difference matters now that the
+feed bypasses it. The PR-step comment is fixed; the same phrase survives in the
+exit-3 leg's header comment ("SafeMode must keep blocking") and in the body of the
+issue it opens ("SafeMode keeps blocking, correctly"), both in `watch-steam.yml`.
+The PR and issue bodies also still name only the Ghidra `derive_patterns.py` path.

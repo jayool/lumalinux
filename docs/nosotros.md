@@ -1325,7 +1325,10 @@ lo incoherente, luego lo muerto.
     estática). `patterns.cpp:206` cita una sección del diseño del feed que no
     es. Y `LUMA_NO_PKG0_FINDER=0` apaga el finder en `main.cpp:284` (basta con
     que la variable exista) mientras el propio finder trata `0` como no puesta
-    (`package_zero_finder.cpp:583`). Sin efecto en el uso normal; confunde al
+    (`package_zero_finder.cpp:583`). En CI, `watch-steam.yml` sigue diciendo que
+    SafeMode "keeps blocking" (comentario del exit 3, ~`:343`, y el cuerpo de la
+    issue, ~`:503`), y sus PR e issues solo nombran `derive_patterns.py` (Ghidra)
+    aunque la cadena es Python primero. Sin efecto en el uso normal; confunde al
     depurar.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
