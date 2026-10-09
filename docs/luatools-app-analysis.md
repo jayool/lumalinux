@@ -321,8 +321,7 @@ nuestras, para ver dónde coinciden y dónde no.
   `OST-Nightly` (upstream compilado de `main`) o desde BetterSteamTools; para
   BST la versión y el hash salen de
   `madoiscool/BetterSteamTools@updates/opensteamtool/latest.toml`, **la misma
-  rama `updates` cuyo feed de patrones seguimos en
-  `bettersteamtools-findings.md`**. Y registra `config/stplug-in` en el
+  rama `updates` del auto-update de BST** (`bettersteamtools.md` §2.11). Y registra `config/stplug-in` en el
   `[lua] paths` de `opensteamtool.toml` para que los luas se recarguen en
   caliente.
 - **`check_apis` en Ryuu**: sin auth, solo User-Agent fijo
