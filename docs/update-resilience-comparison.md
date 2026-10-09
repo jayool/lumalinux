@@ -244,7 +244,7 @@ que moon espera su "nuevo sistema" para Linux: re-barrer entonces.
   `steam.sh` **y** deja que Headcrab lo parchee, con re-parche silencioso cuando
   Steam lo revierte (`slssteam.py:512`); su comentario admite que solo su wrapper
   "aplicado el último" inyecta en modo juego. Eje 6: contador, no latch.
-  `slsdeck-analysis.md` §3.5.
+  `slsdeck.md` §2.1 y `slsteam-moon.md` §2.1.
 - **ASSella.** No inyecta nada propio: Headcrab por `curl | bash`, `SafeMode: yes`
   heredado, sin `.desktop`, sin systemd, sin guard. Añadido en el eje 4: como
   descarga fuera de Steam y bloquea el update nativo, un build desconocido no

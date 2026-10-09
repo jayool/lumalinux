@@ -1222,6 +1222,17 @@ lo incoherente, luego lo muerto.
     `depotcache/` es más probable con otro programa que siembra (ASSella copia
     allí todo lo del zip, `assella.md` §2.4). Sin medir (apuntado el 2026-10-05).
     Arreglo: no añadir la línea si el lua ya trae el depot. Sin decisión.
+34. **No vemos cuándo otro gestor nos desmonta.** Ni LumaDeck ni `setup.sh`
+    comprueban que el `path/steam` siga siendo el nuestro (con
+    `liblumalinux.so`), que `ensure-desktop-coverage.sh` no esté vaciado, que
+    las sombras `.desktop` sigan apuntando al wrapper o que `keys.txt` no se
+    haya renombrado a `*.slsdeck-disabled`. SLSDeck hace las cuatro cosas, la
+    primera y la tercera en cada carga de su plugin (`slsdeck.md` §4.1-1, -2).
+    El síntoma es un lumalinux que no carga, sin aviso. Opciones: comprobarlo
+    en el panel de componentes de LumaDeck (el estado de lumalinux ya viene de
+    `status.json`, que tampoco se escribiría) y nombrar al culpable si se ve su
+    marca ("neutralised by SLSDeck" en el script, `.slsdeck-disabled`). Sin
+    decisión.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de

@@ -486,7 +486,7 @@ Lo que sí se ha movido está fuera de este repo y ya está anotado en los otros
 docs: `cloudredirect-moon` reconstruyó su `.so` el 19-sep arrastrando el mismo
 bug del store vacío que parcheamos con `cr_stats_fix` (`slsteam-moon.md` §5.2 M97,
 satélites), y SLSDeck añadió proveedor de carpeta personalizada e importador de
-saves sobre CR (`slsdeck-analysis.md` §18.7). Ninguno toca el camino de
+saves sobre CR (`slsdeck.md` §2.8). Ninguno toca el camino de
 contenido; la premisa de superficies disjuntas sigue intacta.
 
 **Decisión 2026-09-23: el report a Selectively11 NO se envía.** La sección
