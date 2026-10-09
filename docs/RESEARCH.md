@@ -2113,7 +2113,7 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
   más abajo, es mejor evidencia), un solo build, y `Reconcile: broadcast`
   retornando sólo prueba que `NotifyLicensesUpdated` volvió, **no** que
   `ProcessPendingLicenseUpdates` terminase (es asíncrono). Detalle en
-  [`slssteam-plugins-analysis.md`](slssteam-plugins-analysis.md) §3.4.2.
+  [`slssteam-plugins.md`](slssteam-plugins.md) §5.2.
 
 **Did the hang matter for us?** No. We over-weighted it. moon's own note: the hang
 is a cold-cache/early-inject problem and lumalinux (finder, post-login) "most

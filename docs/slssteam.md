@@ -2,7 +2,7 @@
 
 Leído desde el código el 2026-10-08. Sustituye a `slssteam-analysis.md`;
 sus mediciones con fecha están en §5.2 y su historia por releases en §5.3.
-`slssteam-plugins-analysis.md` (los plugins Lua como programas aparte) sigue
+`slssteam-plugins.md` (la API de plugins y los plugins que circulan) sigue
 siendo su propio doc. Cómo **nosotros**
 configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 §4.3); aquí se describe SLSsteam tal como es.
@@ -1169,7 +1169,7 @@ Sin pruebas propias; las de DLC de juegos poseídos están en `nosotros.md`
 #### Función 4 — Claves y manifests
 
 SLSsteam no interviene. El plugin `download.lua` (códigos por wudrm, en
-claro) se mide en `slssteam-plugins-analysis.md`.
+claro) se mide en `slssteam-plugins.md`.
 
 #### Función 5 — Updates de juegos
 

@@ -7,7 +7,7 @@ con el estado de hoy en §4.4. ASSella es un fork de **ACCELA**, cuyo código
 original no está publicado; todo lo que aquí se dice es del fork. Cómo
 **nosotros** hacemos lo mismo está en `nosotros.md`; SLSsteam, sobre el que
 monta, en `slssteam.md`; los plugins Lua que despliega, en
-`slssteam-plugins-analysis.md`.
+`slssteam-plugins.md`.
 
 ---
 
@@ -20,7 +20,7 @@ monta, en `slssteam.md`; los plugins Lua que despliega, en
 | **Ramas** | `beta` y `canary` se separan en `1fcd7a8` (2026-09-19): 85 commits solo en `beta`, 144 solo en `canary`, sin merges entre ellas; los arreglos se reaplican a mano (ocho asuntos en las dos, cuatro con el parche idéntico). **AT0-M y `native_steam/` solo existen en `canary`**; en `beta` el motor de manifests se llama `vapor.py` (971 líneas, sin ManifestDeX) y `at0m.py` es un alias, al revés que en `canary`. `arm64` recibe `canary` por un workflow que lo fusiona en cada push (`.github/workflows/sync-arm64.yml`, 20 commits del bot). `beta-6634894975231722385`: un commit vacío de "auditoría sin hallazgos". |
 | **Plataforma** | Linux x86_64 (AppImage, paquete de Arch en `gh-pages`, `install.sh`); `arm64` por `scripts/install-armada.sh`. Steam nativo o Flatpak. Requiere .NET para el descargador clásico. |
 | **Licencia y quién** | Sin `LICENSE` en el repo. niwia: 427 commits; "You-know-who" (`niwia007@…`) 9 (README, `voices.json`, `broadcast.json`); github-actions[bot] 21; KingCatto 2 (PR #16, 09-15). El repo se desarrolla con agentes (`.agents/AGENTS.md`, `.agents/rules/canary_rules.md`, `plugin_publishing_rules.md`). |
-| **Relación con los demás programas** | Monta sobre **SLSsteam** de serie (lo instala ejecutando Headcrab) y escribe su `config.yaml`. Despliega el **`download.lua`** de la familia de `slssteam-plugins-analysis.md` y el **`spliced-tickets.lua`** de Ace, byte a byte el mismo fichero que nuestro `lumadeck-spliced-tickets.lua` en la copia de `beta`. Fuentes compartidas con LumaDeck: **Hubcap** (con la clave del usuario) y los proveedores de códigos **wudrm** y **ManifestDeX**, que también están en la cascada GMRC de lumalinux. **Convive con nuestra pila en la misma máquina**: los dos escriben el mismo `config.yaml`, el mismo `depotcache/` y la misma carpeta de plugins, y ASSella lista como suyos los juegos de LumaDeck (§4.1). |
+| **Relación con los demás programas** | Monta sobre **SLSsteam** de serie (lo instala ejecutando Headcrab) y escribe su `config.yaml`. Despliega el **`download.lua`** de la familia de `slssteam-plugins.md` y el **`spliced-tickets.lua`** de Ace, byte a byte el mismo fichero que nuestro `lumadeck-spliced-tickets.lua` en la copia de `beta`. Fuentes compartidas con LumaDeck: **Hubcap** (con la clave del usuario) y los proveedores de códigos **wudrm** y **ManifestDeX**, que también están en la cascada GMRC de lumalinux. **Convive con nuestra pila en la misma máquina**: los dos escriben el mismo `config.yaml`, el mismo `depotcache/` y la misma carpeta de plugins, y ASSella lista como suyos los juegos de LumaDeck (§4.1). |
 
 **Lo que cambia respecto al doc anterior**, en una línea cada uno:
 
@@ -659,15 +659,19 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
    `LuaHook::place` de SLSsteam no corrige el `jmp` relativo que deja
    lumalinux.
 
-   - **Plugin cargado con lumalinux ya enganchado**: Steam se cae.
-   - **Plugin presente al arrancar Steam**: lumalinux se encadena encima; al
-     recargarse el estado Lua, el plugin restaura su prólogo limpio y
-     **lumalinux queda mudo** hasta reiniciar Steam.
+   - **Plugin desplegado con Steam abierto y lumalinux ya enganchado**:
+     Steam se cae en la primera llamada a `GetBinary`. Es lo que pasa al
+     pulsar el despliegue en los Ajustes de ASSella con Steam en marcha.
+   - **Plugin presente al arrancar Steam**: lumalinux llega después y se
+     encadena bien (`RelocateChainedJmp`). En una build release de SLSsteam,
+     borrar el plugin o poner `Plugins: no` **no** quita sus hooks: el estado
+     Lua no se cierra (`lua.cpp:549-553`). Solo en una build debug el
+     desmontaje restaura el prólogo limpio y deja a **lumalinux mudo** hasta
+     reiniciar Steam.
 
-   Lo que cambia hoy: los plugins ya no van y vienen con cada descarga; se
-   despliegan una vez y se quedan (§2.1), así que el caso normal es el segundo.
-   Cada despliegue o borrado en la carpeta, y cada `Plugins: no/yes`, recarga
-   el estado Lua (`slssteam.md` §2.11).
+   Como hoy los plugins se despliegan una vez y se quedan (§2.1), el riesgo es
+   el primer despliegue con Steam abierto. Después de un reinicio de Steam se
+   está en el caso benigno. Detalle en `slssteam-plugins.md` §4.1-1.
 
    El mutex de Lua es uno para todos los plugins. Mientras el GMRC de
    `download.lua` hace su `curl` sin `--max-time`, nuestro hook de tickets
