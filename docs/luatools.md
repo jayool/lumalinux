@@ -2,12 +2,11 @@
 
 Leído desde el código el 2026-10-09. Sustituye a `luatools-app-analysis.md`:
 sus mediciones con fecha están en §5.2, lo que afirmaba y el código ya no
-sostiene en §5.1, y sus decisiones con el estado de hoy en §4.4. El análisis del
-binario v1.2.6 (anterior a que se publicara el fuente) sigue en
-`luatools-desktop-app/` con sus artefactos. El motor que esta app instala,
-BetterSteamTools, tiene su doc (`bettersteamtools.md`); el plugin de Millennium
-de LuaTools, que es otro programa, está en `luatools-windows/`. Cómo
-**nosotros** hacemos lo mismo está en `nosotros.md`.
+sostiene en §5.1, y sus decisiones con el estado de hoy en §4.4. El motor que
+esta app instala, BetterSteamTools, tiene su doc (`bettersteamtools.md`). El
+plugin de Millennium de LuaTools es otro programa y no tiene doc; lo único que
+nos toca de él está en §5.1. Cómo **nosotros** hacemos lo mismo está en
+`nosotros.md`.
 
 ---
 
@@ -432,8 +431,14 @@ Además de lo listado en la cabecera:
   la versión y el hash; el zip se baja de las releases del repo
   (`UnlockerService.cs:260-264`).
 - Lo que el doc anterior contaba del binario v1.2.6 (puerto, rutas, servicios)
-  sigue siendo válido en lo esencial; su detalle está en
-  `luatools-desktop-app/README.md`.
+  sigue siendo válido en lo esencial y está recogido en las secciones de arriba.
+- **El plugin de Millennium** (8.0.4 y 9.0.1, leído en 2026-07) consulta los
+  fixes con un índice público, `https://index.luatools.work/fixes-index.json`
+  (`{genericFixes: [...], onlineFixes: [...]}`), y luego baja
+  `files.luatools.work/OnlineFix1/<appid>.zip` o `GameBypasses/<appid>.zip`.
+  LumaDeck hace un `HEAD` por appid a esas mismas dos URLs
+  (`LumaDeck/backend/fixes.py:73-89`); el índice sería una alternativa, no un
+  arreglo: el `HEAD` funciona.
 
 **Lo que sigue sin medir**:
 
@@ -461,7 +466,7 @@ Además de lo listado en la cabecera:
 
 ### 5.3 Cronología
 
-- **2026-07-23.** v1.2.6, solo binario (análisis en `luatools-desktop-app/`).
+- **2026-07-23.** v1.2.6, solo binario.
 - **2026-08-13/14.** Se publica el fuente (`47b9254`, 105 ficheros C#); v1.2.8
   (`18f6f9c`), estadísticas de Hubcap (`9b4407c`), README.
 - **2026-08-21 → 08-30.** Descarga de depots (`54fbe9c`, `58d36db`, `0be1bf4`),
