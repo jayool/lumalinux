@@ -12,7 +12,7 @@
 // runs. But LumaDeck installs games via NATIVE Steam download, which writes a
 // real local licence (config.vdf DecryptionKeys, AppTokens, .acf) — that makes
 // isSubscribed return *true*, so the guard skips the borrow and our games get no
-// native achievements. (See docs/slssteam-analysis.md.)
+// native achievements. (See docs/slssteam.md §2.7 and RESEARCH §17.)
 //
 // A blunt NOP of the guard is unsafe: it would run the borrow for GENUINELY
 // owned games too, hijacking your real stats request with a reviewer's and

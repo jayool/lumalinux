@@ -579,8 +579,10 @@ void* FindPackage0(uintptr_t cacheGlobal, const CacheLayout& lay) {
 void Run() {
     // ON BY DEFAULT — the finder IS the fix for the cached-PackageId=0
     // regression, so it must run without the user setting anything. Mirrors the
-    // LUMA_NO_* hook gates: LUMA_NO_PKG0_FINDER disables it entirely.
-    if (const char* off = std::getenv("LUMA_NO_PKG0_FINDER"); off && off[0] && off[0] != '0') {
+    // LUMA_NO_* hook gates: LUMA_NO_PKG0_FINDER, set to anything, disables it
+    // entirely. main.cpp already skips Start() on the same test; this keeps the
+    // two from disagreeing (they did: "=0" was off there and on here).
+    if (std::getenv("LUMA_NO_PKG0_FINDER")) {
         Log::Info("PKG0_FINDER: disabled via LUMA_NO_PKG0_FINDER");
         return;
     }

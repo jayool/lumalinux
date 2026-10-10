@@ -52,8 +52,8 @@
 //
 // MEASURED 2026-09-07 — the name-derived resolver is NOT an option here, so
 // this walk-back cannot simply be replaced. Rtti::ResolveVtableSlotByName gave
-// DepotKey a resolver that reads no prologue at all (docs/slssteam-plugins-
-// analysis.md §7.5.a); the obvious follow-up was to do the same for GMRC and
+// DepotKey a resolver that reads no prologue at all (docs/slssteam-plugins.md
+// §4.4 P3); the obvious follow-up was to do the same for GMRC and
 // retire step 4. It does not apply: "GetManifestRequestCode" exists exactly once
 // in build bc54101b29 and NONE of the 52 `*IClient…Map` interface-map vtables has
 // a slot referencing it (swept with tools/experiment_ifacemap_slot.py over every

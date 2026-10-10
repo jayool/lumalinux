@@ -298,14 +298,14 @@ void InstallHooks() {
     // exists and the patch was dead code. The countermeasure now lives in
     // LumaDeck, which writes `DisableUpdates: no` into SLSsteam's config.yaml on
     // install and on every plugin start (ensure_slssteam_flags). See
-    // docs/slssteam-analysis.md §7.6.
+    // docs/slssteam.md §2.5.
 
     // Coexistence patch: scope SLSsteam's native-achievement "legit app" guard
     // so the schema borrow also fires for AdditionalApps (LumaDeck) games while
     // leaving genuinely-owned games untouched. Repoints two `call isSubscribed`
     // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check.
     // Fail-safe: no SLSsteam / missing symbols / moved codegen → no-op, native
-    // achievements just stay off. See docs/slssteam-analysis.md.
+    // achievements just stay off. See docs/slssteam.md §2.7 and RESEARCH §17.
     if (std::getenv("LUMA_NO_SLS_ACH_UNBLOCK")) {
         Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
     } else if (SlsAchievementUnblock::Apply()) {
@@ -437,8 +437,9 @@ void LumalinuxCtor() {
     // OOBE finishes (~73% reproduction rate with the full stack). _exit(0)
     // skips atexit chains and library destructors — Steam has already
     // persisted state by this point, and the kernel reclaims memory on
-    // process exit. Registered here so it fires FIRST (atexit handlers run
-    // LIFO, lumalinux is the last LD_PRELOAD slot in steam.sh).
+    // process exit. Registered from the constructor (atexit handlers run LIFO).
+    // This comment used to say lumalinux is the last LD_PRELOAD slot in
+    // steam.sh; since the setup.sh wrapper it is the first (nosotros.md §2.1).
     std::atexit([]() { _exit(0); });
 
     std::thread([] {

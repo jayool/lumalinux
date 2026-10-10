@@ -8,15 +8,14 @@
 namespace Hooks::LoadPackage {
 
 // Hook CPackageInfoCache::LoadPackage. When the package being loaded has
-// PackageId == 0 (the implicit "free apps everyone owns" package), we append
-// our forced appids (KeyStore::GetForcedAppIds()) into pInfo->AppIdVec so
-// Steam fetches their appinfo as if they were owned.
+// PackageId == 0 (the implicit "free apps everyone owns" package), it logs
+// what it sees; it no longer injects. Installed only with LUMA_LOADPKG_DEBUG:
+// the injection into package 0 is done by the package-0 finder
+// (package_zero_finder.cpp), which walks the cache instead of waiting for a
+// LoadPackage call that a cached package 0 never makes (RESEARCH §13).
 //
-// This is the Linux equivalent of LumaCore's PackagePatch on Windows. Hooking
-// here is critical: by the time Steam reaches BuildDepotDependency, the appids
-// must already be in PackageId=0 — otherwise Steam never asks for their
-// appinfo, BuildDep finds no matching app and we can't even PATCH depot
-// entries (let alone inject new ones).
+// This was the Linux equivalent of LumaCore's PackagePatch on Windows. The
+// injection helper below is what the finder calls.
 bool Install();
 void Uninstall();
 

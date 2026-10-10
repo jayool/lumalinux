@@ -4,7 +4,7 @@
 # plugin `spliced-tickets.lua` de SLSsteam a un hook nativo de lumalinux.
 #
 # El plugin resuelve el objetivo en dos pasos (misma técnica que download.lua,
-# docs/slssteam-plugins-analysis.md §7.5.a):
+# docs/slssteam-plugins.md §4.4 P3):
 #
 #     VFTableInfo_t("14IClientUserMap", "GetAppOwnershipTicketExtendedData")  -> .index
 #     VFTableInfo_t("5CUser", ..., .index, 0)                                  -> .ptr

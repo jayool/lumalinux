@@ -3,7 +3,7 @@
 # Tests for patch_acf_error_state — it runs when Steam already wrote an
 # appmanifest and clears its stale error state. It never creates one.
 #
-# See LumaDeck/docs/dev-multi-library.md, defect D5. Three properties:
+# Multi-library defects, LumaDeck issue #41. Three properties:
 #   1. Real error residue IS cleared (UpdateResult, the Bytes* counters, and the
 #      Update-Required bit).
 #   2. Steam's own scheduled work is NOT touched — ScheduledAutoUpdate is a

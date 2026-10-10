@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 //
-// libcurl pin — make CloudRedirect (and our own SafeMode/GMRC fetches) use the
-// SYSTEM libcurl instead of the one bundled in the Steam Runtime.
+// libcurl pin — make our own SafeMode/GMRC fetches (and CloudRedirect before
+// 2.6.6) use the SYSTEM libcurl instead of the one bundled in the Steam Runtime.
 //
 // THE PROBLEM
 // -----------
-// Neither CloudRedirect nor lumalinux links libcurl: both dlopen() it by bare
-// soname at runtime. Inside Steam that name resolves against Steam's own
+// lumalinux does not link libcurl: it dlopen()s it by bare soname at runtime,
+// and so did CloudRedirect until 2.6.6 (since then it links libcurl statically
+// and this pin does not touch it). Inside Steam that name resolves against Steam's own
 // LD_LIBRARY_PATH, whose steam-runtime directories come FIRST — so the winner
 // is the Runtime's copy: libcurl 7.22 / OpenSSL 1.0.1, built in 2021 against
 // crypto from 2013. The system's libcurl 8.x / OpenSSL 3 sits later in the path

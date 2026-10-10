@@ -1316,31 +1316,21 @@ lo incoherente, luego lo muerto.
     tras un `downgrade.sh` (`target > current AND lumalinux_ready`). Issue
     #26 abierta desde el 2026-09-14; la variante sin Headcrab está anotada en
     §4.4 (C3). Si Headcrab desaparece o fija un build raro, la chapa miente.
-39. **Comentarios y un interruptor del `.so` que no dicen lo que hace el código.**
-    `depot_key_hook.cpp:113-123` describe DepotKey como "RTTI primero, derivando
-    el slot por el patrón", un método que ya no existe; el orden real es feed →
-    patrón → rescate por nombre (`:128-176`). `main.cpp:441` dice que lumalinux
-    es el último del `LD_PRELOAD` (va el primero, §2.1). `libcurl_pin.cpp:8-11`
-    dice que CloudRedirect abre libcurl con `dlopen` (desde 2.6.6 la lleva
-    estática). `patterns.cpp:206` cita una sección del diseño del feed que no
-    es. Y `LUMA_NO_PKG0_FINDER=0` apaga el finder en `main.cpp:284` (basta con
-    que la variable exista) mientras el propio finder trata `0` como no puesta
-    (`package_zero_finder.cpp:583`). En CI, `watch-steam.yml` sigue diciendo que
-    SafeMode "keeps blocking" (comentario del exit 3, ~`:343`, y el cuerpo de la
-    issue, ~`:503`), y sus PR e issues solo nombran `derive_patterns.py` (Ghidra)
-    aunque la cadena es Python primero. Más comentarios del mismo tipo:
-    `load_package_hook.hpp:9-18` llama "crítico" a un hook que solo se instala
-    con `LUMA_LOADPKG_DEBUG` y cita `KeyStore::GetForcedAppIds()`, que ya no
-    existe; `patterns.hpp:109-111` da LoadPackage por fijo en la RVA
-    `0x14b780`; `main.cpp:301,308`, `sls_achievement_unblock.hpp:15` y
-    `tools/test_update_feed_guard.cpp:14` citan `docs/slssteam-analysis.md`,
-    retirado (hoy `slssteam.md`); `tools/check_patterns.py:31-33` y la cabecera
-    de `watch-steam-selftest.yml` (`:23`) llaman "diagnóstico" a GMRC, que va
-    activo por defecto desde v0.21.0; `tools/blocking_constants.py:20-22` dice
-    que DepotKey sale del recorrido de vcall de Ghidra (hoy, rescate por RTTI);
-    y `curl.hpp:14-18` justifica el User-Agent con
-    `manifest.opensteamtool.com`, proveedor que ya no está en la cascada. Sin
-    efecto en el uso normal; confunde al depurar.
+39. **Comentarios y un interruptor del `.so` que no decían lo que hace el
+    código — corregido 2026-10-10.** Eran comentarios que describían DepotKey
+    con un paso RTTI que ya no existe, ponían a lumalinux el último del
+    `LD_PRELOAD`, daban a CloudRedirect un libcurl por `dlopen` (desde 2.6.6 lo
+    lleva estático), justificaban el User-Agent con opensteamtool, llamaban
+    "crítico" al hook de LoadPackage y "diagnóstico" a GMRC, y citaban docs
+    retirados (`slssteam-analysis.md`, `slssteam-plugins-analysis.md`,
+    `slsteam-moon-findings.md`, `dev-multi-library.md`); y textos de
+    `watch-steam.yml` que decían que SafeMode "keeps blocking" y solo nombraban
+    `derive_patterns.py` (Ghidra). Ahora dicen lo que hace el código y citan los
+    docs actuales. El interruptor: `LUMA_NO_PKG0_FINDER=0` apagaba el finder en
+    `main.cpp` (basta con que exista) mientras el finder trataba `0` como no
+    puesta; el finder sigue ahora la misma regla que `main.cpp` y que el resto de
+    `LUMA_NO_*` (`package_zero_finder.cpp:583`). Sin cambio de comportamiento:
+    con `=0` el finder ya no arrancaba.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de

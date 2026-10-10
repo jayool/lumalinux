@@ -43,7 +43,7 @@ LoadDepotKeyFn g_origFn = nullptr;
 // addresses and not code bytes: `21IClientConfigStoreMap` is the interface-map
 // class whose virtuals each reference their own method name, and the slot found
 // there is applied to the concrete store. This is what `download.lua` does
-// (docs/slssteam-plugins-analysis.md §7.5.a), verified on build bc54101b29:
+// (docs/slssteam-plugins.md §4.4 P3 and §5.2), verified on build bc54101b29:
 // "GetBinary" -> map slot 6 -> CConfigStore 0x11a4500, the byte pattern's answer.
 // NOTE there are TWO GetBinary overloads, in map slots 6 and 7, each with its own
 // string; slot 7 is a different function, so the bare name must take the lower.
@@ -110,26 +110,20 @@ int32_t HookFn(void* pObject, uint32_t foo, const char* keyName,
 namespace Hooks::DepotKey {
 
 bool Install() {
-    // Resolve the LoadDepotDecryptionKey accessor two ways, and prefer RTTI
-    // (RESEARCH §15, issue #19):
-    //   - RTTI   : find CConfigStore's vtable by RTTI, then DERIVE the accessor's
-    //              slot by scanning the vtable for the slot whose prologue matches
-    //              kDepotKeyFnPattern. No hardcoded index (was slot 6), so a
-    //              vtable reorder is handled — the accessor is found wherever it
-    //              moved — instead of silently mis-resolving.
-    //   - pattern: kDepotKeyFnPattern scanned across .text — today's proven
-    //              method, kept as a fallback for when the RTTI walk itself fails
-    //              (e.g. .data.rel.ro relocations not yet applied at install).
-    // Both use the SAME signature, so they agree when both resolve; on the rare
-    // disagreement we use the pattern (no regression) and log loudly.
+    // Resolve the LoadDepotDecryptionKey accessor in three steps: RVA feed →
+    // unique byte pattern → slot derived from the method name (RESEARCH §4,
+    // issue #19). The RTTI-by-signature walk that used to come first is gone;
+    // CI still runs it, as a constraint before it publishes the feed's RVA
+    // (docs/design/rva-feed-design.md §8).
     int derivedSlot = -1;
     uintptr_t target = 0;
     const char* method = "none";
 
     // RVA feed first: the CI publishes DepotKey's RVA per build (keyed by the
     // steamclient.so hash), and it is prologue-independent — it survives a
-    // recompile that would break the byte pattern. RTTI/pattern below is the
-    // fallback for builds the feed hasn't published yet. docs/design/rva-feed-design.md.
+    // recompile that would break the byte pattern. The pattern and the name
+    // resolver below are the fallback for builds the feed hasn't published yet.
+    // docs/design/rva-feed-design.md.
     //
     // Each step runs ONLY if the previous came up empty. Resolution is a hot path
     // — it runs while Steam is starting — so a resolver that cannot change the
@@ -149,10 +143,9 @@ bool Install() {
     }
 
     // Last resort: derive the vtable slot from the METHOD NAME. Reads no byte of
-    // the accessor, so it survives the one event that takes out feed, RTTI and
-    // pattern together — a recompile that moves the prologue (§7.5.a: the feed is
-    // a cache of the pattern and the RTTI walk compares prologues, so those three
-    // are one bet, not three).
+    // the accessor, so it survives the one event that takes out feed and pattern
+    // together — a recompile that moves the prologue (the feed is a cache of the
+    // pattern, so those two are one bet, not two).
     //
     // Deliberately NOT computed when something else already resolved. It costs
     // roughly a dozen passes over the module (string search, GOT consensus, one
@@ -170,7 +163,7 @@ bool Install() {
             target = byname;
             method = "byname(rescue)";
             derivedSlot = bynameSlot;
-            Log::Warn("DepotKey: feed, RTTI and pattern all MISSED; %s::%s resolved "
+            Log::Warn("DepotKey: feed and pattern both MISSED; %s::%s resolved "
                       "by name to 0x%lx (slot %d) — Steam likely reshuffled the "
                       "prologue",
                       kDepotKeyImplClass, kDepotKeyMethodName,
@@ -179,7 +172,7 @@ bool Install() {
     }
 
     if (!target) {
-        Log::Error("DepotKey hook: target not found (feed, RTTI, pattern and name "
+        Log::Error("DepotKey hook: target not found (feed, pattern and name "
                    "resolution all failed)");
         Log::Warn("Hook install: name=DepotKey method=none outcome=miss");
         return false;
@@ -200,7 +193,8 @@ bool Install() {
     uintptr_t base = Patterns::FindSteamclientBase();
     // `slot` is -1 unless the name resolver decided; it used to be filled by the
     // RTTI-by-signature path too, which is gone. Renamed from rtti_slot= so the
-    // field says what it now holds — nothing outside docs/RESEARCH.md §21 reads it.
+    // field says what it now holds. Nothing parses it; RESEARCH §15 still quotes
+    // the old rtti_slot= name.
     Log::Info("Hook install: name=DepotKey method=%s target=0x%lx rva=0x%lx slot=%d outcome=installed",
               method, (unsigned long)target, (unsigned long)(base ? target - base : 0), derivedSlot);
     return true;

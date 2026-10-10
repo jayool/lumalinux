@@ -765,7 +765,7 @@ def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=
 
     manifest_gids / name_override: kept for call compatibility, unused. They fed
     the stub this function used to seed; that behaviour is gone (see the tail of
-    the function, and LumaDeck/docs/dev-multi-library.md)."""
+    the function, and LumaDeck issue #41)."""
     acf_path = _find_acf(steam_root, app_id)
     if acf_path is not None:
         try:
@@ -805,7 +805,7 @@ def patch_acf_error_state(steam_root, app_id, manifest_gids=None, name_override=
     # button reads "Install" either way) and to cost a real bug: a game installed
     # to a second library ends up with our orphan in the default one, and after
     # the next Steam restart Steam honours the orphan and reports the game as not
-    # installed — issue #41. See LumaDeck/docs/dev-multi-library.md.
+    # installed — LumaDeck issue #41.
     return "none (no .acf yet — Steam writes it on Install)"
 
 

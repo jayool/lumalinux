@@ -17,9 +17,10 @@
 #   * a blocking hook name isn't one we know how to auto-derive (so we can't
 #     promise the re-validation will come back clean).
 #
-# DepotKey IS included (derive_patterns tries the dispatcher vcall walk); if that
-# walk fails it simply won't appear in derived.json and the apply step will fall
-# back to the issue. BuildDep / GMRC are the reliable string-anchored ones.
+# DepotKey IS included: tools/derive_python_first.sh derives it from its RTTI
+# name (derive_depotkey_byname.py); if that fails it simply won't appear in
+# derived.json and the caller falls back to the issue. BuildDep / GMRC stay in
+# the map although only DepotKey is critical since v0.20.0.
 #
 # Usage:  blocking_constants.py result.json   ->  prints e.g.
 #         "kBuildDepotDependencyPattern,kGmrcFunctionPattern"  (or empty)

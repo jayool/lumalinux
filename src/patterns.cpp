@@ -197,13 +197,12 @@ uintptr_t FindNotifyLicensesUpdatedFunction() {
 uintptr_t FindDepotKeyFunction() {
     // UNIQUE-match required, since v0.16.x. This used to take the first match
     // because DepotKey is load-bearing and a 0 meant no downloads at all — but
-    // that trade is gone: the hook now has the RTTI vtable constraint and the
-    // name-derived resolver behind it (depot_key_hook.cpp), so an ambiguous
-    // pattern degrades to "let the next resolver decide" instead of "hook
-    // whatever matched first". Note the two remaining paths can still succeed
-    // where this one bails: a pattern that is ambiguous across the whole module
-    // may still be unique WITHIN CConfigStore's vtable, which is exactly the
-    // constraint docs/design/rva-feed-design.md §13 describes.
+    // that trade is gone: the hook has the name-derived resolver behind it
+    // (depot_key_hook.cpp), so an ambiguous pattern degrades to "let the name
+    // resolver decide" instead of "hook whatever matched first". The vtable
+    // constraint (exactly one CConfigStore slot matching this pattern) is
+    // checked in CI before the feed publishes an RVA, not here
+    // (docs/design/rva-feed-design.md §8).
     return FindUniqueInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 

@@ -221,7 +221,7 @@ GmrcXrefCore::Region ExecRegion() {
 // Every occurrence of `needle` across the readable ranges (FindBytes returns
 // only the first). Steam emits its interface name tables more than once, so a
 // method name legitimately appears several times and the caller must try them
-// all — see docs/slssteam-plugins-analysis.md §7.5.a.
+// all — see docs/slssteam-plugins.md §5.2 (2026-09-07).
 void FindAllBytes(const std::vector<Range>& readable, const void* needle,
                   size_t len, std::vector<uintptr_t>& out, size_t maxHits) {
     for (const auto& r : readable) {
@@ -284,7 +284,7 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot) {
 // inverted: it builds the whole `name -> index` map for an interface because it
 // needs 37 of them; we need one, so we find the string first and then ask which
 // slot references it. Verified against build bc54101b29 by
-// tools/experiment_ifacemap_slot.py (§7.5.a): slot 6 -> 0x11a4500, the same
+// tools/experiment_ifacemap_slot.py (docs/slssteam-plugins.md §5.2): slot 6 -> 0x11a4500, the same
 // address the byte pattern yields, with zero false positives on the lea scan.
 uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
                                   const char* methodName,

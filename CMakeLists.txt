@@ -68,7 +68,7 @@ endif()
 # bypassed -> the process aborts. src/update.cpp parses updates.yaml with
 # YAML::Load inside try/catch, so a corrupt/truncated updates.yaml could hit
 # exactly that. Layout-only flag: zero behaviour change, negligible perf cost.
-# Mirrors slsteam-moon's fix (see docs/slsteam-moon-findings.md, Delta 2026-07-10).
+# Mirrors slsteam-moon's fix (see docs/slsteam-moon.md §4.4).
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     add_compile_options(-fno-reorder-blocks-and-partition)
 endif()

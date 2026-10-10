@@ -30,7 +30,7 @@
 #                        ShaderDepot UNIQUE  -> A.1: PR the hash, no issue.
 #   2  NONCRITICAL_MOVED criticals + anchors OK but ShaderDepot moved
 #                        (criticals = DepotKey only since v0.20.0; GMRC is
-#                        diagnostic — opt-in hook, no provider to feed it)
+#                        on by default since v0.21.0 but non-critical)
 #                        -> A.1: PR the hash AND open a ShaderDepot issue.
 #   3  BLOCKING          a critical pattern, a finder anchor, or the DepotKey
 #                        RTTI ground-truth (§15/#19: exactly one CConfigStore

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # experiment_cold_cache.sh — observador cronometrado para el Accionable A
-# (docs/slssteam-plugins-analysis.md §3.4.2).
+# (docs/slssteam-plugins.md §4.4 P2 y §5.2; resultado en nosotros.md §5.2).
 #
 # QUE MIDE
 # --------

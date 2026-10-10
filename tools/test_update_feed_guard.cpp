@@ -11,7 +11,8 @@
 //
 // The garbage cases are measured, not assumed: which bodies parse and which throw
 // decides whether the cache gets poisoned or merely a toast fires, and that split
-// is documented in docs/slssteam-analysis.md §7.8.3 from THIS program's output.
+// is recorded in docs/nosotros.md §5.2 (SafeMode bodies against YAML::Load)
+// from THIS program's output.
 //
 // The guard is INCLUDED FROM src/update.cpp, not copied, so this tests what ships.
 //

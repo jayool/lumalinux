@@ -1048,20 +1048,10 @@ has been decided is in its §4.4. This section keeps the reverse-engineering one
   without a usable `.eh_frame_hdr`. Delete it if real logs never show
   `.eh_frame_hdr unavailable — falling back to the walk-back`
   (`src/gmrc_xref.hpp:72-77`, `gmrc_xref.cpp:152`).
-- **Comments that contradict the code** (no runtime effect; they mislead whoever
-  debugs):
-  - `src/curl.hpp:14-18` still describes the `OpenSteamTool/1.0` UA.
-  - `src/hooks/depot_key_hook.cpp:113-123` says "RTTI first, slot derived from
-    the pattern", a resolver that no longer exists.
-  - `tools/check_patterns.py:31-33` and the `watch-steam-selftest.yml` header
-    call GMRC diagnostic.
-  - `tools/blocking_constants.py:20-22` says DepotKey is derived by the Ghidra
-    vcall walk.
-  - `watch-steam.yml`'s PR and issue bodies name only `derive_patterns.py`, and
-    it says SafeMode "keeps blocking".
-  - `tools/gmrc_probe.py` lists five providers, opensteamtool included.
-
-  (nosotros §4.1-22, -39.)
+- **`tools/gmrc_probe.py` probes five providers**, opensteamtool included, where
+  the runtime has four. The dead one just reports DOWN (nosotros §4.1-22). The
+  stale code comments this list used to carry were corrected on 2026-10-10
+  (nosotros §4.1-39).
 - **`RelocateChainedJmp`** (`src/lmhook.cpp:97-123`) is wired into
   `LmHook::Install` and runs whenever a target's first byte is already `0xE9`
   (another hooker's detour, `:138-156`). None of the default hooks targets a

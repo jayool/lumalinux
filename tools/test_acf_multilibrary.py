@@ -4,7 +4,7 @@
 # (SD card, second partition). Builds a synthetic Steam tree, so it needs no
 # Steam, no network and no account.
 #
-# See LumaDeck/docs/dev-multi-library.md, defect D1.
+# Multi-library defects, LumaDeck issue #41.
 #
 # The function used to look for the manifest under `steam_root` alone, so a game
 # already installed in a SECOND library was invisible and never got its stale

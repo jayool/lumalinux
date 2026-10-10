@@ -30,8 +30,8 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot);
 // Resolve by deriving the slot FROM THE METHOD NAME, reading no byte of the
 // target function. This is `download.lua`'s technique (SLSsteam's
 // VFTableInfo_t::init + Decompiler::parseInterfaceMapBase); see
-// docs/slssteam-plugins-analysis.md §7.5.a for the analysis and the on-binary
-// verification.
+// docs/slssteam-plugins.md §4.4 (P3) for the decision and §5.2 for the
+// on-binary verification.
 //
 //   1. `mapMangledName` is Steam's INTERFACE MAP class (e.g.
 //      "21IClientConfigStoreMap") — the dispatch layer whose every virtual

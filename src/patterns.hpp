@@ -106,9 +106,11 @@ inline constexpr const char* kBuildDepotDependencyPattern =
 // path), and downloads silently broke ("0 mounted depots"). v0.10.4 picked yet
 // another candidate by behaviour filter and crashed Steam at startup.
 //
-// Steam did NOT refactor LoadPackage. The function is still at the same RVA
-// (0x14b780 across observed builds) with the same prologue and the same
-// PackageInfo layout. If a future Steam build legitimately moves it, the
+// Steam did NOT refactor LoadPackage then: the function was at the same RVA
+// (0x14b780 on the builds observed at the time) with the same prologue and the
+// same PackageInfo layout. Today the hook is installed only with
+// LUMA_LOADPKG_DEBUG (the package-0 finder does the injection), so this
+// pattern is a debug aid. If a future Steam build legitimately moves it, the
 // re-derivation MUST be validated against runtime ground truth (a log line
 // "LoadPackage: PackageId=0 hit — vec mem=… size=…") before any pattern bump
 // is published.

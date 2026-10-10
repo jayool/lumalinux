@@ -15,7 +15,7 @@
 -- metiendo depots en la lista de apps -- una confusion de tipos que funciona
 -- porque el filtro de licencias solo compara numeros.
 --
--- Ver docs/slssteam-plugins-analysis.md §3.4 y §7.
+-- Ver docs/slssteam-plugins.md §5.2 (2026-09-04).
 --
 -- COMO USARLA
 -- -----------

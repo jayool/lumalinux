@@ -3,8 +3,8 @@
 # experiment_ifacemap_slot.py — ¿podemos derivar el índice de vtable POR NOMBRE,
 # como hace download.lua, en vez de por patrón de bytes o por constante?
 #
-# Contexto (docs/slssteam-plugins-analysis.md §7.5.a)
-# ---------------------------------------------------
+# Contexto (docs/slssteam-plugins.md §4.4 P3)
+# -------------------------------------------
 # DepotKey tiene HOY un solo método real de localización: la chuleta es una caché
 # del patrón, y la vía RTTI (`ResolveVtableSlotBySignature`) busca la ranura
 # COMPARANDO PRÓLOGOS — o sea, el mismo patrón otra vez. Los tres caen a la vez
