@@ -384,7 +384,7 @@ dice en su columna Fuente; hasta entonces es `?`.
 
 | Programa | Doc | Último barrido | Relectura por la matriz | Orden propuesto |
 |---|---|---|---|---|
-| SLSsteam | `slssteam.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`main@049bbdd`, release `20261001163836`); `slssteam-analysis.md` absorbido (mediciones en §5.2, afirmaciones en §5.1) | 1 |
+| SLSsteam | `slssteam.md` | 2026-10-13 (`dev@311fae3`, sin publicar: §5.3 y §4.2 del doc; `main` y la release sin cambios) | **hecha 2026-10-08** desde el código (`main@049bbdd`, release `20261001163836`); `slssteam-analysis.md` absorbido (mediciones en §5.2, afirmaciones en §5.1) | 1 |
 | SteaMidra/SFF (drappula) | `steamidra.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`origin/main@4159300`, v6.9.0) y `headcrab.sh` de hoy; `steamidra-linux-analysis.md` absorbido (mediciones en §5.2, afirmaciones en §5.1, vectores y hallazgos en §4.4); las partes SFF-app de `lumacore-findings.md` también | 2 |
 | LumaCore (drappula) | `lumacore.md` | 2026-10-07 | **hecha 2026-10-08** desde el código (`drappula/LumaCore@33c36e9`, V37) y el feed `MigoReleases@61988bc`; `lumacore-findings.md` absorbido (mediciones en §5.2, afirmaciones en §5.1, decisiones en §4.4) | 3 |
 | BetterSteamTools (+ OpenSteamTool) | `bettersteamtools.md` | 2026-10-07 | **hecha 2026-10-09** desde el código (`main@4747385`, v1.0.4), la rama `updates@bfa812e` y el feed `madoiscool/steam-monitor` (`pattern@6fd7961`); `bettersteamtools-findings.md` absorbido y borrado (mediciones en §5.2, afirmaciones en §5.1, decisiones en §4.4; Fluent-Steam-Lua y SteamToolbox quedan fuera de momento) | 4 |

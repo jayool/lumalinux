@@ -1127,7 +1127,10 @@ lo incoherente, luego lo muerto.
    `keys.txt`).
 5. El crash guard es ciego sin `/tmp/dumps` (`setup.sh:919-932`): Steam con
    `-nominidumps` o sin breakpad nunca latchea. No está verificado que en Game
-   Mode exista siempre ese directorio.
+   Mode exista siempre ese directorio. SLSsteam `dev` (`abafc49`, 2026-10-12,
+   sin publicar) impide cargar `crashhandler.so` desde `la_objsearch`: si se
+   publica, no habrá `.dmp` y el guard no latcheará nunca (`slssteam.md`
+   §4.2).
 6. `http_client` desactiva la verificación TLS como último recurso
    (`http_client.py:218-223`). En el Python de Decky `certifi` existe (medido:
    "SSL: loaded certs from certifi"), pero el camino sigue ahí.
