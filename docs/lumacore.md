@@ -14,16 +14,16 @@ en `slssteam.md`.
 
 | | |
 |---|---|
-| **Qué es** | La **mitad DLL de SteaMidra en Windows**: cuatro ficheros que el lanzador copia junto a `steam.exe`. `xinput1_4.dll` y `dwmapi.dll` son proxies que Steam carga de su propia carpeta y que cargan `LumaCore.dll` desde un hilo; `LumaCore.dll` se engancha **dentro del proceso de Steam** (Microsoft Detours sobre `steamclient64.dll` y `steamui.dll`, dos trampas `int3` con VEH, reescritura de mensajes protobuf del CM y del IPC cliente↔juego) y lee los `.lua` de `config/stplug-in/` **ejecutándolos en un Lua 5.5 con sandbox**; `LumaCorePayload.dll` se inyecta en los procesos de juego lanzados por la ruta online-fix (puente EOS). Hace en un solo binario lo que nuestro stack reparte entre SLSsteam, lumalinux y CloudRedirect: propiedad, package 0, claves, pin de versión, códigos de manifest, tickets forjados, logros con SteamID de donantes, family sharing, ruta Spacewar (480), bloqueo de Steam Cloud. |
-| **Repo y commit leídos** | `drappula/LumaCore` `main@33c36e9` (2026-10-03, tag `V37`). 35 commits; raíz `8ec4e88` (2026-05-25, "Initial clean commit - SteaMidra v6.2.4", la historia extraída del subárbol `LumaCore/` de `Midrags/SFF`). 165 ficheros, 24.980 líneas en `source/` (`.cpp` + `.h`; `steam/Enums.h` son 1.902). Patrones: `michelegoku3/MigoReleases` rama `pattern` `@61988bc` (2026-10-08). |
+| **Qué es** | La **mitad DLL de SteaMidra en Windows**: tres ficheros que el lanzador copia junto a `steam.exe`. `xinput1_4.dll` es un proxy que Steam carga de su propia carpeta y que carga `LumaCore.dll` desde un hilo; `LumaCore.dll` se engancha **dentro del proceso de Steam** (Microsoft Detours sobre `steamclient64.dll` y `steamui.dll`, dos trampas `int3` con VEH, reescritura de mensajes protobuf del CM y del IPC cliente↔juego) y lee los `.lua` de `config/stplug-in/` **ejecutándolos en un Lua 5.5 con sandbox**; `LumaCorePayload.dll` se inyecta en los procesos de juego lanzados por la ruta online-fix (puente EOS). Hace en un solo binario lo que nuestro stack reparte entre SLSsteam, lumalinux y CloudRedirect: propiedad, package 0, claves, pin de versión, códigos de manifest, tickets forjados, logros con SteamID de donantes, family sharing, ruta Spacewar (480), bloqueo de Steam Cloud. |
+| **Repo y commit leídos** | `drappula/LumaCore` `main@0661423` (2026-10-09, tag `V38`). 38 commits; raíz `8ec4e88` (2026-05-25, "Initial clean commit - SteaMidra v6.2.4", la historia extraída del subárbol `LumaCore/` de `Midrags/SFF`). 163 ficheros, 24.803 líneas en `source/` (`.cpp` + `.h`; `steam/Enums.h` son 1.902). Patrones: `michelegoku3/MigoReleases` rama `pattern` `@61988bc` (2026-10-08). |
 | **Plataforma** | Windows x64 solo (`README.md:30`, `CMakeLists.txt`): MSVC, CMake 3.20+, C++20, runtime estático. Ningún camino Linux ni Proton. |
-| **Licencia y quién** | GPL-3.0 (`LICENSE`; cabeceras "GNU General Public License v3 or later", "Copyright (c) 2025-2026 Midrag"). `CREDITS.md`: escrito por Midrag, inspirado en OpenSteamTool (GPL-3.0). Commits: Midrag 26 (05-25 → 08-21, releases de SteaMidra aplastadas), wtfseanscool 1 (09-04), michelegoku3 1 (`c0d0537`, 09-30, el autor de Aether), mallusrgreat 7 (CI, 10-03). Mantenido hoy dentro del fork `drappula`; el original `KoriaPolis/LumaCore` parado en V36. |
+| **Licencia y quién** | GPL-3.0 (`LICENSE`; cabeceras "GNU General Public License v3 or later", "Copyright (c) 2025-2026 Midrag"). `CREDITS.md`: escrito por Midrag, inspirado en OpenSteamTool (GPL-3.0). Commits: Midrag 26 (05-25 → 08-21, releases de SteaMidra aplastadas), wtfseanscool 1 (09-04), michelegoku3 1 (`c0d0537`, 09-30, el autor de Aether), mallusrgreat 10 (CI 10-03, `dwmapi` fuera y CI 10-09). Mantenido hoy dentro del fork `drappula`; el original `KoriaPolis/LumaCore` parado en V36. |
 | **Relación con los demás programas** | **SteaMidra** lo instala, le escribe los `.lua` y le precalienta la caché de patrones (`steamidra.md` §2.1); **MigoReleases** (michelegoku3) le da los patrones por SHA-256; **Aether** (michelegoku3) es la fuente de la última tanda de cambios; **OpenSteamTool** es su antepasado. Con nosotros: es el **origen de los hooks de lumalinux** (`main.cpp:9-22`, `RESEARCH.md` §11): mismas funciones para claves, pin y package 0; `steamidra_lite.py` imita su lectura del `.lua` (`steamidra_lite.py:111-122,206`). No convive con nosotros en ninguna máquina: es solo Windows. |
 
 **Lo que cambia respecto al doc anterior**, en una línea cada uno:
 
 - **Ya no copia `steamclient64.dll`**: carga el original por ruta absoluta y lo engancha, con aserción de identidad (`core/entry.cpp:132-202`, `steamclient64-direct` / `steamclient64-MISMATCH` en `status.json`). `lcoverlay.dll` desapareció en `c0d0537`; su `README.md` y `docs/LumaCore.md` lo siguen contando.
-- **`xinput1_4.dll` es la puerta principal** y `dwmapi.dll` la de reserva (`proxy/LcXInputProxy.cpp:170-213`), no al revés.
+- **Un solo proxy, `xinput1_4.dll`** (`proxy/LcXInputProxy.cpp:170-213`): `dwmapi.dll`, que era la puerta de reserva, se eliminó en V38 (`86496c3`, 2026-10-09); SteaMidra lo borra si lo encuentra.
 - **Ningún hook verifica los bytes antes de engancharse.** Las TOML traen `rva` y `sig`, pero todas las macros de instalación pasan por `ByteSearch`, que devuelve `base + rva` sin comparar la firma (`patterns/ByteScan.cpp:159-167`, `hooks/Macros.h:69-171`); la única ruta que compara (`PatternFetcher::Resolve`) solo la usan dos macros que nadie llama (`runtime/VehUtil.h:41,76`). El doc anterior decía "byte patterns".
 - **Los patrones vienen de `michelegoku3/MigoReleases`** (raw → jsDelivr → gitflic `midrags/steam-auto-pt`), no de `KoriaPolis/Steam-Auto-PT` (`patterns/PatternFetcher.cpp:49-64`).
 - **El build id no elige firma**: solo se publica en `status.json`; el comentario de `core/entry.h:56` describe un `PatternDb.h` que ya no existe.
@@ -31,7 +31,7 @@ en `slssteam.md`.
 - **El acuñado de ETickets por HTTP está muerto**: `seteticketurl()` guarda la URL, pero el único que la usa (`IpcHandlers_ISteamUser.cpp`) nunca se registra.
 - **Tres caminos de clave de depot, no dos**: `LoadDepotDecryptionKey`, `ConfigStoreGetBinary` con el marcador `\DecryptionKey` y un segundo detour de `ConfigStoreGetBinary` con el prefijo `Software\Valve\Steam\depots\` (`hooks/client/LicenseHooks.cpp:216-244`).
 - **Cuatro hooks no se instalan nunca con el feed de hoy**: las siete TOML de `steamclient` de MigoReleases no traen `CConfigStore::FlushToDisk`, `CConfigStore::SetString`, `IClientRemoteStorage::FileExists` ni `IClientRemoteStorage::Dispatch` (medido 2026-10-08, §5.2).
-- **`status.json` dice `V36`** en un binario publicado como `V37` (`runtime/HookStatus.cpp:160`).
+- **`status.json` dice `V36`** en un binario publicado como `V38` (`runtime/HookStatus.cpp:160`, sin cambio en V37 ni V38).
 - `[user] steam_id` de `lumacore.toml` **no existe**: el SteamID sale del registro, del ticket o de la cuenta activa (`hooks/client/CmdUser.cpp:153-170`).
 
 ---
@@ -48,7 +48,6 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `core/entry.cpp`, `entry.h` | 426, 71 | `DllMain` fija el módulo y lanza `Bootstrap::Run` en un hilo (`:370-415`); `Run` (`:236-360`): logger, `lumacore.toml`, build id de `steam.exe!GetBootstrapperVersion` (`:210-225`), `PrepareAndLoad` (`LoadLibraryA` del `steamclient64.dll` original + aserción de ruta, `:132-202`; si falla, `return 1` sin hooks), patrones de steamclient, **`PackagePatch` y `SteamCapture` antes que nada** (`:279-280`), patrones de steamui (o reintento 60×500 ms), specs IPC, `BootDiag`, `status.json`, hooks de SteamUI, `ParseDirectory` de los `.lua`, inyección de arranque, `DirWatch`, `IpcHooks`, `DenuvoAuth::Init`, `LumaCore::Attach`. `kOnlineFixAppId = 480` (`entry.h:62`) | 1, 2, 11 |
 | `core/Orchestrator.cpp`, `.h` | 55, 22 | orden de instalación: DepotKeys, DecryptionKeyHook, IPCBus, ManifestBind, PacketRouter, OnlineFixInject, LicenseHooks; desinstalación inversa | 1 |
 | `proxy/LcXInputProxy.cpp`, `.def` | 238, 15 | `xinput1_4.dll`: reenvía al de System32 (carga perezosa, ordinales 100-104/108); hilo que carga `LumaCore.dll` por ruta absoluta **solo** si el proceso es `steam.exe` y el proxy está a su lado (`:180-213`); "the only bootstrap Steam still loads from its own directory" (Aether `14a6359`) | 1 |
-| `proxy/LcDwmProxy.cpp`, `.def` | 177, 105 | `dwmapi.dll`: forwarders `#pragma` a `DWMAPI.*`, mismo hilo y mismas condiciones (`:118-155`); el `.def` no entra en el build | 1 |
 | `patterns/PatternFetcher.cpp`, `.h` | 1153, 110 | SHA-256 del fichero del módulo → **caché primero** `<steam>\lumacore\pattern\<sha>.toml` (si parsea, no hay red) → espejo de usuario → `raw.githubusercontent.com/michelegoku3/MigoReleases/pattern/<subdir>/<sha>.toml` → jsDelivr (no si GitHub dio 404) → gitflic (API de blobs, `:542-617`) → escritura atómica `.tmp` + `MoveFileExA` (`:466-496`); cada tramo pide además `<url>.sig` (`:834-871`); TOML `[hash] name/rva/sig`, un `rva` o `sig` malformado tumba el fichero entero (`:385-422`); `Resolve` con comparación de bytes (`:759-806`, sin uso vivo); `LoadCachedSync`, `LoadForSteamUiDeferred`, `Lookup` público: muertos | 1 |
 | `patterns/ByteScan.cpp`, `.h` | 207, 32 | `ByteSearch`: busca el nombre (alias `KeyValues_`) y **devuelve `base + rva` sin mirar la firma** (`:135-189`); solo si `rva == 0` escanea con la firma (nunca: `ParseToml` exige `rva`); `PatchMemoryBytes` | 1 |
 | `patterns/PatternSig.cpp`, `.h` | 185, 50 | verificación RSA-2048 PSS-SHA256 con BCrypt contra un módulo **todo ceros** (`kPlaceholderModulus`, `:47`) → siempre `KeyUnavailable` | 1, 12 |
@@ -126,8 +125,8 @@ Cobertura por fichero con la función de la matriz a la que sirve (números de
 | `payload/LumaCorePayload/*` (6 `.cpp`/`.h` + `RemoteDllDeploy.h`, `EpicOnlineTypes.h`) | 146, 12, 81, 48, 21, 80, 76, 12, 33 | DLL de juego: se propaga a los hijos (`CreateProcessW/AsUserW`), espera `EOSSDK-Win64-Shipping.dll` (`LdrRegisterDllNotification`) y le cambia `EOS_Connect_Login` por login de Device ID con el nombre de persona de Steam, responde `Success` a `IntegratedPlatformOptionsContainer_Add` y quita la presencia de los lobbies; log por PID solo en Debug | 6 |
 | `proto/steam_messages.proto` | 356 | 20 mensajes (cabecera, ETicket, PICS, NotifyRunningApps, SharedLibrary, GetUserStats ×2, GetManifestRequestCode, GamesPlayed, StoreUserStats2, PersonaState, RichPresenceUpload, `CAppOverview_Change`); protobuf **3.15.3** fijado por ABI de Steam | 1 |
 | `steam/Types.h`, `Enums.h`, `Structs.h`, `Callback.h`, `NetPacketLayout.h` | 39, 1902, 284, 107, 111 | tipos y layouts de Steam (`PackageInfo`, `AppOwnership`, `DepotEntry`, `CUtlVector`, `CSteamPipeClient`, 1.423 `EMsg`) | 1 |
-| `source/CMakeLists.txt`, `cmake/*.cmake` (7) | 216, 351 | dependencias por FetchContent: **Lua 5.5.0** de `lua.org` con `TLS_VERIFY OFF` (`LcLua.cmake`), Detours `GIT_TAG main` sin fijar, protobuf v3.15.3, spdlog v1.17.0 (solo Debug), toml++ v3.4.0; `LUMACORE_LOGGING_ENABLED` solo en Debug, `LUMACORE_DIAGNOSTICS_ENABLED` siempre | 11, 12 |
-| `.github/workflows/release.yml`, `build.bat` | 82, 229 | CI en cada push a `main`: Windows, MSVC, CMake 3.31.6 + Ninja, Release y Debug, `Release.zip`/`Debug.zip`, release `V<n+1>` ("stay above upstream V36"), sin checksums ni firmas; `build.bat` local con `--clean` por defecto | 11, 12 |
+| `source/CMakeLists.txt`, `cmake/*.cmake` (7) | 211, 351 | dependencias por FetchContent: **Lua 5.5.0** de `lua.org` con `TLS_VERIFY OFF` (`LcLua.cmake`), Detours `GIT_TAG main` sin fijar, protobuf v3.15.3, spdlog v1.17.0 (solo Debug), toml++ v3.4.0; `LUMACORE_LOGGING_ENABLED` solo en Debug, `LUMACORE_DIAGNOSTICS_ENABLED` siempre | 11, 12 |
+| `.github/workflows/release.yml`, `build.bat` | 108, 223 | CI en cada push a `main`: Windows, MSVC, CMake 3.31.6 + Ninja, Release y Debug, `Release.zip`/`Debug.zip`, release `V<n+1>` ("stay above upstream V36"), sin checksums ni firmas; `build.bat` local con `--clean` por defecto | 11, 12 |
 | `README.md`, `docs/LumaCore.md`, `CREDITS.md`, `lumacore.toml.example`, `.gitignore`, `LICENSE` | 49, 457, 19, 67, 51, 674 | docs de upstream (la de funciones es de `8321f69`, 07-04, y cuenta la copia `lcoverlay`, la entropía, `[user] steam_id`, el ETicket por GET y "Lua 5.4"); ejemplo de config; `.gitignore` en italiano | 12 |
 
 ---
@@ -139,11 +138,11 @@ Cada función contesta la lista de control de `ecosystem-matrix.md` §1, con
 
 ### 2.1 Engancharse a Steam
 
-**Cómo entra.** Secuestro de DLL por carpeta: `xinput1_4.dll` (principal) y
-`dwmapi.dll` (reserva) junto a `steam.exe`. Ninguno carga nada en `DllMain`;
-un hilo comprueba que el proceso es `steam.exe` y que el proxy está a su lado,
-y carga `LumaCore.dll` por ruta absoluta si nadie lo cargó ya
-(`proxy/LcXInputProxy.cpp:180-213`, `proxy/LcDwmProxy.cpp:139-155`). `LumaCore.dll`
+**Cómo entra.** Secuestro de DLL por carpeta: `xinput1_4.dll` junto a
+`steam.exe` (el único proxy desde V38; `dwmapi.dll` fue la reserva hasta V37).
+No carga nada en `DllMain`; un hilo comprueba que el proceso es `steam.exe` y
+que el proxy está a su lado, y carga `LumaCore.dll` por ruta absoluta si nadie
+lo cargó ya (`proxy/LcXInputProxy.cpp:180-213`). `LumaCore.dll`
 hace lo mismo en su `DllMain` (`core/entry.cpp:370-391`) y el trabajo real va en
 `Bootstrap::Run` (`:236-360`). El objetivo es el `steamclient64.dll`
 **original**, cargado otra vez por ruta para tener su `HMODULE`, con
@@ -186,7 +185,7 @@ detector de crash. La salida es quitar las DLL (lo hace SteaMidra,
 (`runtime/Logger.cpp:41-47`); en Release, `status.json` y el anillo de logros
 (`%APPDATA%\SteaMidra\lumacore_diag.txt`).
 
-**A qué procesos se limita.** `steam.exe` (proxies). Dentro de Steam, los
+**A qué procesos se limita.** `steam.exe` (proxy). Dentro de Steam, los
 pipes internos (`m_hSteamPipe & 0xFFFF <= 2`) pasan sin tocar
 (`hooks/client/IPCBus.cpp:56`). El payload va a procesos de juego,
 y desde ahí a sus hijos.
@@ -393,7 +392,7 @@ nuevo.
 **Superficie.** Ninguna propia: config `lumacore.toml` (recarga en caliente al
 siguiente handshake), `status.json`, `MessageBoxA` de diagnóstico. **Update de
 sí mismo**: no; lo instala y actualiza SteaMidra comparando tags
-(`steamidra.md` §2.11), y `status.json` declara `V36` en el binario `V37`
+(`steamidra.md` §2.11), y `status.json` declara `V36` en el binario `V38`
 (`runtime/HookStatus.cpp:160`). **Componentes**: patrones por caché + red (§2.1);
 una TOML cacheada no se vuelve a pedir. **Salud y logs**: `status.json` con
 `hooks_installed`, `hooks_missed`, `toml_found`, `diagnostic_reason`; logs por
@@ -439,7 +438,7 @@ script) y los hooks de Steam.
 
 | Ruta | Quién | Para qué |
 |---|---|---|
-| `<steam>\{xinput1_4,dwmapi,LumaCore,LumaCorePayload}.dll`, `<steam>\lumacore.toml` | SteaMidra los pone; la DLL los lee | carga y config |
+| `<steam>\{xinput1_4,LumaCore,LumaCorePayload}.dll`, `<steam>\lumacore.toml` | SteaMidra los pone; la DLL los lee | carga y config |
 | `<steam>\config\stplug-in\*.lua` (+ `[lua] paths`) | lee y vigila; crea la carpeta si falta | entrada |
 | `<steam>\lumacore\pattern\<sha>.toml` (+ `.tmp`), `…\pattern\steamclientipc\<sha>.toml` | escribe (caché) | patrones |
 | `<steam>\lumacore\status.json` (+ `.tmp`) | escribe, atómico | estado |
@@ -634,14 +633,14 @@ Además de lo listado en la cabecera:
 
 | Fecha | Dónde | Qué se probó | Resultado | Detalle |
 |---|---|---|---|---|
-| 2026-09-12 | `0b7e846` | `kLumaCoreVersion` | V35 → V36 | hoy sigue en V36 con el tag V37 |
+| 2026-09-12 | `0b7e846` | `kLumaCoreVersion` | V35 → V36 | hoy sigue en V36 con el tag V38 |
 | 2026-09-28 | subárbol `LumaCore/` de `drappula/SFF` | actividad | commits por mes: 13 en julio, 5 en agosto, 1 en septiembre; ninguno de Midrag desde el 21-ago | "en mantenimiento, no muerto": SteaMidra 6.8.0 lo volvió a poner por defecto en Windows |
 
 ### 5.3 Cronología
 
-**Topología.** `drappula/LumaCore`: 35 commits desde `8ec4e88` (2026-05-25), la
+**Topología.** `drappula/LumaCore`: 38 commits desde `8ec4e88` (2026-05-25), la
 historia del subárbol `LumaCore/` de SteaMidra extraída el 3-oct (`e4c6b65`,
-`da3108e` en SFF, `steamidra.md` §5.3). Un tag, `V37`.
+`da3108e` en SFF, `steamidra.md` §5.3). Dos tags, `V37` y `V38`.
 
 - **2026-05-25 → 2026-08-21, Midrag (26 commits).** Releases de SteaMidra
   aplastadas: 6.2.4 inicial, sandbox de Lua (6.2.8, `b0ec680`), "LumaCore
@@ -661,3 +660,8 @@ historia del subárbol `LumaCore/` de SteaMidra extraída el 3-oct (`e4c6b65`,
   jsDelivr, `LoadModuleWithPath` comparando por nombre base.
 - **2026-10-03, mallusrgreat (7 commits).** CI de releases; la DLL precompilada
   sale de git (`source/*.dll` en `.gitignore`). Primera release: `V37`.
+- **2026-10-09, mallusrgreat (3 commits).** `86496c3` elimina el proxy
+  `dwmapi.dll` (`LcDwmProxy.cpp` y su `.def`; el release pasa a tres DLL);
+  `8f29a19`/`0661423` el workflow deja de inventar `V37` cuando `gh release
+  list` falla (colisionó una vez con el V37 real) y recibe `GH_TOKEN`.
+  Release `V38`. `kLumaCoreVersion` sigue en `V36`.
