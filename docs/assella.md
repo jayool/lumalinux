@@ -15,9 +15,9 @@ monta, en `slssteam.md`; los plugins Lua que despliega, en
 
 | | |
 |---|---|
-| **Qué es** | Un **gestor de escritorio para Linux** (Python 3.13 + PyQt6, distribuido como AppImage) que añade juegos a Steam sobre **SLSsteam** de serie. Tiene dos descargadores. **Clásico**: baja los depots fuera de Steam con `DepotDownloader.dll` (.NET) y las claves y manifests de Hubcap. **AT0-M** (solo `canary`): escribe en el `config.yaml` de SLSsteam `AdditionalApps`, `AdditionalDepots` y `DecryptionKeys`, siembra `depotcache/` y manda `install\|appid\|lib` por `/tmp/SLSsteam.API`, para que **Steam descargue** con dos plugins Lua de SLSsteam (`download.lua`, que inyecta depots y claves y responde los códigos de manifest, y `spliced-tickets.lua`) que baja de un bucket R2 propio. Además: motor de manifests propio (código de petición de wudrm/ManifestDeX + CDN de Valve, Hubcap de rescate), rollback por build, Workshop, Steamless, Goldberg, proxy EOS, `fix.so` de netsock, editor de logros, tickets de propiedad, "All games online", reparador del `config.yaml` (`assfixer`), cadena de evasión de bloqueos para Hubcap (DoH, Tor, Cloudflare Worker), web UI y CLI. |
-| **Repo y commit leídos** | `niwia/ASSella` `canary@73f0471` (2026-10-09 01:34 +0530, versión `3.0.0testing071026003`) entero; `beta@070526c` (2026-10-09, rama por defecto, `2.7.1beta`) por diferencias con `canary`; `main@f582f4f` (2026-09-13, 10 commits, parado) y `arm64@e24372a` (árbol idéntico a `canary`). 460 commits en todas las ramas desde `9a11c5f` (2026-05-20, "Initial ASSella release"). `canary`: 310 ficheros, 170 `.py` fuera de `src/deps` (~90.000 líneas; los mayores `managers/task_manager.py` 3.609, `ui/…/depotselection.py` 3.153, `utils/yaml_config_manager.py` 2.892). |
-| **Ramas** | `beta` y `canary` se separan en `1fcd7a8` (2026-09-19): 85 commits solo en `beta`, 144 solo en `canary`, sin merges entre ellas; los arreglos se reaplican a mano (ocho asuntos en las dos, cuatro con el parche idéntico). **AT0-M y `native_steam/` solo existen en `canary`**; en `beta` el motor de manifests se llama `vapor.py` (971 líneas, sin ManifestDeX) y `at0m.py` es un alias, al revés que en `canary`. `arm64` recibe `canary` por un workflow que lo fusiona en cada push (`.github/workflows/sync-arm64.yml`, 20 commits del bot). `beta-6634894975231722385`: un commit vacío de "auditoría sin hallazgos". |
+| **Qué es** | Un **gestor de escritorio para Linux** (Python 3.13 + PyQt6, distribuido como AppImage) que añade juegos a Steam sobre **SLSsteam** de serie. Tiene dos descargadores. **Clásico**: baja los depots fuera de Steam con `DepotDownloader.dll` (.NET) y las claves y manifests de Hubcap. **AT0-M** (solo `canary`): escribe en el `config.yaml` de SLSsteam `AdditionalApps`, `AdditionalDepots` y `DecryptionKeys`, siembra `depotcache/` y manda `install\|appid\|lib` por `/tmp/SLSsteam.API`, para que **Steam descargue** con dos plugins Lua de SLSsteam (`download.lua`, que inyecta depots y claves y responde los códigos de manifest, y `spliced-tickets.lua`) que baja de un bucket R2 propio. Además: motor de manifests propio (código de petición de wudrm/ManifestDeX + CDN de Valve, Hubcap de rescate), rollback por build, Workshop, importación de zips y luas con inspección del contenido, Steamless, Goldberg y SLScheevo bajados bajo demanda de su R2 con hash, proxy EOS, `fix.so` de netsock, editor de logros, tickets de propiedad, "All games online", reparador del `config.yaml` (`assfixer`), cadena de evasión de bloqueos para Hubcap (DoH, Tor, Cloudflare Worker), web UI y CLI. |
+| **Repo y commit leídos** | `niwia/ASSella` `canary@cd0c4a5` (2026-10-12 19:31 +0530, versión `3.0Release_candidate111026001`) entero; `beta@3fcbe15` (2026-10-13, rama por defecto, `2.7.1dev`) por diferencias con `canary`; `main@f582f4f` (2026-09-13, 10 commits, parado) y `arm64@f9efc9e` (árbol idéntico a `canary`). 517 commits en todas las ramas desde `9a11c5f` (2026-05-20, "Initial ASSella release"). `canary`: 333 ficheros, 214 `.py` fuera de `src/deps` (~97.800 líneas; los mayores `ui/dialogs/depot_selection/dialog.py` 3.151, `ui/dialogs/game_details/info_tab.py` 2.875, `ui/main_window.py` 2.499, `managers/game_manager.py` 2.627; `task_manager.py` y `yaml_config_manager.py` troceados en paquetes el 10-09/10). |
+| **Ramas** | `beta` y `canary` se separan en `1fcd7a8` (2026-09-19): 90 commits solo en `beta`, 176 solo en `canary`, sin merges entre ellas; los arreglos se reaplican a mano (ocho asuntos en las dos, cuatro con el parche idéntico). **AT0-M y `native_steam/` solo existen en `canary`**; en `beta` el motor de manifests se llama `vapor.py` (971 líneas, sin ManifestDeX) y `at0m.py` es un alias, al revés que en `canary`. `arm64` recibe `canary` por un workflow que lo fusiona en cada push (`.github/workflows/sync-arm64.yml`, 20 commits del bot). `beta-6634894975231722385`: un commit vacío de "auditoría sin hallazgos". |
 | **Plataforma** | Linux x86_64 (AppImage, paquete de Arch en `gh-pages`, `install.sh`); `arm64` por `scripts/install-armada.sh`. Steam nativo o Flatpak. Requiere .NET para el descargador clásico. |
 | **Licencia y quién** | Sin `LICENSE` en el repo. niwia: 427 commits; "You-know-who" (`niwia007@…`) 9 (README, `voices.json`, `broadcast.json`); github-actions[bot] 21; KingCatto 2 (PR #16, 09-15). El repo se desarrolla con agentes (`.agents/AGENTS.md`, `.agents/rules/canary_rules.md`, `plugin_publishing_rules.md`). |
 | **Relación con los demás programas** | Monta sobre **SLSsteam** de serie (lo instala ejecutando Headcrab) y escribe su `config.yaml`. Despliega el **`download.lua`** de la familia de `slssteam-plugins.md` y el **`spliced-tickets.lua`** de Ace, byte a byte el mismo fichero que nuestro `lumadeck-spliced-tickets.lua` en la copia de `beta`. Fuentes compartidas con LumaDeck: **Hubcap** (con la clave del usuario) y los proveedores de códigos **wudrm** y **ManifestDeX**, que también están en la cascada GMRC de lumalinux. **Convive con nuestra pila en la misma máquina**: los dos escriben el mismo `config.yaml`, el mismo `depotcache/` y la misma carpeta de plugins, y ASSella lista como suyos los juegos de LumaDeck (§4.1). |
@@ -30,7 +30,6 @@ monta, en `slssteam.md`; los plugins Lua que despliega, en
 - **El modo nativo ya no retira nada al terminar**: `AdditionalDepots`, `DecryptionKeys` y los plugins se quedan (`core/tasks/native_steam_download_task.py:1145-1172`); los plugins ya no se despliegan por descarga sino una vez, desde Ajustes. El doc anterior describía los plugins como "transitorios".
 - **La clave raíz del AppID ya entra en `DecryptionKeys`** (`native_steam_download_task.py:784-790`), lo que cierra el fallo de shaders y Workshop medido el 2026-10-05.
 - **El motor de manifests corre wudrm y ManifestDeX en carrera**, wudrm ya por **HTTPS** (`core/at0m.py:127,288,302-337`), y guarda los códigos en SQLite sin caducidad (`:150-185`).
-- **Todas las llamadas a Hubcap van sin verificar TLS** (`core/morrenus_api.py:36-66`), con la clave como `Bearer`; en modo `auto` (el de por defecto) pueden acabar en un Cloudflare Worker de un tercero con la clave dentro (`utils/isp_bypass.py:494-498,636-642`).
 - **El web server de `canary` escucha en `127.0.0.1` con token** (`utils/web_server.py:21,48-61`); el de `beta`, la rama por defecto, sigue en `0.0.0.0:8765` con CORS `*` y sin autenticación.
 
 ---
@@ -43,34 +42,37 @@ Rutas relativas a `src/` en `canary@73f0471`. F = función de §2.
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
-| `main.py` | 374 | modo GUI, `--headless`, `--helper`, `accela://`; en GUI, **copia `config.yaml` a `.bak` en cada arranque** (`:251`), fuerza `API: yes`, `LogLevels \|= 0x2` y `Plugins: yes` (`:256` → `utils/yaml_config_manager.py:390-431`) y fusiona la base de FakeAppIds si está activa (`:258`) | 1, 11 |
+| `main.py` | 393 | modo GUI, `--headless`, `--helper`, `accela://`; en GUI, **copia `config.yaml` a `.bak` en cada arranque**, lo deja a **`0600`** (`:261-262` → `utils/yaml/maintenance.py:29-57`), fuerza `API: yes`, `LogLevels \|= 0x2` y `Plugins: yes` y fusiona la base de FakeAppIds si está activa | 1, 11 |
 | `managers/app_update_manager.py` | 368 | updater por canal sobre la lista `/releases` de GitHub; zsync o `appimageupdatetool`, o AppImage entero con su `.sha256` si existe (`:310-339`) | 11 |
 | `managers/at0m_update_checker.py` | 560 | comprobación de updates de los juegos "AT0-M": PICS/steamcmd, depots nuevos, preflight gratis de Hubcap `/contents`; `apply_update` baja el zip de Hubcap y añade depots y claves al config (`:496-560`) | 5 |
 | `utils/web_server.py` | 689 | web UI en `127.0.0.1:8765` (`0.0.0.0` con `web_ui_allow_lan`), token por sesión; apagada en GUI, encendida en headless/helper | 11 |
 | `managers/cli_manager.py`, `managers/helper_manager.py` | 1.085, … | CLI y modo helper (comprobación de updates sin ventana) | 11 |
-| `utils/isp_bypass.py` | 652 | transporte de Hubcap: directo → DoH → Tor → Wirecutter (§2.10) | 10, 12 |
+| `utils/isp_bypass.py` | 664 | transporte de Hubcap: directo (TLS verificado) → DoH → Tor → Wirecutter, los tres últimos con `verify=False` a propósito (§2.10) | 10, 12 |
 | `ui/status_pager.py`, `managers/voices_manager.py` | — | `broadcast.json` (solo texto) y `voices.json` (builds recomendados con `manifest_overrides`) de la rama del repo | 5, 11 |
 
 ### 1.2 Juegos, fuentes, SLSsteam
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
-| `managers/task_manager.py` | 3.609 | cola de trabajos; decide descargador clásico, tarea nativa vigilada o handoff (`:680-870`); vigilante de instalación nativa 30 min (`:1003-1058`) | 4, 9 |
+| `managers/task_manager.py` + `managers/finalize/post_install.py`, `managers/achievements.py`, `managers/emulation/{goldberg,steamless}.py` | 1.703 + 932, 298, 464, 286 | cola de trabajos; decide descargador clásico, tarea nativa vigilada o handoff; vigilante de instalación nativa 30 min. Desde `a61acc7` (10-09) el cierre de una descarga (ACF, `depotcache`, `AdditionalApps`, GreenLuma, EOS), los logros y la emulación son mixins | 4, 6, 7, 9 |
 | `core/tasks/native_steam_download_task.py` | 1.224 | AT0-M vigilado: claves, parche del config, licencia, `depotcache`, `install`, vigilancia del `.acf`, limpieza (§2.4) | 4, 9 |
 | `core/native_steam/native_steam_handoff.py` | 463 | AT0-M "entregar y volver": lo mismo sin vigilar, `install` opcional | 4, 9 |
 | `core/native_steam/steam_manifest_pinning.py` | 218 | bloque `ManifestIds` reconstruido entero; pin por `pin_build`, rollback, `voices.json` | 5 |
 | `core/at0m.py` (`core/vapor.py` = alias) | 1.095 | códigos de wudrm/ManifestDeX → CDN de Valve → `DepotManifest` (nombres descifrados, nulos recortados) → Hubcap; Workshop; builds de SteamDB; copia al `depotcache` central (`:963-1003`) | 4 |
-| `core/morrenus_api.py` | 595 | API de Hubcap (`hubcapmanifest.com/api/v1`) | 4, 10 |
-| `core/tasks/download_depots_task.py`, `process_zip_task.py`, `smart_update_task.py`, `manifest_check_task.py`, `download_workshop_task.py` | 1.155, 1.004, 419, 898, 362 | descargador clásico, zips, updates, Workshop | 4, 5 |
-| `utils/manifest_resolver.py`, `core/branch_bundle.py`, `managers/depot_key_manager.py` | 457, 206, … | manifests para el clásico, betas montadas en cliente, claves en SQLite | 4, 5 |
-| `utils/yaml_config_manager.py` | 2.892 | **todas** las escrituras del `config.yaml` (§3.2) | 2, 3, 5, 9 |
-| `utils/plugin_manager.py`, `utils/plugin_games.py` | 442, 489 | plugins Lua desde R2; registro de juegos AT0-M y sincronía con el config | 1, 9 |
+| `core/morrenus_api.py` | 669 | API de Hubcap (`hubcapmanifest.com/api/v1`); sesión con TLS verificado salvo `hubcap_disable_tls_verify` (`:70-93`); índice `/depot-keys` cacheado (`:631-669`) | 4, 10 |
+| `core/tasks/download_depots_task.py`, `process_zip_task.py`, `smart_update_task.py`, `manifest_check_task.py`, `download_workshop_task.py` | 1.161, 1.004, 419, 922, 362 | descargador clásico (`mistwalker_keys.vdf` a `0600`), zips, updates (también por `buildid` de rama, `manifest_check_task.py:787`), Workshop | 4, 5 |
+| `utils/manifest_resolver.py`, `core/branch_bundle.py`, `managers/depot_key_manager.py` | 678, 206, … | manifests para el clásico, carrera de metadatos vivos (caché de SteamDB, PICS, `api.steamcmd.net`, Hubcap; gana el primero, `:502-660`), betas montadas en cliente, claves en SQLite | 4, 5 |
+| `ui/dialogs/zip_confirm_dialog.py` | 1.738 | importación de zip, lua o manifest arrastrado: lee appids, depots y gids del protobuf y del lua antes que del nombre, compara build instalado, del paquete y vivo, detecta downgrades y propone el pin, y si solo llega el lua baja los manifests que faltan con la carrera wudrm/ManifestDeX | 4, 9 |
+| `utils/component_manager.py`, `ui/dialogs/settings_tabs/components_card.py` | 414, 336 | Goldberg, Steamless y SLScheevo bajo demanda desde R2: `components_manifest.json` con SHA-256 y tamaño por componente, descarga a temporal, hash comprobado, extracción con guarda de rutas, estado en `components/.state.json` (`:48-49,216-258,272-392`) | 6, 7, 11 |
+| `utils/steam_manifest.py`, `utils/lua_parsing.py` | 282, 355 | `safe_extract_zip` (zip-slip, `:254-282`); ids de depot y gids del lua validados como dígitos puros (`lua_parsing.py:286-320`) | 4, 9 |
+| `utils/yaml_config_manager.py` → `utils/yaml/` (15 módulos: `core` 1.030, `apps` 356, `fakeappid` 362, `maintenance` 334, `slssteam` 241, `keys` 180, `dlc` 189, `tokens` 188, `plugins`, `repair`, `validation`, `yaml_values`, `modes`, `constants`) | 175 (fachada) | **todas** las escrituras del `config.yaml` (§3.2), troceadas por sección desde `326e2d1` (10-10) con una fachada que re-exporta los nombres | 2, 3, 5, 9 |
+| `utils/plugin_manager.py`, `utils/plugin_games.py` | 442, 563 | plugins Lua desde R2; registro de juegos AT0-M y sincronía con el config; `unregister_plugin_game` purga del config depots, claves, DLC y las secciones secundarias (`:248-385`) | 1, 9 |
 | `utils/slssteam_integration.py`, `core/steam_helpers.py` | 985, 817 | `/tmp/SLSsteam.API`, vida de SLSsteam, watcher muerto, ACF de respaldo, bibliotecas | 1, 9 |
 | `utils/assfixer.py` | 1.698 | reparador del `config.yaml` contra la plantilla de SLSsteam | 11 |
 | `managers/mrc_config_manager.py` | 143 | `mrc_config.lua/json` para un plugin `download` de prueba | 4 |
 | `utils/ticket_manager.py`, `utils/eos_detector.py`, `managers/shsah_reborn.py` | 509, 271, 432 | tickets cifrados, proxy EOS, `UserGameStats_*.bin` | 6, 7 |
-| `managers/game_manager.py` | 2.536 | escaneo de bibliotecas, marcadores `.ACCELA`/`.DepotDownloader`, juegos AT0-M | 9 |
-| `deps/` | — | binarios sin fuente: `DepotDownloader.dll` y `DepotDownloaderMod.dll` 3.4.0, SteamKit2, protobuf-net, ZstdSharp, QRCoder, `EOSSDK-Win64-Shipping.dll`, Goldberg (`release-2026_08_23`), Steamless, SLScheevo, `schema-grabber` (ELF) | 4, 6, 7 |
+| `managers/game_manager.py` | 2.627 | escaneo de bibliotecas, marcadores `.ACCELA`/`.DepotDownloader`, juegos AT0-M; `uninstall_game` (`:1962-2125`) localiza la carpeta de un juego AT0-M por el registro de plugins y purga el config entero | 9 |
+| `deps/` | — | binarios sin fuente: `DepotDownloader.dll` (desde `352c1d5` el binario modificado) y `DepotDownloaderMod.dll`, SteamKit2, protobuf-net, ZstdSharp, QRCoder, `EOSSDK-Win64-Shipping.dll`, `steamless.py`, `schema-grabber` (ELF). Goldberg, Steamless (.NET) y SLScheevo **salieron del árbol** el 10-09 (`7bb5f66`, `333c62a`): se bajan de R2 | 4, 6, 7 |
 
 ---
 
@@ -180,7 +182,10 @@ raíz del appid.
 - En AT0-M van al **`config.yaml` de SLSsteam**, en una sección
   `DecryptionKeys` que lee el plugin, no SLSsteam (`:771-860`).
 - En el clásico van a `/tmp/mistwalker_keys.vdf`, de ruta fija y compartida,
-  con los permisos por defecto.
+  a `0600` desde `333c62a` (`download_depots_task.py:802`).
+- Hubcap `/api/v1/depot-keys`: índice global de depots con clave y pendientes,
+  cacheado, para saber qué pedir antes de gastar cuota; si no responde, todo
+  depot se trata como pendiente (`core/morrenus_api.py:631-669`).
 
 **Manifests, motor propio** (`core/at0m.py`). El orden:
 
@@ -206,7 +211,10 @@ Detalles del motor:
 - **Fallback sin comprobar.** Si el zip no se puede leer, el fallback devuelve
   la primera entrada tal cual, aunque la magia no cuadre (`:537-545`).
 - **Hubcap sin comprobar.** Lo que llega de Hubcap no se comprueba contra el
-  depot/gid pedido.
+  depot/gid pedido. Lo que sí hay desde `333c62a` es una guarda de zip-slip al
+  extraer el bundle (`utils/steam_manifest.py:254-282`) y la validación de
+  que los ids de depot y los gids del lua sean dígitos puros antes de
+  convertirse en ruta (`utils/lua_parsing.py:286-320`).
 
 **Dónde deja los manifests**:
 
@@ -264,8 +272,10 @@ ruta del juego, sin contención (`utils/manifest_resolver.py:120-151`).
 ### 2.5 Updates de juegos
 
 **Clásico.** `manifest_check_task.py` compara los gids de `depots/<appid>.depot`
-con los de Steam (PICS, `api.steamcmd.net`) para la rama elegida. Un cambio de
-build sin cambio de gid no cuenta. Se comprueba al arrancar, a mano, con un
+con los de Steam (PICS, `api.steamcmd.net`) para la rama elegida; desde
+`7330e9c` (10-12) un `buildid` de rama más nuevo que el local también cuenta
+aunque ningún gid cambie (`manifest_check_task.py:787`), y "Verify" ya no
+reutiliza un zip de manifests viejo. Se comprueba al arrancar, a mano, con un
 temporizador y en modo helper. Actualizar = volver a bajar con
 DepotDownloader. Tres fallos trazados en el código:
 
@@ -299,9 +309,15 @@ cliente con los gids de PICS y `/generate/manifest` (`core/branch_bundle.py`).
 
 En la ficha de cada juego:
 
-- **Steamless** (Python y .NET, `deps/Steamless`).
-- **Goldberg** (`deps/Goldberg`, aplicar/quitar, opcional al instalar).
-- **Proxy EOS** (`utils/eos_detector.py`):
+- **Steamless** (`deps/steamless.py` y el CLI .NET) y **Goldberg** (aplicar/quitar,
+  opcional al instalar): desde `7bb5f66` (10-09) ninguno viaja en el AppImage.
+  Se bajan desde Ajustes → Tools → "Optional Components" del R2 de ASSella
+  (`goldberg.tar.gz` ~35 MB, `steamless.tar.gz`), con el SHA-256 de
+  `components_manifest.json` comprobado antes de sustituir nada; un botón de
+  un juego que los necesite ofrece la descarga en vez de fallar
+  (`utils/component_manager.py:304-392`, `docs/OPTIONAL_COMPONENTS.md`).
+- **Proxy EOS** (`utils/eos_detector.py`): si el `.dll` empaquetado falta lo
+  baja del release `v1.0.0` de `yesyes0649/eos-proxy` sin hash (`:19-61`).
   - `apply_proxy` borra el original `.yes` si ya hay uno y renombra el `.dll`
     actual sin comprobar si ya es el proxy (`:180-189`). En un árbol con
     carpetas mixtas destruye el original.
@@ -326,7 +342,9 @@ En la ficha de cada juego:
 - "SHSAH Reborn" (`managers/shsah_reborn.py`) desbloquea logros editando
   `appcache/stats/UserGameStats_<cuenta>_<appid>.bin`. Reinterpreta los enteros
   como 32 bits con signo y pierde los tipos de 64 (`:69-81,345-372`).
-- "Generate Achievements" usa SLScheevo y `schema-grabber`, con login de Steam.
+- "Generate Achievements" usa SLScheevo (desde `7bb5f66` bajado de R2 como
+  componente opcional, con hash; antes `deps/SLScheevo/SLScheevo.py`) y
+  `schema-grabber`, con login de Steam.
 - Sin sincronización entre máquinas.
 - Lo que conteste `GetUserStats` es cosa de SLSsteam.
 
@@ -336,9 +354,16 @@ Nada.
 
 ### 2.9 Añadir y quitar un juego
 
-**Entradas**: búsqueda en Hubcap, zip arrastrado, web UI, CLI, `accela://`.
-Antes de descargar, el selector de depots ("Smart Select" con
-`packageinfo.vdf`).
+**Entradas**: búsqueda en Hubcap, zip, lua o manifest arrastrado, web UI, CLI,
+`accela://`. Lo arrastrado pasa desde `dcc604b`/`f478fb6` (10-09) por un diálogo
+de inspección (`ui/dialogs/zip_confirm_dialog.py`): lee appids, depots y gids
+del protobuf de los manifests y de los tokens del lua antes que del nombre del
+fichero, compara el build instalado, el del paquete y el vivo (carrera entre
+caché de SteamDB, PICS, `api.steamcmd.net` y Hubcap,
+`utils/manifest_resolver.py:502-660`), detecta un downgrade y propone o impone
+"Pin this build", y si solo llega el lua baja los manifests que faltan con la
+carrera wudrm/ManifestDeX. Antes de descargar, el selector de depots ("Smart
+Select" con `packageinfo.vdf`, fijo a activado desde `352c1d5`).
 
 **Qué escribe**:
 
@@ -376,14 +401,23 @@ Antes de descargar, el selector de depots ("Smart Select" con
 
 **Quitar**:
 
-- En juegos AT0-M, "Uninstall", "Advanced Uninstall", "Verify" y "Reset Depot
-  Selection" están desactivados (`ui/dialogs/library/actions.py:507-543`;
-  `ui/dialogs/game_details/info_tab.py:442-490`). Desinstalar desde Steam deja
-  `AdditionalApps`, `AdditionalDepots`, `DecryptionKeys` y `AppTokens` (§5.2).
-- En los demás, "Uninstall" borra la carpeta y quita del config `AdditionalApps`,
-  `DlcData`, `LaunchOptions` y `FakeAppIds` del appid
-  (`managers/game_manager.py:2046-2064`).
-- La opción "I bought the game" (`_wipe_sls_only`, `actions.py:659-776`) deja los
+- En juegos AT0-M, "Uninstall", "Verify" y "Reset Depot Selection" siguen
+  desactivados en el menú de la biblioteca (`ui/dialogs/library/actions.py:592-629`).
+  El backend sí sabe desinstalarlos desde `e67ead7` (10-10): localiza la
+  carpeta y la biblioteca por el registro de plugins, manda `uninstall|appid`
+  por la API si está y, si no, sigue sin ella (`managers/game_manager.py:1962-2125`).
+  Desinstalar desde Steam deja `AdditionalApps`, `AdditionalDepots`,
+  `DecryptionKeys` y `AppTokens` (§5.2).
+- En los demás, "Uninstall" borra la carpeta y el `.acf` de todas las
+  bibliotecas, y quita del config, para el appid y sus DLC, `AdditionalApps`,
+  `AdditionalDepots`, `DecryptionKeys` (incluida la clave raíz), `DlcData`,
+  `LaunchOptions`, `FakeAppIds`, `AppTokens`, y desde `e67ead7` también
+  `GameTitles`, `ManifestIds`, `CDKeys` y el resto de secciones secundarias,
+  más los pins de `ManifestIds` de sus depots
+  (`managers/game_manager.py:2140-2154`, `utils/plugin_games.py:248-385`).
+  Conserva lo que otro juego registrado siga necesitando; lo que puso LumaDeck
+  no cuenta como registrado (§4.1-1).
+- La opción "I bought the game" (`_wipe_sls_only`, `actions.py:746`) deja los
   ficheros. Quita del config, para el appid, sus DLC y sus depots: `AdditionalApps`,
   `FakeAppIds`, `AppTokens`, `LaunchOptions` y `DlcData`, más `GameTitles`,
   `ManifestIds`, `DepotBlacklist` y `CDKeys` (`:713-745`). También manda
@@ -414,10 +448,12 @@ Varias bibliotecas: elige el índice por `get_library_index`.
 **Clave de Hubcap** (`morrenus_api_key` en QSettings, en claro):
 
 - Viaja como `Authorization: Bearer` en todas las llamadas
-  (`core/morrenus_api.py:72-79`), y también en la query de `/user/stats`
-  (`:269`).
-- **La sesión de Hubcap no verifica TLS**: `check_hostname=False`, `CERT_NONE`,
-  `SECLEVEL=1`, `verify=False` y avisos silenciados (`:36-66`).
+  (`core/morrenus_api.py:102-109`), y también en la query de `/user/stats`.
+- **La sesión directa de Hubcap verifica TLS** desde `333c62a` (10-09):
+  `session.verify = True` salvo que el usuario marque
+  `hubcap_disable_tls_verify`, y entonces `check_hostname=False`, `CERT_NONE`,
+  `SECLEVEL=1` con un aviso en el log de que la clave queda expuesta
+  (`:70-93`). Hasta ese commit iba siempre sin verificar.
 - **Transporte `auto`, el de por defecto** (`utils/isp_bypass.py:474-648`):
   1. Directo.
   2. DoH a `1.1.1.1` y `dns.google`, también sin verificar
@@ -428,8 +464,10 @@ Varias bibliotecas: elige el índice por `get_library_index`.
   4. **Wirecutter**: Cloudflare Worker `rapid-thunder-fba1wirecutter.7ucking.workers.dev`,
      con la URL ofuscada por XOR y base85 (`:198-209`).
 
-  Tor y el Worker reciben las mismas cabeceras, **clave incluida** (`:622-642`).
-  La casilla `isp_bypass_hubcap` de la UI no la lee nadie.
+  Tor y el Worker reciben las mismas cabeceras, **clave incluida**, y los tres
+  escalones de bypass van con `verify=False` a propósito, para que activar la
+  verificación en el directo no deje colgado a quien dependa de ellos
+  (`:521-545,594`). La casilla `isp_bypass_hubcap` de la UI no la lee nadie.
 
 **Cuota**: `API x/25 · Single y/1500` en la pantalla principal. No hay
 contadores propios, ni backoff, ni `Retry-After`. El zip se pide siempre con
@@ -461,14 +499,25 @@ wudrm/ManifestDeX si se tienen las claves.
 - Las versiones de canary (`DDMMYY` + secuencia) se comparan como enteros, que
   no es orden cronológico entre meses (`main_window.py:2324-2349`).
 
-**`install.sh`**:
+**`install.sh`**, dos versiones distintas desde el 10-13:
 
-- Usuario, en `~/.local/share/ACCELA`; `sudo` para paquetes de la distro
+- **`canary`** (1.234 líneas, `cd0c4a5`): asistente interactivo. Detecta la
+  distro y la ruta de Steam (`:82-204`), ofrece instalar `fuse2` con el gestor
+  de paquetes (`:249-284`), pregunta si ejecutar headcrab (lo baja a un
+  temporal con `--retry 3` y guarda copia del `config.yaml` antes,
+  `run_headcrab_installer`, `:329-418`), elige canal (por defecto `canary`,
+  `:227-233`), pide la lista de releases con reintentos y token opcional
+  (`fetch_github_json`, `:301-327`), baja por zsync si está o entero, y comprueba
+  el `.sha256` si existe, fatal si no cuadra y solo aviso si falta salvo con
+  `ASSELLA_REQUIRE_SHA256=1` (`:675-760`). `sudo` para paquetes de la distro
   (pacman `-Sy` con actualización parcial, paquetes i386 de apt).
-- `.sha256` si existe; si falta solo avisa, salvo con `ASSELLA_REQUIRE_SHA256=1`
-  (`:388-434`).
-- Siempre canal estable, con v2.6.5 fija de reserva (`:163`).
-- Registra `accela://`. No instala SLSsteam.
+- **`beta`**, la rama por defecto (`3fcbe15`, 10-13, "rollback install.sh to
+  pre-checksum version"): recibió el mismo asistente el 10-12 y al día
+  siguiente volvió entero a la versión anterior al checksum: baja el AppImage
+  **sin `.sha256`**, hace la copia `.bak` antes de verificar nada y ejecuta
+  headcrab con `curl -fsSL headcrab.pages.dev | bash` (`:271-286`). Es un
+  retroceso frente a la 2.7.1 (§5.3).
+- Registra `accela://`.
 
 **Otros**:
 
@@ -480,6 +529,11 @@ wudrm/ManifestDeX si se tienen las claves.
   el `assella_runner.py` o el `main.py` que haya ahí, y cualquier usuario local
   puede ponerlo (`core/steamdb_scraper.py:88-96,152-189`;
   `main_window.py:248-251,1530-1555`).
+- **Componentes opcionales** (Ajustes → Tools): Goldberg, Steamless y SLScheevo
+  con estado "Not installed", "Update available" o "Installed and up to date"
+  según el SHA-256 de `components_manifest.json` contra `components/.state.json`;
+  descarga atómica, hash comprobado, una entrada que escape del destino se
+  salta (`utils/component_manager.py`, `cloud/README.md`).
 - **Salud**: pestaña Health con binario, versión y proceso de SLSsteam, y el
   reparador `assfixer`:
   - Hoy falla siempre: nombre indefinido `template_url` (`utils/assfixer.py:1299`),
@@ -493,7 +547,8 @@ wudrm/ManifestDeX si se tienen las claves.
 ### 2.12 Proyecto
 
 - **Mantenimiento**: un mantenedor, desarrollo con agentes de IA y ritmo muy
-  alto (22 commits en `canary` del 07 al 09-oct).
+  alto (32 commits en `canary` del 09 al 12-oct, 162 ficheros, +19.400/−12.500
+  líneas; 5 en `beta`).
 - **Licencia**: sin licencia.
 - **Build**: AppImage sin firma, construido en CI con `appimagetool`/`appimageupdatetool`
   "continuous" y python-build-standalone sin hash, `requirements.txt` sin fijar
@@ -503,8 +558,8 @@ wudrm/ManifestDeX si se tienen las claves.
   Arch recomienda `SigLevel = Optional TrustAll` (`:664`).
 - **Terceros de los que depende**: Hubcap; wudrm; ManifestDeX; Valve (PICS,
   CDN, Web API); `api.steamcmd.net`; Cloudflare (R2, el Worker); GitHub
-  (releases, `broadcast.json`, `voices.json`, `fix.so`); Supabase; Headcrab;
-  Byparr.
+  (releases, `broadcast.json`, `voices.json`, `fix.so`, `eos-proxy`); Supabase;
+  Headcrab; Byparr.
 - **Privacidad**: sin telemetría y sin subir claves, `config.vdf` ni logs.
 
 ---
@@ -515,16 +570,17 @@ wudrm/ManifestDeX si se tienen las claves.
 
 | Host | Para qué | Notas |
 |---|---|---|
-| `hubcapmanifest.com/api/v1` | zips, `/generate/manifest`, `/contents`, `/status`, `/search`, `/user/stats`, `/generate/usage`, `/generate/workshopmanifest` | TLS sin verificar; `Bearer` |
+| `hubcapmanifest.com/api/v1` | zips, `/generate/manifest`, `/contents`, `/status`, `/search`, `/user/stats`, `/generate/usage`, `/generate/workshopmanifest`, `/depot-keys` | TLS verificado salvo `hubcap_disable_tls_verify`; `Bearer` |
 | `rapid-thunder-fba1wirecutter.7ucking.workers.dev` | proxy de Hubcap, cuarto escalón | recibe la clave |
 | `1.1.1.1`, `dns.google` | DoH | sin verificar |
 | `gmrc.wudrm.com` | códigos (motor propio por HTTPS; `mrc_config` y el plugin por HTTP) | UA `curl/7.88.1`, luego Chrome 120 |
 | `manifest.manifestdex.com` | códigos | UA `ManifestDeX/1.0` |
 | `api.steampowered.com`, `*.steamcontent.com`, `content1.steampowered.com` | CDN, directorio de servidores, `GetPublishedFileDetails` | UA `Valve/Steam HTTP Client 1.0` |
 | `api.steamcmd.net`, `store.steampowered.com` | depots, gids, nombres | caché SQLite de 14 días |
-| `pub-19657b4f385d424b91a909253efdb29c.r2.dev` | `plugins_manifest.json` y plugins | hash del mismo origen |
+| `pub-19657b4f385d424b91a909253efdb29c.r2.dev` | `plugins_manifest.json` y plugins; `components_manifest.json`, `goldberg.tar.gz`, `steamless.tar.gz`, `slscheevo.tar.gz` | hash del mismo origen |
 | `github.com/niwia/ASSella`, `raw.githubusercontent.com` | releases, `broadcast.json`, `voices.json`, `src/res/version` | sin firma |
 | `github.com/yesyes0649/steamnetsock-patch` | `fix.so` | `latest`, sin hash |
+| `github.com/yesyes0649/eos-proxy` | `EOSSDK-Win64-Shipping.dll` si falta el empaquetado | `v1.0.0`, sin hash |
 | `headcrab.pages.dev` | instalador de SLSsteam | `curl \| bash`, sin esquema → `http` |
 | Supabase de niwia | estado de Denuvo | clave anónima embebida |
 | `steamdb.info` vía Byparr (`127.0.0.1:8191`) | historial de builds | |
@@ -534,7 +590,7 @@ wudrm/ManifestDeX si se tienen las claves.
 
 | Ruta | Qué | Quién más la toca |
 |---|---|---|
-| `~/.config/SLSsteam/config.yaml` | ASSella escribe `API`, `LogLevels`, `Plugins`, `SmartTickets`, `DisableUpdates`, `AdditionalApps`, `AdditionalDepots`, `DecryptionKeys`, `DlcData`, `FakeAppIds`, `AppTokens`, `LaunchOptions`, `ManifestIds`, `DenuvoGames`. Lo hace por regex sobre el texto (PyYAML solo valida duplicados de primer nivel), en el sitio (`r+`, `truncate`, `fsync`), sin bloqueo (`yaml_config_manager.py:84-105,164-186`). Si falta, lo crea | SLSsteam, LumaDeck |
+| `~/.config/SLSsteam/config.yaml` | ASSella escribe `API`, `LogLevels`, `Plugins`, `SmartTickets`, `DisableUpdates`, `AdditionalApps`, `AdditionalDepots`, `DecryptionKeys`, `DlcData`, `FakeAppIds`, `AppTokens`, `LaunchOptions`, `ManifestIds`, `DenuvoGames`. Lo hace por regex sobre el texto (PyYAML solo valida duplicados de primer nivel), en el sitio (`r+`, `truncate`, `fsync`), sin bloqueo (`utils/yaml/core.py`). Si falta, lo crea; al arrancar lo deja a `0600` (`utils/yaml/maintenance.py:29-57`) | SLSsteam, LumaDeck |
 | `config.yaml.bak`, `config.yaml.native_steam_backup` | copia en cada arranque de la GUI (pisa la anterior); respaldo de la tarea nativa (nunca se borra si nadie lo restaura) | — |
 | `~/.config/SLSsteam/plugins/` | `download.lua`, `spliced-tickets.lua`, `.bak` | LumaDeck (`lumadeck-spliced-tickets.lua`) |
 | `~/.config/SLSsteam/mrc_config.{lua,json}`, `tools/netsock/`, `Tickets/` | config de códigos de prueba, `fix.so`, tickets | — |
@@ -544,7 +600,7 @@ wudrm/ManifestDeX si se tienen las claves.
 | `appcache/stats/UserGameStats_*.bin` | editor de logros | Steam |
 | `/tmp/mistwalker_keys.vdf`, `/tmp/mistwalker_manifests/` | claves y manifests del clásico | — |
 | `/tmp/byparr_test/main.py` | se ejecuta si existe | cualquier usuario local |
-| `~/.local/share/ACCELA/` | AppImage, `db/` (claves, códigos, Steam), `cached_luas/`, `hubcap_manifests/`, `plugins/`, `plugin_library.json`, `depots/`, logs | — |
+| `~/.local/share/ACCELA/` | AppImage, `db/` (claves, códigos, Steam), `cached_luas/`, `hubcap_manifests/`, `plugins/`, `plugin_library.json`, `depots/`, `components/` (Goldberg, Steamless, SLScheevo + `.state.json`), logs | — |
 | `~/.config/ACCELA/ACCELA.conf` (QSettings) | ajustes y clave de Hubcap en claro | — |
 
 ### 3.3 Puertos
@@ -573,7 +629,8 @@ Además, Byparr en `127.0.0.1:8191` y Tor en `9050`/`127.0.0.1:9080`.
 | `isp_bypass_mode` | `auto` | cadena hasta el Worker |
 | `all_games_online_beta` | `False` | `FakeAppIds: 0: 480` |
 | `custom_plugins_advanced` | `False` | sin comprobar plugins |
-| `use_experimental_ddm`, `probe_cdn`, `use_lancache` | `False`, `False`, `True` | descargador clásico |
+| `probe_cdn`, `use_lancache` | `False`, `True` | descargador clásico (`use_experimental_ddm` y `smart_depot_selection` ya no tienen casilla: fijos a `True` desde `352c1d5`, y `Paths` devuelve siempre `DepotDownloader.dll`, que desde ese commit es el binario modificado) |
+| `hubcap_disable_tls_verify` | `False` | sesión directa de Hubcap sin verificar TLS |
 | `web_ui_allow_lan` | `False` | web en la LAN |
 
 ---
@@ -614,10 +671,10 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 2. **Flags de SLSsteam que LumaDeck necesita y ASSella pisa.**
 
    - **`DisableUpdates`.** Cada "OK" en los Ajustes de ASSella escribe el valor
-     de su casilla (`settings.py:1001-1014`), que nace marcada (`at0m_tab.py:213`).
+     de su casilla (`settings.py:1098`), que nace marcada (`at0m_tab.py:213`).
      Resultado: `DisableUpdates: yes`, y los juegos añadidos dejan de
      actualizarse (`slssteam.md` §2.5).
-   - **`Plugins`.** Desmarcar AT0-M escribe `Plugins: no` (`settings.py:983-998`),
+   - **`Plugins`.** Desmarcar AT0-M escribe `Plugins: no` (`settings.py:1083`),
      que apaga también `lumadeck-spliced-tickets.lua`.
 
    LumaDeck solo repone `DisableUpdates: no` y `Plugins: yes` al cargar su
@@ -697,10 +754,11 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 
 8. **La misma clave de Hubcap, expuesta y compartida.**
 
-   - **Exposición.** ASSella manda la clave sin verificar TLS (`morrenus_api.py:36-66`)
-     y, en `auto`, a Tor y a un Worker de un tercero (`isp_bypass.py:622-642`).
-     Si es la misma que el usuario tiene en LumaDeck, cualquiera en ese camino
-     puede usarla y gastarle la cuota.
+   - **Exposición.** Desde `333c62a` (10-09) la sesión directa verifica TLS;
+     queda la exposición en los escalones de bypass del modo `auto`: DoH, Tor
+     y el Worker de un tercero reciben la clave y van sin verificar a propósito
+     (`isp_bypass.py:521-545,594`). Si es la misma que el usuario tiene en
+     LumaDeck, cualquiera en ese camino puede usarla y gastarle la cuota.
    - **Cuota compartida.** ASSella gasta zips (25/día) en cada descarga nueva,
      en cada depot sin clave del clásico (`download_depots_task.py:831`) y en
      cada `apply_update`. LumaDeck se queda sin zip el mismo día. En cambio,
@@ -729,10 +787,11 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 | 4 | carrera wudrm ↔ ManifestDeX con imitación de Chrome; claves en `DecryptionKeys` del config | cascada de cuatro con UA propio y validación en el CDN; claves en `keys.txt` y `config.vdf` | la imitación no nos hace falta: el filtro es por UA (§5.2) |
 | 4 | descarga fuera de Steam (DepotDownloader) | Steam descarga | descartado por diseño |
 | 5 | rollback a un build, `voices.json` de builds recomendados | `pins.py`, Change version | |
-| 6 | Steamless, Goldberg, EOS, netsock, tickets, editor de logros | fixes por botón | tickets aparcados con la fila de SLSsteam |
+| 6 | Steamless, Goldberg, EOS, netsock, tickets, editor de logros; Steamless, Goldberg y SLScheevo bajo demanda desde su R2 con hash | fixes por botón; Goldberg y el proxy EOS los baja `release.yml` al empaquetar, Steamless va en el zip | tickets aparcados con la fila de SLSsteam |
 | 9 | Workshop (DepotDownloader `-ugc`) | nada | §4.4 A9 |
 | 9 | detección del watcher de SLSsteam muerto | nada | §4.4 A4 |
 | 11 | reparador del config que reescribe | completado que solo añade | |
+| 11 | componentes de terceros verificados por SHA-256 contra un manifest de un bucket propio, descarga atómica | `setup.sh` baja los `.so` de terceros sin hash | `nosotros.md` §4.1-29; matriz §3.1 |
 | 8 | nada | CloudRedirect | |
 
 ### 4.4 Decisiones ya tomadas (del doc anterior, con fecha) y estado hoy
@@ -788,11 +847,26 @@ Además de lo listado en la cabecera:
 - **"P-ToyStore está en nuestra cadena".** Retirado el 2026-10-07 (404); la
   comparación de "cuatro fuentes antes de Hubcap" es hoy depotcache → archivo
   propio → luastools → Hubcap suelto → zip (`manifests.py:1-37`).
+- **"Todas las llamadas a Hubcap van sin verificar TLS"** (10-09). Desde
+  `333c62a` la sesión directa verifica; solo los escalones de bypass siguen
+  sin verificar (§2.10).
+- **"Goldberg, Steamless y SLScheevo van en `deps/`"** (10-09). Desde
+  `7bb5f66` se bajan de R2 bajo demanda con hash (§2.6, §2.7).
+- **"Un cambio de build sin cambio de gid no cuenta"** (10-09). Desde `7330e9c`
+  sí (§2.5).
+- **"El `install.sh` de `beta` comprueba el `.sha256`"** (2.7.1). Revertido en
+  `3fcbe15` el 10-13; solo el de `canary` lo comprueba (§2.11).
+- **"`use_experimental_ddm` apagado por defecto"** (10-09). Sin casilla y fijo
+  a activado desde `352c1d5` (§3.4).
 
 **Lo que sigue sin medir**:
 
 - §4.1-1 a -3 con las dos herramientas instaladas.
 - El efecto de `DisableUpdates: yes` en un juego de ASSella con build nueva.
+- Qué hay hoy en `components_manifest.json` y en `plugins_manifest.json` del
+  R2 (el bucket no se pudo leer el 2026-10-13).
+- Si el menú de la biblioteca llegará a ofrecer "Uninstall" en un juego AT0-M
+  ahora que el backend lo soporta.
 
 ### 5.2 Pruebas y mediciones con fecha
 
@@ -868,3 +942,20 @@ Además de lo listado en la cabecera:
   config, `lua_parsing.py`, regex tolerantes a claves entre comillas;
   `e9ad493` ningún AppID en `AdditionalDepots`; `c9ceace` comprobador de
   updates AT0-M; `beta` `070526c`.
+- **2026-10-09.** `f478fb6`/`dcc604b`/`7434ae4` importación con inspección del
+  contenido y carrera de metadatos; `333c62a` TLS verificado por defecto en
+  Hubcap, `config.yaml` y claves a `0600`, zip-slip, ids del lua validados,
+  Steamless fuera del árbol; `a61acc7` `task_manager` en mixins; `7bb5f66`
+  Goldberg, Steamless y SLScheevo a R2 con `components_manifest.json`;
+  `765835d` rutas `/home/aiwin` del autor fuera; CI con `ty` y suites nuevas.
+- **2026-10-10.** `e67ead7` desinstalación con purga de las secciones
+  secundarias y sin API; `326e2d1` `utils/yaml/`; `2b707aa` proxy EOS
+  descargado si falta; `8fbbbe7` selector de depots en paquete, Hubcap
+  `/depot-keys`, `baselanguages` fuera, `buildid` solo hacia delante; `e77fb07`
+  eventos de actividad; `bd9e886` `3.0Release_candidate`.
+- **2026-10-11/12.** `352c1d5` DepotDownloader modificado de serie, sin casillas
+  de DDM ni Smart Select; `7330e9c` update por `buildid` de rama; `0672385`,
+  `b842506`, `cd0c4a5` asistente de `install.sh` (headcrab, `fuse2`, ruta de
+  Steam, reintentos); `beta` recibe el asistente (`a651e95`…`8d8d314`).
+- **2026-10-13.** `beta` `3fcbe15` revierte `install.sh` entero a la versión
+  anterior al checksum.

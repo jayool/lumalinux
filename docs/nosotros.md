@@ -1241,8 +1241,10 @@ lo incoherente, luego lo muerto.
     BetterSteamTools y LuaTools (`bettersteamtools.md` §2.11, `luatools.md`
     §2.11); LuaTools al menos compara el digest del asset. Opciones: comprobar
     ese digest (barato; protege de una descarga alterada, no de una cuenta
-    comprometida) o fijar versión y hash de los binarios de terceros. Sin
-    decisión.
+    comprometida) o fijar versión y hash de los binarios de terceros. ASSella
+    hace lo primero desde el 2026-10-09 para Goldberg, Steamless y SLScheevo:
+    manifest con SHA-256 en su bucket, descarga a temporal y comprobación antes
+    de sustituir (`assella.md` §2.11). Sin decisión.
 30. **Las credenciales se guardan con permisos por defecto.**
     `credentials.json` (clave de Hubcap, cookie de Ryuu, sesión de LuaTools),
     `luatools_session.json` y `api.json` se escriben con `open(…, "w")` desde
