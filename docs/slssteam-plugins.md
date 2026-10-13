@@ -346,6 +346,12 @@ no defenderse).
    hace que la segunda copia no enganche, porque comparten estado. Comprobado
    en el fuente. Nombre propio para que ASSella no borre la nuestra; su botón
    "Standard Plugin" sí la borraría (`assella.md` §4.1-7).
+6. **Solo la app 7 como donante.** Cuando el ticket de la app 7 viene vacío
+   (sincronización de licencias a medias, cuenta nueva) el plugin no empalma
+   nada y SteamStub da el 65432. opensteamtool-cn, que forja igual, pasó el
+   2026-10-10 a probar la 228980 y luego cualquier ticket del registro
+   (`opensteamtool-cn.md` §2.6, §4.1-5). Candidato de unas líneas de Lua; sin
+   decisión (matriz §3.1).
 
 ### 4.2 Dependencias y qué rompe si cambia
 
