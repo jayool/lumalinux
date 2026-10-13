@@ -1031,11 +1031,11 @@ has been decided is in its §4.4. This section keeps the reverse-engineering one
   deliberately corrupted patterns (§8.1). The cron watches only
   `steamdeck_stable`, so a beta recompile is invisible until promotion unless
   someone runs `probe-steam.yml`. A second cron job on `steamdeck_publicbeta`
-  was noted and deferred (nosotros §4.1-36, §4.4 C2).
+  was noted and deferred (nosotros §4.1-35, §4.4 C2).
 - **Hash is advisory; a hook can resolve UNIQUE at the wrong site and still
   install.** The defence is the crash-loop guard, not a block. `status.json`
   says `installed` but cannot tell "installed" from "installed and serving". A
-  per-hook hit counter (~30 lines) is the noted candidate (nosotros §4.1-37,
+  per-hook hit counter (~30 lines) is the noted candidate (nosotros §4.1-36,
   §4.4 C5b).
 - **Masking left undecided:** the `0x44` in ShaderDepot's
   `mov eax,[eax+0x44]`. Mask it only if a build ever moves it, and validate with
@@ -1051,7 +1051,7 @@ has been decided is in its §4.4. This section keeps the reverse-engineering one
 - **`tools/gmrc_probe.py` probes five providers**, opensteamtool included, where
   the runtime has four. The dead one just reports DOWN (nosotros §4.1-22). The
   stale code comments this list used to carry were corrected on 2026-10-10
-  (nosotros §4.1-39).
+  (nosotros §4.1-38).
 - **`RelocateChainedJmp`** (`src/lmhook.cpp:97-123`) is wired into
   `LmHook::Install` and runs whenever a target's first byte is already `0xE9`
   (another hooker's detour, `:138-156`). None of the default hooks targets a

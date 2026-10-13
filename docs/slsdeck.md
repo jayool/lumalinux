@@ -602,7 +602,7 @@ pila en la misma Deck.
 |---|---|---|---|
 | S1 | ¿Lee Steam `config/depotcache`? Pregunta previa a todo lo demás | 2026-08-26 | **contestado**: no lo lee (medido 2026-09-11, `nosotros.md` §0); el archivo propio de LumaDeck repone `depotcache` |
 | S2 | `downloads.py` `extractall()` de un zip de terceros como root | 2026-08-26 | **no es hallazgo**: `zipfile` de Python quita las rutas absolutas y los `..` al extraer y no crea symlinks; sigue en `downloads.py:1083` y `self_update.py:127` |
-| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-34) |
+| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-33) |
 | S4 | `setup.sh` sin checksums | 2026-08-26 | sin decisión (`nosotros.md` §4.1-29) |
 | S5 | Credenciales con permisos por defecto (`0600`) | 2026-08-26 | sin decisión (`nosotros.md` §4.1-30) |
 | S6 | `self_update.py` crea `~/Downloads` como root sin `chown` | 2026-08-26 | sin cambio (`self_update.py:207-220`) |

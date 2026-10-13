@@ -1057,7 +1057,7 @@ La tabla completa de claves que escribimos y su valor está en `nosotros.md`
 manifests, códigos de petición de manifest, package-0, updates por proveedor,
 fixes, cloud (CloudRedirect), UI. Lo que SLSsteam tiene en `dev` y no nos
 alcanza: `stealth` (§5.3), porque decide por `isSubscribed` y nuestros juegos
-lo son (`nosotros.md` §4.1-40).
+lo son (`nosotros.md` §4.1-39).
 
 ### 4.4 Bugs y fragilidades propias de SLSsteam (del código, no de la convivencia)
 

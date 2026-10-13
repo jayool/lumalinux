@@ -295,7 +295,7 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 1 | slsteam-moon | máscara de bytes de layout en las firmas (M1.1) | ya hecha donde sirve, refutada donde no (issue #16); nada más (`nosotros.md` §4.4 C1) | 2026-09-14 |
 | 1 | slsteam-moon, BST | vigilar el canal beta | anotado, no ahora: sin uso de beta; `probe-steam.yml` a mano (`nosotros.md` §4.4 C2) | 2026-09-14 |
 | 1 | BST | `fencepost` / comprobación del slot de vtable en runtime | no: hash + resolvedor por nombre (`nosotros.md` §4.4 C5a) | 2026-09-14 |
-| 11 | slsteam-moon | atestación de hooks (`res/runtime-probes.toml`: resuelto, instalado, invocado) | anotado: contador por pieza en `status.json` como candidato (`nosotros.md` §4.4 C5b, §4.1-37) | 2026-09-14 |
+| 11 | slsteam-moon | atestación de hooks (`res/runtime-probes.toml`: resuelto, instalado, invocado) | anotado: contador por pieza en `status.json` como candidato (`nosotros.md` §4.4 C5b, §4.1-36) | 2026-09-14 |
 | 1 | SLSsteam, BST, slsteam-moon | segundo mirror del feed (jsDelivr) | no mientras GitHub raw funcione (`nosotros.md` §4.4 C5c) | 2026-09-14 |
 | 1 | SteamFlipper (retirado) | derivar funciones por cadenas de VProf + `.eh_frame` | anotado: ya existe para GMRC (`gmrc_xref`), medido que no sirve para DepotKey ni LoadPackage (`nosotros.md` §4.4 C4) | 2026-09-14 |
 | 1 | slsteam-moon | catálogo de patrones firmado (Ed25519, solo RVAs) y shim root en el PATH | rechazados 2026-08-18 y 2026-09-01 (feed sin firma deliberado; nada de root) | 2026-10-08 |
@@ -350,7 +350,7 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 1 | plugins SLSsteam | lumalinux como plugin | descartado 2026-09-03: API sin versionado ni contrato de desmontaje, sin `steamwebhelper` (`slssteam-plugins.md` §4.4 P11) | 2026-10-09 |
 | 7 | CloudRedirect | almacén propio de logros, stats y tiempo con blob por cuenta | adoptado como componente: lo usamos tal cual (`nosotros.md` §2.7) | 2026-10-09 |
 | 8 | CloudRedirect | redirección de Steam Cloud | adoptado como componente core de `setup.sh` (`nosotros.md` §2.8); el congelamiento de lotes grandes se mitiga por juego (`cloudredirect.md` §4.4 C4) | 2026-10-09 |
-| 12 | SLSsteam (`dev`, sin publicar) | `stealth`: no enviar a Valve `GamesPlayed`, petición de ticket ni `StoreUserStats2` de apps no suscritas | pendiente: no nos cubre porque nuestros juegos son `isSubscribed` por el package 0; candidato a repuntar sus tres `isSubscribed` como en los logros (`nosotros.md` §4.1-40) | 2026-10-13 |
+| 12 | SLSsteam (`dev`, sin publicar) | `stealth`: no enviar a Valve `GamesPlayed`, petición de ticket ni `StoreUserStats2` de apps no suscritas | pendiente: no nos cubre porque nuestros juegos son `isSubscribed` por el package 0; candidato a repuntar sus tres `isSubscribed` como en los logros (`nosotros.md` §4.1-39) | 2026-10-13 |
 | 1 | SLSsteam (`dev`, sin publicar) | bloquear `crashhandler.so` para que Steam no suba volcados con el módulo cargado | pendiente: si se publica, nuestro guard se queda sin `.dmp` que contar; hay que detectar el crash por otra vía (Steam muerto a los N segundos de arrancar) antes de la release (`slssteam.md` §4.2, `nosotros.md` §4.1-5) | 2026-10-13 |
 
 ### 3.2 Nosotros sí, ellos no
