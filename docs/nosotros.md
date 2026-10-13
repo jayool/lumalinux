@@ -1334,6 +1334,19 @@ lo incoherente, luego lo muerto.
     puesta; el finder sigue ahora la misma regla que `main.cpp` y que el resto de
     `LUMA_NO_*` (`package_zero_finder.cpp:583`). Sin cambio de comportamiento:
     con `=0` el finder ya no arrancaba.
+40. **El `stealth` de SLSsteam `dev` no cubre a nuestros juegos.** Desde
+    `94474f9` (2026-10-12, sin publicar) SLSsteam deja de enviar a Valve, para
+    las apps que `isSubscribed` da como no poseídas, los `ClientGamesPlayed*`,
+    la petición `ClientGetAppOwnershipTicket` y el `StoreUserStats2`
+    (`slssteam.md` §5.3). Con la inyección de package 0, `isSubscribed` es
+    `true` para un juego de LumaDeck (§5.2 F7), así que esas tres señales
+    siguen saliendo para los nuestros: el riesgo de detección no cambia, ni a
+    mejor ni a peor. Candidato: repuntar los tres `call isSubscribed` de
+    `stealth.cpp` al guard `subscribed && !added` de `sls_achievement_unblock`
+    (§2.7), la misma técnica que ya usamos para los logros; antes habría que
+    medir que descartar el ticket de propiedad (los tickets empalmados ya
+    cubren el ticket vacío) y los `GamesPlayed` (el tiempo de juego lo lleva
+    CloudRedirect en local) no rompe nada nuestro. Sin decisión.
 
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de

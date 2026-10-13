@@ -348,6 +348,8 @@ Se rellena cuando la relectura de un programa termina, no antes.
 | 1 | plugins SLSsteam | lumalinux como plugin | descartado 2026-09-03: API sin versionado ni contrato de desmontaje, sin `steamwebhelper` (`slssteam-plugins.md` §4.4 P11) | 2026-10-09 |
 | 7 | CloudRedirect | almacén propio de logros, stats y tiempo con blob por cuenta | adoptado como componente: lo usamos tal cual (`nosotros.md` §2.7) | 2026-10-09 |
 | 8 | CloudRedirect | redirección de Steam Cloud | adoptado como componente core de `setup.sh` (`nosotros.md` §2.8); el congelamiento de lotes grandes se mitiga por juego (`cloudredirect.md` §4.4 C4) | 2026-10-09 |
+| 12 | SLSsteam (`dev`, sin publicar) | `stealth`: no enviar a Valve `GamesPlayed`, petición de ticket ni `StoreUserStats2` de apps no suscritas | pendiente: no nos cubre porque nuestros juegos son `isSubscribed` por el package 0; candidato a repuntar sus tres `isSubscribed` como en los logros (`nosotros.md` §4.1-40) | 2026-10-13 |
+| 1 | SLSsteam (`dev`, sin publicar) | bloquear `crashhandler.so` para que Steam no suba volcados con el módulo cargado | pendiente: si se publica, nuestro guard se queda sin `.dmp` que contar; hay que detectar el crash por otra vía (Steam muerto a los N segundos de arrancar) antes de la release (`slssteam.md` §4.2, `nosotros.md` §4.1-5) | 2026-10-13 |
 
 ### 3.2 Nosotros sí, ellos no
 
