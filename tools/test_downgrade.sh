@@ -45,12 +45,15 @@ url=""; prev=""
 for a in "\$@"; do [[ "\$prev" == "-overridepackageurl" ]] && url="\$a"; prev="\$a"; done
 case "\$*" in *-forcesteamupdate*)
     (
-      sleep 1; "$TMP/fake/steam" 2
+      sleep 1
+      mkdir -p "$STEAM_DIR/logs"; echo "[t] Startup - Steam Client launched with: 'steam' \$*" >> "$STEAM_DIR/logs/bootstrap_log.txt"
+      "$TMP/fake/steam" 2
       if [[ "$1" == ok ]]; then
           curl -fsS -o /dev/null "\${url}steam_client_steamdeck_stable_ubuntu12" && \\
           curl -fsS -o /dev/null "\${url}bins_ubuntu12.zip.vz.bbb_123" && \\
           printf 'NEW CLIENT\\n' > "$STEAM_DIR/ubuntu12_32/steamclient.so" || echo "server check failed" >> "$TMP/calls"
       fi
+      echo "[t] Shutdown" >> "$STEAM_DIR/logs/bootstrap_log.txt"
     ) >/dev/null 2>&1 &
     disown ;;
 esac

@@ -160,17 +160,15 @@ wait_steam_gone() {
     return 0
 }
 
-# Wait up to $1 seconds for a `steam` process to APPEAR. The SteamOS launcher
-# returns before the bootstrapper exists, so right after a launch "no steam
-# process" means "not started yet", not "finished".
-wait_steam_appear() {
-    local deadline=$(( SECONDS + $1 ))
-    until steam_running; do
-        (( SECONDS >= deadline )) && return 1
-        sleep 1
-    done
-    return 0
-}
+# The bootstrapper's own log is the deterministic signal for the relaunch: it
+# writes `Startup - Steam Client launched with: ... -overridepackageurl ...`
+# when it starts and `Shutdown` when it exits (-exitsteam). pgrep alone missed
+# the whole 27-second run on a Deck (2026-10-14), so both are watched.
+BOOT_LOG=""; LOG_MARK=0
+log_mark()         { LOG_MARK="$(wc -l < "$BOOT_LOG" 2>/dev/null || echo 0)"; }
+log_since()        { tail -n "+$((LOG_MARK + 1))" "$BOOT_LOG" 2>/dev/null; }
+bootstrap_seen()   { log_since | grep -q -- '-overridepackageurl'; }
+bootstrap_done()   { log_since | grep -q 'Shutdown'; }
 
 # Stop Steam and WAIT until it is really gone. -shutdown first (clean exit, like
 # the QAM's Restart), SIGTERM if it ignores that, and only then give up. Nothing
@@ -243,6 +241,7 @@ STEAM_DIR="$(resolve_steam_dir)" || die "Steam install dir not found"
 PKG_DIR="${STEAM_DIR}/package"
 STEAM_CFG="${STEAM_DIR}/steam.cfg"
 CLIENT_SO="${STEAM_DIR}/ubuntu12_32/steamclient.so"
+BOOT_LOG="${STEAM_DIR}/logs/bootstrap_log.txt"
 info "Steam dir: $STEAM_DIR"
 if ! { [[ -d "$FLATPAK_STEAM_DIR" ]] && command -v flatpak >/dev/null 2>&1; }; then
     STEAM_REAL="$(resolve_real_steam)" || die "real steam binary not found — Steam left untouched"
@@ -417,6 +416,7 @@ if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
     fi
 fi
 info "Relaunching Steam to install build $TARGET_VERSION from the local server (headless)..."
+log_mark
 if [[ -n "$LD_AUDIT_ARG" ]]; then
     LD_AUDIT="$LD_AUDIT_ARG" steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
@@ -424,17 +424,34 @@ else
     steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
-if ! wait_steam_appear "$STEAM_START_TIMEOUT"; then
-    warn "No Steam process appeared within ${STEAM_START_TIMEOUT}s of the relaunch."
+# Appear: the bootstrapper logged its start, or a steam process exists.
+appeared=0; deadline=$(( SECONDS + STEAM_START_TIMEOUT ))
+while :; do
+    if bootstrap_seen || steam_running; then appeared=1; break; fi
+    (( SECONDS >= deadline )) && break
+    sleep 1
+done
+if [[ "$appeared" -ne 1 ]]; then
+    warn "No bootstrapper appeared within ${STEAM_START_TIMEOUT}s of the relaunch."
     # Fall through to the hash check: if nothing started, nothing changed, and
     # the failure path below undoes the staging.
-elif ! wait_steam_gone "$STEAM_UPDATE_TIMEOUT"; then
-    # Never undo package/ or the pin underneath a bootstrapper that is still
-    # writing: leave everything staged and let the user re-run once it is done
-    # (a client that already matches the target just gets its pin written).
-    warn "Steam is still running ${STEAM_UPDATE_TIMEOUT}s after the update relaunch."
-    warn "Nothing has been undone. Wait for the update window to finish, do NOT start Steam, then re-run this script."
-    exit 2
+else
+    # Done: no steam process, and (when the log saw it start) the log saw it
+    # exit too. Never undo package/ or the pin underneath a bootstrapper that is
+    # still writing: at the timeout leave everything staged and let the user
+    # re-run once it is done (a client already on the target just gets pinned).
+    deadline=$(( SECONDS + STEAM_UPDATE_TIMEOUT )); finished=0
+    while :; do
+        if ! steam_running && { ! bootstrap_seen || bootstrap_done; }; then finished=1; break; fi
+        (( SECONDS >= deadline )) && break
+        sleep 1
+    done
+    if [[ "$finished" -ne 1 ]]; then
+        warn "The bootstrapper is still running ${STEAM_UPDATE_TIMEOUT}s after the relaunch."
+        warn "Nothing has been undone. Wait for the update window to finish, do NOT start Steam, then re-run this script."
+        exit 2
+    fi
+    sleep 1
 fi
 stop_server
 
@@ -459,5 +476,6 @@ fi
 
 rm -rf "$BAK" 2>/dev/null || true
 ok "steamclient.so now matches build $TARGET_VERSION (${AFTER_SHA:0:12}…)."
-ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION. (Steam was not started: -exitsteam.)"
+ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION."
+warn "Steam is NOT running: the bootstrapper exits after installing (-exitsteam). Start it yourself (or let the LumaDeck hand-off return to Game Mode)."
 info "Next: setup.sh re-establishes the wrapper, then start Steam; the QAM offers the update once the stack supports a newer build."
