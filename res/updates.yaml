@@ -41,6 +41,11 @@ SafeModeHashes:
     # DESKTOP stable carries the same label with a different file (237495b4…),
     # so the version number alone never identifies a build; the hash does.
     - bc54101b290f9a5b4a0713c9084494a5f05097826f66a661dbe322c469b764a2
+    # steam_version: 1791918634
+    # caps: shader=ok reconcile=ok gmrc=ok
+    # auto-added by watch-steam.yml 2026-10-14: patterns verified by CI
+    # (Steam client version 1791918634). Live-install test on a Deck still recommended.
+    - 0d01ab4fe889f87314c8416d18a2152b130a93231bb19cd6f0ed2ebd7a7ab90a
   20260611150000:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
