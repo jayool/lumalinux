@@ -23,17 +23,24 @@ setup() {   # setup MODE  -> exports TMP STEAM_DIR and PATH with the stub first
     printf '"ubuntu12"\n{\n\t"version"\t\t"1788291500"\n}\n' > "$TMP/manifest"
     NEW_SHA="$(printf 'NEW CLIENT\n' | sha256sum | cut -d' ' -f1)"
     printf 'SafeModeHashes:\n  1:\n    # steam_version: 1788291500\n    - %s\n' "$NEW_SHA" > "$TMP/updates.yaml"
+    # Like the real launcher: returns at once, while a background process named
+    # `steam` (a copy of sleep, so pgrep -x sees it) plays the bootstrapper and
+    # installs the new client (or not) before it exits.
+    mkdir -p "$TMP/fake"; cp "$(command -v sleep)" "$TMP/fake/steam"
     cat > "$TMP/bin/steam" <<STUB
 #!/usr/bin/env bash
 echo "stub steam \$*" >> "$TMP/calls"
-case "\$*" in *-forcesteamupdate*) [[ "$1" == ok ]] && printf 'NEW CLIENT\n' > "$STEAM_DIR/ubuntu12_32/steamclient.so" ;; esac
+case "\$*" in *-forcesteamupdate*)
+    ( sleep 1; "$TMP/fake/steam" 2; [[ "$1" == ok ]] && printf 'NEW CLIENT\n' > "$STEAM_DIR/ubuntu12_32/steamclient.so" ) >/dev/null 2>&1 &
+    disown ;;
+esac
 exit 0
 STUB
     chmod +x "$TMP/bin/steam"
     export STEAM_DIR_OVERRIDE="$STEAM_DIR" \
            LINUX_MANIFEST_URL="file://$TMP/manifest" DECK_MANIFEST_URL="file://$TMP/manifest" \
            UPDATES_YAML_URL="file://$TMP/updates.yaml" DOWNGRADE_URL="http://mirror.invalid" \
-           STEAM_STOP_TIMEOUT=3 STEAM_UPDATE_TIMEOUT=3 HOME="$TMP/home"
+           STEAM_STOP_TIMEOUT=3 STEAM_START_TIMEOUT=5 STEAM_UPDATE_TIMEOUT=15 HOME="$TMP/home"
     mkdir -p "$HOME"
     PATH="$TMP/bin:$PATH"
 }
@@ -79,5 +86,19 @@ bash "$SCRIPT" > "$TMP/out" 2>&1; rc=$?
 [[ $rc -eq 1 ]] || fail "nobinary: exit $rc"
 [[ "$(cat "$STEAM_DIR/steam.cfg")" == "keep=me" ]] || fail "nobinary: steam.cfg touched"
 [[ -f "$STEAM_DIR/package/bins_ubuntu12.zip.deadbeef" ]] || fail "nobinary: package/ touched"
+echo "   pass"
+echo "== scenario: still running at timeout =="
+setup ok
+cat > "$TMP/bin/steam" <<STUB
+#!/usr/bin/env bash
+case "\$*" in *-forcesteamupdate*) ( "$TMP/fake/steam" 30 ) >/dev/null 2>&1 & disown ;; esac
+exit 0
+STUB
+STEAM_UPDATE_TIMEOUT=3 bash "$SCRIPT" > "$TMP/out" 2>&1; rc=$?
+pkill -f "$TMP/fake/steam" 2>/dev/null
+[[ $rc -eq 2 ]] || { cat "$TMP/out"; fail "timeout: exit $rc (expected 2)"; }
+grep -q 'BootStrapperInhibitAll=enable' "$STEAM_DIR/steam.cfg" || fail "timeout: pin was undone under a live bootstrapper"
+grep -q 1788291500 "$STEAM_DIR/package/steam_client_ubuntu12.manifest" || fail "timeout: staged manifest was undone"
+[[ -d "$STEAM_DIR/package.lumalinux.bak" ]] || fail "timeout: backup removed too early"
 echo "   pass"
 echo "all downgrade.sh scenarios pass"

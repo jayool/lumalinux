@@ -40,7 +40,12 @@
 #
 # Env overrides (all optional): DOWNGRADE_URL DECK_MANIFEST_URL LINUX_MANIFEST_URL
 #   UPDATES_YAML_URL EXPECTED_SHA256 STEAM_DIR_OVERRIDE STEAM_STOP_TIMEOUT
-#   STEAM_UPDATE_TIMEOUT
+#   STEAM_START_TIMEOUT STEAM_UPDATE_TIMEOUT
+#
+# Exit codes: 0 done (pinned on the target), 1 failed and undone (Steam left as
+# it was), 2 undecided (the bootstrapper was still running at the timeout;
+# nothing was undone — wait for it, then re-run: a client already on the target
+# is just pinned).
 
 set -uo pipefail
 
@@ -56,6 +61,7 @@ UPDATES_YAML_URL="${UPDATES_YAML_URL:-https://raw.githubusercontent.com/jayool/l
 # Seconds to wait for Steam to exit after -shutdown (then SIGTERM, then give up),
 # and for the headless update relaunch to finish (a client download).
 STEAM_STOP_TIMEOUT="${STEAM_STOP_TIMEOUT:-60}"
+STEAM_START_TIMEOUT="${STEAM_START_TIMEOUT:-60}"
 STEAM_UPDATE_TIMEOUT="${STEAM_UPDATE_TIMEOUT:-900}"
 
 SLS_DIR="${HOME}/.local/share/SLSsteam"
@@ -136,6 +142,18 @@ steam_running() { pgrep -x -u "$(id -u)" steam >/dev/null 2>&1; }
 wait_steam_gone() {
     local deadline=$(( SECONDS + $1 ))
     while steam_running; do
+        (( SECONDS >= deadline )) && return 1
+        sleep 1
+    done
+    return 0
+}
+
+# Wait up to $1 seconds for a `steam` process to APPEAR. The SteamOS launcher
+# (steam-jupiter -> steam.sh) returns before the bootstrapper exists, so right
+# after a launch "no steam process" means "not started yet", not "finished".
+wait_steam_appear() {
+    local deadline=$(( SECONDS + $1 ))
+    until steam_running; do
         (( SECONDS >= deadline )) && return 1
         sleep 1
     done
@@ -314,11 +332,13 @@ cp -f "$TMP_MANIFEST" "$PKG_DIR/$MANIFEST_NAME" \
 info "Writing Steam-update pin (steam.cfg)..."
 write_pin || { rollback_pkg; die "could not write pin at $STEAM_CFG — Steam package restored, NOT pinned"; }
 
-# 6. Relaunch Steam headless, in the FOREGROUND, so its bootstrapper pulls the
-#    target packages from the mirror and exits (-exitsteam). SLSsteam-audited
-#    when present (headcrab's export_sls); vanilla otherwise. Its exit status is
-#    not trusted — step 7 checks the result — but we do wait for the process
-#    tree to be gone, since steam.sh can return before the client does.
+# 6. Relaunch Steam headless so its bootstrapper pulls the target packages from
+#    the mirror and exits (-exitsteam). SLSsteam-audited when present (headcrab's
+#    export_sls); vanilla otherwise. The launcher RETURNS AT ONCE (measured on a
+#    Deck, 2026-10-14: steam-jupiter/steam.sh come back before the bootstrapper
+#    is even a process), so its exit status means nothing and "no steam process"
+#    right after it means "not started yet". Wait for the bootstrapper to appear,
+#    then to be gone; only then is steamclient.so final.
 LD_AUDIT_ARG=""
 if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
     if [[ -s "$SLS_DIR/library-inject.so" ]]; then
@@ -336,8 +356,17 @@ else
     steam_cmd -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
-if ! wait_steam_gone "$STEAM_UPDATE_TIMEOUT"; then
-    warn "Steam is still running ${STEAM_UPDATE_TIMEOUT}s after the update relaunch — checking the result anyway."
+if ! wait_steam_appear "$STEAM_START_TIMEOUT"; then
+    warn "No Steam process appeared within ${STEAM_START_TIMEOUT}s of the relaunch."
+    # Fall through to the hash check: if nothing started, nothing changed, and
+    # the failure path below undoes the staging.
+elif ! wait_steam_gone "$STEAM_UPDATE_TIMEOUT"; then
+    # Never undo package/ or the pin underneath a bootstrapper that is still
+    # writing: leave everything staged and let the user re-run once it is done
+    # (a client that already matches the target just gets its pin written).
+    warn "Steam is still running ${STEAM_UPDATE_TIMEOUT}s after the update relaunch."
+    warn "Nothing has been undone. Wait for the update window to finish, do NOT start Steam, then re-run this script."
+    exit 2
 fi
 
 # 7. Verify by the ONLY thing that matters: the client binary on disk. Against the
