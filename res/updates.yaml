@@ -40,6 +40,11 @@ SafeModeHashes:
     # on 2026-09-05 without changing steamclient.so (watch-steam run 75). The
     # DESKTOP stable carries the same label with a different file (237495b4…),
     # so the version number alone never identifies a build; the hash does.
+    # Both labels are annotated on purpose: headcrab's pinned manifest
+    # (Deadboy666/SteamTracking@headcrab) still says 1788291500, so a Deck
+    # downgraded by downgrade.sh reports that number, and both the script's
+    # hash check and LumaDeck's build gate look the build up by its label.
+    # steam_version: 1788291500
     - bc54101b290f9a5b4a0713c9084494a5f05097826f66a661dbe322c469b764a2
     # steam_version: 1791918634
     # caps: shader=ok reconcile=ok gmrc=ok

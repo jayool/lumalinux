@@ -75,7 +75,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
 | `setup.sh` | 1232 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`), wrapper, guard anti crash-loop, cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, app de CloudRedirect, `--uninstall` | 1, 2, 6, 8, 11, 12 |
-| `downgrade.sh` | — | escape hatch "Fix in Desktop": baja el cliente de Steam al build fijado por headcrab desde su espejo y escribe el pin `steam.cfg` firmado (§2.1 "Cómo se recupera") | 1, 11 |
+| `downgrade.sh` | 300 | escape hatch "Fix in Desktop": para Steam y espera, pone el manifest fijado por headcrab, escribe el pin `steam.cfg` firmado, relanza contra el espejo y verifica por hash de `steamclient.so` (§2.1 "Cómo se recupera") | 1, 11 |
 | `install.sh` | — | instalador **legacy** de la era headcrab (parchea el `steam.sh` de headcrab); sin uso desde el modelo wrapper | — |
 | `tools/steamidra_lite.py` | 1462 | "añadir juego": manifests → depotcache, `AdditionalApps`/`AppTokens`/`ManifestIds`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`; `--pin-installed`/`--unpin`/`--set-pin`/`--pin-status` | 2, 3, 4, 5, 9 |
 | `tools/vdf_inject_keys.py` | 240 | vuelca `keys.txt` a `config.vdf > depots` (parser VDF propio) | 4 |
@@ -292,22 +292,31 @@ SafeMode de la **release** de lumalinux (`releases/latest/download/version.txt`)
   `curl downgrade.sh | bash` + `setup.sh` y vuelve a Game Mode
   (`desktop_handoff.py:83-111`); el pin `steam.cfg` que deja el downgrade se
   levanta al acabar un `install_via_setup` bueno si el objetivo es más nuevo y
-  lumalinux lo soporta (`steam_freeze.py:148-189`). **El downgrade nunca se
-  ha ejercitado en vivo** (§5 F1).
-- `downgrade.sh`, en orden: baja y verifica el manifest del cliente fijado por
-  headcrab (`DECK_MANIFEST_URL` / `LINUX_MANIFEST_URL`, de
-  `Deadboy666/SteamTracking@headcrab`) antes de tocar nada; respalda
-  `package/` y deja el manifest; relanza Steam sin interfaz contra el espejo
-  (`-forcesteamupdate -forcepackagedownload -overridepackageurl $DOWNGRADE_URL
-  -exitsteam`, por defecto `headcrab.bifrosthub.ru/client-stable`), con SLSsteam
-  si está y vanilla si no; comprueba que llegaron paquetes, y **solo entonces**
-  escribe el pin `steam.cfg` (`BootStrapperInhibitAll`) con la firma
-  `# lumalinux`. Si no llegó nada, restaura `package/` y no pinea: Steam sigue
-  arrancando (`downgrade.sh:30-46,155-235`). LumaDeck distingue el pin propio
-  (firmado, se levanta con el gate de arriba) de uno ajeno (sin firma, se
-  levanta en el acto, `steam_freeze.py:65,148-170`). Se ofrece cuando algún
-  componente está `not_supported`, salvo si el único es lumalinux y aún no
-  soporta el build fijado (`SystemStatus.tsx:99-121`).
+  lumalinux lo soporta (`steam_freeze.py:148-189`). El downgrade se ejercitó
+  en vivo por primera vez el 2026-10-14 y falló sin decirlo; el script se
+  reescribió ese día (§5 F1).
+- `downgrade.sh`, en el orden de headcrab: baja y verifica el manifest del
+  cliente fijado por headcrab (`DECK_MANIFEST_URL` / `LINUX_MANIFEST_URL`, de
+  `Deadboy666/SteamTracking@headcrab`) antes de tocar nada y lee su `version`;
+  busca en `updates.yaml` el hash de `steamclient.so` de ese build
+  (`hash_for_build`, por la anotación `# steam_version`); para Steam con
+  `-shutdown` y **espera a que el proceso desaparezca** (luego SIGTERM, luego
+  aborta sin tocar nada); respalda `package/`, deja el manifest, **escribe el
+  pin** `steam.cfg` (`BootStrapperInhibitAll`, firma `# lumalinux`), y relanza
+  Steam sin interfaz contra el espejo (`-forcesteamupdate -forcepackagedownload
+  -overridepackageurl $DOWNGRADE_URL -exitsteam`, por defecto
+  `headcrab.bifrosthub.ru/client-stable`), con SLSsteam si está, esperando a
+  que salga. Verifica por el **hash del `steamclient.so`** en disco (igual al
+  esperado; o distinto del anterior si el build no está anotado); si no cuadra,
+  restaura `steam.cfg` y `package/` y aborta: Steam arranca y se actualiza
+  solo. Si el `.so` ya era el del objetivo, solo escribe el pin. LumaDeck
+  distingue el pin propio (firmado, se levanta con el gate de arriba) de uno
+  ajeno (sin firma, se levanta en el acto, `steam_freeze.py:65,148-170`), y
+  cuando dos etiquetas de build comparten hash en `updates.yaml` (1788291500 y
+  1788652215) trata el pin como alcanzado (`headcrab_compat.builds_share_binary`)
+  para no levantarlo en el acto. Se ofrece cuando algún componente está
+  `not_supported`, salvo si el único es lumalinux y aún no soporta el build
+  fijado (`SystemStatus.tsx:99-121`).
 - Logs: `~/.cache/lumalinux/lumalinux.log` con líneas legibles por máquina
   (`Hook install: name=… method=… outcome=installed|miss|hook_install_failed`,
   `Finder resolve: … outcome=resolved|miss`), `~/.local/state/lumalinux/guard.log`,
@@ -1505,7 +1514,7 @@ cada prueba hecha con fecha, por función, con su resultado; la columna
   (pin movido por el pase de 30 min) sobre la Deck; solo la de 2026-09-13
   (pin, §5.2 F5).
 - El pin sobre un juego poseído: si congela el base al salir un build nuevo.
-- `downgrade.sh` en vivo.
+- `downgrade.sh` en vivo **con la versión reescrita** (la anterior se midió el 2026-10-14 y falló, §5.2 F1).
 - La causa raíz de LumaDeck #31 (CachyOS: hooks en el primer arranque, nada
   en el segundo).
 - Si el `OnlineFix.ini` automatiza netsock (Valheim).
@@ -1559,6 +1568,8 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-09-19 | CI (`probe-steam.yml`) | Una beta que recompila el cliente | Invisible para el monitor diario, que solo mira `steamdeck_stable` | maintenance §A.2 |
 | 2026-10-01 | CI (`probe-steam.yml`, `readelf -n`) | Canales de Steam contra nuestros patrones | Deck stable y escritorio stable dicen `1788652215` y sirven binarios distintos (`bc54101b`/`a577b836` frente a `237495b4`/`29734b56`); Deck beta y escritorio beta `1790721607` comparten `a3661f5b`. Los cuatro limpios; la beta cae en el layout `beta-0xf90`. Solo existen `steamdeck_stable` y `steamdeck_publicbeta`; `main`, `preview` y `beta` dan 404 | maintenance §A.2 |
 | 2026-10-07 22:16 | Deck | Update de CloudRedirect desde LumaDeck (`setup.sh`) | `.so` y última línea de `cr_debug.log` en `2.6.6+3434d9d`, `DoInit: SUCCESS`, `cloud_redirect.so` mapeado seis veces en `steam`. lumalinux v0.22.1 decía "cloud_redirect.so not loaded" porque el símbolo ya va oculto; texto corregido en v0.22.2 | lumalinux `e92b763` |
+| 2026-10-14 08:17-08:22 | Deck (reset de fábrica, cliente `1791918634`) | Quick Install desde el QAM | Build fuera del pin de headcrab (`1788652215`) → hand-off a Desktop; `setup.sh` hace tres `daemon-reload` (journal 08:20:49-50), vuelta a Game Mode por `steam-launcher.service` con `ExecStart` = nuestro launcher. lumalinux v0.22.2 carga `3/3 hooks` y el finder `resolved`, **todo por `method=rva`** (primer disparo del feed en producción) con el layout `0xf90/0xfa4` del cliente recompilado. SLSsteam `20261001163836` aborta: `vftableinfo.cpp:46 GetAvailableCompatToolsForApp not found` → `Failed to parse VFTables!`; LumaDeck lo daba por `healthy` porque solo reconocía dos de sus cinco aborts (corregido, LumaDeck `f5fa930`). El ruido `wrong ELF class: ELFCLASS32; ignored` del journal son los hijos de 64 bits del launcher | LumaDeck `f5fa930` |
+| 2026-10-14 08:43-08:52 | Deck | **Primera ejecución en vivo de `downgrade.sh`** (manual, Desktop) | Dijo "Download verified" y escribió el pin, pero `steamclient.so` siguió siendo `0d01ab4f` (`1791918634`) y `package/` tenía solo el manifest y un `beta`. Causas: (1) `killall; sleep 2` relanzaba con Steam aún vivo: el bootstrapper nuevo le pasó los flags a la instancia moribunda y salió; esta se relanzó sola a las 08:44:33 **sin** `-forcesteamupdate`/`-overridepackageurl` (`bootstrap_log.txt`) y leyó el pin ("Suppressing Steam update"); (2) la verificación "hay algo más que el manifest" la satisface el `package/beta` que `steam-jupiter` escribe en cada arranque; (3) el manifest de headcrab dice `1788291500` y `headcrab.sh` `1788652215`: `maybe_lift_freeze` habría levantado el pin en el siguiente `setup.sh`. Con pin + manifest viejo + `package/` vacío Steam arrancó igual con el cliente extraído (el miedo que justificaba pin-después era infundado). Recuperación: `rm steam.cfg` + arranque desde Desktop → "Instalando actualización… completa" → `1791918634`, `package/` con 32 ficheros. El espejo sí sirve (`HEAD` 200 a `tenfoot_images_all.zip.86419c7a…`). Reescrito ese día: orden de headcrab (pin antes), espera real del pid, verificación por hash, undo en fallo | este commit |
 | 2026-10-08 | build local | `liblumalinux.so` con el `cr_stats_fix` de v0.22.2 | Compila; `cr_stats_fix_selftest/run.sh` 6/6; las únicas cadenas de versión del binario son `lumalinux v0.22.1 preinit` y `lumalinux/v0.22.1` | `tools/cr_stats_fix_selftest/` |
 | 2026-06-11 → 09-14 | CI + historial git | Cuántas veces ha roto Valve un patrón nuestro | **Ninguna rederivación** en 11 builds: un solo grupo SafeMode (`20260611150000`); las huellas de DepotKey, BuildDep, GMRC y LoadPackage son byte a byte las de mayo. Cron desde el 07-01: 75 runs programados, 75 verdes, 5 hash bumps automáticos (07-22, 07-23, 07-28, 08-04, 09-02), 0 "moved". Única máscara preventiva: ShaderDepot el 06-24 (disp32 de global), el día de su creación | en la misma ventana SLSsteam tocó firmas 4 veces y moon 5 (`slssteam.md`, `slsteam-moon.md` §5.2 F1): enganchamos prólogos que Valve no reordena, ellos despachadores IPC |
 | 2026-09-14 | CI (`watch-steam-selftest.yml`, build `bc54101b`) | Nueve runs del autotest sobre el binario estable real | #4 (shaderdepot, exit 2) verde en 15 min: Ghidra rederiva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve ("type_info not referenced by any function") y no bloquea. #5 rojo: corromper BuildDep+GMRC (diagnósticos) daba CLEAN y nunca llegaba a Ghidra (`dda90dc`). #6 rojo: `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y un DepotKey movido iba a issue (`63a5a0a`). #7 rojo en 20 min: Ghidra no resuelve el `CALL [reg+0x18]` y `derive_patterns.py` validaba una copia rancia. #8 rojo: `KeyError` en un `print` de la herramienta nueva. **#9 verde en 23 s**: exit 3 → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → aplicar → revalidar con RTTI y nombre de acuerdo, sin Ghidra | hasta el #9 el camino del único crítico no era autónomo; la Deck no se habría roto (rescate RTTI desde 07-06) |
