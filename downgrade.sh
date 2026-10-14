@@ -1,65 +1,76 @@
 #!/usr/bin/env bash
 # lumalinux — Steam client downgrade + pin (break-recovery escape-hatch).
 #
-# A port of headcrab's downgrade (prepdowngrade + overideupdate) and NOTHING
-# else. It aligns the Steam CLIENT down to a supported build and pins it there,
-# so the injection stack (whose hooks broke under a Steam update) hooks again. It
-# does NOT run headcrab, does NOT replace steam.sh, and does NOT reinstall
+# Aligns the Steam CLIENT down to a supported build and pins it there, so the
+# injection stack (whose hooks broke under a Steam update) hooks again. It does
+# NOT run headcrab, does NOT replace steam.sh, and does NOT reinstall
 # SLSsteam/CloudRedirect/netsock/lumalinux — that is setup.sh's job.
 #
-# MECHANISM — the same three moves headcrab makes, in headcrab's order:
-#   1. stage the target client manifest (deck/linux) in $STEAM/package
-#   2. write the steam.cfg pin (BootStrapperInhibitAll / BootStrapperForceSelfUpdate)
-#   3. relaunch Steam headless so its bootstrapper pulls the target packages from
-#      headcrab's mirror:
+# MECHANISM — what headcrab's dgsc/dlm era did, measured on a Deck on 2026-10-14
+# (docs/nosotros.md §5.2 F1), self-contained:
+#   1. fetch the target client manifest (Deadboy666/SteamTracking@headcrab) and
+#      download every package it lists from Valve's CDN (which keeps old client
+#      packages online) into a temp dir — BEFORE touching Steam, so a network
+#      failure aborts with Steam intact
+#   2. stop Steam and wait until it is really gone
+#   3. stage the manifest in $STEAM/package, write the steam.cfg pin
+#      (BootStrapperInhibitAll / BootStrapperForceSelfUpdate)
+#   4. serve the temp dir on http://127.0.0.1:1666/ (python3 http.server) and
+#      relaunch Steam headless against it:
 #        steam -forcesteamupdate -forcepackagedownload \
-#          -overridepackageurl https://headcrab.bifrosthub.ru/client-stable -exitsteam
+#          -overridepackageurl http://127.0.0.1:1666/ -exitsteam
+#   5. verify by the SHA-256 of ubuntu12_32/steamclient.so; undo on failure
 #
-# What headcrab does NOT do, and this script does (both learnt the hard way on a
-# Deck on 2026-10-14, the first live run — see docs/nosotros.md §5.2 F1):
-#   * WAIT for Steam to be gone before relaunching. headcrab does `killall` and
-#     moves on; a bootstrapper started while the old client is still shutting
-#     down hands its arguments to that dying instance and exits, the dying
-#     instance restarts itself WITHOUT our flags, nothing is downloaded, and
-#     nobody notices. headcrab only gets away with it because its network
-#     downloads between the kill and the relaunch usually give Steam time to die.
-#   * VERIFY the result by the SHA-256 of ubuntu12_32/steamclient.so, against the
-#     hash lumalinux's res/updates.yaml records for the target build. The earlier
-#     "package/ holds more than the manifest" check was satisfied by the `beta`
-#     file steam-jupiter writes on EVERY launch, so it could never fail.
-#   * UNDO on failure: strip the pin again and restore package/, so Steam
-#     self-heals to the current client on its next launch instead of sitting
-#     pinned on a build it never downloaded.
+# WHY A LOCAL SERVER. With -forcesteamupdate the bootstrapper does NOT use the
+# manifest staged in package/: it downloads the branch manifest
+# (steam_client_<beta>_ubuntu12) fresh from its first download host, and if that
+# host 404s it falls back to Valve's CDN, which serves the CURRENT manifest — so
+# a mirror that only carries packages (headcrab.bifrosthub.ru does) "downgrades"
+# straight back to the build you are leaving. The only host that can answer with
+# the OLD manifest is one we run ourselves. That is what headcrab's dgsc did, and
+# what the current headcrab.sh no longer does (it points the bootstrapper at
+# localhost:1666 with dgsc commented out, so it does not downgrade either).
 #
-# Writing the pin BEFORE the download (headcrab's order) is safe: package/ is only
-# the bootstrapper's download cache, the extracted client keeps running with the
-# pin in place, and the pin is what keeps the bootstrapper from "updating" the
-# staged manifest back to the current build when it is relaunched.
+# Other lessons from the live runs, all enforced here:
+#   * WAIT for Steam to be gone before relaunching: a bootstrapper started while
+#     the old client is still shutting down hands its flags to the dying
+#     instance and exits; that instance restarts itself without them.
+#   * The SteamOS launcher (steam-jupiter -> steam.sh) RETURNS BEFORE the
+#     bootstrapper exists: wait for a `steam` process to appear, then to be gone.
+#   * VERIFY by the client binary's hash, never by what is in package/:
+#     steam-jupiter drops a `beta` file there on every launch.
+#   * Pin BEFORE the relaunch (headcrab's order) is safe: package/ is only the
+#     download cache and the extracted client keeps running under the pin.
 #
 # Must run in Desktop (Steam is stopped and relaunched headless). No root.
 #
-# Env overrides (all optional): DOWNGRADE_URL DECK_MANIFEST_URL LINUX_MANIFEST_URL
-#   UPDATES_YAML_URL EXPECTED_SHA256 STEAM_DIR_OVERRIDE STEAM_STOP_TIMEOUT
-#   STEAM_START_TIMEOUT STEAM_UPDATE_TIMEOUT
+# Env overrides (all optional): DECK_MANIFEST_URL LINUX_MANIFEST_URL PACKAGE_CDN
+#   PACKAGE_CDN_FALLBACK UPDATES_YAML_URL EXPECTED_SHA256 STEAM_DIR_OVERRIDE
+#   LOCAL_PORT STEAM_STOP_TIMEOUT STEAM_START_TIMEOUT STEAM_UPDATE_TIMEOUT
 #
-# Exit codes: 0 done (pinned on the target), 1 failed and undone (Steam left as
-# it was), 2 undecided (the bootstrapper was still running at the timeout;
-# nothing was undone — wait for it, then re-run: a client already on the target
-# is just pinned).
+# Exit codes: 0 done (pinned on the target; Steam is NOT started — -exitsteam),
+# 1 failed and undone (Steam left as it was), 2 undecided (the bootstrapper was
+# still running at the timeout; nothing was undone — wait for it, then re-run:
+# a client already on the target is just pinned).
 
 set -uo pipefail
 
-# ── config (mirror + manifests match headcrab's, overridable) ────────────────
-# The package mirror Steam is pointed at (headcrab's Headcrab_Downgrade_URL, the
-# /client-stable tier). Verified serving packages on 2026-10-14.
-DOWNGRADE_URL="${DOWNGRADE_URL:-https://headcrab.bifrosthub.ru/client-stable}"
+# ── config ───────────────────────────────────────────────────────────────────
 DECK_MANIFEST_URL="${DECK_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12}"
 LINUX_MANIFEST_URL="${LINUX_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12}"
+# Where the packages the manifest lists are fetched from. Valve's own CDN keeps
+# old client packages online (verified 2026-10-14 for the 1788291500 set); the
+# akamai host is the same CDN. headcrab's package mirror is the last resort.
+PACKAGE_CDN="${PACKAGE_CDN:-https://client-update.fastly.steamstatic.com}"
+PACKAGE_CDN_FALLBACK="${PACKAGE_CDN_FALLBACK:-https://client-update.akamai.steamstatic.com https://headcrab.bifrosthub.ru/client-stable}"
 # lumalinux's whitelist: its `# steam_version: <build>` annotations name the
 # steamclient.so hash of each build, which is how the result is verified.
 UPDATES_YAML_URL="${UPDATES_YAML_URL:-https://raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml}"
+# Port of the local package server the bootstrapper is pointed at (headcrab's
+# dgsc used 1666 too).
+LOCAL_PORT="${LOCAL_PORT:-1666}"
 # Seconds to wait for Steam to exit after -shutdown (then SIGTERM, then give up),
-# and for the headless update relaunch to finish (a client download).
+# for the bootstrapper to appear after the relaunch, and for it to finish.
 STEAM_STOP_TIMEOUT="${STEAM_STOP_TIMEOUT:-60}"
 STEAM_START_TIMEOUT="${STEAM_START_TIMEOUT:-60}"
 STEAM_UPDATE_TIMEOUT="${STEAM_UPDATE_TIMEOUT:-900}"
@@ -100,7 +111,8 @@ is_steamos() {
 # ($SLS_DIR/path/steam) — the downgrade relaunch must not go through the wrapper
 # (its guard would override our explicit LD_AUDIT). Mirrors the wrapper's own
 # real-steam resolution. On SteamOS this is /usr/bin/steam -> steam-jupiter, which
-# forwards its arguments to steam.sh, which forwards them to the bootstrapper.
+# forwards its arguments to steam.sh, which forwards them to the bootstrapper
+# (measured: the flags arrive).
 resolve_real_steam() {
     local self="$SLS_DIR/path/steam" d c IFS=:
     for d in $PATH; do
@@ -149,8 +161,8 @@ wait_steam_gone() {
 }
 
 # Wait up to $1 seconds for a `steam` process to APPEAR. The SteamOS launcher
-# (steam-jupiter -> steam.sh) returns before the bootstrapper exists, so right
-# after a launch "no steam process" means "not started yet", not "finished".
+# returns before the bootstrapper exists, so right after a launch "no steam
+# process" means "not started yet", not "finished".
 wait_steam_appear() {
     local deadline=$(( SECONDS + $1 ))
     until steam_running; do
@@ -163,7 +175,7 @@ wait_steam_appear() {
 # Stop Steam and WAIT until it is really gone. -shutdown first (clean exit, like
 # the QAM's Restart), SIGTERM if it ignores that, and only then give up. Nothing
 # below may run while an old client is alive: the relaunch would hand its
-# arguments to it and be lost (the 2026-10-14 failure).
+# arguments to it and be lost.
 stop_steam() {
     if ! steam_running; then info "Steam is not running."; return 0; fi
     info "Stopping Steam (clean shutdown)..."
@@ -178,6 +190,13 @@ stop_steam() {
 # "version" line of a Steam client manifest (KeyValues: "version"  "1788291500").
 manifest_version() {
     sed -n 's/^[[:space:]]*"version"[[:space:]]*"\([0-9]\+\)".*/\1/p' "$1" 2>/dev/null | head -n1
+}
+
+# The package files a client manifest makes the bootstrapper download: every
+# "zipvz" (the compressed form it prefers) and every "file" (the plain zip, used
+# when an entry has no vz). Both are plain KeyValues string pairs.
+manifest_package_files() {
+    grep -oE '"(zipvz|file)"[[:space:]]+"[^"]+"' "$1" 2>/dev/null | cut -d'"' -f4 | awk '!seen[$0]++'
 }
 
 sha256_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -202,6 +221,23 @@ hash_for_build() {  # hash_for_build FILE BUILD
     ' "$1" 2>/dev/null
 }
 
+# Local package server (headcrab's dgsc, minus the binary): python3's http.server
+# on the loopback, serving SERVE_DIR. Stopped by the EXIT trap.
+SERVER_PID=""
+start_server() {
+    command -v python3 >/dev/null 2>&1 || return 1
+    python3 -m http.server "$LOCAL_PORT" --bind 127.0.0.1 --directory "$SERVE_DIR" >/dev/null 2>&1 &
+    SERVER_PID=$!
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if curl -fsS -o /dev/null "http://127.0.0.1:${LOCAL_PORT}/${MANIFEST_HOST_NAME}" 2>/dev/null; then return 0; fi
+        kill -0 "$SERVER_PID" 2>/dev/null || return 1
+        sleep 0.5
+    done
+    return 1
+}
+stop_server() { [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null; SERVER_PID=""; }
+
 # ── main ─────────────────────────────────────────────────────────────────────
 STEAM_DIR="$(resolve_steam_dir)" || die "Steam install dir not found"
 PKG_DIR="${STEAM_DIR}/package"
@@ -212,9 +248,14 @@ if ! { [[ -d "$FLATPAK_STEAM_DIR" ]] && command -v flatpak >/dev/null 2>&1; }; t
     STEAM_REAL="$(resolve_real_steam)" || die "real steam binary not found — Steam left untouched"
     info "Steam launcher: $STEAM_REAL"
 fi
+command -v python3 >/dev/null 2>&1 || die "python3 is required (for the local package server) — Steam left untouched"
 
-# Pick the manifest for this platform (Deck vs generic Linux). Both saved with the
-# .manifest extension — the name Steam reads.
+# Pick the manifest for this platform (Deck vs generic Linux). The bootstrapper
+# asks its download host for `steam_client_<branch>_ubuntu12` where <branch> is
+# the package/beta file (steam-jupiter writes `steamdeck_stable` there), or
+# `steam_client_ubuntu12` with no branch — that is the name the local server
+# must answer to. package/ keeps the staged copy under the .manifest name Steam
+# reads for its installed version.
 if is_steamos; then
     info "SteamOS/Deck detected — deck client manifest."
     MANIFEST_URL="$DECK_MANIFEST_URL"; MANIFEST_NAME="steam_client_steamdeck_stable_ubuntu12.manifest"
@@ -222,12 +263,14 @@ else
     info "Generic Linux — linux client manifest."
     MANIFEST_URL="$LINUX_MANIFEST_URL"; MANIFEST_NAME="steam_client_ubuntu12.manifest"
 fi
+BRANCH="$(tr -d '[:space:]' < "$PKG_DIR/beta" 2>/dev/null || true)"
+if [[ -n "$BRANCH" ]]; then MANIFEST_HOST_NAME="steam_client_${BRANCH}_ubuntu12"; else MANIFEST_HOST_NAME="steam_client_ubuntu12"; fi
 
 # 1. Fetch the target manifest to a temp and verify it BEFORE touching anything,
 #    so a network failure aborts with Steam completely intact.
 info "Downloading target client manifest..."
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
+trap 'stop_server; rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
 TMP_MANIFEST="$TMP_DIR/manifest"
 fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
 [[ -s "$TMP_MANIFEST" ]] || die "manifest is empty — Steam left untouched"
@@ -265,7 +308,32 @@ else
     ALREADY_THERE=0
 fi
 
-# 3. Steam must be OFF, and verifiably so, before package/ or steam.cfg change.
+# 3. Download every package the manifest lists into the dir the local server
+#    will serve, still BEFORE touching Steam. A failed download aborts here with
+#    nothing changed. (This is headcrab's dlm step, from the same CDN.)
+SERVE_DIR="$TMP_DIR/serve"
+mkdir -p "$SERVE_DIR"
+cp -f "$TMP_MANIFEST" "$SERVE_DIR/$MANIFEST_HOST_NAME"
+if [[ "$ALREADY_THERE" == 0 ]]; then
+    mapfile -t PKG_FILES < <(manifest_package_files "$TMP_MANIFEST")
+    [[ ${#PKG_FILES[@]} -gt 0 ]] || die "manifest lists no package files — Steam left untouched"
+    info "Downloading ${#PKG_FILES[@]} client packages for build $TARGET_VERSION (a few hundred MB)..."
+    n=0
+    for f in "${PKG_FILES[@]}"; do
+        n=$((n + 1))
+        got=0
+        for base in "$PACKAGE_CDN" $PACKAGE_CDN_FALLBACK; do
+            if fetch "${base%/}/$f" "$SERVE_DIR/$f" 2>/dev/null && [[ -s "$SERVE_DIR/$f" ]]; then got=1; break; fi
+            rm -f "$SERVE_DIR/$f" 2>/dev/null
+        done
+        [[ "$got" == 1 ]] || die "could not download $f from $PACKAGE_CDN (nor the fallbacks) — Steam left untouched"
+        printf '\r    %d/%d  %s' "$n" "${#PKG_FILES[@]}" "$f"
+    done
+    printf '\n'
+    ok "All packages downloaded."
+fi
+
+# 4. Steam must be OFF, and verifiably so, before package/ or steam.cfg change.
 stop_steam || die "Could not stop Steam — nothing changed. Close it and retry."
 
 # Roll package/ back to its exact pre-downgrade state. Used on any failure below.
@@ -311,8 +379,8 @@ if [[ "$ALREADY_THERE" == 1 ]]; then
     exit 0
 fi
 
-# 4. Back up package/ (do NOT destroy it) and stage the target manifest in a fresh
-#    one. The manifest tells the bootstrapper which build to pull.
+# 5. Back up package/ (do NOT destroy it) and stage the target manifest in a fresh
+#    one, keeping the branch file so the bootstrapper asks for the same branch.
 info "Backing up package dir..."
 BAK="${PKG_DIR}.lumalinux.bak"
 had_pkg=0
@@ -324,21 +392,22 @@ fi
 mkdir -p "$PKG_DIR"
 cp -f "$TMP_MANIFEST" "$PKG_DIR/$MANIFEST_NAME" \
     || { rollback_pkg; die "could not place manifest in $PKG_DIR — Steam restored, nothing changed"; }
+[[ -n "$BRANCH" ]] && printf '%s' "$BRANCH" > "$PKG_DIR/beta"
 
-# 5. Pin FIRST (headcrab's order): with the staged manifest in place and the pin
-#    forbidding the bootstrapper's own update check, the relaunch below can only
-#    pull the staged build. (Without the pin it would fetch the current manifest
-#    from Valve and "update" straight back to the client we are leaving.)
+# 6. Pin FIRST (headcrab's order), then the local server, then the relaunch.
 info "Writing Steam-update pin (steam.cfg)..."
 write_pin || { rollback_pkg; die "could not write pin at $STEAM_CFG — Steam package restored, NOT pinned"; }
 
-# 6. Relaunch Steam headless so its bootstrapper pulls the target packages from
-#    the mirror and exits (-exitsteam). SLSsteam-audited when present (headcrab's
-#    export_sls); vanilla otherwise. The launcher RETURNS AT ONCE (measured on a
-#    Deck, 2026-10-14: steam-jupiter/steam.sh come back before the bootstrapper
-#    is even a process), so its exit status means nothing and "no steam process"
-#    right after it means "not started yet". Wait for the bootstrapper to appear,
-#    then to be gone; only then is steamclient.so final.
+info "Serving manifest + packages on http://127.0.0.1:${LOCAL_PORT}/ ..."
+start_server || { restore_cfg; rollback_pkg; die "could not start the local package server on port $LOCAL_PORT (in use?) — steam.cfg and package/ restored, nothing changed"; }
+
+# 7. Relaunch Steam headless against the local server so its bootstrapper
+#    fetches the OLD manifest and the packages, installs them and exits
+#    (-exitsteam: it does NOT start Steam afterwards). SLSsteam-audited when
+#    present (headcrab's export_sls); vanilla otherwise. The launcher returns at
+#    once, so wait for the bootstrapper to appear, then to be gone; only then is
+#    steamclient.so final.
+OVERRIDE_URL="http://127.0.0.1:${LOCAL_PORT}/"
 LD_AUDIT_ARG=""
 if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
     if [[ -s "$SLS_DIR/library-inject.so" ]]; then
@@ -347,14 +416,13 @@ if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
         LD_AUDIT_ARG="$SLS_DIR/SLSsteam.so"
     fi
 fi
-info "Relaunching Steam to apply the downgrade from the mirror (headless, this downloads the client)..."
-info "  mirror: $DOWNGRADE_URL"
+info "Relaunching Steam to install build $TARGET_VERSION from the local server (headless)..."
 if [[ -n "$LD_AUDIT_ARG" ]]; then
     LD_AUDIT="$LD_AUDIT_ARG" steam_cmd -forcesteamupdate -forcepackagedownload \
-        -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
+        -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
 else
     steam_cmd -forcesteamupdate -forcepackagedownload \
-        -overridepackageurl "$DOWNGRADE_URL" -exitsteam >/dev/null 2>&1 || true
+        -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
 if ! wait_steam_appear "$STEAM_START_TIMEOUT"; then
     warn "No Steam process appeared within ${STEAM_START_TIMEOUT}s of the relaunch."
@@ -368,10 +436,10 @@ elif ! wait_steam_gone "$STEAM_UPDATE_TIMEOUT"; then
     warn "Nothing has been undone. Wait for the update window to finish, do NOT start Steam, then re-run this script."
     exit 2
 fi
+stop_server
 
-# 7. Verify by the ONLY thing that matters: the client binary on disk. Against the
-#    whitelist hash when we have one, else against "it changed". package/ is not
-#    evidence (steam-jupiter drops a `beta` file there on every launch).
+# 8. Verify by the ONLY thing that matters: the client binary on disk. Against the
+#    whitelist hash when we have one, else against "it changed".
 AFTER_SHA="$(sha256_of "$CLIENT_SO")"
 verified=0
 if [[ -n "$EXPECTED_SHA" ]]; then
@@ -386,10 +454,10 @@ if [[ "$verified" -ne 1 ]]; then
     # self-updates to the current client on its own.
     restore_cfg
     rollback_pkg
-    die "Downgrade FAILED: steamclient.so is ${AFTER_SHA:0:12}… (expected ${EXPECTED_SHA:-a different file}; was ${BEFORE_SHA:0:12}…). The bootstrapper did not install build $TARGET_VERSION from $DOWNGRADE_URL. steam.cfg and package/ have been RESTORED, so Steam starts and updates normally. Check ${STEAM_DIR}/logs/bootstrap_log.txt and retry."
+    die "Downgrade FAILED: steamclient.so is ${AFTER_SHA:0:12}… (expected ${EXPECTED_SHA:-a different file}; was ${BEFORE_SHA:0:12}…). The bootstrapper did not install build $TARGET_VERSION from the local server. steam.cfg and package/ have been RESTORED, so Steam starts and updates normally. Check ${STEAM_DIR}/logs/bootstrap_log.txt and retry."
 fi
 
 rm -rf "$BAK" 2>/dev/null || true
 ok "steamclient.so now matches build $TARGET_VERSION (${AFTER_SHA:0:12}…)."
-ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION."
-info "Next: setup.sh re-establishes the wrapper; the QAM offers the update once the stack supports a newer build."
+ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION. (Steam was not started: -exitsteam.)"
+info "Next: setup.sh re-establishes the wrapper, then start Steam; the QAM offers the update once the stack supports a newer build."
