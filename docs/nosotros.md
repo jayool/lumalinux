@@ -1428,17 +1428,6 @@ lo incoherente, luego lo muerto.
     (`GameDetail.tsx:1277-1283`). Ruido, no un fallo de datos. Opciones:
     ocultar la fila cuando el juego tiene `.acf`, o borrar el estado al ver la
     instalación. Sin decisión.
-37. **El guard puede correr dos veces por arranque y anularse.** En el
-    codespace el supervisor lanza `lumalinux-steam-launcher` y el
-    `steam-launcher` emulado vuelve a invocar `steam` por el PATH, que es
-    nuestro `path/steam`: dos pasadas en el mismo segundo. La primera cuenta
-    el crash (`fail 1/3`) y toca `last_launch`; la segunda ya no ve `.dmp`
-    posteriores y resetea a 0 (2026-10-15, §5.2 F1). En la Deck debería entrar
-    una sola capa (el PATH no llega al servicio de Game Mode, `setup.sh:30-31`),
-    pero no está comprobado ni en Game Mode ni en Desktop. Si se repite allí:
-    la primera pasada exporta una marca de entorno y las anidadas solo ponen
-    `LD_PRELOAD`/`LD_AUDIT`, sin duplicarlos. Sin decisión.
-
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
 CloudRedirect; sin efecto desde CloudRedirect 2.6.6, que oculta sus símbolos); `target_library_path` se acepta y se ignora porque Steam elige
@@ -1688,7 +1677,7 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-06-11 → 09-14 | CI + historial git | Cuántas veces ha roto Valve un patrón nuestro | **Ninguna rederivación** en 11 builds: un solo grupo SafeMode (`20260611150000`); las huellas de DepotKey, BuildDep, GMRC y LoadPackage son byte a byte las de mayo. Cron desde el 07-01: 75 runs programados, 75 verdes, 5 hash bumps automáticos (07-22, 07-23, 07-28, 08-04, 09-02), 0 "moved". Única máscara preventiva: ShaderDepot el 06-24 (disp32 de global), el día de su creación | en la misma ventana SLSsteam tocó firmas 4 veces y moon 5 (`slssteam.md`, `slsteam-moon.md` §5.2 F1): enganchamos prólogos que Valve no reordena, ellos despachadores IPC |
 | 2026-09-14 | CI (`watch-steam-selftest.yml`, build `bc54101b`) | Nueve runs del autotest sobre el binario estable real | #4 (shaderdepot, exit 2) verde en 15 min: Ghidra rederiva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve ("type_info not referenced by any function") y no bloquea. #5 rojo: corromper BuildDep+GMRC (diagnósticos) daba CLEAN y nunca llegaba a Ghidra (`dda90dc`). #6 rojo: `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y un DepotKey movido iba a issue (`63a5a0a`). #7 rojo en 20 min: Ghidra no resuelve el `CALL [reg+0x18]` y `derive_patterns.py` validaba una copia rancia. #8 rojo: `KeyError` en un `print` de la herramienta nueva. **#9 verde en 23 s**: exit 3 → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → aplicar → revalidar con RTTI y nombre de acuerdo, sin Ghidra | hasta el #9 el camino del único crítico no era autónomo; la Deck no se habría roto (rescate RTTI desde 07-06) |
 | 2026-09-14 | estático | Requisitos de versión del `.so` | `liblumalinux.so` exige GLIBCXX 3.4.32 / GLIBC 2.38 | dato de portabilidad; SteamOS lo cumple |
-| 2026-10-15 | codespace SteamOS | Crash guard con un crash provocado (`kill -SEGV` al cliente a los 20 s del arranque) | Dos `assert_*.dmp` en `/tmp/dumps`; el supervisor relanzó Steam y el guard apuntó `previous boot crashed at startup -> fail 1/3`. Un milisegundo después una segunda pasada (el `steam-launcher` emulado llama a `steam` por el PATH) apuntó `previous boot ok -> reset fail count`: contador a 0 (§4.1-37). Los siete arranques anteriores, con `/tmp` vacío por reanudar el codespace: `no dumps dir -> cannot assess`; con el directorio presente y sin volcados, un arranque sano pasa en silencio y actualiza `good_client` | esta sesión |
+| 2026-10-15 | codespace SteamOS | Crash guard con un crash provocado (`kill -SEGV` al cliente a los 20 s del arranque) | Dos `assert_*.dmp` en `/tmp/dumps`; el supervisor relanzó Steam y el guard apuntó `previous boot crashed at startup -> fail 1/3`. Un milisegundo después una segunda pasada (el `steam-launcher` emulado llama a `steam` por el PATH) apuntó `previous boot ok -> reset fail count`: contador a 0. Es un artefacto del codespace (su `steam-launcher` emulado invoca `steam` por el PATH y entra en `path/steam`); en la Deck, Game Mode y Desktop, ninguna hora repetida en `guard.log` (medido el mismo día). Los siete arranques anteriores, con `/tmp` vacío por reanudar el codespace: `no dumps dir -> cannot assess`; con el directorio presente y sin volcados, un arranque sano pasa en silencio y actualiza `good_client` | esta sesión |
 
 #### Función 2 — Propiedad y licencias
 
