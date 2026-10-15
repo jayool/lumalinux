@@ -57,6 +57,26 @@ std::string SiblingPath(const char* name) {
     return p.substr(0, slash + 1) + name;
 }
 
+// Open `<path>.tmp` for writing; CommitAtomic() renames it over `path`.
+// LumaDeck reads both files while Steam runs (status.json on every component
+// poll, gmrc.json in the pin pass); fopen(path, "w") truncated the file first
+// and a read in that window saw an empty JSON, which for gmrc.json meant
+// "absent" = providers up and could release pins. A rename is atomic: readers
+// see the old file whole or the new one whole.
+FILE* OpenAtomic(const std::string& path) {
+    return std::fopen((path + ".tmp").c_str(), "w");
+}
+
+bool CommitAtomic(FILE* f, const std::string& path) {
+    std::fclose(f);
+    std::string tmp = path + ".tmp";
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        std::remove(tmp.c_str());
+        return false;
+    }
+    return true;
+}
+
 std::string IsoUtcNow() {
     std::time_t now = std::time(nullptr);
     std::tm tm_utc;
@@ -88,11 +108,11 @@ void RecordGmrc(bool providersUp) {
     static std::mutex m;
     std::lock_guard<std::mutex> lock(m);
     std::string path = SiblingPath("gmrc.json");
-    FILE* f = std::fopen(path.c_str(), "w");
+    FILE* f = OpenAtomic(path);
     if (!f) return;
     std::fprintf(f, "{\"providers\": \"%s\", \"at\": \"%s\"}\n",
                  providersUp ? "up" : "down", IsoUtcNow().c_str());
-    std::fclose(f);
+    CommitAtomic(f, path);
 }
 
 void Write() {
@@ -105,9 +125,9 @@ void Write() {
     }
 
     std::string path = ResolvePath();
-    FILE* f = std::fopen(path.c_str(), "w");
+    FILE* f = OpenAtomic(path);
     if (!f) {
-        Log::Warn("Status: cannot open %s for writing", path.c_str());
+        Log::Warn("Status: cannot open %s.tmp for writing", path.c_str());
         return;
     }
 
@@ -132,7 +152,10 @@ void Write() {
     }
     std::fprintf(f, "%s}\n", snapshot.empty() ? "" : "\n  ");
     std::fprintf(f, "}\n");
-    std::fclose(f);
+    if (!CommitAtomic(f, path)) {
+        Log::Warn("Status: cannot rename %s.tmp into place", path.c_str());
+        return;
+    }
 
     Log::Info("Status: wrote %s (%zu hooks, blocked=%s)",
               path.c_str(), snapshot.size(),
