@@ -337,6 +337,13 @@ is still the fix, the rescue only keeps the Deck working until it lands.
    so never omit it. Users that re-run `setup.sh` (or LumaDeck's reinstall
    action) pick up the new binary.
 
+   > A tag is also what ships the runtime tools. `setup.sh` deploys
+   > `tools/steamidra_lite.py` and `tools/vdf_inject_keys.py` from the **same
+   > tag as the `.so`** (since 2026-10-15), so a functional change to either
+   > of them reaches no Deck until a release is cut; comment-only changes can
+   > wait. `setup.sh`, `downgrade.sh` and `res/` still come from `main` with
+   > no tag needed.
+
    > Only a **critical** move bumps the group (the `watch-steam.yml` policy). A
    > non-critical re-derive (ShaderDepot / Reconcile) keeps the **same** group —
    > the build already works, so its hash stays whitelisted where it is, just with
