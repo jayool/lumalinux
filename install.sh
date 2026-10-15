@@ -36,6 +36,8 @@ CR_SO="${HOME}/.local/share/CloudRedirect/cloud_redirect.so"
 # (derive_patterns.py, ghidra_find_gmrc.py, fetch_libmem.sh) are kept out
 # of the install — they're maintainer tools, not user-facing.
 RUNTIME_TOOLS=( steamidra_lite.py vdf_inject_keys.py )
+# Resolved next to the download (resolve_tools_ref): the tools ride the same
+# tag as the .so; TOOLS_BASE_URL is only the fallback.
 TOOLS_BASE_URL="https://raw.githubusercontent.com/${REPO}/main/tools"
 
 MARKER_BEGIN="# >>> lumalinux launcher patch >>> (managed by install.sh - do not edit)"
@@ -53,6 +55,23 @@ info()  { printf "${c_info}[*]${c_rst} %s\n" "$*"; }
 ok()    { printf "${c_ok}[+]${c_rst} %s\n" "$*"; }
 warn()  { printf "${c_warn}[!]${c_rst} %s\n" "$*" >&2; }
 die()   { printf "${c_err}[X]${c_rst} %s\n" "$*" >&2; exit 1; }
+
+# The runtime tools come from the same git ref as the .so, so a Deck never
+# runs a steamidra_lite.py newer (or older) than its liblumalinux.so
+# (nosotros.md §4.1-4). The ref is the tag in the .so URL when it names one
+# (releases/download/<tag>/...), else the tag releases/latest redirects to;
+# main only when neither can be read.
+resolve_tools_ref() {
+    local so_url="$1" ref=""
+    case "$so_url" in
+        */releases/download/*/*)
+            ref="${so_url#*/releases/download/}"; ref="${ref%%/*}" ;;
+        */releases/latest/download/*)
+            ref="$(curl -fsSI -o /dev/null -w '%{redirect_url}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+            ref="${ref##*/}" ;;
+    esac
+    if [[ "$ref" =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then printf '%s' "$ref"; else printf 'main'; fi
+}
 
 TMP_SO=""
 NEW_STEAM_SH=""
@@ -158,12 +177,18 @@ fi
 # no way to actually feed keys into it.
 info "Deploying runtime tools under $TOOLS_DIR..."
 mkdir -p "$TOOLS_DIR"
+TOOLS_REF="$(resolve_tools_ref "$SO_URL")"
+TOOLS_REF_URL="https://raw.githubusercontent.com/${REPO}/${TOOLS_REF}/tools"
+info "Runtime tools from ${TOOLS_REF} (same ref as the .so)"
 for tool in "${RUNTIME_TOOLS[@]}"; do
-    if curl -fsSL -o "${TOOLS_DIR}/${tool}" "${TOOLS_BASE_URL}/${tool}"; then
+    if curl -fsSL -o "${TOOLS_DIR}/${tool}" "${TOOLS_REF_URL}/${tool}"; then
         chmod 0755 "${TOOLS_DIR}/${tool}"
-        ok "Deployed ${TOOLS_DIR}/${tool}"
+        ok "Deployed ${TOOLS_DIR}/${tool} (${TOOLS_REF})"
+    elif [[ "$TOOLS_REF" != "main" ]] && curl -fsSL -o "${TOOLS_DIR}/${tool}" "${TOOLS_BASE_URL}/${tool}"; then
+        chmod 0755 "${TOOLS_DIR}/${tool}"
+        warn "Deployed ${TOOLS_DIR}/${tool} from main (${TOOLS_REF} has no ${tool})"
     else
-        die "Failed to download ${TOOLS_BASE_URL}/${tool}"
+        die "Failed to download ${tool} from ${TOOLS_REF_URL}"
     fi
 done
 
