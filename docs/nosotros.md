@@ -75,13 +75,14 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
 | `setup.sh` | 1232 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`), wrapper, guard anti crash-loop, cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, app de CloudRedirect, `--uninstall` | 1, 2, 6, 8, 11, 12 |
-| `downgrade.sh` | — | escape hatch "Fix in Desktop": baja el cliente de Steam al build fijado por headcrab desde su espejo y escribe el pin `steam.cfg` firmado (§2.1 "Cómo se recupera") | 1, 11 |
+| `downgrade.sh` | 481 | escape hatch "Fix in Desktop": baja del CDN de Valve los paquetes del build fijado por headcrab, para Steam y espera, escribe el pin `steam.cfg` firmado, sirve el manifest viejo desde `127.0.0.1:1666` y relanza Steam contra él, verifica por hash de `steamclient.so`, deshace si falla (§2.1 "Cómo se recupera") | 1, 11 |
 | `install.sh` | — | instalador **legacy** de la era headcrab (parchea el `steam.sh` de headcrab); sin uso desde el modelo wrapper | — |
 | `tools/steamidra_lite.py` | 1462 | "añadir juego": manifests → depotcache, `AdditionalApps`/`AppTokens`/`ManifestIds`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`; `--pin-installed`/`--unpin`/`--set-pin`/`--pin-status` | 2, 3, 4, 5, 9 |
 | `tools/vdf_inject_keys.py` | 240 | vuelca `keys.txt` a `config.vdf > depots` (parser VDF propio) | 4 |
 | `tools/pin_set.py` | 37 | edita `ManifestIds` a mano (desarrollo) | 5 |
 | `tools/whitelist_hash.py` | 141 | añade un hash a `SafeModeHashes` en `updates.yaml` (`--create-group`) | 1, 11 |
 | `tools/check_patterns.py` | 1217 | validador de patrones sin Ghidra: único/no, RTTI, by-name, xref, anclas del finder; `--emit-rvas` | 1 (CI) |
+| `tools/test_downgrade.sh` | 143 | harness de `downgrade.sh` contra un Steam falso: seis escenarios (éxito, no instala nada, ya en el objetivo, sin binario, paquete que falta, timeout), afirma lo que queda en disco; sin red; a mano, no en CI | 11 |
 | `tools/fetch_steamclient.py` | 434 | baja el `steamclient.so` actual de un canal de cliente (`media.steampowered.com`) | 1 (CI) |
 | `tools/derive_patterns.py`, `derive_*.py`, `apply_derived_pattern.py`, `derive_python_first.sh`, `run_ghidra_derive.sh`, `blocking_constants.py`, `verify_mask.py` | 568+… | rederivación de patrones (Python primero, Ghidra 11.2.1 de respaldo) y aplicación a `patterns.hpp` | 1 (CI) |
 | `tools/gmrc_probe.py`, `gmrc_mint.py` | 436+346 | sondas de proveedores de request code y acuñación con sesión real (experimento) | 4 |
@@ -115,8 +116,8 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `backend/http_client.py` | 387 | cliente HTTP sobre urllib; contexto SSL con certifi y ficheros del sistema; **último recurso: sin verificación** (`:218-223`) | 4, 10, 11 |
 | `backend/platform_info.py` | 367 | distro, usuario/home/uid real bajo Decky-root, flatpak, familia de sesión, gamescope | 12 |
 | `backend/slssteam_schema.py`, `slssteam_version.py` | 369+234 | completa `config.yaml` con claves ausentes del esquema upstream; versión de SLSsteam (`.slssteam.version` o deducida del `.so`) | 1, 2, 11 |
-| `backend/desktop_handoff.py`, `quick_install_cli.py` | 384+94 | autostart one-shot en Desktop (`downgrade.sh` + `setup.sh`, o Quick Install), `steamos-session-select` | 1, 11 |
-| `backend/components.py`, `update_checks.py`, `self_update.py`, `headcrab_compat.py`, `steam_freeze.py` | 318+263+293+333+189 | estado unificado de componentes (salud + update + crash guard), releases de GitHub con caché 6 h, auto-update del plugin, pin de build de headcrab y soporte por build de lumalinux, `steam.cfg` | 1, 11 |
+| `backend/desktop_handoff.py` | 441 | autostart one-shot en Desktop (`downgrade.sh` + `setup.sh`), objetivo del downgrade y si el SLSsteam más nuevo lo engancha, `steamos-session-select` (el Quick Install en Desktop y `quick_install_cli.py` se quitaron el 10-15) | 1, 11 |
+| `backend/components.py`, `update_checks.py`, `self_update.py`, `headcrab_compat.py`, `steam_freeze.py`, `steam_update_gate.py` | 416+263+293+383+145+382 | estado unificado de componentes (salud + update + crash guard + pin + gate), releases de GitHub con caché 6 h, auto-update del plugin, soporte por build de lumalinux, `steam.cfg`, regla de soporte de SLSsteam y plan de cada `setup.sh` | 1, 11 |
 | `backend/steam_licenses.py` | 146 | parser binario de `appcache/packageinfo.vdf`: `licensed_appids()` / `is_licensed()` | 2, 3, 5, 9 |
 | `backend/dev.py`, `config.py`, `utils.py`, `subprocess_env.py` | 171+36+80+43 | overrides de preview; constantes (varias sin uso); helpers; limpieza del entorno de PyInstaller | 11, 4, 9 |
 | `backend/deps/Steamless/`, `backend/deps/SplicedTickets/lumadeck-spliced-tickets.lua` | — / 99 | Steamless.CLI (.NET 9) embebido; plugin Lua de SLSsteam (Ace) para tickets de ownership empalmados | 6 |
@@ -286,28 +287,79 @@ SafeMode de la **release** de lumalinux (`releases/latest/download/version.txt`)
   `LUMA_NO_CR_STATS_FIX`, `LUMA_NO_LIBCURL_FIX` (tabla en §3.3). `setup.sh
   --uninstall` quita wrapper, guard, cobertura y estado, y deja `.so`, configs
   y `keys.txt` (`:1016-1030`).
-- LumaDeck: "Restart Steam" (`steam -shutdown` como usuario, luego SIGTERM,
-  `main.py:268-300`), "Repair"/"Reinstall" = `setup.sh` entero
-  (`installer.py:486-633`), "Fix in Desktop" = autostart one-shot que ejecuta
+- LumaDeck: "Restart Steam" **reinicia la máquina** (desde el 10-14:
+  `SteamClient.System.RestartPC()`, el Restart del menú de energía, con
+  `systemctl reboot` del backend como respaldo; cerrar Steam en Game Mode lo
+  relanza la sesión de gamescope con el launcher que tiene en memoria, sin los
+  componentes, como pasó el 10-13), "Repair"/"Reinstall"/"Update" = `setup.sh`
+  entero (`installer.py`), "Fix in Desktop" = autostart one-shot que ejecuta
   `curl downgrade.sh | bash` + `setup.sh` y vuelve a Game Mode
-  (`desktop_handoff.py:83-111`); el pin `steam.cfg` que deja el downgrade se
-  levanta al acabar un `install_via_setup` bueno si el objetivo es más nuevo y
-  lumalinux lo soporta (`steam_freeze.py:148-189`). **El downgrade nunca se
-  ha ejercitado en vivo** (§5 F1).
-- `downgrade.sh`, en orden: baja y verifica el manifest del cliente fijado por
-  headcrab (`DECK_MANIFEST_URL` / `LINUX_MANIFEST_URL`, de
-  `Deadboy666/SteamTracking@headcrab`) antes de tocar nada; respalda
-  `package/` y deja el manifest; relanza Steam sin interfaz contra el espejo
-  (`-forcesteamupdate -forcepackagedownload -overridepackageurl $DOWNGRADE_URL
-  -exitsteam`, por defecto `headcrab.bifrosthub.ru/client-stable`), con SLSsteam
-  si está y vanilla si no; comprueba que llegaron paquetes, y **solo entonces**
-  escribe el pin `steam.cfg` (`BootStrapperInhibitAll`) con la firma
-  `# lumalinux`. Si no llegó nada, restaura `package/` y no pinea: Steam sigue
-  arrancando (`downgrade.sh:30-46,155-235`). LumaDeck distingue el pin propio
-  (firmado, se levanta con el gate de arriba) de uno ajeno (sin firma, se
-  levanta en el acto, `steam_freeze.py:65,148-170`). Se ofrece cuando algún
-  componente está `not_supported`, salvo si el único es lumalinux y aún no
-  soporta el build fijado (`SystemStatus.tsx:99-121`).
+  (`desktop_handoff.py`). Cualquier pin `steam.cfg`, el firmado `# lumalinux`
+  del downgrade o el sin firma que deja el instalador de headcrab, es **el pin**
+  (desde el 10-15): lo suelta **el usuario** con el botón "Let Steam update"
+  (QAM y Settings ▸ Components, `lift_steam_freeze` → `steam_freeze.lift_freeze`
+  + reinicio), aconsejado por un gate que no bloquea
+  (`backend/steam_update_gate.py`): lee la build estable actual del manifest
+  de Valve (`steam_client_steamdeck_stable_ubuntu12`, caché de 30 min), mira si
+  nuestro `res/updates.yaml` la anota (`# steam_version: <build>`, text scan) y
+  si el hash de `steamclient.so` anotado junto a ella aparece bajo algún tag del
+  `updates.yaml` de Ace. Tres estados: `ready` ("Steam update ready"),
+  `not_yet` ("The components don't support the newer Steam build yet. Updating
+  would break them.") y `unknown`. **Regla de soporte de SLSsteam** (10-14): una
+  release engancha un cliente solo si su grupo `SafeModeHashes` (el de tag más
+  nuevo no posterior a la release) lo lista; `20261014151919` abrió un grupo
+  con solo `0d01ab4f` y dejó fuera `bc54101b`. Con esa regla `plan_setup`
+  **se niega** a instalar bajo un pin un SLSsteam que el cliente fijado no puede
+  correr (el combo que el 10-14 hizo crash-loop y OOBE, §5.2) y dice "Press Let
+  Steam update first, then Update"; ningún `setup.sh` levanta un pin
+  (`maybe_lift_freeze` y la fila "Steam update available / Update in Desktop"
+  del pin ajeno se quitaron el 10-15; issue #26 cerrada por esa vía). Cuando
+  SLSsteam no está mapeado, la salud consulta la lista de Ace con la release
+  instalada antes de decir `not_loaded`: si no lista el cliente en disco es
+  `not_supported` y sale la fila con el arreglo. Un solo molde de texto para
+  "Steam rompió un componente": "Steam build not supported" + "Press
+  Update / Let Steam update / Fix in Desktop to fix it" o "Wait for an update";
+  orden Update > Let Steam update > Wait > Fix in Desktop; el update de
+  LumaDeck es la única fila del QAM mientras esté pendiente. El downgrade se
+  ejercitó en vivo por primera vez el 2026-10-14 y falló sin decirlo; el script
+  se reescribió ese día y por la tarde el camino entero desde el QAM funcionó
+  en una Deck de fábrica (§5 F1).
+- `downgrade.sh`, en el orden de headcrab: baja y verifica el manifest del
+  cliente fijado por headcrab (`DECK_MANIFEST_URL` / `LINUX_MANIFEST_URL`, de
+  `Deadboy666/SteamTracking@headcrab`) antes de tocar nada y lee su `version`;
+  busca en `updates.yaml` el hash de `steamclient.so` de ese build
+  (`hash_for_build`, por la anotación `# steam_version`); **baja todos los
+  paquetes que lista el manifest del CDN de Valve**
+  (`client-update.*.steamstatic.com`, que conserva los paquetes viejos; akamai
+  y el espejo de headcrab como respaldo) a un directorio temporal, todavía sin
+  tocar Steam; para Steam con `-shutdown` y **espera a que el proceso
+  desaparezca** (luego SIGTERM, luego aborta sin tocar nada); respalda
+  `package/`, deja el manifest y el `beta`, **escribe el pin** `steam.cfg`
+  (`BootStrapperInhibitAll`, firma `# lumalinux`), sirve el directorio temporal
+  en `http://127.0.0.1:1666/` con `python3 -m http.server` (el `dgsc` de
+  headcrab sin binario) y relanza Steam sin interfaz contra él
+  (`-forcesteamupdate -forcepackagedownload -overridepackageurl
+  http://127.0.0.1:1666/ -exitsteam`), con SLSsteam si está, esperando a que el
+  bootstrapper aparezca y termine. El servidor local es imprescindible: con
+  `-forcesteamupdate` el bootstrapper **no usa el manifest de `package/`**,
+  pide `steam_client_<beta>_ubuntu12` a su primer host y si ese host no lo
+  tiene cae al CDN de Valve, que sirve el actual (medido 2026-10-14: el espejo
+  de bifrosthub solo tiene paquetes, y el `headcrab.sh` actual apunta a
+  `localhost:1666` con `dgsc` comentado, así que tampoco baja nada; ese mismo
+  día su autor reactivó `dgsc`/`dlm` en un commit y en el siguiente volvió al
+  espejo `runn.i.ng` con los dos comentados otra vez, de modo que su bajada
+  sigue dependiendo de un espejo que no sirve el manifest). Verifica
+  por el **hash del `steamclient.so`** en disco (igual al
+  esperado; o distinto del anterior si el build no está anotado); si no cuadra,
+  restaura `steam.cfg` y `package/` y aborta: Steam arranca y se actualiza
+  solo. Si el `.so` ya era el del objetivo, solo escribe el pin. LumaDeck
+  distingue el pin propio (firmado, se levanta con el gate de arriba) de uno
+  ajeno (sin firma, se levanta en el acto, `steam_freeze.py:65,148-170`), y
+  cuando dos etiquetas de build comparten hash en `updates.yaml` (1788291500 y
+  1788652215) trata el pin como alcanzado (`headcrab_compat.builds_share_binary`)
+  para no levantarlo en el acto. Se ofrece cuando algún componente está
+  `not_supported`, salvo si el único es lumalinux y aún no soporta el build
+  fijado (`SystemStatus.tsx:99-121`).
 - Logs: `~/.cache/lumalinux/lumalinux.log` con líneas legibles por máquina
   (`Hook install: name=… method=… outcome=installed|miss|hook_install_failed`,
   `Finder resolve: … outcome=resolved|miss`), `~/.local/state/lumalinux/guard.log`,
@@ -885,8 +937,8 @@ arriba.
 
 **Superficie.** Plugin de Decky (QAM + páginas: juego, biblioteca, Settings
 con API Credentials, Components, System, About, Help y una pestaña **Dev
-siempre visible**); Quick Install desde Desktop por `quick_install_cli.py`; sin
-app de escritorio ni web. CLI de lumalinux: `setup.sh` (`curl | bash`,
+siempre visible**); Quick Install siempre en Game Mode (un `setup.sh` y
+reinicio; el desvío a Desktop se quitó el 10-15); sin app de escritorio ni web. CLI de lumalinux: `setup.sh` (`curl | bash`,
 `--uninstall`), `steamidra_lite.py`, `vdf_inject_keys.py`. Idiomas `en` y
 `pt-BR` (detección por `localStorage` o `navigator.language`; pt-BR sin las
 claves de ayuda).
@@ -974,7 +1026,7 @@ Cada una con su función.
 |---|---|---|---|
 | `raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml` | `update.cpp:72`; `headcrab_compat.py:46` | feed SafeMode; builds soportados por lumalinux | 1, 11 |
 | `raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml` | `rva_feed.cpp:63-64` | feed de RVAs del build cargado (sin override) | 1 |
-| `headcrab.bifrosthub.ru/client-stable` | `downgrade.sh:44` | espejo de paquetes del cliente para el downgrade (`DOWNGRADE_URL`) | 1, 11 |
+| `client-update.fastly.steamstatic.com`, `client-update.akamai.steamstatic.com` (CDN de Valve), `headcrab.bifrosthub.ru/client-stable` (respaldo) | `downgrade.sh` (`PACKAGE_CDN`, `PACKAGE_CDN_FALLBACK`) | paquetes del cliente viejo para el downgrade; el manifest se sirve en local (`127.0.0.1:1666`) | 1, 11 |
 | `raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/{steam_client_steamdeck_stable_ubuntu12,steam_client_ubuntu12}` | `downgrade.sh:45-46` | manifest del cliente fijado por headcrab (Deck / escritorio) | 1, 11 |
 | `raw.githubusercontent.com/jayool/lumalinux/main/{setup.sh,downgrade.sh,tools/steamidra_lite.py,tools/vdf_inject_keys.py}` | `installer.py:47-50`; `desktop_handoff.py:60-67`; `setup.sh:93,139` | instalador, downgrade, herramientas de runtime (de `main`) | 1, 11 |
 | `github.com/jayool/lumalinux/releases/latest/download/{liblumalinux.so,version.txt}` | `setup.sh:60`; `headcrab_compat.py:56` | el `.so` y el grupo SafeMode de la release | 1, 11 |
@@ -1178,8 +1230,8 @@ lo incoherente, luego lo muerto.
 17. `verify-fix.yml` nunca ha pasado, usa el tag `linux-test` de `h3adcr-b`
     que `setup.sh` abandonó y un `config.yaml` con claves obsoletas; el
     devcontainer instala SLSsteam vía headcrab y no vía `setup.sh`.
-18. pt-BR sin las claves de ayuda ni `showMoreResults`, `sysAlignUpSwitching`,
-    `sysAlignUpManual`; cadenas en inglés fuera del diccionario (login de Ryuu
+18. pt-BR sin las claves de ayuda ni `showMoreResults` (las de align-up se
+    quitaron el 10-15); cadenas en inglés fuera del diccionario (login de Ryuu
     y LuaTools en `Settings.tsx`, textos de fixes en `GameDetail.tsx`, toasts de
     `useLuatoolsConnect.ts`); la pestaña Dev mezcla castellano e inglés. El
     resultado "DLC added…" de un juego poseído (`ownedDlcNextStart`) sale en
@@ -1310,12 +1362,24 @@ lo incoherente, luego lo muerto.
     pero no distingue "instalado" de "instalado y sirviendo" (`status.cpp`, sin
     contadores). Candidato anotado: un contador por pieza (§4.4, C5). Sin
     decisión.
-37. **El pin de build de LumaDeck sigue saliendo de Headcrab.**
-    `HeadcrabCompatibleClientVer` del `headcrab.sh` de `Deadboy666/h3adcr-b`
-    (`headcrab_compat.py:36`) alimenta la chapa "compatible" y el desbloqueo
-    tras un `downgrade.sh` (`target > current AND lumalinux_ready`). Issue
-    #26 abierta desde el 2026-09-14; la variante sin Headcrab está anotada en
-    §4.4 (C3). Si Headcrab desaparece o fija un build raro, la chapa miente.
+37. **El pin de build de LumaDeck sigue saliendo de Headcrab, a medias desde
+    el 2026-10-14.** `HeadcrabCompatibleClientVer` del `headcrab.sh` de
+    `Deadboy666/h3adcr-b` (`headcrab_compat.py:36`) sigue leyéndose para
+    `lumalinux_ready` y `current_build_supported_by_latest`, y el manifest de
+    `Deadboy666/SteamTracking@headcrab` dice a `downgrade.sh` a qué build bajar
+    (`downgrade_target_ok` comprueba contra la lista de Ace que el SLSsteam más
+    nuevo lo engancha; si no, el QAM dice "Wait"). Lo que ya **no** sale de
+    Headcrab: la vuelta (el pin, suyo o nuestro, lo suelta el usuario con "Let
+    Steam update" aconsejado por el gate, §2.1), la recogida automática
+    (`maybe_lift_freeze` quitada el 10-15), la chapa "compatible" en Components
+    y el desvío del Quick Install a Desktop. Issue #26 (abierta el 2026-09-14)
+    queda cerrada por el lado del pin; el objetivo de la bajada sigue siendo
+    suyo. Su manifest de Deck no viene de SteamDatabase (que no rastrea
+    `steam_client_steamdeck_stable_ubuntu12`): es un snapshot que Deadboy sube a
+    mano en cada bump, solo del build actual. La variante sin Headcrab está en
+    §4.4 (C3): número de nuestras listas y manifests archivados por nuestro
+    cron. Si Headcrab desaparece o fija un build raro, la bajada no sabe a
+    dónde ir; la vuelta ya no depende de él.
 38. **Comentarios y un interruptor del `.so` que no decían lo que hace el
     código — corregido 2026-10-10.** Eran comentarios que describían DepotKey
     con un paso RTTI que ya no existe, ponían a lumalinux el último del
@@ -1444,7 +1508,7 @@ bien: `slssteam.md` §4.3.
 | Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-41 | 10-13 |
 | C1 — máscara de bytes de layout en `patterns.hpp` (moon M1.1) | ya hecha donde tiene sentido (disp32 de ShaderDepot; frame, miembro de `CUser` y spill en Reconcile) y refutada donde no (issue #16, 07-06: comodín al frame deja BuildDep con 70 coincidencias y LoadPackage con 222). Único byte sin decidir: el `0x44` de `mov eax,[eax+0x44]` en ShaderDepot; enmascararlo si un día se mueve por él, validando con `verify_mask.py` | 09-14 |
 | C2 — segundo job del cron sobre `steamdeck_publicbeta` (`LUMA_STEAM_MANIFEST`, `fetch_steamclient.py:65`) | anotado, no ahora: el usuario no usa beta; `probe-steam.yml` sondea a mano | 09-14 |
-| C3 — cerrar #26 sin Headcrab: `stack_target` = build más nuevo con hash en nuestro `updates.yaml` y en el de SLSsteam (~20 líneas en LumaDeck, Headcrab de respaldo) | anotado, no ahora: solo actúa tras una rotura real con downgrade | 09-14 |
+| C3 — objetivo del downgrade sin Headcrab: número = build más nuevo con hash en nuestro `updates.yaml` y en el de SLSsteam; **archivo** = manifest de ese build, que hoy solo existe en la rama de headcrab (snapshot manual, solo el build actual; SteamDatabase no rastrea el de Deck). Hace falta que el cron archive el manifest de Valve en cada cambio (Deck y Linux) y que LumaDeck lea número y archivo de ahí. El lado del pin de #26 se cerró el 10-15 | anotado, siguiente tanda: el número solo cambia quién hace la cuenta; sin el archivo no se puede bajar | 09-14, estado 10-15 |
 | C4 — anclas de texto (VProf) como segunda vía automática | anotado: la técnica ya existe para GMRC (`gmrc_xref`) y como respaldo en runtime de ShaderDepot y BuildDep; #13 y `b599366` midieron que no sirve para DepotKey ni LoadPackage. Reabrir si un patrón con ancla se mueve. De la lista de prioridades de septiembre: el walk-back que falla cerrado y la vtable por nombre (DepotKey) están hechos | 09-14, estado 10-09 |
 | Antes de anclar un hook en un **sitio de llamada**, el auditor (`classify_hit_count`) tiene que aceptar N coincidencias que **convergen** al mismo destino; hoy marca AMBIGUOUS cualquier n>1 y el primer hook que se mueva saldría BLOCKING sin estarlo (slsteam-moon tropezó con un localizador de veinte llamadores) | requisito, sin trabajo abierto | 09-08 |
 | Lo que no hacemos al instalar o reparar (vectores de SteaMidra que pueden dejar una Deck en OOBE, `steamidra.md` §4.4): nunca escribir en `/usr` ni pedir `steamos-readonly disable` (Game Mode por el drop-in de `steam-launcher.service`); nunca SIGKILL a Steam; no tocar `steam.sh`; mantener el guard (tres crashes → vanilla) por delante de `short_session_recover` | vigente | 09-14 |
@@ -1546,7 +1610,6 @@ cada prueba hecha con fecha, por función, con su resultado; la columna
   (pin movido por el pase de 30 min) sobre la Deck; solo la de 2026-09-13
   (pin, §5.2 F5).
 - El pin sobre un juego poseído: si congela el base al salir un build nuevo.
-- `downgrade.sh` en vivo.
 - La causa raíz de LumaDeck #31 (CachyOS: hooks en el primer arranque, nada
   en el segundo).
 - Si el `OnlineFix.ini` automatiza netsock (Valheim).
@@ -1600,6 +1663,10 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-09-19 | CI (`probe-steam.yml`) | Una beta que recompila el cliente | Invisible para el monitor diario, que solo mira `steamdeck_stable` | maintenance §A.2 |
 | 2026-10-01 | CI (`probe-steam.yml`, `readelf -n`) | Canales de Steam contra nuestros patrones | Deck stable y escritorio stable dicen `1788652215` y sirven binarios distintos (`bc54101b`/`a577b836` frente a `237495b4`/`29734b56`); Deck beta y escritorio beta `1790721607` comparten `a3661f5b`. Los cuatro limpios; la beta cae en el layout `beta-0xf90`. Solo existen `steamdeck_stable` y `steamdeck_publicbeta`; `main`, `preview` y `beta` dan 404 | maintenance §A.2 |
 | 2026-10-07 22:16 | Deck | Update de CloudRedirect desde LumaDeck (`setup.sh`) | `.so` y última línea de `cr_debug.log` en `2.6.6+3434d9d`, `DoInit: SUCCESS`, `cloud_redirect.so` mapeado seis veces en `steam`. lumalinux v0.22.1 decía "cloud_redirect.so not loaded" porque el símbolo ya va oculto; texto corregido en v0.22.2 | lumalinux `e92b763` |
+| 2026-10-14 08:17-08:22 | Deck (reset de fábrica, cliente `1791918634`) | Quick Install desde el QAM | Build fuera del pin de headcrab (`1788652215`) → hand-off a Desktop; `setup.sh` hace tres `daemon-reload` (journal 08:20:49-50), vuelta a Game Mode por `steam-launcher.service` con `ExecStart` = nuestro launcher. lumalinux v0.22.2 carga `3/3 hooks` y el finder `resolved`, **todo por `method=rva`** (primer disparo del feed en producción) con el layout `0xf90/0xfa4` del cliente recompilado. SLSsteam `20261001163836` aborta: `vftableinfo.cpp:46 GetAvailableCompatToolsForApp not found` → `Failed to parse VFTables!`; LumaDeck lo daba por `healthy` porque solo reconocía dos de sus cinco aborts (corregido, LumaDeck `f5fa930`). El ruido `wrong ELF class: ELFCLASS32; ignored` del journal son los hijos de 64 bits del launcher | LumaDeck `f5fa930` |
+| 2026-10-14 08:43-08:52 | Deck | **Primera ejecución en vivo de `downgrade.sh`** (manual, Desktop) | Dijo "Download verified" y escribió el pin, pero `steamclient.so` siguió siendo `0d01ab4f` (`1791918634`) y `package/` tenía solo el manifest y un `beta`. Causas: (1) `killall; sleep 2` relanzaba con Steam aún vivo: el bootstrapper nuevo le pasó los flags a la instancia moribunda y salió; esta se relanzó sola a las 08:44:33 **sin** `-forcesteamupdate`/`-overridepackageurl` (`bootstrap_log.txt`) y leyó el pin ("Suppressing Steam update"); (2) la verificación "hay algo más que el manifest" la satisface el `package/beta` que `steam-jupiter` escribe en cada arranque; (3) el manifest de headcrab dice `1788291500` y `headcrab.sh` `1788652215`: `maybe_lift_freeze` habría levantado el pin en el siguiente `setup.sh`. Con pin + manifest viejo + `package/` vacío Steam arrancó igual con el cliente extraído (el miedo que justificaba pin-después era infundado). Recuperación: `rm steam.cfg` + arranque desde Desktop → "Instalando actualización… completa" → `1791918634`, `package/` con 32 ficheros. El espejo sí sirve (`HEAD` 200 a `tenfoot_images_all.zip.86419c7a…`). Segunda ejecución (09:20, script reescrito): los flags **sí llegan** al bootstrapper (`launched with … -forcesteamupdate … -overridepackageurl …`), que pide el manifest al espejo → **404** → cae al CDN de Valve → baja `1791918634` (`-forcesteamupdate` ignora el manifest de `package/` y el pin); el lanzador devuelve el control antes de que exista el proceso. El `headcrab.sh` actual tiene `Headcrab_Downgrade_URL=http://localhost:1666/` con `dgsc` y `dlm` comentados: tampoco baja. `sources.txt` de headcrab son URLs del CDN de Valve, que sigue sirviendo los paquetes del build viejo (200). Reescrito: paquetes del CDN de Valve a un temporal antes de tocar Steam, pin antes, servidor local `http.server` con el manifest viejo, espera a que el bootstrapper aparezca y termine, hash, undo en fallo, exit 2 si sigue vivo. **Tercera ejecución (09:45): éxito.** El bootstrapper pidió el manifest a `127.0.0.1:1666` (`Downloaded new manifest … version 1788291500`), bajó los 50 paquetes del servidor local en 2 s, instaló y salió; `steamclient.so` = `bc54101b`, pin escrito. **Primer downgrade real del proyecto.** `pgrep -x steam` no vio el bootstrapper en sus 27 s de vida (el hash se comprobó justo al acabar); desde entonces el script vigila también `bootstrap_log.txt` (`launched with … -overridepackageurl` → `Shutdown`) | `71e3c45`, `c278aea`, `07e0256`, este commit |
+| 2026-10-14 (tarde) | Deck (segundo reset de fábrica, cliente `1791918634`) | **Camino completo desde el QAM**: Quick Install → "Steam build not supported" → Fix in Desktop → vuelta | Quick Install sale a Desktop (desvío por build fuera del pin de headcrab), instala el stack sin downgrade y vuelve a Game Mode. LumaDeck v0.11.2 detecta el abort de SLSsteam (VFTables) y el QAM ofrece **Fix in Desktop**. El hand-off (`_REAL_PAYLOAD`: `curl downgrade.sh | bash`, luego `setup.sh`) corre en una konsole, Steam muestra "actualizando", y vuelve solo a Game Mode. Resultado: QAM "Steam updates paused" + botón "Let Steam update" + "The components don't support the newer Steam build yet"; Components: Steam "held at build … by LumaDeck" y la explicación detallada (SLSsteam no soporta la build nueva). **Primera vez que el camino entero (detección → hand-off → downgrade → pin → gate) funciona sin tocar nada a mano.** Pendiente: el round-trip (soltar el pin y volver a bajar) cuando SLSsteam soporte la build nueva | LumaDeck `v0.11.2` (`1d3edb7`), `b6dff59` |
+| 2026-10-14 15:56-15:57 | Deck (pin `# lumalinux` en `bc54101b`) | "Update components" desde el QAM con SLSsteam `20261014151919` recién publicado | El gate decía `update_slssteam` ("Update the components first"): `setup.sh` instaló el SLSsteam nuevo sobre el cliente fijado. Ese SLSsteam no lista `bc54101b` ("Failed to parse VFTables! Aborting"), pero aborta **después** de tocar el cliente: tres arranques en 20 s (`bootstrap_log.txt`, updater del 13-oct-2026), el guard marcó "previous boot crashed at startup → fail 1/3", y `steam-jupiter` re-bootstrapeó Steam desde `/usr/lib/steam/bootstraplinux_ubuntu12_32.tar.xz` (cliente de imagen `ec96ee3c`, manifest `1788652215`, updater del 3-oct-2025) → **OOBE**. El pin se honró en cada arranque ("Suppressing Steam update"), así que el cliente de imagen, que nadie engancha, se quedó. Recuperación: `rm steam.cfg` + arranque → `0d01ab4f`, "Loaded successfully", lumalinux `rva outcome=installed`. Lección: el orden seguro bajo pin es Let Steam update (el SLSsteam viejo aborta limpio en el build nuevo) y luego Update; nunca al revés. En LumaDeck: regla de soporte por grupo, `plan_setup` que se niega, estado `update_slssteam` eliminado | LumaDeck `240f705`, `17ce19b`, `af281f7` |
 | 2026-10-08 | build local | `liblumalinux.so` con el `cr_stats_fix` de v0.22.2 | Compila; `cr_stats_fix_selftest/run.sh` 6/6; las únicas cadenas de versión del binario son `lumalinux v0.22.1 preinit` y `lumalinux/v0.22.1` | `tools/cr_stats_fix_selftest/` |
 | 2026-06-11 → 09-14 | CI + historial git | Cuántas veces ha roto Valve un patrón nuestro | **Ninguna rederivación** en 11 builds: un solo grupo SafeMode (`20260611150000`); las huellas de DepotKey, BuildDep, GMRC y LoadPackage son byte a byte las de mayo. Cron desde el 07-01: 75 runs programados, 75 verdes, 5 hash bumps automáticos (07-22, 07-23, 07-28, 08-04, 09-02), 0 "moved". Única máscara preventiva: ShaderDepot el 06-24 (disp32 de global), el día de su creación | en la misma ventana SLSsteam tocó firmas 4 veces y moon 5 (`slssteam.md`, `slsteam-moon.md` §5.2 F1): enganchamos prólogos que Valve no reordena, ellos despachadores IPC |
 | 2026-09-14 | CI (`watch-steam-selftest.yml`, build `bc54101b`) | Nueve runs del autotest sobre el binario estable real | #4 (shaderdepot, exit 2) verde en 15 min: Ghidra rederiva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve ("type_info not referenced by any function") y no bloquea. #5 rojo: corromper BuildDep+GMRC (diagnósticos) daba CLEAN y nunca llegaba a Ghidra (`dda90dc`). #6 rojo: `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y un DepotKey movido iba a issue (`63a5a0a`). #7 rojo en 20 min: Ghidra no resuelve el `CALL [reg+0x18]` y `derive_patterns.py` validaba una copia rancia. #8 rojo: `KeyError` en un `print` de la herramienta nueva. **#9 verde en 23 s**: exit 3 → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → aplicar → revalidar con RTTI y nombre de acuerdo, sin Ghidra | hasta el #9 el camino del único crítico no era autónomo; la Deck no se habría roto (rescate RTTI desde 07-06) |

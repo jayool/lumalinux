@@ -859,6 +859,76 @@ knowing:
 
 ---
 
+## F) Valve ships a Steam client a component can't hook: the downgrade
+
+This is the case that happened on 2026-10-14 (build 1791918634 broke SLSsteam:
+"Failed to parse VFTables"; lumalinux itself was fine, 3/3). Nothing here is a
+lumalinux rebuild; it is the escape hatch while the broken component catches up.
+
+**What the user does.** LumaDeck shows *Steam build not supported* and the
+button that fixes it: **Update** when the broken component already shipped
+support for the new build, **Let Steam update** when Steam is held on a build
+nothing hooks and the released components support Valve's, **Fix in Desktop**
+when a downgrade to a build the latest components hook is the only way, or
+*Wait for an update* with no button. The Desktop hand-off runs `downgrade.sh`
+then `setup.sh` in a Desktop konsole and returns to Game Mode. Afterwards
+Steam is held on the supported build (`steam.cfg`, signed `# lumalinux`) and
+LumaDeck offers **Let Steam update** with advice from its gate (reads
+`# steam_version` in our `res/updates.yaml` and the tags in SLSsteam's). Under
+that pin the safe order is Let Steam update first, then Update: installing a
+newer SLSsteam that no longer lists the pinned client crash-loops Steam into
+SteamOS's re-bootstrap (OOBE, 2026-10-14), so LumaDeck refuses that install.
+Waiting for the component update instead is always an option: owned games keep
+working meanwhile.
+
+**Running `downgrade.sh` by hand** (Desktop, any Linux with a native Steam):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/downgrade.sh | bash
+```
+
+What it does, in order: resolves the real Steam binary (skipping our wrapper);
+fetches headcrab's manifest (`Deadboy666/SteamTracking@headcrab`) and reads the
+target `version`; looks up that build's `steamclient.so` hash in
+`res/updates.yaml` (`# steam_version:` annotation); downloads **every** package
+the manifest lists from Valve's CDN (`client-update.*.steamstatic.com` keeps old
+builds; akamai and headcrab's mirror as fallbacks) into a temp dir, Steam still
+untouched; stops Steam (`-shutdown`, waits for the process to go, then SIGTERM);
+backs up `package/`, stages the old manifest, **writes the pin**; serves the temp
+dir on `http://127.0.0.1:1666/` (`python3 -m http.server`) and relaunches Steam
+headless against it (`-forcesteamupdate -forcepackagedownload
+-overridepackageurl http://127.0.0.1:1666/ -exitsteam`), waiting for the
+bootstrapper to appear and finish (`pgrep` and `logs/bootstrap_log.txt`);
+verifies `ubuntu12_32/steamclient.so` by SHA-256. On any failure it restores
+`steam.cfg` and `package/` and exits 1 (Steam then starts and updates itself);
+exit 2 means the bootstrapper was still running at the timeout and nothing was
+undone. If the installed `.so` already matches the target it only writes the
+pin. The local server is not optional: with `-forcesteamupdate` the
+bootstrapper ignores the manifest in `package/`, asks its first host for
+`steam_client_<beta>_ubuntu12` and falls back to Valve's CDN (the current build)
+on a 404, which is exactly how headcrab's own downgrade fails today.
+
+Environment overrides, all optional: `DECK_MANIFEST_URL` / `LINUX_MANIFEST_URL`
+(target manifest), `UPDATES_YAML_URL` (where to read the hash), `EXPECTED_SHA256`
+(skip the lookup), `PACKAGE_CDN` / `PACKAGE_CDN_FALLBACK`, `STEAM_DIR_OVERRIDE`,
+`LOCAL_PORT` (default 1666), `STEAM_STOP_TIMEOUT` / `STEAM_START_TIMEOUT` /
+`STEAM_UPDATE_TIMEOUT`.
+
+**Undoing it by hand:** delete `~/.steam/steam/steam.cfg` (or the two
+`BootStrapperInhibitAll` / `BootStrapperForceSelfUpdate` lines, keeping the
+rest) and start Steam; it updates itself to the current build. That is what
+**Let Steam update** does.
+
+**Before touching the script:** `bash tools/test_downgrade.sh` from the repo
+root. It runs the script against a fake Steam (a `steam` stub that fetches the
+manifest and a package from the local server and installs a new
+`steamclient.so`, or does nothing) in six scenarios: success, bootstrapper
+installs nothing (the first live failure of 2026-10-14), already on the target,
+no Steam binary, a package missing from the CDN, bootstrapper outliving the
+timeout. Each asserts what is left on disk (pin, `package/`, backup, exit
+code, server stopped). No network, no real Steam, a few seconds. It is not in
+CI yet; run it by hand.
+
 ## TL;DR — which fix to try, in order
 
 1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
@@ -873,3 +943,6 @@ knowing:
    anchors by hand).
 5. **`SLS-ach: could not resolve…` / native cheevos off** → D (update SLSsteam
    symbols/pattern; it's fail-closed, not a crash).
+6. **lumalinux is CLEAN but SLSsteam (or CloudRedirect) aborts on the new
+   client** → F (the downgrade: Fix in Desktop / `downgrade.sh`, then wait for
+   that component and **Let Steam update**). Not a lumalinux fix.
