@@ -865,13 +865,21 @@ This is the case that happened on 2026-10-14 (build 1791918634 broke SLSsteam:
 "Failed to parse VFTables"; lumalinux itself was fine, 3/3). Nothing here is a
 lumalinux rebuild; it is the escape hatch while the broken component catches up.
 
-**What the user does.** LumaDeck shows *Steam build not supported* and
-**Fix in Desktop**. That hand-off runs `downgrade.sh` then `setup.sh` in a
-Desktop konsole and returns to Game Mode. Afterwards Steam is held on the
-supported build (`steam.cfg`, signed `# lumalinux`) and LumaDeck offers
-**Let Steam update** with advice from its gate (reads `# steam_version` in our
-`res/updates.yaml` and the tags in SLSsteam's). Waiting for the component
-update instead is always an option: owned games keep working meanwhile.
+**What the user does.** LumaDeck shows *Steam build not supported* and the
+button that fixes it: **Update** when the broken component already shipped
+support for the new build, **Let Steam update** when Steam is held on a build
+nothing hooks and the released components support Valve's, **Fix in Desktop**
+when a downgrade to a build the latest components hook is the only way, or
+*Wait for an update* with no button. The Desktop hand-off runs `downgrade.sh`
+then `setup.sh` in a Desktop konsole and returns to Game Mode. Afterwards
+Steam is held on the supported build (`steam.cfg`, signed `# lumalinux`) and
+LumaDeck offers **Let Steam update** with advice from its gate (reads
+`# steam_version` in our `res/updates.yaml` and the tags in SLSsteam's). Under
+that pin the safe order is Let Steam update first, then Update: installing a
+newer SLSsteam that no longer lists the pinned client crash-loops Steam into
+SteamOS's re-bootstrap (OOBE, 2026-10-14), so LumaDeck refuses that install.
+Waiting for the component update instead is always an option: owned games keep
+working meanwhile.
 
 **Running `downgrade.sh` by hand** (Desktop, any Linux with a native Steam):
 
