@@ -58,7 +58,7 @@ die()   { printf "${c_err}[X]${c_rst} %s\n" "$*" >&2; exit 1; }
 
 # The runtime tools come from the same git ref as the .so, so a Deck never
 # runs a steamidra_lite.py newer (or older) than its liblumalinux.so
-# (nosotros.md §4.1-4). The ref is the tag in the .so URL when it names one
+# (nosotros.md §3.1). The ref is the tag in the .so URL when it names one
 # (releases/download/<tag>/...), else the tag releases/latest redirects to;
 # main only when neither can be read.
 resolve_tools_ref() {

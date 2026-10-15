@@ -602,9 +602,9 @@ pila en la misma Deck.
 |---|---|---|---|
 | S1 | ¿Lee Steam `config/depotcache`? Pregunta previa a todo lo demás | 2026-08-26 | **contestado**: no lo lee (medido 2026-09-11, `nosotros.md` §0); el archivo propio de LumaDeck repone `depotcache` |
 | S2 | `downloads.py` `extractall()` de un zip de terceros como root | 2026-08-26 | **no es hallazgo**: `zipfile` de Python quita las rutas absolutas y los `..` al extraer y no crea symlinks; sigue en `downloads.py:1083` y `self_update.py:127` |
-| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-33) |
-| S4 | `setup.sh` sin checksums | 2026-08-26 | sin decisión (`nosotros.md` §4.1-29) |
-| S5 | Credenciales con permisos por defecto (`0600`) | 2026-08-26 | sin decisión (`nosotros.md` §4.1-30) |
+| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-27) |
+| S4 | `setup.sh` sin checksums | 2026-08-26 | sin decisión (`nosotros.md` §4.1-24) |
+| S5 | Credenciales con permisos por defecto (`0600`) | 2026-08-26 | hecho el 2026-10-15 (`utils.write_private_text`, `nosotros.md` §2.10) |
 | S6 | `self_update.py` crea `~/Downloads` como root sin `chown` | 2026-08-26 | sin cambio (`self_update.py:207-220`) |
 | S7 | Depots compartidos detectados por cabecera y lista, no por señal viva | 2026-08-26 | **superado**: desde el hook v1.0 servir cualquiera no corrompe; los redists van a `keys.txt` y nunca se pinean (`nosotros.md` §2.2) |
 | S8 | DLC capas 2 y 3 | 2026-08-26 | corregido 2026-10-05: la capa 2 la da SLSsteam de serie, la 3 la tenemos (medido); la 1 es `AdditionalApps` por DLC (RESEARCH §21) |

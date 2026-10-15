@@ -1041,7 +1041,7 @@ ninguno se ha actuado.
 | glibc rtld-audit y que el lanzador respete `LD_AUDIT` (Flatpak: `SHARED_LIBRARY_GUARD=0`) | `main.cpp:240-292` | no se carga |
 | hilo único del steamclient (sin locks en hooks; mapas globales sin mutex) | `hooks.cpp:1473-1476`, `achievements.hpp` | carreras si Valve paraleliza el IPC |
 | `VERSION` presente en `updates.yaml` | `update.cpp:143-146` | builds propias nunca pasan SafeMode |
-| que `crashhandler.so` se cargue en `steam` (es quien escribe los `.dmp` de `/tmp/dumps`) | `main.cpp` `la_objsearch`, solo en `dev` (`abafc49`, 2026-10-12, sin publicar) | SLSsteam devuelve `nullptr` al loader y el manejador de crashes de Steam no se carga: si `dev` se publica, no habrá minidumps y el crash guard de nuestro `setup.sh` no latcheará nunca (`nosotros.md` §4.1-5). SLSsteam mismo no pierde nada |
+| que `crashhandler.so` se cargue en `steam` (es quien escribe los `.dmp` de `/tmp/dumps`) | `main.cpp` `la_objsearch`, solo en `dev` (`abafc49`, 2026-10-12, sin publicar) | SLSsteam devuelve `nullptr` al loader y el manejador de crashes de Steam no se carga: si `dev` se publica, no habrá minidumps y el crash guard de nuestro `setup.sh` no latcheará nunca (`nosotros.md` §4.1-2; hoy cuenta un crash provocado, medido 2026-10-15). SLSsteam mismo no pierde nada |
 
 ### 4.3 Lo que SLSsteam tiene y nosotros usamos o no
 
@@ -1057,7 +1057,7 @@ La tabla completa de claves que escribimos y su valor está en `nosotros.md`
 manifests, códigos de petición de manifest, package-0, updates por proveedor,
 fixes, cloud (CloudRedirect), UI. Lo que SLSsteam tiene en `dev` y no nos
 alcanza: `stealth` (§5.3), porque decide por `isSubscribed` y nuestros juegos
-lo son (`nosotros.md` §4.1-39).
+lo son (`nosotros.md` §4.1-33).
 
 ### 4.4 Bugs y fragilidades propias de SLSsteam (del código, no de la convivencia)
 

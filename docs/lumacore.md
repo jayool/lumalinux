@@ -499,9 +499,8 @@ Aparcados el 2026-10-08. Numeración propia de este doc.
    `steamclient.so` y patrón de respaldo, `nosotros.md` §2.1). Es el argumento
    para no aflojar esa comprobación nunca. Sin acción.
 3. **`status.json` atómico.** LumaCore escribe `status.json` y las TOML por
-   `.tmp` + rename (`runtime/HookStatus.cpp:602-665`); el nuestro hace
-   `fopen("w")` directo (`nosotros.md` §4.1-24). Es la referencia para
-   arreglar ese punto si se decide.
+   `.tmp` + rename (`runtime/HookStatus.cpp:602-665`); el nuestro lo hace
+   igual desde el 2026-10-15 (`status.cpp:66-78`). Cerrado.
 4. **Códigos de manifest sin comprobar en el CDN.** LumaCore entrega a Steam
    el primer número que un proveedor devuelva; nosotros solo tras aceptarlo el
    CDN (`nosotros.md` §2.4). Sus tres proveedores por defecto son los que
