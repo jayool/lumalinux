@@ -835,6 +835,7 @@ G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
 G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
 G_CLIENT_LAST="$GDIR/last_client"; G_CLIENT_GOOD="$GDIR/good_client"; G_LOG="$GDIR/guard.log"
 : "${LUMA_GUARD_MAX_FAILS:=3}"; : "${LUMA_GUARD_STARTUP_SECS:=180}"; : "${LUMA_GUARD_DUMPS_DIR:=/tmp/dumps}"
+: "${LUMA_GUARD_NO_COREDUMP:=0}"
 
 g_log()    { printf '%s %s\n' "$(date '+%F %T' 2>/dev/null)" "$1" >> "$G_LOG" 2>/dev/null || true; }
 g_notify() { command -v notify-send >/dev/null 2>&1 && notify-send -u normal -t 10000 "Steam recovery mode" "$1" >/dev/null 2>&1 || true; }
@@ -851,10 +852,29 @@ g_fingerprint() {
         printf '|'
     done
 }
+# Two sources of crash evidence, OR'ed:
+#  * Steam's own minidumps (*.dmp in /tmp/dumps, written by crashhandler.so).
+#    SLSsteam 20261014151919 chokes crashhandler.so from loading, so on a Deck
+#    with that release Steam creates /tmp/dumps and never writes into it.
+#  * systemd-coredump: without crashhandler.so a client crash goes to the
+#    kernel, SteamOS hands it to systemd-coredump (through steamos_log_submitter's
+#    core_pattern hook) and `coredumpctl list` shows it with time and exe. Only
+#    the client itself counts (ubuntu12_32/steam, or steamrt64/steam on the
+#    64-bit client); steamwebhelper and games crash on their own.
+# "Can assess the previous boot" = either source exists; with neither we are
+# blind and leave the counters alone (see luma_guard_run).
+g_coredump_available() { [ "$LUMA_GUARD_NO_COREDUMP" = 0 ] && command -v coredumpctl >/dev/null 2>&1; }
+g_coredump_crash() {  # $1 = launch epoch; a client core between launch and launch+window
+    g_coredump_available || return 1
+    _until=$(( $1 + LUMA_GUARD_STARTUP_SECS ))
+    timeout 5 coredumpctl list --no-pager --no-legend --since="@$1" --until="@$_until" 2>/dev/null \
+        | grep -q -E '[[:space:]]/[^[:space:]]*/(ubuntu12_32|steamrt64)/steam([[:space:]]|$)'
+}
 g_startup_crash() {
-    [ -d "$LUMA_GUARD_DUMPS_DIR" ] || return 1
     case "$2" in ''|*[!0-9]*) return 1 ;; esac
     [ "$2" -gt 0 ] || return 1
+    g_coredump_crash "$2" && return 0
+    [ -d "$LUMA_GUARD_DUMPS_DIR" ] || return 1
     _ref="$GDIR/.crash_win_ref"
     touch -d "@$(( $2 + LUMA_GUARD_STARTUP_SECS ))" "$_ref" 2>/dev/null || { rm -f "$_ref" 2>/dev/null; return 1; }
     # Match ANY minidump, not just crash_*.dmp: Steam also writes assert_*.dmp for
@@ -913,19 +933,20 @@ luma_guard_run() {
                 _client_changed=1; g_log "steamclient.so changed since last clean boot -> first crash = compat break"
             fi
             g_log "previous boot crashed at startup -> fail ${_fails}/${LUMA_GUARD_MAX_FAILS}"
-        elif [ -d "$LUMA_GUARD_DUMPS_DIR" ]; then
-            # Only treat "no crash dump" as a clean boot when the dumps dir EXISTS
-            # (so the absence of a dump is real evidence). If the dir is absent we
-            # are blind — a non-dumping crash (OOM/hang/breakpad-off) must NOT be
-            # read as success: do nothing (leave the counter, and crucially do NOT
-            # promote a possibly-bad steamclient.so to the known-good baseline,
-            # which would defeat the "client changed -> latch on first crash" path).
+        elif [ -d "$LUMA_GUARD_DUMPS_DIR" ] || g_coredump_available; then
+            # Only treat "no crash seen" as a clean boot when a source of evidence
+            # EXISTS (the dumps dir or coredumpctl), so the absence of a crash is
+            # real evidence. With neither we are blind — a non-dumping crash
+            # (OOM/hang/breakpad-off) must NOT be read as success: do nothing
+            # (leave the counter, and crucially do NOT promote a possibly-bad
+            # steamclient.so to the known-good baseline, which would defeat the
+            # "client changed -> latch on first crash" path).
             [ "$_fails" -ne 0 ] && g_log "previous boot ok -> reset fail count"
             _fails=0
             _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"
             [ -n "$_prev" ] && printf '%s' "$_prev" > "$G_CLIENT_GOOD" 2>/dev/null || true
         else
-            g_log "no dumps dir -> cannot assess previous boot; leaving fail/good state unchanged"
+            g_log "no dumps dir and no coredumpctl -> cannot assess previous boot; leaving fail/good state unchanged"
         fi
     fi
     printf '%s' "$_fails" > "$G_COUNT" 2>/dev/null || true
