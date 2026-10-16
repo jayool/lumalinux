@@ -813,9 +813,9 @@ Steam update may stop it for good" (`Settings.tsx:650`). lumalinux:
 `libcurl_pin` hace que CloudRedirect (y nuestras propias descargas) carguen el
 libcurl del sistema y no el del Steam Runtime (`libcurl_pin.cpp:102-168`); con
 2.6.6 estático solo afecta a lo nuestro, y se mantiene (opción A, 2026-10-07).
-Medido 2026-10-16 en la Deck: con el cliente del 2026-10-14, el que dejó
-CloudRedirect sin enganchar en Windows, una partida de Fields of Mistria carga
-y al cerrar el fichero de Drive se modifica (`cloudredirect.md` §5.2 F8).
+Medido 2026-10-16: con el cliente del 2026-10-14 (`1791918634`), en la Deck
+una partida de Fields of Mistria carga y al cerrar el fichero de Drive se
+modifica; en el PC con LuaTools + BST, lo mismo (`cloudredirect.md` §5.2 F8).
 Es de 32 bits: con el cliente de 64 bits de Valve se acaba, sin port posible
 (`steam-rt3-x64.md` §2).
 

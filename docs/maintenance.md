@@ -992,5 +992,6 @@ gone.
    downgrade: Fix in Desktop / `downgrade.sh`, then wait for that component
    and **Let Steam update**). Not a lumalinux fix. If it is **CloudRedirect**
    that stops hooking, nobody ships a fix any more (G): the stack keeps
-   working without cloud saves.
+   working without cloud saves. (It still hooks `1791918634`, the 2026-10-14
+   client, on the Deck and on Windows under BST.)
 
