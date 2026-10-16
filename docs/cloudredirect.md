@@ -11,6 +11,14 @@ instalamos y lo cargamos (wrapper, orden de `LD_PRELOAD`, salud en LumaDeck)
 está en `nosotros.md` §2.1, §2.7 y §2.8; aquí solo entra lo que hace
 CloudRedirect.
 
+**El repo ya no existe.** El 2026-10-16 desaparecieron `Selectively11/CloudRedirect`
+y la cuenta de su autor (§2.12, §5.3). Lo leído aquí sigue valiendo para el
+binario que corre en la Deck; las fuentes que quedan son el fork de
+preservación `huanyuejue/CloudRedirect` (historia completa hasta `bc5e38a`,
+v2.6.5, con `gh-pages`) y la captura de Software Heritage del 2026-08-20
+(mismo alcance). Del código de la 2.6.6 (`3434d9d`) no hay copia: solo el
+binario, que distribuimos nosotros (§0 "Hoy").
+
 ---
 
 ## §0 Ficha
@@ -19,7 +27,8 @@ CloudRedirect.
 |---|---|
 | **Qué es** | Redirección de **Steam Cloud** para juegos sin licencia. En Linux, una biblioteca de 32 bits (`cloud_redirect.so`) que se carga en el proceso `steam` por `LD_PRELOAD`, engancha el transporte de servicios unificados de `steamclient.so` y **contesta ella** las RPC `Cloud.*` de los juegos de `AdditionalApps` de SLSsteam, guardando las partidas en el almacenamiento del usuario (Google Drive, OneDrive, S3, Cloudflare R2 o una carpeta). Opcionalmente sincroniza **logros, stats y tiempo de juego** con un blob propio por cuenta. Se completa con una **app Qt en Flatpak** (`org.cloudredirect.CloudRedirect`: login OAuth, despliegue del `.so`, copias, borrado, migración) y un **CLI de 32 bits** (`cloud_redirect_cli`). En Windows, una DLL que carga OpenSteamTool, con su UI WPF. |
 | **Repo y commits leídos** | `Selectively11/CloudRedirect` `master@00969da` (2026-09-27 autor, 2026-10-03 commit; tag ligero `v2.6.6`). 281 commits en todas las ramas. Desde `v2.6.5` (`bc5e38a`, 2026-08-18): 26 commits, todos rebasados el 2026-10-03. Nada en `master` ni `ost` después. `gh-pages` `83100b8` (2026-10-04, "Publish 2.6.6 to the flatpak repo"). |
-| **Release** | v2.6.6 publica `cloud_redirect.so` (7,5 MB, 32 bits, `strings` → `2.6.6+3434d9d`). **`3434d9d` no existe en el repo público**: el binario se compila desde otro árbol (el `.flatpakrepo` apunta a `Selectively11/CloudRedirect-Unified`), con `release.sh`, `deps/` y `tools/` en `.gitignore` (`flatpak/build.sh:2-3`). El CLI no sale en las releases, solo dentro del Flatpak. |
+| **Release** | v2.6.6 publicaba `cloud_redirect.so` (7,5 MB, 32 bits, `strings` → `2.6.6+3434d9d`). **`3434d9d` no existió nunca en el repo público**: el binario se compilaba desde otro árbol (el `.flatpakrepo` apunta a `Selectively11/CloudRedirect-Unified`), con `release.sh`, `deps/` y `tools/` en `.gitignore` (`flatpak/build.sh:2-3`). El CLI no salía en las releases, solo dentro del Flatpak. |
+| **Hoy (2026-10-16)** | **Proyecto retirado**: repo y cuenta borrados; en Windows dejó de funcionar con el cliente del 2026-10-14 ("unable to sync", anuncio de LuaTools) y nadie espera que vuelva (§2.12). En Linux la 2.6.6 **sigue enganchando el cliente del 2026-10-14** en la Deck (§5.2 F8). Lo distribuimos nosotros: `cloud_redirect.so` 2.6.6 (sha256 `86a40032…`, archivado de una Deck) y la app como bundle `cloudredirect.flatpak` (2.6.5, el último `gh-pages`, sha256 `a0a916bb…`, construido con `flatpak build-bundle`) son assets de la release `jayool/lumalinux` v0.22.3; los mismos dos ficheros están en la rama `cr-archive` de lumalinux (`vendor/cloudredirect/`, nunca se fusiona). `setup.sh` baja de ahí con el hash fijado y ya no aborta sin CloudRedirect (`nosotros.md` §2.8, `maintenance.md` §G). Es de 32 bits: muere con el cliente de 64 bits de Valve sin port posible (`steam-rt3-x64.md`). |
 | **Plataforma** | Linux de 32 bits dentro del Steam nativo o Flatpak (SteamOS, escritorio); Windows 64 bits bajo OpenSteamTool. |
 | **Licencia y quién** | MIT desde `2c7f89e` (2026-08-18), "Copyright (c) 2026 Selectively11"; antes, sin licencia. Un único autor en `master`; la rama `ost` (7 commits de JanitorialMess, mayo) está parada. Sin CI en `master`. |
 | **Relación con los demás programas** | Lee la configuración de **SLSsteam** (`DisableCloud`, `AdditionalApps`) y solo funciona con ella. Lo inyecta **Headcrab** (`LD_PRELOAD` en `steam.sh`) en el flujo de su autor; en el nuestro, nuestro wrapper. Su fork **cloudredirect-moon** lo distribuye **SLSDeck** a la misma ruta que el nuestro (`slsdeck.md` §4.1-4). En Windows lo cargan OpenSteamTool, BetterSteamTools y opensteamtool-cn; LuaTools lo baja. La UI de Windows **bloquea** su instalación si detecta `LumaCore.dll` (`ui/Services/ThirdPartyDetector.cs:9-90`). |
@@ -404,6 +413,19 @@ instale; sin hash publicado salvo el OSTree firmado. Kill switch: fichero
   `stplug-in/*.lua` y `luaappids.yaml`, y un puente
   `slsteam_local_stats_epoch_v1` que solo responde slsteam-moon (sin él no
   sirve logros nunca). No ha adoptado nada de la 2.6.6.
+- **Retirado el 2026-10-16.** Repo y cuenta de GitHub borrados (404 en repo,
+  releases, raw y `gh-pages`; `git ls-remote` pide credenciales). El autor es
+  SelectivelyGood en el Discord de Hubcap, volcado en NotProton desde el
+  verano; su comunidad no sabe si borró la cuenta o se la cerró GitHub, y da
+  por muertos CloudRedirect y macsteam ("steam broke macsteam", 2026-10-15).
+  La rotura es del cliente, no del servidor: en Windows el cliente del
+  2026-10-14 ya no engancha y LuaTools anunció "cloud redirect doesn't work on
+  latest steam update"; en Linux la 2.6.6 sincroniza con ese mismo cliente
+  (§5.2 F8). Queda el fork de preservación `huanyuejue/CloudRedirect`
+  (creado ese día: `master` = `bc5e38a` v2.6.5 sin cambios, `gh-pages` con el
+  repo ostree de la app, un workflow para la DLL de Windows; su release
+  v2.6.5 **no** trae `cloud_redirect.so`) y Software Heritage (captura del
+  2026-08-20, tags hasta v2.6.5). El código de la 2.6.6 no está en ninguno.
 
 ---
 
@@ -453,7 +475,9 @@ instale; sin hash publicado salvo el OSTree firmado. Kill switch: fichero
 ### 4.1 Hallazgos pendientes de decisión
 
 Aparcados el 2026-10-09. Solo lo que le pasa a nuestra pila o a un usuario de
-LumaDeck, que lleva CloudRedirect instalado por `setup.sh`.
+LumaDeck, que lleva CloudRedirect instalado por `setup.sh`. Desde el
+2026-10-16 no hay upstream: nada de esto lo arreglará nadie más que nosotros,
+y solo compilando la 2.6.5 del fork (la 2.6.6 no tiene código).
 
 1. **Steam se congela al salir de un juego con muchos ficheros nuevos.**
    `CompleteAppUploadBatchBlocking` espera en el hilo de Steam a que se suba
@@ -529,8 +553,10 @@ LumaDeck, que lleva CloudRedirect instalado por `setup.sh`.
 | Valve renombra `CClientUnifiedServiceTransport` o reordena su vtable | CloudRedirect se apaga esa sesión ("Incompatible Steam client"); lumalinux sigue |
 | el prólogo de `CCMInterface::Send` o del escritor de `GetLastPlayedTimes` | sin tiempo de juego ni captura de desbloqueos; nube y lumalinux siguen |
 | el formato de `config.yaml` de SLSsteam (lista en línea, `DisableCloud` anidado) | CloudRedirect deja de gestionar los juegos, en silencio |
-| `DisableCloud: yes` (lo escriba quien lo escriba) | sin nube para ningún juego añadido |
-| una release del `.so` sin publicar el asset | `setup.sh` aborta: CloudRedirect es componente core (`nosotros.md` §2.8) |
+| `DisableCloud: yes` (lo escriba quien lo escriba) | sin nube para los juegos que SLSsteam no ve como poseídos; los nuestros van por package-0 y no les afecta (`slssteam.md` §2.8) |
+| los assets de `jayool/lumalinux` v0.22.3 (`.so` y `.flatpak`) inaccesibles o con otro hash | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta (`setup.sh:490-510,535-564,1091-1102`). Copia de respaldo en la rama `cr-archive` |
+| Valve lleva el cliente de 64 bits (`steamrt64`) al canal estable de SteamOS | `cloud_redirect.so` es de 32 bits y no carga (`wrong ELF class`); sin código de la 2.6.6 y sin autor, no hay port: la nube redirigida se acaba ese día (`steam-rt3-x64.md` §2) |
+| huanyuejue borra su fork | se pierde la única fuente viva del código (2.6.5) y del repo ostree; nuestros dos binarios no dependen de él |
 | SLSDeck en la misma Deck | `cloud_redirect.so` sustituido por el de moon, que sin slsteam-moon no sirve logros (`slsdeck.md` §4.1-4) |
 | la retirada del endpoint de tienda que usa SLSsteam para los schemas (2026-10-22) | los juegos nuevos no consiguen schema hasta la release de SLSsteam con el arreglo; CloudRedirect solo guarda lo que Steam reciba |
 
@@ -561,6 +587,8 @@ LumaDeck, que lleva CloudRedirect instalado por `setup.sh`.
 | C11 | No proponer parches que no hemos escrito ni probado (camino C); build propio (B) solo si lo exige CachyOS | 2026-09-28 | vigente |
 | C12 | Actualizar a 2.6.6 | 2026-10-07 | **hecho** en la Deck 22:16 (`2.6.6+3434d9d`, `DoInit: SUCCESS`) |
 | C13 | Espera de 10 s como requisito del port a CachyOS | 2026-09-28 | vigente: sigue en `init.cpp:541-545` (`cachyos-port.md`) |
+| C14 | Tras la desaparición del upstream, distribuir CloudRedirect nosotros: el `.so` 2.6.6 archivado de la Deck y la app como bundle del `gh-pages` de huanyuejue, como assets de lumalinux v0.22.3 con hash fijado en `setup.sh`; copia en la rama `cr-archive`; `setup.sh` no aborta sin él; `DisableCloud` se queda en `no`; LumaDeck compara contra 2.6.6 fijo y avisa en la tarjeta de que no hay mantenimiento | 2026-10-16 | **hecho** (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`). Sin medir: qué hace Steam con un juego nuestro sin CloudRedirect (lo esperable es el error de sincronización al lanzar o cerrar, que no bloquea) |
+| C15 | No forkear el código ni compilar: la 2.6.5 del fork solo si algún día hace falta cambiar algo (C11 sigue), y entonces desde `jayool`, no desde huanyuejue | 2026-10-16 | vigente; C3 y C9 quedan **superadas**: no hay a quién enviar nada |
 
 ---
 
@@ -621,6 +649,8 @@ LumaDeck, que lleva CloudRedirect instalado por `setup.sh`.
 | 2026-09-16/18 | misma Deck | `LUMA_NO_LIBCURL_FIX=1` | `curl failed: 60` con la libcurl del runtime | el pin era necesario en 2.6.5 |
 | 2026-09-16/18 | misma Deck | casilla de Steam Cloud desmarcada en 2545360 | `cloud_log.txt`: `Starting sync (AC Exit,Sync Disabled,)`; no sube nada; el juego arranca y cierra normal | mitigación por juego |
 | 2026-09-29 | issues #197, #203; Discord de SLSsteam | "CloudRedirect en Linux roto desde hace semanas" | `[R2] curl failed: 60` en bucle, `FetchCloudStateBounded … exceeded 12000ms` | la libcurl del runtime de Steam tras vaciarse `library-inject` en SLSsteam 20260903; usuarios de LumaDeck cubiertos por el pin; cerrado arriba en 2.6.6 |
+| 2026-10-16 | Deck (stack instalado la víspera, cliente estable del 2026-10-14, CR 2.6.6, Drive), Fields of Mistria | abrir el juego, cargar la partida, cerrar | la partida carga; al cerrar, el fichero en Drive aparece modificado un minuto antes | la 2.6.6 engancha el cliente que rompió CloudRedirect en Windows; la rotura es del cliente de Windows, no del servidor |
+| 2026-10-16 | codespace (SteamOS) | `setup.sh` de `main` con el `.so` y la app borrados antes | `exit=0`; `.so` desplegado con sha `86a40032…`; app instalada desde el bundle, versión 2.6.5; `cloud_redirect_cli` copiado; el remoto flatpak `cloudredirect` eliminado, queda `flathub` | instalación de cero sin upstream |
 
 ### 5.3 Cronología
 
@@ -651,3 +681,10 @@ LumaDeck, que lleva CloudRedirect instalado por `setup.sh`.
   `e507ba4` (stats), puertas de `sync_*`, carpeta en Linux (#193).
 - **2026-10-03/04.** Tag `v2.6.6`; Flatpak 2.6.6 publicado (`83100b8`).
 - **2026-10-07.** 2.6.6 en la Deck; logros Deck ↔ PC medidos.
+- **2026-10-14.** El cliente de Steam de ese día deja CloudRedirect sin
+  enganchar en Windows ("unable to sync"; anuncio de LuaTools). En Linux
+  sigue (§5.2 F8).
+- **2026-10-16.** Repo y cuenta borrados. Fork de preservación
+  `huanyuejue/CloudRedirect` (v2.6.5). Nosotros: `.so` 2.6.6 y bundle de la
+  app como assets de lumalinux v0.22.3 y rama `cr-archive`; `setup.sh` ya no
+  aborta sin CloudRedirect; LumaDeck deja de consultar el repo (C14).

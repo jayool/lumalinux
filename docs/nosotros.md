@@ -11,7 +11,7 @@ donde toca. Los docs de diseño ya ejecutados están en `docs/design/`.
 
 | | |
 |---|---|
-| **Qué es** | Tres piezas que se instalan juntas en un Steam de Linux: **lumalinux**, una biblioteca de 32 bits (`liblumalinux.so`) que se carga dentro del cliente Steam y parchea cinco funciones de `steamclient.so`, más su instalador `setup.sh` y la herramienta `steamidra_lite.py`; **LumaDeck**, un plugin de Decky Loader (backend Python como root + frontend React) que es la interfaz y la lógica de añadir, actualizar y quitar juegos; y **SLSsteam** (de AceSLS), que instalamos tal cual sale de su release y configuramos, y que pone la propiedad falsa de las apps. CloudRedirect (Selectively11) va en la misma instalación para cloud saves y logros; tiene su propio doc. |
+| **Qué es** | Tres piezas que se instalan juntas en un Steam de Linux: **lumalinux**, una biblioteca de 32 bits (`liblumalinux.so`) que se carga dentro del cliente Steam y parchea cinco funciones de `steamclient.so`, más su instalador `setup.sh` y la herramienta `steamidra_lite.py`; **LumaDeck**, un plugin de Decky Loader (backend Python como root + frontend React) que es la interfaz y la lógica de añadir, actualizar y quitar juegos; y **SLSsteam** (de AceSLS), que instalamos tal cual sale de su release y configuramos, y que pone la propiedad falsa de las apps. CloudRedirect va en la misma instalación para cloud saves y logros; tiene su propio doc. Su upstream (Selectively11) desapareció el 2026-10-16 y desde entonces el `.so` 2.6.6 y su app salen de nuestras releases. |
 | **Repos y commits leídos** | `jayool/lumalinux` `b8d4d6d` (release v0.22.2 = `c17536e`; después, el downgrade reescrito, el whitelist `0d01ab4f`, `status.cpp` atómico y las herramientas por tag); `jayool/LumaDeck` `07a6eb8` (release v0.11.2; después, el hotfix del 2026-10-14 y los cinco arreglos del 10-13/15). SLSsteam: config y fuentes de `AceSLS/SLSsteam` `main@049bbdd` (`config_default.hpp`), release instalada en la Deck `20261001163836`. |
 | **Plataforma** | SteamOS (Steam Deck, Game Mode y Desktop). Port a CachyOS en curso (`cachyos-port.md`). Arch, Debian, Void contemplados en `setup.sh`. Steam Flatpak **no** soportado (`setup.sh:31`; LumaDeck solo lo detecta, `platform_info.py:252-278`). |
 | **Licencia y quién** | lumalinux: GPL-3.0-only (cabeceras SPDX en `src/`), con `src/update.cpp` tomado de SLSsteam (AGPL-3.0, `update.cpp:1-8`). LumaDeck: "Fork of DeckTools" (`package.json`), autor jayool; sin `LICENSE` en la raíz (leído del código, no de docs). SLSsteam: AGPL-3.0, AceSLS. Releases por tag con CI en los dos repos (`build.yml`, `release.yml`). |
@@ -74,7 +74,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
-| `setup.sh` | 1258 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`; herramientas de runtime del mismo tag que el `.so`), wrapper, guard anti crash-loop, cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, app de CloudRedirect, `--uninstall` | 1, 2, 6, 8, 11, 12 |
+| `setup.sh` | 1234 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`; herramientas de runtime del mismo tag que el `.so`; CloudRedirect y su app desde nuestros assets con hash fijado), wrapper, guard anti crash-loop, cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, `--uninstall` | 1, 2, 6, 8, 11, 12 |
 | `downgrade.sh` | 481 | escape hatch "Fix in Desktop": baja del CDN de Valve los paquetes del build fijado por headcrab, para Steam y espera, escribe el pin `steam.cfg` firmado, sirve el manifest viejo desde `127.0.0.1:1666` y relanza Steam contra él, verifica por hash de `steamclient.so`, deshace si falla (§2.1 "Cómo se recupera") | 1, 11 |
 | `install.sh` | — | instalador **legacy** de la era headcrab (parchea el `steam.sh` de headcrab); sin uso desde el modelo wrapper | — |
 | `tools/steamidra_lite.py` | 1462 | "añadir juego": manifests → depotcache, `AdditionalApps`/`AppTokens`/`ManifestIds`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`; `--pin-installed`/`--unpin`/`--set-pin`/`--pin-status` | 2, 3, 4, 5, 9 |
@@ -786,22 +786,38 @@ LumaDeck apagado; SLSsteam los consigue por reseñadores de la tienda
 
 Delegado por completo en **CloudRedirect**: `cloud_redirect.so` por `LD_PRELOAD`
 intercepta los RPC de Steam Cloud y los sirve desde Google Drive, OneDrive,
-S3, R2 o una carpeta (`cloudredirect.md` §2.10). `setup.sh` lo trata como componente core: sin él aborta ("cloud
-enabled sin CloudRedirect es incoherente", `:1091-1103`), resuelve la última
-release que traiga `cloud_redirect.so` saltando las Windows-only (`:463-524`),
-instala la app flatpak `org.cloudredirect.CloudRedirect` para el login del
-proveedor y copia `cloud_redirect_cli`. `DisableCloud: no` en SLSsteam porque
-empaquetamos CloudRedirect (`setup.sh:246`, `installer.py:121-161`). LumaDeck
-solo observa: estados `not_authed` (sin `tokens_<provider>.json`), `disabled`
-(marker `~/.config/CloudRedirect/disable`), `not_loaded`, `not_supported` por
-`cr_debug.log` ("Init failed: …") (`paths.py:934-1080`); la fila "Cloud saves
-need sign-in / Open the CloudRedirect app in Desktop Mode" y nada más: la UI
-no puede iniciar sesión. Versión del `.so` en disco contra la última release
-con Linux (`components.py:87-114, 165-181`). lumalinux: `libcurl_pin` hace que
-CloudRedirect (y nuestras propias descargas) carguen el libcurl del sistema y
-no el del Steam Runtime (`libcurl_pin.cpp:102-168`); con 2.6.6 estático solo
-afecta a lo nuestro, y se mantiene (opción A, 2026-10-07). Ninguna medición de
-un save sincronizado en nuestros docs; sí de logros (§2.7).
+S3, R2 o una carpeta (`cloudredirect.md` §2.10). **Su upstream ya no existe**
+(repo y cuenta borrados el 2026-10-16, `cloudredirect.md` §2.12): lo
+distribuimos nosotros. `setup.sh` baja el `.so` 2.6.6 (archivado de una Deck)
+y la app como bundle `cloudredirect.flatpak` (2.6.5, construido del último
+`gh-pages`) de los assets de la release v0.22.3 de lumalinux, cada uno con su
+sha256 fijado (`:69-88`; `CLOUDREDIRECT_URL` y `CLOUDREDIRECT_FLATPAK_URL`
+fuerzan otro origen y saltan el pin); instala el bundle con la runtime KDE de
+Flathub, borra el remoto `cloudredirect` muerto que añadían los setups
+anteriores y copia `cloud_redirect_cli` del flatpak (`:490-510,535-564`). Ya
+no es fatal: si la descarga falla o el hash no cuadra, conserva el `.so`
+instalado o instala sin nube, con aviso (`:1091-1102`). `DisableCloud: no` en
+SLSsteam igual que siempre (`setup.sh:245`, `installer.py:121-161`): ponerlo a
+`yes` no cambiaría nada para nuestros juegos, que SLSsteam ve como poseídos
+por el package-0 (`slssteam.md` §2.8); lo que hace Steam con un juego nuestro
+sin CloudRedirect no está medido (lo esperable es su error de sincronización,
+que no bloquea). LumaDeck solo observa: estados `not_authed` (sin
+`tokens_<provider>.json`), `disabled` (marker `~/.config/CloudRedirect/disable`),
+`not_loaded`, `not_supported` por `cr_debug.log` ("Init failed: …")
+(`paths.py:934-1080`); la fila "Cloud saves need sign-in / Open the
+CloudRedirect app in Desktop Mode" y nada más: la UI no puede iniciar sesión.
+Versión del `.so` en disco contra la 2.6.6 que distribuimos, una constante sin
+red (`components.py:55-64,162-174`); la tarjeta de Componentes lleva siempre
+la línea "No longer maintained upstream. LumaDeck ships its last build; a
+Steam update may stop it for good" (`Settings.tsx:650`). lumalinux:
+`libcurl_pin` hace que CloudRedirect (y nuestras propias descargas) carguen el
+libcurl del sistema y no el del Steam Runtime (`libcurl_pin.cpp:102-168`); con
+2.6.6 estático solo afecta a lo nuestro, y se mantiene (opción A, 2026-10-07).
+Medido 2026-10-16 en la Deck: con el cliente del 2026-10-14, el que dejó
+CloudRedirect sin enganchar en Windows, una partida de Fields of Mistria carga
+y al cerrar el fichero de Drive se modifica (`cloudredirect.md` §5.2 F8).
+Es de 32 bits: con el cliente de 64 bits de Valve se acaba, sin port posible
+(`steam-rt3-x64.md` §2).
 
 **Lista de control.** Redirección: CloudRedirect, cinco proveedores.
 Convivencia con Steam Cloud: `DisableCloud: no`; CloudRedirect contesta los
@@ -974,9 +990,10 @@ con `status.json` de respaldo para lumalinux; SLSsteam por el tag que
 `setup.sh` grabó en `.slssteam.version` (vacío si se instaló con
 `SLSSTEAM_7Z_URL`) o un mínimo deducido buscando en `SLSsteam.so` las VERSION
 de su `updates.yaml` (`slssteam_version.py`); plugin por `package.json`.
-Última: GitHub Releases con caché 6 h en `~/.cache/lumadeck/releases/`,
-CloudRedirect la última que publique `cloud_redirect.so`; stale OK sin red;
-"no update" en silencio si no se sabe (`update_checks.py`, `components.py`).
+Última: GitHub Releases con caché 6 h en `~/.cache/lumadeck/releases/`;
+CloudRedirect contra la 2.6.6 que distribuimos, constante sin red (su
+upstream desapareció el 2026-10-16); stale OK sin red; "no update" en silencio
+si no se sabe (`update_checks.py`, `components.py`).
 Aplicar = **`setup.sh` entero** para cualquier componente (`reinjectInstalled`
 + reinicio; `installer.apply_component`). Settings y el panel usan las mismas
 comprobaciones (v0.11.0). Medido 2026-10-07: CloudRedirect 2.6.5 → 2.6.6 en
@@ -1009,8 +1026,8 @@ SLSsteam, `setup.sh` para aplicar. Salud: estados, guard, logs en tres sitios.
   lumalinux además con PRs automáticos diarios de hashes. Grupo SafeMode
   actual `20260922150000`. Licencias en §0.
 - **Servicios de terceros**: GitHub (releases, raw, API, Actions),
-  AceSLS/SLSsteam, Selectively11/CloudRedirect (+ su repo flatpak, Flathub,
-  runtime KDE 6.10), yesyes0649/steamnetsock-patch y eos-proxy,
+  AceSLS/SLSsteam, Flathub (runtime KDE 6.10 para la app de CloudRedirect,
+  que ya sale de nuestras releases), yesyes0649/steamnetsock-patch y eos-proxy,
   Detanup01/gbe_fork, SteamDatabase/SteamTracking, Microsoft (`dot.net`),
   Valve (`media.steampowered.com`, `api.steampowered.com`, tienda, CDN
   steampipe), `api.steamcmd.net`, SteamDB, hubcapmanifest.com, generator.ryuu.lol,
@@ -1049,14 +1066,14 @@ Cada una con su función.
 | `github.com/jayool/lumalinux/releases/latest/download/{liblumalinux.so,version.txt}` (y su redirect a `releases/tag/<tag>`) | `setup.sh:60,121-131`; `headcrab_compat.py:56` | el `.so` y el grupo SafeMode de la release | 1, 11 |
 | `github.com/AceSLS/SLSsteam/releases/…/SLSsteam-Any[-release].7z` | `setup.sh:454-471` | SLSsteam (tag por redirect 302) | 1 |
 | `raw.githubusercontent.com/AceSLS/SLSsteam/main/res/{config.yaml,updates.yaml}` | `slssteam_schema.py:50`; `slssteam_version.py:64` | esquema de config; VERSION para deducir la versión instalada | 2, 11 |
-| `github.com/Selectively11/CloudRedirect/releases` (+ `api.github.com/...?per_page=10` en slow path) | `setup.sh:80-81,502,517`; `update_checks.py:186` | `cloud_redirect.so` (última con Linux) | 8, 11 |
-| `raw.githubusercontent.com/Selectively11/CloudRedirect/refs/heads/gh-pages/cloudredirect.flatpakrepo`, `dl.flathub.org/repo/flathub.flatpakrepo` | `setup.sh:88-90` | app de CloudRedirect y runtime KDE 6.10 | 8 |
+| `github.com/jayool/lumalinux/releases/download/v0.22.3/{cloud_redirect-2.6.6+3434d9d.so,cloudredirect.flatpak}` (sha256 fijados) | `setup.sh:80-88,490-510,535-564` | `cloud_redirect.so` 2.6.6 y la app (bundle 2.6.5); el upstream desapareció el 2026-10-16 | 8 |
+| `dl.flathub.org/repo/flathub.flatpakrepo` | `setup.sh:89` | runtime KDE 6.10 de la app | 8 |
 | `github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so` | `setup.sh:84` | `netsock.so` para fixes online | 6 |
 | `github.com/yesyes0649/eos-proxy/…`, `github.com/Detanup01/gbe_fork/…` | `release.yml:70-122` | proxy EOS y Goldberg, solo al empaquetar | 6 |
 | `raw.githubusercontent.com/SteamDatabase/SteamTracking/master/ClientExtracted/steam.sh` | `setup.sh:285` | `steam.sh` vanilla al migrar desde headcrab | 1 |
 | `raw.githubusercontent.com/Deadboy666/h3adcr-b/main/headcrab.sh` | `headcrab_compat.py:36` | `HeadcrabCompatibleClientVer` | 1, 11 |
 | `dot.net/v1/dotnet-install.sh` | `setup.sh:412`; `dotnet.py:45` | .NET 9 para Steamless | 6 |
-| `api.github.com/repos/{jayool/LumaDeck,AceSLS/SLSsteam,jayool/lumalinux,Selectively11/CloudRedirect}/releases[/latest]` | `self_update.py:80`; `update_checks.py:125,186` | updates (caché 6 h) | 11 |
+| `api.github.com/repos/{jayool/LumaDeck,AceSLS/SLSsteam,jayool/lumalinux}/releases/latest` | `self_update.py:80`; `update_checks.py:125` | updates (caché 6 h); CloudRedirect ya no se consulta | 11 |
 | `20770407.xyz/manifest/<depot>/<gid>`, `manifest.manifestdex.com/<gid>`, `gmrc.wudrm.com/manifest/<gid>` (HTTP), `manifest.steam.run/api/manifest/<gid>` | `gmrc_store.hpp:155-158`; sonda `pins.py:461-462` | códigos de petición de manifest | 4 |
 | `steampipe.akamaized.net`, `fastly.cdn.steampipe.steamcontent.com` `/depot/<d>/manifest/<gid>/5/<code>` | `gmrc_store.hpp:292-300`; `pins.py:113-114,474` | validar un código con `Range: 0-0` | 4 |
 | `hubcapmanifest.com/api/v1/{manifest/<appid>,generate/manifest,user/stats}` | `api_manifest.py:173,524`; `manifests.py:80,330-353` | zip, manifest suelto, caducidad y cuota | 4, 10 |
@@ -1331,15 +1348,17 @@ lo incoherente, luego lo muerto.
     marca ("neutralised by SLSDeck" en el script, `.slsdeck-disabled`). Sin
     decisión.
 28. **El `.so` de CloudRedirect llega por dos caminos que no se coordinan.**
-    `setup.sh` (y LumaDeck al actualizar) baja `cloud_redirect.so` del asset de
-    la release de GitHub (`setup.sh:70-80,482-543`); la app Flatpak, que
-    instalamos de `gh-pages` y pedimos abrir para el login, trae el suyo y
-    ofrece reemplazar el desplegado si la versión difiere
-    (`cloudredirect.md` §4.1-6). LumaDeck compara la versión en disco con la
-    release (`components.py:87-114,165-181`): si la del Flatpak va por
-    delante o por detrás, cada lado ofrece volver a cambiarlo. Opciones: tomar
-    el `.so` del Flatpak igual que ya tomamos el CLI, o avisar en LumaDeck
-    cuando la versión en disco no sea la de la release. Sin decisión.
+    `setup.sh` (y LumaDeck al actualizar) despliega el 2.6.6 de nuestro asset
+    (`setup.sh:69-88,490-510`); la app, que instalamos de nuestro bundle y
+    pedimos abrir para el login, lleva dentro el 2.6.5 y ofrece reemplazar el
+    desplegado al ver que la versión difiere (`cloudredirect.md` §4.1-6).
+    LumaDeck compara la versión en disco con la 2.6.6 fija
+    (`components.py:55-64,162-174`): tras pulsar "Update" en la app, la
+    tarjeta ofrece volver a subir. Desde el 2026-10-16 las versiones no se
+    moverán más, así que el bucle es siempre 2.6.5 ↔ 2.6.6. Opciones: que
+    `setup.sh` tome el `.so` del Flatpak igual que toma el CLI (sería 2.6.5,
+    con el bug de stats que `cr_stats_fix` tapa), o avisar en LumaDeck cuando
+    la versión en disco no sea la 2.6.6. Sin decisión.
 29. **La rederivación automática nunca ha corrido sobre un movimiento real.**
     Desde junio Valve no ha movido ningún patrón nuestro (§5.2 F1); la cadena
     solo se ha ensayado con patrones corrompidos a propósito, y el ensayo del
@@ -1450,7 +1469,7 @@ nuestra (`api_manifest.py:180-205`).
 | Dependencia | Qué deja de funcionar | Evidencia |
 |---|---|---|
 | Release de SLSsteam (tag numérico de 14 dígitos, asset `SLSsteam-Any[-release].7z` con `bin/SLSsteam.so` y `res/config.yaml`) | `setup.sh` aborta: no hay instalación ni reinstalación. Un cambio de nombre de asset ya dejó la instalación en 404 ~44 h (2026-08-19) | `setup.sh:445-480,1062-1107` |
-| Release de CloudRedirect con `cloud_redirect.so` | `setup.sh` aborta (componente core); `api.github.com` con 403 en el slow path también | `setup.sh:493-543,1116-1122` |
+| Assets de CloudRedirect en nuestra release v0.22.3 (`.so` 2.6.6 y `cloudredirect.flatpak`) | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta. Respaldo en la rama `cr-archive`. El upstream (Selectively11) desapareció el 2026-10-16 y no hay más versiones | `setup.sh:490-510,535-564,1091-1102` |
 | GitHub raw y releases (`jayool/lumalinux`) | sin `setup.sh`, `downgrade.sh`, herramientas ni `.so`; SafeMode y feed de RVAs desde caché; sin checks de update (caché stale) | `installer.py:502-511`; `update.cpp:86-104`; `rva_feed.cpp:71` |
 | Hubcap | sin zips nuevos (salvo Ryuu), sin manifests sueltos para builds viejos, depots nuevos no se añaden; la clave queda `unknown` | `api_manifest.py:173,524`; `manifests.py:330-380` |
 | Ryuu | solo la fuente 2 y su verificación | `downloads.py:1351-1381` |
@@ -1503,6 +1522,7 @@ bien: `slssteam.md` §4.3.
 | Ryuu como proveedor completo (login verificado, orden del lua, búsqueda por tienda, sesión viva, borrado de la clave de Hubcap) | hecho (v0.11.0) | 10-07 |
 | Versión de componentes desde el `.so` de disco; Settings y panel con la misma comprobación | hecho (v0.11.0) | 10-08 |
 | Mensaje de `CR-stats` con CloudRedirect mapeado y símbolo oculto | hecho (v0.22.2) | 10-08 |
+| CloudRedirect sin upstream (repo y cuenta borrados): distribuirlo desde nuestras releases (`.so` 2.6.6 archivado de la Deck, app como bundle del `gh-pages` de huanyuejue) con hash fijado, `setup.sh` sin `die`, `DisableCloud` como está, LumaDeck con versión fija y aviso de "sin mantenimiento"; rama `cr-archive` como respaldo, nunca fusionada | hecho (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`) | 10-16 |
 | Enrich del depot Linux y Proton forzado en `localconfig.vdf` al añadir | eliminados (`26d9fec`): el enrich corría antes de que los manifests llegaran a `depotcache/`, así que nunca añadía nada en un primer add y en un re-add pisaba la clave del depot Linux con la del app; el forzado se perdía en la siguiente reescritura de Steam. Steam elige el depot y aplica Proton solo | 10-13 |
 | Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-35 | 10-13 |
 | C1 — máscara de bytes de layout en `patterns.hpp` (moon M1.1) | ya hecha donde tiene sentido (disp32 de ShaderDepot; frame, miembro de `CUser` y spill en Reconcile) y refutada donde no (issue #16, 07-06: comodín al frame deja BuildDep con 70 coincidencias y LoadPackage con 222). Único byte sin decidir: el `0x44` de `mov eax,[eax+0x44]` en ShaderDepot; enmascararlo si un día se mueve por él, validando con `verify_mask.py` | 09-14 |
@@ -1864,6 +1884,7 @@ convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
 | 2026-09-08 | CI | `verify-fix.yml` (smoke test en runtime) | Nunca ha dado verde: sus primeras ejecuciones reales fallaron en el arnés antes de cualquier aserción. El "verde" que se citaba era de otro workflow | maintenance §C |
 | sin fecha | código | Regresión de sesión para CachyOS | Una revisión anterior metía CachyOS en la familia ChimeraOS y le enviaba `desktop`, que CachyOS rechaza; corregido (verificado en `CachyOS/gamescope-session`) | LumaDeck docs/porting-cachyos.md |
 | 2026-10-07 | Deck | Versiones de componentes que mostraba Settings | CloudRedirect: `.so` en `2.6.5+870afdb-dirty`, caché de releases en `v2.6.6`, pero Settings leía 2.6.3 porque tomaba la primera línea de un `cr_debug.log` acumulativo desde agosto. SLSsteam `20261001163836`, lumalinux v0.22.1. Corregido leyendo la versión del `.so` en disco | LumaDeck `c4776ce`, `be36d92` |
+| 2026-10-16 | GitHub, codespace | Desaparición de `Selectively11/CloudRedirect` | Repo, releases, raw y `gh-pages` en 404, la cuenta también; `setup.sh` moría en "Downloading CloudRedirect" y LumaDeck recibía 404 en cada refresco. El fork `huanyuejue/CloudRedirect` llega a `bc5e38a` (v2.6.5) y su release no trae el `.so`; Software Heritage, captura del 08-20, tags hasta v2.6.5. El único 2.6.6 (`86a40032…`) estaba en la Deck y el codespace. `setup.sh` de `main` en el codespace con todo borrado: `exit=0`, `.so` con ese sha, app 2.6.5 del bundle, CLI copiado, remoto muerto eliminado | `cloudredirect.md` §0, §5.2 F8; `maintenance.md` §G |
 | 2026-10-08 06:51 | CI | Releases lumalinux v0.22.2 y LumaDeck v0.11.0 | `build.yml` run 534 con `liblumalinux.so` (9,5 MB) y `version.txt`; `release.yml` run 143 estampa `0.11.0` del tag | — |
 | 2026-07-22 → 09-02 | CI | Latencia del whitelist automático | PR #22 creado 06:03:32 y mergeado 06:03:35; #27 12:08:50 → 12:08:53. SLSsteam en los mismos builds: 07-22 el mismo día, 07-25 tres días después, 07-28, 08-04, 09-02 el mismo día | `slssteam.md` §5.2 F11 |
 | 2026-10-15 | arnés de 64 bits con el `status.cpp` real | Lector en bucle sobre `gmrc.json` contra 2000 escrituras | Con `fopen("w")`: 24.417 lecturas vacías o truncadas de 2.035.545. Con `.tmp` + `rename`: 0 de 1.855.903; salida y rutas iguales, ningún `.tmp` residual | esta sesión |

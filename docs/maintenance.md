@@ -936,6 +936,44 @@ timeout. Each asserts what is left on disk (pin, `package/`, backup, exit
 code, server stopped). No network, no real Steam, a few seconds. It is not in
 CI yet; run it by hand.
 
+## G) CloudRedirect: where it comes from now
+
+Upstream (`Selectively11/CloudRedirect`) and its author's GitHub account were
+deleted on 2026-10-16 (`docs/cloudredirect.md` §2.12). Nothing new will ever
+be published there, so we ship it ourselves. What `setup.sh` installs:
+
+| File | What | Where it lives | sha256 |
+|---|---|---|---|
+| `cloud_redirect-2.6.6+3434d9d.so` | the last Linux build (32-bit, 7,573,924 bytes), copied off a Deck. Its source commit `3434d9d` was never public: there is no code for 2.6.6 anywhere | asset of release `v0.22.3`; `vendor/cloudredirect/` on branch `cr-archive` | `86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b` |
+| `cloudredirect.flatpak` | the sign-in app as a single bundle (2.6.5, the last `gh-pages` publish; carries `cloud_redirect_cli` and its own 2.6.5 `.so`). Built with `flatpak build-bundle <ostree repo> cloudredirect.flatpak org.cloudredirect.CloudRedirect master` from the `gh-pages` branch of the preservation fork `huanyuejue/CloudRedirect` | same two places | `a0a916bbd305852149b99d5c90d8765396951a518136a0b677063c4b519d77cc` |
+
+`setup.sh` pins both URLs and hashes (`CR_SO_URL`/`CR_SO_SHA256`,
+`CR_FLATPAK_URL`/`CR_FLATPAK_SHA256`, `setup.sh:69-88`). A failed download or a
+hash mismatch is a warning, never an abort: an installed `.so` is kept,
+otherwise the stack installs without cloud saves (`:1091-1102`). The KDE
+runtime still comes from Flathub.
+
+Rules:
+
+- **`cr-archive` is an archive, not a work branch. Never merge it into
+  `main`**: the binaries would enter main's history for good. It exists so
+  the files survive a release being deleted.
+- The release asset is what users download; the branch is the backup. If one
+  is ever lost, restore it from the other and keep the hashes above.
+- Source code (up to 2.6.5, `bc5e38a`) exists only in `huanyuejue/CloudRedirect`
+  and in Software Heritage (snapshot 2026-08-20). If something must ever be
+  changed, fork that into `jayool` first and build 2.6.5 with `-m32` from
+  `src/platform/linux/` (`CMakeLists.txt`, `LINUX_32BIT=ON`); 2.6.6's fixes
+  (hidden symbols, the empty-store stats bug) are not in it, and lumalinux's
+  `cr_stats_fix` covers the stats one.
+- CloudRedirect is 32-bit and cannot follow Steam's 64-bit client
+  (`docs/steam-rt3-x64.md`). When Valve ships that to SteamOS, cloud saves
+  end; there is no port to wait for.
+
+LumaDeck's side: `components.py` compares the installed `.so` against a
+constant 2.6.6 and never asks GitHub; the Components card says upstream is
+gone.
+
 ## TL;DR — which fix to try, in order
 
 1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
@@ -950,6 +988,9 @@ CI yet; run it by hand.
    anchors by hand).
 5. **`SLS-ach: could not resolve…` / native cheevos off** → D (update SLSsteam
    symbols/pattern; it's fail-closed, not a crash).
-6. **lumalinux is CLEAN but SLSsteam (or CloudRedirect) aborts on the new
-   client** → F (the downgrade: Fix in Desktop / `downgrade.sh`, then wait for
-   that component and **Let Steam update**). Not a lumalinux fix.
+6. **lumalinux is CLEAN but SLSsteam aborts on the new client** → F (the
+   downgrade: Fix in Desktop / `downgrade.sh`, then wait for that component
+   and **Let Steam update**). Not a lumalinux fix. If it is **CloudRedirect**
+   that stops hooking, nobody ships a fix any more (G): the stack keeps
+   working without cloud saves.
+
