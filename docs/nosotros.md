@@ -807,9 +807,12 @@ no es fatal: si la descarga falla o el hash no cuadra, conserva el `.so`
 instalado o instala sin nube, con aviso (`:1112-1123`). `DisableCloud: no` en
 SLSsteam igual que siempre (`setup.sh:245`, `installer.py:121-161`): ponerlo a
 `yes` no cambiaría nada para nuestros juegos, que SLSsteam ve como poseídos
-por el package-0 (`slssteam.md` §2.8); lo que hace Steam con un juego nuestro
-sin CloudRedirect no está medido (lo esperable es su error de sincronización,
-que no bloquea). LumaDeck solo observa: estados `not_authed` (sin
+por el package-0 (`slssteam.md` §2.8). Sin CloudRedirect, Steam lanza el juego
+igual: al arrancar sincroniza a "ChangeNumber 0" (la nube de Valve no tiene
+nada) y al salir intenta subir los ficheros de AutoCloud, Valve responde
+`Access Denied` a cada uno, y la fila del juego dice "unable to sync" con un
+toast "Cloud Error", en cada cierre; la partida local no se toca (§5.2 F8).
+LumaDeck solo observa: estados `not_authed` (sin
 `tokens_<provider>.json`), `disabled` (marker `~/.config/CloudRedirect/disable`),
 `not_loaded`, `not_supported` por `cr_debug.log` ("Init failed: …")
 (`paths.py:934-1080`); la fila "Cloud saves need sign-in / Open the
@@ -1830,9 +1833,11 @@ el frontend.
 
 #### Función 8 — Cloud saves
 
-Ningún save sincronizado medido por nosotros; solo logros (F7). La
-convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
-`cloudredirect.md`.
+Las mediciones de saves (un save sincronizado con Drive en la Deck y en el
+PC con el cliente `1791918634`; Steam sin CloudRedirect: `Access Denied` al
+subir, "unable to sync" en cada cierre, sin bloquear) están en
+`cloudredirect.md` §5.2 F8, junto con la convivencia y el orden del
+`LD_PRELOAD`.
 
 #### Función 9 — Añadir y quitar un juego
 
