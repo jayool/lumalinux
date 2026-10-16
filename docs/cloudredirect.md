@@ -556,7 +556,7 @@ y solo compilando la 2.6.5 del fork (la 2.6.6 no tiene código).
 | el prólogo de `CCMInterface::Send` o del escritor de `GetLastPlayedTimes` | sin tiempo de juego ni captura de desbloqueos; nube y lumalinux siguen |
 | el formato de `config.yaml` de SLSsteam (lista en línea, `DisableCloud` anidado) | CloudRedirect deja de gestionar los juegos, en silencio |
 | `DisableCloud: yes` (lo escriba quien lo escriba) | sin nube para los juegos que SLSsteam no ve como poseídos; los nuestros van por package-0 y no les afecta (`slssteam.md` §2.8) |
-| los assets de `jayool/lumalinux` v0.22.3 (`.so` y `.flatpak`) inaccesibles o con otro hash | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta (`setup.sh:490-510,535-564,1091-1102`). Copia de respaldo en la rama `cr-archive` |
+| los assets de `jayool/lumalinux` v0.22.3 (`.so` y `.flatpak`) inaccesibles o con otro hash | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta (`setup.sh:490-510,535-564,1112-1123`). Copia de respaldo en la rama `cr-archive` |
 | Valve lleva el cliente de 64 bits (`steamrt64`) al canal estable de SteamOS | `cloud_redirect.so` es de 32 bits y no carga (`wrong ELF class`); sin código de la 2.6.6 y sin autor, no hay port: la nube redirigida se acaba ese día (`steam-rt3-x64.md` §2) |
 | huanyuejue borra su fork | se pierde la única fuente viva del código (2.6.5) y del repo ostree; nuestros dos binarios no dependen de él |
 | SLSDeck en la misma Deck | `cloud_redirect.so` sustituido por el de moon, que sin slsteam-moon no sirve logros (`slsdeck.md` §4.1-4) |

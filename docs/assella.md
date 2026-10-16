@@ -745,7 +745,7 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
      (`manifests.py:513-514`) y no lo repone.
 
    Un manifest malo dejado por ASSella se queda (nuestro lado en
-   `nosotros.md` §4.1-25).
+   `nosotros.md` §4.1-24).
 
 7. **El botón "Standard Plugin" borra nuestro plugin.** Ofrece borrar todos los
    `.lua` de la carpeta salvo los suyos, sin copia (`at0m_tab.py:584-610`), y
@@ -791,7 +791,7 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 | 9 | Workshop (DepotDownloader `-ugc`) | nada | §4.4 A9 |
 | 9 | detección del watcher de SLSsteam muerto | nada | §4.4 A4 |
 | 11 | reparador del config que reescribe | completado que solo añade | |
-| 11 | componentes de terceros verificados por SHA-256 contra un manifest de un bucket propio, descarga atómica | `setup.sh` baja los `.so` de terceros sin hash | `nosotros.md` §4.1-24; matriz §3.1 |
+| 11 | componentes de terceros verificados por SHA-256 contra un manifest de un bucket propio, descarga atómica | `setup.sh` baja los `.so` de terceros sin hash | `nosotros.md` §4.1-23; matriz §3.1 |
 | 8 | nada | CloudRedirect | |
 
 ### 4.4 Decisiones ya tomadas (del doc anterior, con fecha) y estado hoy

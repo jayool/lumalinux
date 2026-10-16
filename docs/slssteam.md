@@ -14,7 +14,7 @@ configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 | | |
 |---|---|
 | **Qué es** | Una biblioteca de 32 bits (`SLSsteam.so`) que se carga como **auditor del enlazador** (`LD_AUDIT`) en el proceso `steam` de Linux y parchea `steamclient.so` en memoria: 37 hooks (15 detours sobre funciones localizadas por patrón o RTTI y 22 sobre vtables de objetos vivos) que fingen la propiedad de las apps listadas en `config.yaml`, desbloquean DLC, reescriben y descartan mensajes del CM, cachean tickets, suplantan el SteamID y el AppId que ven los juegos, y piden esquemas de logros en nombre de otros usuarios. Trae un API de plugins Lua (LuaJIT sin sandbox), un fichero de comandos en `/tmp`, y dos herramientas .NET (`ticket-grabber`, `schema-grabber`). No descarga juegos, no maneja claves de depot ni manifests externos, y no se actualiza a sí mismo. |
-| **Repos y commits leídos** | `AceSLS/SLSsteam` `main@049bbdd` (2026-10-06; último tag `20261001163836` = `42568f0`, 2026-10-01; `res/version.txt` = `20260903114323`); rama `dev@311fae3` (2026-10-12, 17 commits sin publicar después de `51724f5`, §5.3). `src/` ≈ 12.000 líneas propias sin los protobufs generados. La release instalada en la Deck es `20261001163836` (`nosotros.md` §0). |
+| **Repos y commits leídos** | `AceSLS/SLSsteam` `main@136f614` (2026-10-14; último tag `20261014151919` = `a45c19b`, 2026-10-14, que publica lo que `dev` acumulaba desde `51724f5`, §5.3); rama `dev@ae7d680` (2026-10-15, 3 commits de `stealth` después del tag). Código leído hasta `main@049bbdd` y `dev@311fae3`. `src/` ≈ 12.000 líneas propias sin los protobufs generados. La release instalada en la Deck es `20261014151919` (`nosotros.md` §0). |
 | **Plataforma** | Linux x86 de 32 bits dentro del proceso `steam` (`-m32`): Steam nativo, `steam-native`, Flatpak (`flatpak override` + `SHARED_LIBRARY_GUARD=0`), SteamOS/Deck (hashes `steamdeck_stable` en el feed; `SafeMode` recomendado para Game Mode por el propio `config.yaml:112`). Paquetes: 7z/zip "Any", PKGBUILD Arch (`/usr/lib32/libSLSsteam.so`), flake Nix, Docker para compilar contra glibc de Debian bookworm. |
 | **Licencia y quién** | AGPL-3.0-only. Autor y mantenedor único en la práctica "Ace! _SL/S" (`.mailmap`, `acesls@protonmail.com`); Parasitic-Hollow como suplente declarado; aportes puntuales de DeveloperMikey (Nix), exefer, skrimix, dankrr, _drazy/Deadboy666 (hashes). Soporte por Discord, no por issues. Ritmo: 22 tags entre 2026-07-05 y 2026-10-01 (≈ uno cada 4 días), ~400 commits en tres meses; historia reescrita el 2026-07-21 (raíz nueva sin padre, §5.3). |
 | **Relación con los demás programas** | Es la capa de propiedad de nuestro stack: lumalinux y LumaDeck la instalan tal cual sale de su release y la configuran (`nosotros.md` §2.2, §4.3). lumalinux copió su `update.cpp` (SafeMode) y parchea en memoria dos `call` de `SLSsteam.so` para los logros (`nosotros.md` §2.7). slsteam-moon es un fork; LumaCore, SteaMidra, SLSDeck, ASSella y LuaTools se apoyan en él o lo instalan; los plugins Lua corren dentro de él; CloudRedirect convive con él para cloud y logros. |
@@ -31,7 +31,7 @@ configuramos y parcheamos SLSsteam está en `nosotros.md` (§2 por función y
 - **La caché offline de SafeMode no funcionó hasta el 2026-09-02** (`eafd3ea`): `path::append("/.updates.yaml")` sustituía la ruta por `/.updates.yaml`.
 - **`library-inject.so` es un fichero de 0 bytes** desde `148b9a1` (2026-08-23) y sigue en todos los `LD_AUDIT` upstream; glibc lo ignora con aviso.
 - Los hooks son **37** (tabla en §2.1); se hablaba de "los `RunIPCFrame` de 7 interfaces", mecanismo muerto desde 2026-07-24.
-- El endpoint de reseñas en `main@049bbdd` sigue siendo `store.steampowered.com/appreviews`; el cambio a `api.steampowered.com/IUserReviewsService` está solo en `dev` (`51724f5`, 2026-10-03).
+- El endpoint de reseñas es `api.steampowered.com/IUserReviewsService` desde `20261014151919` (`51724f5`); hasta `20261001163836` era `store.steampowered.com/appreviews` (`51724f5`, 2026-10-03).
 
 ---
 
@@ -957,12 +957,10 @@ ninguno se ha actuado.
    contrastar con `nosotros.md` §2.3 qué DLC entran por `keys.txt` y cuáles
    por `AdditionalApps`. (`sdk/CUser.cpp:37-46`, `dlc.cpp:16`, `apps.cpp:177,403,442,457`, `fakeappid.cpp:20`)
 2. **Borrow de esquemas y nosotros**: el guard que repunta lumalinux es
-   exactamente `achievements.cpp:154` y `:236`; el endpoint de reseñas cambia
-   en `dev` y el autor dice que el de la tienda muere el 2026-10-22. Si
-   SLSsteam publica, nuestro parche sigue válido (misma forma del `call`);
-   si no publica y el endpoint muere, los juegos nuevos no tendrán esquema
-   hasta que haya release. Esperar a SLSsteam (ya decidido en `nosotros.md`
-   §4.4). (`achievements.cpp:21-23`; `dev` `51724f5`)
+   exactamente `achievements.cpp:154` y `:236`; el endpoint de reseñas es el
+   de la Web API desde `20261014151919`, antes de que el de la tienda muera el
+   2026-10-22, y nuestro parche sigue válido (misma forma del `call`)
+   (`achievements.cpp:21-23`; `51724f5`).
 3. **`AppLicensesChanged_t` nunca en arranque y solo tras `GetSubscribedApps`**:
    nuestro reconcile dispara `LicensesUpdate_t` (`0x7d`); el de SLSsteam
    `AppLicensesChanged_t` (`0xf90be`) solo cuando LumaDeck añade con Steam
@@ -1003,15 +1001,14 @@ ninguno se ha actuado.
 13. **Hooks de `IClientAppManager` duplicados**: cada `GetUpdateInfo`,
     `BIsDlcEnabled`, etc. pasa dos veces por el hook; sin efecto funcional,
     pero cualquier medición de tiempos en esas rutas lo verá doble.
-    (`hooks.cpp:1502-1514`; corregido en `dev`, `f3489d6` 2026-10-08, sin
-    publicar)
+    (`hooks.cpp:1502-1514`; corregido desde `20261014151919`, `f3489d6`)
 14. **Sin kill-switch en caliente** (`removeAll` sin llamadores) y sin crash
     guard: el único guard del stack es el nuestro (vanilla tras N crashes).
 15. **Arena de paquetes de 8×1 MB con rotación**: si Steam retuviera un
     paquete reserializado más de 8 reserializaciones, se sobreescribe. No
     tocamos la capa CM; solo importa si un plugin nuestro lo hiciera. En
-    `dev` la arena desaparece (`03b6c57`, 2026-10-08, sin publicar: `Plat_Alloc`
-    por paquete, §5.3).
+    `20261014151919` la arena desaparece (`03b6c57`: `Plat_Alloc` por paquete,
+    §5.3).
 16. **Símbolos**: ni release ni debug van strippeados y no hay `-fvisibility`;
     nuestro parche de logros resuelve `CUser::isSubscribed`,
     `CConfig::isAddedAppId`, `g_config` y `Achievements::sendAndRecv*` por
@@ -1041,7 +1038,7 @@ ninguno se ha actuado.
 | glibc rtld-audit y que el lanzador respete `LD_AUDIT` (Flatpak: `SHARED_LIBRARY_GUARD=0`) | `main.cpp:240-292` | no se carga |
 | hilo único del steamclient (sin locks en hooks; mapas globales sin mutex) | `hooks.cpp:1473-1476`, `achievements.hpp` | carreras si Valve paraleliza el IPC |
 | `VERSION` presente en `updates.yaml` | `update.cpp:143-146` | builds propias nunca pasan SafeMode |
-| que `crashhandler.so` se cargue en `steam` (es quien escribe los `.dmp` de `/tmp/dumps`) | `main.cpp` `la_objsearch`, solo en `dev` (`abafc49`, 2026-10-12, sin publicar) | SLSsteam devuelve `nullptr` al loader y el manejador de crashes de Steam no se carga: si `dev` se publica, no habrá minidumps y el crash guard de nuestro `setup.sh` no latcheará nunca (`nosotros.md` §4.1-2; hoy cuenta un crash provocado, medido 2026-10-15). SLSsteam mismo no pierde nada |
+| que `crashhandler.so` se cargue en `steam` (es quien escribe los `.dmp` de `/tmp/dumps`) | `main.cpp` `la_objsearch` (desde `20261014151919`) | SLSsteam devuelve `nullptr` al loader y el manejador de crashes de Steam no se carga: no hay minidumps. El crash guard de nuestro `setup.sh` lee el core del cliente en `coredumpctl` (`nosotros.md` §2.1). SLSsteam mismo no pierde nada |
 
 ### 4.3 Lo que SLSsteam tiene y nosotros usamos o no
 
@@ -1055,9 +1052,9 @@ La tabla completa de claves que escribimos y su valor está en `nosotros.md`
 `FakeName/Email/WalletBalance`, el fichero de comandos ni las herramientas
 .NET. Lo que SLSsteam no tiene y cubrimos nosotros: claves de depot,
 manifests, códigos de petición de manifest, package-0, updates por proveedor,
-fixes, cloud (CloudRedirect), UI. Lo que SLSsteam tiene en `dev` y no nos
-alcanza: `stealth` (§5.3), porque decide por `isSubscribed` y nuestros juegos
-lo son (`nosotros.md` §4.1-33).
+fixes, cloud (CloudRedirect), UI. Lo que SLSsteam tiene y no nos alcanza:
+`stealth` (desde `20261014151919`, §5.3), porque decide por `isSubscribed` y
+nuestros juegos lo son (`nosotros.md` §4.1-32).
 
 ### 4.4 Bugs y fragilidades propias de SLSsteam (del código, no de la convivencia)
 
@@ -1148,15 +1145,16 @@ Además de lo listado en la cabecera del doc:
   pretende al vaciar `stats` de la respuesta.
 - La causa del crash de `libssl.3.so` en SteamOS que motivó el curl externo.
 - La retirada del endpoint de reseñas de la tienda el 2026-10-22: dicho del
-  autor en `dev`.
+  autor en el commit `51724f5`.
 - La concurrencia sobre los mapas sin mutex de `achievements.cpp`; el autor
   asume un solo hilo.
 - La forma de bytes del `.so` de release: compilarlo no es reproducible, así
   que las anclas del parche de logros se verifican sobre `.symtab` y la
   fuente, no sobre el binario publicado.
-- Si `la_objsearch` en el propio `SLSsteam.so` (`dev`, `abafc49`) rompe el
-  despacho de excepciones como lo hacía en `library-inject.so` (§2.1); en el
-  mismo lote Ace quita `mold` del Makefile por eso.
+- Si `la_objsearch` en el propio `SLSsteam.so` (`abafc49`, publicado en
+  `20261014151919`) rompe el despacho de excepciones como lo hacía en
+  `library-inject.so` (§2.1); en el mismo lote Ace quitó `mold` del Makefile
+  por eso. En la Deck con esa release los hooks cargan (`nosotros.md` §5.2 F1).
 - Que el watcher de `<config>/cache/` de los tickets (`dev`, `f3bd8be`)
   dispare en una Deck; en código sí.
 
@@ -1372,7 +1370,7 @@ decir, las claves de `updates.yaml`):
 - *Octubre (4)*: `e84bbb8` 10-01 `git` en el Dockerfile; `42568f0` 10-01
   **arregla la API** (`strsplit(cmd, "\\|")`): rota entre `20260930144343` y
   `20261001163836`; `9c829a7` PKGBUILDs; `049bbdd` 10-06 README sin "ADS".
-  En `dev` tras el merge (no publicado; punta `311fae3`, 10-12): `07dc57e`…`b92dd53`
+  En `dev` tras el merge (todo publicado el 10-14 en `20261014151919`): `07dc57e`…`b92dd53`
   10-02 offsets por RTTI (`searchOffsetByTypeName`) en vez de tres patrones;
   `51724f5` 10-03 **endpoint de reseñas** →
   `api.steampowered.com/IUserReviewsService/GetAppReviews/v1/` ("Store endpoint
@@ -1436,3 +1434,14 @@ escritura rasgada del `rel32` de ese mismo parche tiró Steam en Game Mode
 hasta el OOBE; issue #157 (crash con SamRewritten, bisecado a `d056fda`,
 arreglado por `bbe1e3f`), #158 (EINTR), #159 (horas y logros al comprar),
 #156 (LuaHook), #46 (FakeAppIds rompe tickets y logros).
+
+**2026-10-14, `20261014151919`.** El cliente `1791918634` (compilado el 13,
+publicado el 14) deja a `20261001163836` abortando en `vftableinfo.cpp:46`
+(`GetAvailableCompatToolsForApp not found`, medido en la Deck ese día,
+`nosotros.md` §5.2 F1). Ace publica el mismo día: patrones del `steamclient`
+nuevo (`7a5c378`), `GetAvailableCompatToolsForApp` eliminado del SDK
+(`d8f6a7b`, "Seems like this function is gone for good"), `CNetPacket` y
+`CProtoBufMsgBase` actualizados, hash `0d01ab4f` en `updates.yaml`
+(`6d02681`), y arrastra lo que `dev` acumulaba: `stealth` (`94474f9`), el
+bloqueo de `crashhandler.so` (`abafc49`) y el endpoint de logros nuevo
+(`51724f5`). `dev` sigue el 15 con tres refactors de `stealth` (`ae7d680`).

@@ -950,7 +950,7 @@ be published there, so we ship it ourselves. What `setup.sh` installs:
 `setup.sh` pins both URLs and hashes (`CR_SO_URL`/`CR_SO_SHA256`,
 `CR_FLATPAK_URL`/`CR_FLATPAK_SHA256`, `setup.sh:69-88`). A failed download or a
 hash mismatch is a warning, never an abort: an installed `.so` is kept,
-otherwise the stack installs without cloud saves (`:1091-1102`). The KDE
+otherwise the stack installs without cloud saves (`:1112-1123`). The KDE
 runtime still comes from Flathub.
 
 Rules:

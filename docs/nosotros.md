@@ -12,7 +12,7 @@ donde toca. Los docs de diseño ya ejecutados están en `docs/design/`.
 | | |
 |---|---|
 | **Qué es** | Tres piezas que se instalan juntas en un Steam de Linux: **lumalinux**, una biblioteca de 32 bits (`liblumalinux.so`) que se carga dentro del cliente Steam y parchea cinco funciones de `steamclient.so`, más su instalador `setup.sh` y la herramienta `steamidra_lite.py`; **LumaDeck**, un plugin de Decky Loader (backend Python como root + frontend React) que es la interfaz y la lógica de añadir, actualizar y quitar juegos; y **SLSsteam** (de AceSLS), que instalamos tal cual sale de su release y configuramos, y que pone la propiedad falsa de las apps. CloudRedirect va en la misma instalación para cloud saves y logros; tiene su propio doc. Su upstream (Selectively11) desapareció el 2026-10-16 y desde entonces el `.so` 2.6.6 y su app salen de nuestras releases. |
-| **Repos y commits leídos** | `jayool/lumalinux` `b8d4d6d` (release v0.22.2 = `c17536e`; después, el downgrade reescrito, el whitelist `0d01ab4f`, `status.cpp` atómico y las herramientas por tag); `jayool/LumaDeck` `07a6eb8` (release v0.11.2; después, el hotfix del 2026-10-14 y los cinco arreglos del 10-13/15). SLSsteam: config y fuentes de `AceSLS/SLSsteam` `main@049bbdd` (`config_default.hpp`), release instalada en la Deck `20261001163836`. |
+| **Repos y commits leídos** | `jayool/lumalinux` `f86659d` (release v0.22.3 = `2af3038`; después, CloudRedirect desde nuestros assets y el guard leyendo `coredumpctl`); `jayool/LumaDeck` `250d675` (release v0.11.3 = `f1b08cb`; después, CloudRedirect contra la 2.6.6 fija). SLSsteam: config y fuentes de `AceSLS/SLSsteam` `main@136f614` (`config_default.hpp`), release instalada en la Deck `20261014151919`. |
 | **Plataforma** | SteamOS (Steam Deck, Game Mode y Desktop). Port a CachyOS en curso (`cachyos-port.md`). Arch, Debian, Void contemplados en `setup.sh`. Steam Flatpak **no** soportado (`setup.sh:31`; LumaDeck solo lo detecta, `platform_info.py:252-278`). |
 | **Licencia y quién** | lumalinux: GPL-3.0-only (cabeceras SPDX en `src/`), con `src/update.cpp` tomado de SLSsteam (AGPL-3.0, `update.cpp:1-8`). LumaDeck: "Fork of DeckTools" (`package.json`), autor jayool; sin `LICENSE` en la raíz (leído del código, no de docs). SLSsteam: AGPL-3.0, AceSLS. Releases por tag con CI en los dos repos (`build.yml`, `release.yml`). |
 | **Relación con los demás programas** | Base técnica = SLSsteam (propiedad) + lumalinux (claves, package-0, códigos de manifest). Referencia histórica de lumalinux = LumaCore (los hooks se alinearon a él, `main.cpp:9-22`; `RESEARCH.md` §11). `steamidra_lite.py` nació de SteaMidra (parser del lua "verbatim", `steamidra_lite.py:106-144`). LumaDeck nació de DeckTools. |
@@ -74,7 +74,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 
 | Fichero | Líneas | Qué hace | F |
 |---|---|---|---|
-| `setup.sh` | 1234 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`; herramientas de runtime del mismo tag que el `.so`; CloudRedirect y su app desde nuestros assets con hash fijado), wrapper, guard anti crash-loop, cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, `--uninstall` | 1, 2, 6, 8, 11, 12 |
+| `setup.sh` | 1255 | instala y ordena la pila (SLSsteam por `LD_AUDIT`, CloudRedirect + lumalinux por `LD_PRELOAD`; herramientas de runtime del mismo tag que el `.so`; CloudRedirect y su app desde nuestros assets con hash fijado), wrapper, guard anti crash-loop (`.dmp` o `coredumpctl`), cobertura Desktop y Game Mode, config de SLSsteam, .NET 9, `--uninstall` | 1, 2, 6, 8, 11, 12 |
 | `downgrade.sh` | 481 | escape hatch "Fix in Desktop": baja del CDN de Valve los paquetes del build fijado por headcrab, para Steam y espera, escribe el pin `steam.cfg` firmado, sirve el manifest viejo desde `127.0.0.1:1666` y relanza Steam contra él, verifica por hash de `steamclient.so`, deshace si falla (§2.1 "Cómo se recupera") | 1, 11 |
 | `install.sh` | — | instalador **legacy** de la era headcrab (parchea el `steam.sh` de headcrab); sin uso desde el modelo wrapper | — |
 | `tools/steamidra_lite.py` | 1462 | "añadir juego": manifests → depotcache, `AdditionalApps`/`AppTokens`/`ManifestIds`, `keys.txt`, `config.vdf`, `.acf`, `stplug-in`; `--pin-installed`/`--unpin`/`--set-pin`/`--pin-status` | 2, 3, 4, 5, 9 |
@@ -150,14 +150,14 @@ citan como "§5 F<n>".
 ### 2.1 Engancharse a Steam
 
 **Cómo entra.** Modelo **wrapper**, sin tocar `steam.sh` (al contrario: `setup.sh`
-lo restaura vanilla si headcrab lo había parcheado, `setup.sh:283-352`). La
+lo restaura vanilla si headcrab lo había parcheado, `setup.sh:282-351`). La
 inyección no puede vivir en `steam.sh`: Steam lo vuelve a extraer cuando su
 tamaño no coincide con el de su manifest, así que cualquier update de Steam la
 borraría (y headcrab lo regenera).
-`setup.sh` escribe `~/.local/share/SLSsteam/path/steam` (`:1150-1202`), que
+`setup.sh` escribe `~/.local/share/SLSsteam/path/steam` (`:1173-1225`), que
 resuelve el binario real (`LUMA_STEAM_BIN` → PATH saltándose a sí mismo →
 `/usr/bin/steam`, `/usr/games/steam`, `/usr/lib/steam/steam`), pasa por el guard
-y hace `exec`. El entorno lo fija `luma_set_injection_env` (`:884-898`):
+y hace `exec`. El entorno lo fija `luma_set_injection_env` (`:901-915`):
 
 - `LD_AUDIT=library-inject.so:SLSsteam.so` (o solo `SLSsteam.so` si
   `library-inject.so` está vacío, como upstream lo deja desde 20260903).
@@ -165,21 +165,21 @@ y hace `exec`. El entorno lo fija `luma_set_injection_env` (`:884-898`):
   CloudRedirect, a propósito, porque `cr_stats_fix` interpone un símbolo de
   CloudRedirect y necesita ir primero (`cr_stats_fix.hpp` "the wrapper puts
   [lumalinux] BEFORE cloud_redirect.so"). CloudRedirect nunca en `LD_AUDIT`:
-  "corrompe el heap del cliente" (`setup.sh:1181-1182`). En Wayland se añade
-  `libextest.so` al final (`:887-892`).
+  "corrompe el heap del cliente" (`setup.sh:1177-1179`). En Wayland se añade
+  `libextest.so` al final (`:904-908`).
 
 Cobertura **Desktop**: `ensure-desktop-coverage.sh` reescribe el `Exec=` de todo
 `*steam*.desktop` cuyo programa sea `steam|steam-jupiter(-stable)?|bazzite-steam`
 a `env LUMA_STEAM_BIN=<prog> <wrapper>` con la marca `X-LumaLinux-Wrapped=1`
-(`setup.sh:603-633`); los de `/usr/share/applications` se sombrean en
+(`setup.sh:569-715`); los de `/usr/share/applications` se sombrean en
 `~/.local/share/applications`; autostart igual; el icono de `~/Desktop` se
 reapunta; PATH drop-in en `.bashrc/.zshrc/.profile`; un guardian systemd
 `--user` (`.path` sobre cinco directorios + `.timer` cada 5 min) rehace la
-cobertura si Steam regenera su `.desktop` (`:747-806`). Cobertura **Game
+cobertura si Steam regenera su `.desktop` (`:738-803`). Cobertura **Game
 Mode**: el PATH drop-in no llega a la sesión gamescope (medido en Deck, §5 F1),
 así que un drop-in en `steam-launcher.service` (`ExecStart=` →
 `lumalinux-steam-launcher`) carga el mismo guard y hace `exec
-/usr/lib/steamos/steam-launcher` (`:960-993`). LumaDeck rehace ese drop-in en
+/usr/lib/steamos/steam-launcher` (`:972-1017`). LumaDeck rehace ese drop-in en
 cada carga del plugin y hace `daemon-reload` (`paths.py:631-703`, llamado en
 `main.py:93-106`).
 
@@ -258,7 +258,7 @@ reordena.
    los RVAs bastan (`watch-steam.yml:420-437`). `probe-steam.yml` prueba a mano
    cualquier canal (`steam_client_ubuntu12`, betas).
 
-SLSsteam tiene su propio SafeMode; lo ponemos a `no` (`setup.sh:247-260`,
+SLSsteam tiene su propio SafeMode; lo ponemos a `no` (`setup.sh:246-259`,
 `installer.py:164-213`) para que intente enganchar builds nuevos. LumaDeck
 lee las consecuencias: `status.json` (`hooks{…}`, `blocked`) y
 `~/.SLSsteam.log` ("Failed to find all patterns! Aborting…", "Unknown
@@ -272,24 +272,32 @@ SafeMode de la **release** de lumalinux (`releases/latest/download/version.txt`)
 
 **Cómo se recupera.**
 
-- Crash guard del launcher (`lumalinux-guard.sh`, `setup.sh:845-967`): cuenta
-  `*.dmp` en `/tmp/dumps` más nuevos que `last_launch` dentro de 180 s; al 3º
-  seguido, o al 1º si `steamclient.so` cambió desde el último arranque bueno,
-  latchea `safe_mode` (fingerprint de los cuatro `.so`), **borra
-  `appcache/appinfo.vdf`**, avisa "Steam recovery mode" y arranca vanilla
-  (`env -u LD_AUDIT -u LD_PRELOAD`). El latch se limpia solo cuando cambia el
-  fingerprint. Si al arrancar no existe `/tmp/dumps` (un `/tmp` vaciado por
-  reinicio), ese arranque no se evalúa y contador y `good_client` quedan como
-  estaban (`:938-951`); tras un crash el directorio y el `.dmp` sobreviven y
-  el siguiente arranque lo cuenta (medido 2026-10-15, §5.2 F1). LumaDeck lo
-  muestra como "Recovery mode" con botón "Re-enable injection"
-  (`paths.py:818-888`, `SystemStatus.tsx:201-211`).
+- Crash guard del launcher (`lumalinux-guard.sh`, `setup.sh:820-967`): en
+  cada lanzamiento mira si el anterior murió dentro de sus primeros 180 s
+  (`LUMA_GUARD_STARTUP_SECS`), con dos fuentes en OR: un `*.dmp` en
+  `/tmp/dumps` más nuevo que `last_launch` (los escribe `crashhandler.so` de
+  Steam) o un core del propio cliente (`ubuntu12_32/steam`, o `steamrt64/steam`)
+  en `coredumpctl list --since=@launch --until=@launch+180` (`:866-889`). Lo
+  segundo existe porque SLSsteam `20261014151919` impide cargar
+  `crashhandler.so`: Steam crea `/tmp/dumps` y nunca escribe en él, y el crash
+  va al kernel, que en SteamOS lo entrega a `systemd-coredump` por el gancho
+  de `steamos_log_submitter` (`slssteam.md` §4.2). Al 3º seguido, o al 1º si
+  `steamclient.so` cambió desde el último arranque bueno, latchea `safe_mode`
+  (fingerprint de los cuatro `.so`), **borra `appcache/appinfo.vdf`**, avisa
+  "Steam recovery mode" y arranca vanilla (`env -u LD_AUDIT -u LD_PRELOAD`).
+  El latch se limpia solo cuando cambia el fingerprint. Un arranque sin crash
+  pone el contador a cero y promociona el cliente a `good_client` solo si hay
+  una fuente de evidencia (`/tmp/dumps` o `coredumpctl`); sin ninguna, no se
+  evalúa y todo queda como estaba (`:936-950`); `LUMA_GUARD_NO_COREDUMP=1`
+  apaga la segunda fuente (§5.2 F1). LumaDeck lo muestra como "Recovery mode"
+  con botón "Re-enable injection" (`paths.py:818-888`,
+  `SystemStatus.tsx:201-211`).
 - Kill-switches del `.so`: `LUMA_NO_DEPOTKEY`, `LUMA_NO_GMRC`,
   `LUMA_NO_SHADERSKIP`, `LUMA_NO_PKG0_FINDER`, `LUMA_NO_RECONCILE` (o el marker
   `~/.config/lumalinux/no_reconcile`), `LUMA_NO_SLS_ACH_UNBLOCK`,
   `LUMA_NO_CR_STATS_FIX`, `LUMA_NO_LIBCURL_FIX` (tabla en §3.3). `setup.sh
   --uninstall` quita wrapper, guard, cobertura y estado, y deja `.so`, configs
-  y `keys.txt` (`:1016-1030`).
+  y `keys.txt` (`:1034-1048`).
 - LumaDeck: "Restart Steam" **reinicia la máquina** (desde el 10-14:
   `SteamClient.System.RestartPC()`, el Restart del menú de energía, con
   `systemctl reboot` del backend como respaldo; cerrar Steam en Game Mode lo
@@ -395,7 +403,7 @@ tocamos: `AppIds`, `UseWhitelist`, `DisableFamilyShareLock`, `DlcData` salvo
 >64 DLC, `AppTokens` salvo `addtoken()` en el lua, `ManifestIds` lo escribe
 `steamidra_lite`, `SmartTickets`, `MaxSchemaTries`, `API`, `LaunchOptions`,
 `FakeName`… Dos notas: `PlayNotOwnedGames` ya no existe upstream (20260707);
-`setup.sh` la elimina al fusionar con la plantilla (`:159-160`) pero
+`setup.sh` la elimina al fusionar con la plantilla (`:176-180`) pero
 `steamidra_lite.py:377-383` la sigue escribiendo si crea el config desde cero
 (§4.1). `NotifyInit: yes` para el toast de arranque.
 
@@ -452,7 +460,7 @@ si no, lo que diga `packageinfo.vdf`. La pista del frontend
 
 **Family sharing.** Sin tratamiento propio en ningún sitio. Solo
 `DisableFamilyShareLock: yes` cuando `steamidra_lite` crea el config desde cero
-(`:380`) y como marcador de plantilla válida en `setup.sh:185`.
+(`:380`) y como marcador de plantilla válida en `setup.sh:184`.
 
 **Depots compartidos (redists, 228980).** Detección por la cabecera
 `-- SHARED DEPOTS` del lua de Hubcap y la lista estática 228981-229033
@@ -675,8 +683,8 @@ detección por `UpdateResult=8` y re-descarga; sin cancelación.
 
 ### 2.6 Fixes y DRM
 
-Todo en LumaDeck; lumalinux solo instala el runtime .NET 9 (`setup.sh:397-423`)
-y descarga `netsock.so` a `~/.config/SLSsteam/tools/netsock/` (`:1109-1117`).
+Todo en LumaDeck; lumalinux solo instala el runtime .NET 9 (`setup.sh:396-422`)
+y descarga `netsock.so` a `~/.config/SLSsteam/tools/netsock/` (`:1126-1133`).
 
 - **Catálogo LuaTools** (`luatools_auth.py`): `lua.tools/api/denuvo/fixes?appid=`
   es público; descargar exige la cuenta (sesión Supabase cosechada de las
@@ -772,8 +780,8 @@ llamadas de estado siguen disparándose al abrir páginas (§4.1). Stats y tiemp
 de juego: nada propio; CloudRedirect reconcilia el tiempo desde
 `localconfig.vdf`.
 
-Pendiente externo: Valve retira el endpoint de tienda de esquemas el
-2026-10-22; SLSsteam lleva el arreglo (`51724f5`) sin release.
+Valve retira el endpoint de tienda de esquemas el 2026-10-22; SLSsteam
+≥ `20261014151919` ya no lo usa (`51724f5`).
 
 **Lista de control.** Almacén: Steam (`appcache/stats`) + CloudRedirect. Sincronización:
 blob de CloudRedirect en su proveedor (Drive, OneDrive, S3, R2 o carpeta), descargado una vez por
@@ -796,7 +804,7 @@ fuerzan otro origen y saltan el pin); instala el bundle con la runtime KDE de
 Flathub, borra el remoto `cloudredirect` muerto que añadían los setups
 anteriores y copia `cloud_redirect_cli` del flatpak (`:490-510,535-564`). Ya
 no es fatal: si la descarga falla o el hash no cuadra, conserva el `.so`
-instalado o instala sin nube, con aviso (`:1091-1102`). `DisableCloud: no` en
+instalado o instala sin nube, con aviso (`:1112-1123`). `DisableCloud: no` en
 SLSsteam igual que siempre (`setup.sh:245`, `installer.py:121-161`): ponerlo a
 `yes` no cambiaría nada para nuestros juegos, que SLSsteam ve como poseídos
 por el package-0 (`slssteam.md` §2.8); lo que hace Steam con un juego nuestro
@@ -1062,17 +1070,17 @@ Cada una con su función.
 | `raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml` | `rva_feed.cpp:63-64` | feed de RVAs del build cargado (sin override) | 1 |
 | `client-update.fastly.steamstatic.com`, `client-update.akamai.steamstatic.com` (CDN de Valve), `headcrab.bifrosthub.ru/client-stable` (respaldo) | `downgrade.sh` (`PACKAGE_CDN`, `PACKAGE_CDN_FALLBACK`) | paquetes del cliente viejo para el downgrade; el manifest se sirve en local (`127.0.0.1:1666`) | 1, 11 |
 | `raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/{steam_client_steamdeck_stable_ubuntu12,steam_client_ubuntu12}` | `downgrade.sh:45-46` | manifest del cliente fijado por headcrab (Deck / escritorio) | 1, 11 |
-| `raw.githubusercontent.com/jayool/lumalinux/main/{setup.sh,downgrade.sh}`, `…/<tag>/tools/{steamidra_lite.py,vdf_inject_keys.py}` | `installer.py:47-50`; `desktop_handoff.py:60-67`; `setup.sh:95,121-131,1157-1168` | instalador y downgrade (de `main`); herramientas de runtime del mismo tag que el `.so` (`resolve_tools_ref`: tag del URL del `.so` o del redirect de `releases/latest`; `main` solo si no hay tag o el tag no trae el fichero) | 1, 11 |
-| `github.com/jayool/lumalinux/releases/latest/download/{liblumalinux.so,version.txt}` (y su redirect a `releases/tag/<tag>`) | `setup.sh:60,121-131`; `headcrab_compat.py:56` | el `.so` y el grupo SafeMode de la release | 1, 11 |
-| `github.com/AceSLS/SLSsteam/releases/…/SLSsteam-Any[-release].7z` | `setup.sh:454-471` | SLSsteam (tag por redirect 302) | 1 |
+| `raw.githubusercontent.com/jayool/lumalinux/main/{setup.sh,downgrade.sh}`, `…/<tag>/tools/{steamidra_lite.py,vdf_inject_keys.py}` | `installer.py:47-50`; `desktop_handoff.py:60-67`; `setup.sh:94,120-130,1154-1165` | instalador y downgrade (de `main`); herramientas de runtime del mismo tag que el `.so` (`resolve_tools_ref`: tag del URL del `.so` o del redirect de `releases/latest`; `main` solo si no hay tag o el tag no trae el fichero) | 1, 11 |
+| `github.com/jayool/lumalinux/releases/latest/download/{liblumalinux.so,version.txt}` (y su redirect a `releases/tag/<tag>`) | `setup.sh:61,120-130`; `headcrab_compat.py:56` | el `.so` y el grupo SafeMode de la release | 1, 11 |
+| `github.com/AceSLS/SLSsteam/releases/…/SLSsteam-Any[-release].7z` | `setup.sh:453-470` | SLSsteam (tag por redirect 302) | 1 |
 | `raw.githubusercontent.com/AceSLS/SLSsteam/main/res/{config.yaml,updates.yaml}` | `slssteam_schema.py:50`; `slssteam_version.py:64` | esquema de config; VERSION para deducir la versión instalada | 2, 11 |
 | `github.com/jayool/lumalinux/releases/download/v0.22.3/{cloud_redirect-2.6.6+3434d9d.so,cloudredirect.flatpak}` (sha256 fijados) | `setup.sh:80-88,490-510,535-564` | `cloud_redirect.so` 2.6.6 y la app (bundle 2.6.5); el upstream desapareció el 2026-10-16 | 8 |
 | `dl.flathub.org/repo/flathub.flatpakrepo` | `setup.sh:89` | runtime KDE 6.10 de la app | 8 |
-| `github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so` | `setup.sh:84` | `netsock.so` para fixes online | 6 |
+| `github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so` | `setup.sh:82` | `netsock.so` para fixes online | 6 |
 | `github.com/yesyes0649/eos-proxy/…`, `github.com/Detanup01/gbe_fork/…` | `release.yml:70-122` | proxy EOS y Goldberg, solo al empaquetar | 6 |
-| `raw.githubusercontent.com/SteamDatabase/SteamTracking/master/ClientExtracted/steam.sh` | `setup.sh:285` | `steam.sh` vanilla al migrar desde headcrab | 1 |
+| `raw.githubusercontent.com/SteamDatabase/SteamTracking/master/ClientExtracted/steam.sh` | `setup.sh:284` | `steam.sh` vanilla al migrar desde headcrab | 1 |
 | `raw.githubusercontent.com/Deadboy666/h3adcr-b/main/headcrab.sh` | `headcrab_compat.py:36` | `HeadcrabCompatibleClientVer` | 1, 11 |
-| `dot.net/v1/dotnet-install.sh` | `setup.sh:412`; `dotnet.py:45` | .NET 9 para Steamless | 6 |
+| `dot.net/v1/dotnet-install.sh` | `setup.sh:411`; `dotnet.py:45` | .NET 9 para Steamless | 6 |
 | `api.github.com/repos/{jayool/LumaDeck,AceSLS/SLSsteam,jayool/lumalinux}/releases/latest` | `self_update.py:80`; `update_checks.py:125` | updates (caché 6 h); CloudRedirect ya no se consulta | 11 |
 | `20770407.xyz/manifest/<depot>/<gid>`, `manifest.manifestdex.com/<gid>`, `gmrc.wudrm.com/manifest/<gid>` (HTTP), `manifest.steam.run/api/manifest/<gid>` | `gmrc_store.hpp:155-158`; sonda `pins.py:461-462` | códigos de petición de manifest | 4 |
 | `steampipe.akamaized.net`, `fastly.cdn.steampipe.steamcontent.com` `/depot/<d>/manifest/<gid>/5/<code>` | `gmrc_store.hpp:292-300`; `pins.py:113-114,474` | validar un código con `Range: 0-0` | 4 |
@@ -1104,10 +1112,10 @@ Cada una con su función.
 | `~/.config/lumalinux/keys.txt`, `retired_keys.txt`, `no_reconcile`, `no_acf_sweep` | `steamidra_lite.py`, `slssteam_ops.py` (W); `key_store.cpp` (R + inotify); `pins.py`, `steam_utils.py`, `downloads.py:748` (R) | claves; claves retiradas; kill-switches |
 | `~/.cache/lumalinux/{lumalinux.log,.updates.yaml,rvas/<sha256>.yaml}` | `log.cpp`, `update.cpp`, `rva_feed.cpp` | log, cachés de SafeMode y RVAs |
 | `$XDG_RUNTIME_DIR/lumalinux/{status.json,gmrc.json}` (fallbacks `~/.cache/lumalinux/`) | `status.cpp` (W, por `.tmp` + `rename`, `:66-78`); `paths.py`, `pins.py` (R) | salud por sesión; estado de proveedores |
-| `~/.local/state/lumalinux/{last_launch,boot_fail_count,safe_mode,safe_mode_fingerprint,last_client,good_client,guard.log}`, `/tmp/dumps/*.dmp` | guard (`setup.sh:855-889`); `paths.py:818-888` (R/B) | crash guard |
+| `~/.local/state/lumalinux/{last_launch,boot_fail_count,safe_mode,safe_mode_fingerprint,last_client,good_client,guard.log}`, `/tmp/dumps/*.dmp`, journal de `systemd-coredump` por `coredumpctl` | guard (`setup.sh:866-889,916-955`); `paths.py:818-888` (R/B) | crash guard |
 | `~/.config/systemd/user/steam-launcher.service.d/lumalinux.conf`, `lumalinux-desktop-guardian.{service,path,timer}` | `setup.sh` (W); `paths.py:631-703` (heal) | cobertura Game Mode y Desktop |
 | `~/.local/share/applications/*steam*.desktop`, `~/.config/autostart/steam*.desktop`, `~/Desktop/*steam*.desktop`, `~/.{bashrc,zshrc,profile}` | `setup.sh` (W); `paths.py:498-518` (R) | cobertura Desktop |
-| `<steam>/steam.sh` (+ `.headcrab.bak`, `.lumalinux.pre-wrapper.bak`) | `setup.sh:286-349` | restaurado vanilla |
+| `<steam>/steam.sh` (+ `.headcrab.bak`, `.lumalinux.pre-wrapper.bak`) | `setup.sh:285-348` | restaurado vanilla |
 | `<steam>/depotcache/<depot>_<gid>.manifest` | `steamidra_lite.py` (W/D), `manifests.py`, `pins.py` (R/W), `slssteam_ops.py` (D) | manifests |
 | `<steam>/config/config.vdf` (+ `.bak`, `.lumabak`) | `steamidra_lite.py`, `vdf_inject_keys.py`, `slssteam_ops.py` (W) | `depots > <id> > DecryptionKey` |
 | `<steam>/config/stplug-in/<appid>.lua[.disabled]` | `steamidra_lite.py` (W); `steam_utils.py`, `slssteam_ops.py` (R); `downloads.py` (D) | el lua del juego (interop) |
@@ -1125,9 +1133,9 @@ Cada una con su función.
 |---|---|---|
 | `LUMA_NO_DEPOTKEY`, `LUMA_NO_SHADERSKIP`, `LUMA_NO_GMRC`, `LUMA_NO_PKG0_FINDER`, `LUMA_NO_RECONCILE`, `LUMA_NO_SLS_ACH_UNBLOCK`, `LUMA_NO_CR_STATS_FIX`, `LUMA_NO_LIBCURL_FIX` | `main.cpp:171-173,284,309`; `license_reconcile.cpp:76`; `cr_stats_fix.cpp:179`; `libcurl_pin.cpp:94` | apagan cada pieza del `.so` |
 | `LUMA_FORCE_BUILDDEP`, `LUMA_NO_BUILDDEP`, `LUMA_LOADPKG_DEBUG`, `LUMA_NO_LOADPKG`, `LUMA_LOADPKG_IDX`, `LUMA_PKG0_FINDER=diag`, `LUMA_SLS_ACH_TRACE`, `LUMA_GMRC_URL`, `LUMA_PROCESS_ANY`, `LUMA_LOG_LEVEL`, `LUMA_NO_NOTIFY` | `main.cpp`; `patterns.cpp:264-270`; `package_zero_finder.cpp:589-593`; `gmrc_store.hpp:183`; `proc_filter.cpp:11`; `log.cpp:37-51,150` | diagnóstico y pruebas |
-| `LUMALINUX_SO_URL`, `SLSSTEAM_7Z_URL`, `CLOUDREDIRECT_URL`, `NETSOCK_SO_URL`, `CR_FLATPAK_RUNTIME`, `LUMA_SKIP_DOTNET`, `LUMA_SKIP_CR_APP`, `VANILLA_STEAM_SH_URL`, `LUMA_STEAM_BIN`, `LUMA_GUARD_MAX_FAILS` (3), `LUMA_GUARD_STARTUP_SECS` (180), `LUMA_GUARD_DUMPS_DIR` (`/tmp/dumps`) | `setup.sh` | fuentes alternativas, saltos, binario real, parámetros del guard |
+| `LUMALINUX_SO_URL`, `SLSSTEAM_7Z_URL`, `CLOUDREDIRECT_URL`, `NETSOCK_SO_URL`, `CR_FLATPAK_RUNTIME`, `LUMA_SKIP_DOTNET`, `LUMA_SKIP_CR_APP`, `VANILLA_STEAM_SH_URL`, `LUMA_STEAM_BIN`, `LUMA_GUARD_MAX_FAILS` (3), `LUMA_GUARD_STARTUP_SECS` (180), `LUMA_GUARD_DUMPS_DIR` (`/tmp/dumps`), `LUMA_GUARD_NO_COREDUMP` (0) | `setup.sh` | fuentes alternativas, saltos, binario real, parámetros del guard |
 | `DOWNGRADE_URL`, `DECK_MANIFEST_URL`, `LINUX_MANIFEST_URL`, `STEAM_DIR_OVERRIDE` | `downgrade.sh:35-46` | espejo y manifests del downgrade, directorio de Steam |
-| `LD_AUDIT`, `LD_PRELOAD`, `LD_LIBRARY_PATH` | wrapper (`setup.sh:890,903-916`) | inyección; el guard en vanilla las des-exporta |
+| `LD_AUDIT`, `LD_PRELOAD`, `LD_LIBRARY_PATH` | wrapper (`setup.sh:888,901-915`) | inyección; el guard en vanilla las des-exporta |
 | `LUMADECK_SETUP_URL`, `LUMADECK_DOWNGRADE_URL`, `LUMA_NO_ACF_SWEEP`, `LUMA_NO_RECONCILE` | `installer.py:47-50`; `desktop_handoff.py:60-67`; `downloads.py:1688`; `slssteam_ops.py:33` | overrides y kill-switches de LumaDeck |
 | `SUDO_USER`, `LOGNAME`, `USER`, `HOME`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`, `DOTNET_ROOT`, `PATH` | `platform_info.py:141-164`; `desktop_handoff.py`, `installer.py`, `ryuu_cookie.py`, `paths.py`; `dotnet.py` | usuario y home real bajo Decky-root; entorno al ejecutar como usuario |
 | `LUMA_STEAM_MANIFEST`, `LUMA_PATTERNS_HPP`, `GH_TOKEN`/`GITHUB_TOKEN`, `LUMA_NO_UPDATE` (cmake) | CI y herramientas | canal de cliente, Ghidra, PRs, gate de hashes compilado |
@@ -1139,9 +1147,9 @@ Cada una con su función.
 
 | Clave | Valor | Quién | Dónde |
 |---|---|---|---|
-| `SafeMode` | `no` (sed + append garantizado + verificación) | `setup.sh`; `installer.py` | `setup.sh:247,253-260`; `installer.py:164-213` |
-| `DisableCloud` | `no` | `setup.sh`; `installer.py` | `setup.sh:246`; `installer.py:121-161` |
-| `DisableUpdates` | `no` | `setup.sh`; `installer.py` | `setup.sh:248`; `installer.py:216-259` |
+| `SafeMode` | `no` (sed + append garantizado + verificación) | `setup.sh`; `installer.py` | `setup.sh:246,252-259`; `installer.py:164-213` |
+| `DisableCloud` | `no` | `setup.sh`; `installer.py` | `setup.sh:245`; `installer.py:121-161` |
+| `DisableUpdates` | `no` | `setup.sh`; `installer.py` | `setup.sh:247`; `installer.py:216-259` |
 | `NotifyInit` | `yes` (best-effort) | `setup.sh` | `:214` |
 | `Plugins` | `yes` (solo con SLSsteam ≥ 20260903114323) | `installer.py` | `:301-321` |
 | `AdditionalApps` | `- <appid>` del juego (added) o de sus DLC sin clave (owned); se quita al desinstalar | `steamidra_lite.py`; `slssteam_ops.py` | `:388-411,1305-1327`; `:315-400,682-706` |
@@ -1200,58 +1208,47 @@ lo incoherente, luego lo muerto.
    `AdditionalApps:`; si la plantilla de SLSsteam usara el estilo
    `AdditionalApps: []`, el resultado sería YAML inválido (`:393-408`). La
    plantilla actual usa la clave vacía, así que hoy no pasa.
-2. **El crash guard vive de los `.dmp` de `/tmp/dumps`, y SLSsteam `dev`
-   puede quitárselos.** Hoy funciona: un `kill -SEGV` al cliente deja
-   `assert_*.dmp` y el siguiente arranque cuenta `fail 1/3` (2026-10-15, §5.2
-   F1). SLSsteam `dev` (`abafc49`, 2026-10-12, sin publicar) impide cargar
-   `crashhandler.so` desde `la_objsearch`: si se publica tal cual, no habrá
-   `.dmp` y el guard no verá ningún crash (`slssteam.md` §4.2). Sin medir
-   hasta que publiquen. Si pasa, la vía sin breakpad: el `.so` deja un
-   marcador `clean_exit` desde un manejador `atexit` (un crash no lo ejecuta)
-   y el guard cuenta como fallo un `last_launch` con hooks instalados, sin
-   `clean_exit` posterior y sin Steam vivo; queda por ver qué hace un
-   `SIGTERM`. Sin decisión.
-3. `--pin-installed` solo mira la biblioteca raíz (`steamidra_lite.py:924`);
+2. `--pin-installed` solo mira la biblioteca raíz (`steamidra_lite.py:924`);
    shadercache y compatdata solo se borran en raíz + biblioteca del juego;
    `get_installed_fixes` y `_find_game_dir_fallback` leen solo
    `config/libraryfolders.vdf`. Tres puntos ciegos de multi-biblioteca.
-4. "Update" de componentes en el QAM es `reinjectInstalled()`, que re-ejecuta
+3. "Update" de componentes en el QAM es `reinjectInstalled()`, que re-ejecuta
    `setup.sh` entero; `applyComponent(id, "update")` existe y no se usa. Es lo
    deseado hoy, pero el nombre engaña.
 
 **Incoherente con lo que promete**
 
-5. El toast "ACF repaired — Steam will restart" (`i18n.ts:414`) sin que nadie
+4. El toast "ACF repaired — Steam will restart" (`i18n.ts:414`) sin que nadie
    reinicie (`GameDetail.tsx:863-872`); la descripción del botón dice lo
    contrario ("Restart Steam afterwards").
-6. El deep-link a una pestaña de Settings nunca se consume
+5. El deep-link a una pestaña de Settings nunca se consume
     (`routes.ts:18-22`): "Open Settings" cae siempre en la primera pestaña (que
     hoy es API Credentials, por suerte).
-7. El estado de credenciales solo se lee al montar el QAM: guardar una clave
+6. El estado de credenciales solo se lee al montar el QAM: guardar una clave
     en Settings no desbloquea "Add game" hasta cerrar y reabrir el QAM
     (`GameList.tsx:268-269`).
-8. La pestaña **Dev** está siempre visible (`Settings.tsx:1351`) y sus
+7. La pestaña **Dev** está siempre visible (`Settings.tsx:1351`) y sus
     overrides persisten en el backend; un usuario puede dejar la UI mintiendo.
-9. `ACHIEVEMENTS_ENABLED=false` pero `checkAchievementsStatus` y `loadAchState`
+8. `ACHIEVEMENTS_ENABLED=false` pero `checkAchievementsStatus` y `loadAchState`
     siguen llamándose al abrir páginas (`GameDetail.tsx:298`,
     `Settings.tsx:337`); la generación automática al instalar está comentada
     como prueba temporal (`downloads.py:1490-1500`).
-10. `PlayNotOwnedGames`: `setup.sh` la elimina (obsoleta upstream desde
+9. `PlayNotOwnedGames`: `setup.sh` la elimina (obsoleta upstream desde
     20260707), `steamidra_lite` la escribe `yes` si crea el config desde cero,
     `installer._set_playnotowned_no` existe sin llamador, `verify-fix.yml` la
     pone a `no`.
-11. `keys.txt` sigue llevando gid y tamaño "para BuildDep", que está OFF; el
+10. `keys.txt` sigue llevando gid y tamaño "para BuildDep", que está OFF; el
     `.lua` de `stplug-in` no se re-comenta al pinear/despinear
     (`_toggle_stplugin_pin` y `purge_depot_manifests` sin llamadores,
     `steamidra_lite.py:957-985`), así que puede quedar incoherente con
     `ManifestIds`.
-12. `status.json.blocked` es siempre `null` (`Status::SetBlocked` sin
+11. `status.json.blocked` es siempre `null` (`Status::SetBlocked` sin
     llamador) y LumaDeck lo lee como causa `version` de `not_supported`: ese
     camino no puede dispararse desde lumalinux; solo desde SLSsteam por su log.
-13. `verify-fix.yml` nunca ha pasado, usa el tag `linux-test` de `h3adcr-b`
+12. `verify-fix.yml` nunca ha pasado, usa el tag `linux-test` de `h3adcr-b`
     que `setup.sh` abandonó y un `config.yaml` con claves obsoletas; el
     devcontainer instala SLSsteam vía headcrab y no vía `setup.sh`.
-14. pt-BR sin las claves de ayuda ni `showMoreResults` (las de align-up se
+13. pt-BR sin las claves de ayuda ni `showMoreResults` (las de align-up se
     quitaron el 10-15); cadenas en inglés fuera del diccionario (login de Ryuu
     y LuaTools en `Settings.tsx`, textos de fixes en `GameDetail.tsx`, toasts de
     `useLuatoolsConnect.ts`); la pestaña Dev mezcla castellano e inglés. El
@@ -1261,47 +1258,47 @@ lo incoherente, luego lo muerto.
     reinicio de Steam al añadir (`downloads.py:1434,1502-1509`), "steam.sh"
     en `GameList.tsx:448-450` y `SystemStatus.tsx:55,91,206`; la fuente "GitHub repo" ya retirada en `luatools_auth.py:684`; headcrab como instalador de netsock en `fixes.py`. La descripción de Steamless en `i18n.ts` dice que guarda un `.exe.bak` y el código guarda `<nombre>.original.exe` (`steamless.py:287`). Lista completa
     de la deriva de la UI frente a sus reglas en LumaDeck `DESIGN_UI.md`.
-15. El guard al latchear **borra `appcache/appinfo.vdf`** (`setup.sh:958-960`)
+14. El guard al latchear **borra `appcache/appinfo.vdf`** (`setup.sh:958`)
     sin comentario que lo explique.
 
 **Código muerto o constantes sin uso**
 
-16. `api.ts`: `verifySlssteamInjected`, `getInjectionStatus`,
+15. `api.ts`: `verifySlssteamInjected`, `getInjectionStatus`,
     `checkSlssteamHashStatus`, `importRyuuCookieFromBrowser`,
     `cancelConnectRyuu`, `updatePlugin`, `deleteLuatoolsForApp`,
     `checkFakeAppIdStatus`, `checkForFixes`, `applyGameFix`, `cancelApplyFix`,
     `cancelConnectLuatools`. En particular un login de Discord abandonado no se
     puede cancelar desde la UI.
-17. `config.py`: `API_MANIFEST_URL`, `API_MANIFEST_PROXY_URL`,
+16. `config.py`: `API_MANIFEST_URL`, `API_MANIFEST_PROXY_URL`,
     `HTTP_PROXY_TIMEOUT_SECONDS`, `DEFAULT_HEADERS`.
     `slssteam_ops.remove_depot_decryption_keys` sin llamador (el uninstall deja
     las claves de `config.vdf` a propósito). `installer._set_playnotowned_no`.
-18. `gmrc_probe.py` lleva cinco proveedores (con `manifest.opensteamtool.com`)
+17. `gmrc_probe.py` lleva cinco proveedores (con `manifest.opensteamtool.com`)
     y el runtime cuatro: la sonda no es espejo exacto.
-19. Hook `LoadPackage`: solo diagnóstico con `LUMA_LOADPKG_DEBUG`; la
+18. Hook `LoadPackage`: solo diagnóstico con `LUMA_LOADPKG_DEBUG`; la
     inyección la hace el finder. El patrón sigue en CI como DIAGNOSTIC.
 
 **Biblioteca de lumalinux (`src/`)**
 
-20. `curl.cpp` no fija `CAINFO` ni toca `VERIFYPEER`: confía en el CA bundle
+19. `curl.cpp` no fija `CAINFO` ni toca `VERIFYPEER`: confía en el CA bundle
     del libcurl que cargue. Por eso existe `libcurl_pin`: si el pin falla y
     entra el libcurl 7.22 del Steam Runtime, las descargas del `.so` (SafeMode,
     RVAs, códigos GMRC) pueden fallar por certificados. Es el aviso de Ace
     sobre "libcurl dentro de Steam".
-21. El `.so` ejecuta `system("mkdir -p …")` y `system("notify-send …")` desde
+20. El `.so` ejecuta `system("mkdir -p …")` y `system("notify-send …")` desde
     dentro de Steam (`log.cpp:75-76,157-159`): un shell hijo por arranque y por
     toast.
-22. `atexit(_exit(0))` en el constructor (`main.cpp:442`) evita un SIGABRT de
+21. `atexit(_exit(0))` en el constructor (`main.cpp:442`) evita un SIGABRT de
     teardown entre SLSsteam y CloudRedirect, y de paso salta cualquier
     destructor del proceso Steam al salir.
-23. Las entradas `LD_AUDIT` (`la_preinit`/`la_objopen`) siguen compiladas
+22. Las entradas `LD_AUDIT` (`la_preinit`/`la_objopen`) siguen compiladas
     aunque esa ruta corrompe el heap (medido, §5.2 F1); el wrapper no las usa.
     Y `FindBuildDepotDependencyFunction` usa el primer match, no el único
     (`patterns.cpp:94-118,210-212`): solo importa si alguien fuerza BuildDep.
 
-24. **Nada de lo que instalamos se comprueba por hash.** `setup.sh` baja por
+23. **Nada de lo que instalamos se comprueba por hash.** `setup.sh` baja por
     HTTPS de GitHub, sin digest ni versión fijada, todo lo que acaba dentro de
-    Steam: el `.so` de lumalinux (`setup.sh:60,1140`), el `.7z` de SLSsteam
+    Steam: el `.so` de lumalinux (`setup.sh:61,1137`), el `.7z` de SLSsteam
     (`:1048`), `cloud_redirect.so` (`:1100`), el `fix.so` de
     `yesyes0649/steamnetsock-patch` (`:84,1112`, cuenta de un tercero) y el
     `steam.sh` "vanilla" de `SteamDatabase/SteamTracking@master` (`:266`).
@@ -1318,7 +1315,7 @@ lo incoherente, luego lo muerto.
     hace lo primero desde el 2026-10-09 para Goldberg, Steamless y SLScheevo:
     manifest con SHA-256 en su bucket, descarga a temporal y comprobación antes
     de sustituir (`assella.md` §2.11). Sin decisión.
-25. **Un manifest que ya está en `depotcache/` se da por bueno.**
+24. **Un manifest que ya está en `depotcache/` se da por bueno.**
     `resolve_manifest` devuelve el fichero si existe, sin validarlo
     (`manifests.py:513-514`), y `place_in_depotcache` no escribe encima de uno
     que exista (`:300-306`). Todo lo que LumaDeck trae de fuera se valida
@@ -1328,7 +1325,7 @@ lo incoherente, luego lo muerto.
     ese depot y LumaDeck no lo repone desde su archivo. Arreglo: pasar
     `validate_manifest` también al fichero existente y reponerlo si no valida.
     Sin decisión.
-26. **Los flags de SLSsteam solo se reponen al cargar el backend.**
+25. **Los flags de SLSsteam solo se reponen al cargar el backend.**
     `ensure_slssteam_flags` (`DisableUpdates: no`, `Plugins: yes`, el plugin
     de spliced tickets) corre una vez por carga de Decky (`main.py:151-183`). Si
     otro programa escribe `DisableUpdates: yes` o `Plugins: no` (ASSella lo hace
@@ -1336,7 +1333,7 @@ lo incoherente, luego lo muerto.
     actualizan y el plugin no carga hasta el siguiente arranque, sin aviso.
     Opciones: comprobarlos en el pase local de `pins.py` o enseñarlos en el
     panel de estado. Sin decisión.
-27. **No vemos cuándo otro gestor nos desmonta.** Ni LumaDeck ni `setup.sh`
+26. **No vemos cuándo otro gestor nos desmonta.** Ni LumaDeck ni `setup.sh`
     comprueban que el `path/steam` siga siendo el nuestro (con
     `liblumalinux.so`), que `ensure-desktop-coverage.sh` no esté vaciado, que
     las sombras `.desktop` sigan apuntando al wrapper o que `keys.txt` no se
@@ -1347,7 +1344,7 @@ lo incoherente, luego lo muerto.
     `status.json`, que tampoco se escribiría) y nombrar al culpable si se ve su
     marca ("neutralised by SLSDeck" en el script, `.slsdeck-disabled`). Sin
     decisión.
-28. **El `.so` de CloudRedirect llega por dos caminos que no se coordinan.**
+27. **El `.so` de CloudRedirect llega por dos caminos que no se coordinan.**
     `setup.sh` (y LumaDeck al actualizar) despliega el 2.6.6 de nuestro asset
     (`setup.sh:69-88,490-510`); la app, que instalamos de nuestro bundle y
     pedimos abrir para el login, lleva dentro el 2.6.5 y ofrece reemplazar el
@@ -1359,7 +1356,7 @@ lo incoherente, luego lo muerto.
     `setup.sh` tome el `.so` del Flatpak igual que toma el CLI (sería 2.6.5,
     con el bug de stats que `cr_stats_fix` tapa), o avisar en LumaDeck cuando
     la versión en disco no sea la 2.6.6. Sin decisión.
-29. **La rederivación automática nunca ha corrido sobre un movimiento real.**
+28. **La rederivación automática nunca ha corrido sobre un movimiento real.**
     Desde junio Valve no ha movido ningún patrón nuestro (§5.2 F1); la cadena
     solo se ha ensayado con patrones corrompidos a propósito, y el ensayo del
     2026-09-14 destapó tres huecos en un día que 75 runs del cron no habían
@@ -1367,13 +1364,13 @@ lo incoherente, luego lo muerto.
     cron solo mira `steamdeck_stable`: una beta que recompila el cliente es
     invisible hasta que llega a estable (§5.2 F1, 2026-09-19). Lo que pasará
     el día que Valve mueva DepotKey de verdad sigue sin ensayar. Sin decisión.
-30. **El hash es consultivo: un patrón que resuelva UNIQUE en el sitio
+29. **El hash es consultivo: un patrón que resuelva UNIQUE en el sitio
     equivocado se engancha igual.** La defensa es el guard anti crash-loop, no
-    un bloqueo (`main.cpp:107-126`; §4.1-12). `status.json` dice `installed`
+    un bloqueo (`main.cpp:107-126`; §4.1-11). `status.json` dice `installed`
     pero no distingue "instalado" de "instalado y sirviendo" (`status.cpp`, sin
     contadores). Candidato anotado: un contador por pieza (§4.4, C5). Sin
     decisión.
-31. **El pin de build de LumaDeck sigue saliendo de Headcrab, a medias desde
+30. **El pin de build de LumaDeck sigue saliendo de Headcrab, a medias desde
     el 2026-10-14.** `HeadcrabCompatibleClientVer` del `headcrab.sh` de
     `Deadboy666/h3adcr-b` (`headcrab_compat.py:36`) sigue leyéndose para
     `lumalinux_ready` y `current_build_supported_by_latest`, y el manifest de
@@ -1391,7 +1388,7 @@ lo incoherente, luego lo muerto.
     §4.4 (C3): número de nuestras listas y manifests archivados por nuestro
     cron. Si Headcrab desaparece o fija un build raro, la bajada no sabe a
     dónde ir; la vuelta ya no depende de él.
-32. **Comentarios y un interruptor del `.so` que no decían lo que hace el
+31. **Comentarios y un interruptor del `.so` que no decían lo que hace el
     código — corregido 2026-10-10.** Eran comentarios que describían DepotKey
     con un paso RTTI que ya no existe, ponían a lumalinux el último del
     `LD_PRELOAD`, daban a CloudRedirect un libcurl por `dlopen` (desde 2.6.6 lo
@@ -1406,8 +1403,8 @@ lo incoherente, luego lo muerto.
     puesta; el finder sigue ahora la misma regla que `main.cpp` y que el resto de
     `LUMA_NO_*` (`package_zero_finder.cpp:583`). Sin cambio de comportamiento:
     con `=0` el finder ya no arrancaba.
-33. **El `stealth` de SLSsteam `dev` no cubre a nuestros juegos.** Desde
-    `94474f9` (2026-10-12, sin publicar) SLSsteam deja de enviar a Valve, para
+32. **El `stealth` de SLSsteam no cubre a nuestros juegos.** Desde
+    `94474f9` (2026-10-12, publicado en `20261014151919`) SLSsteam deja de enviar a Valve, para
     las apps que `isSubscribed` da como no poseídas, los `ClientGamesPlayed*`,
     la petición `ClientGetAppOwnershipTicket` y el `StoreUserStats2`
     (`slssteam.md` §5.3). Con la inyección de package 0, `isSubscribed` es
@@ -1420,7 +1417,7 @@ lo incoherente, luego lo muerto.
     cubren el ticket vacío) y los `GamesPlayed` (el tiempo de juego lo lleva
     CloudRedirect en local) no rompe nada nuestro. Sin decisión.
 
-34. **Re-añadir sin reiniciar Steam entra por el camino poseído.** Quitar un
+33. **Re-añadir sin reiniciar Steam entra por el camino poseído.** Quitar un
     juego desde LumaDeck lo saca de `AdditionalApps`, pero Steam conserva en
     memoria la licencia que SLSsteam le dio hasta el siguiente arranque;
     `is_owned` la ve como real (`pins.py:276-293`) y el siguiente add del mismo
@@ -1429,7 +1426,7 @@ lo incoherente, luego lo muerto.
     instalado solo los DLC. Opciones: `is_owned` ignora las licencias de apps
     que lumalinux acaba de retirar de `keys.txt`, o LumaDeck pide reinicio
     tras quitar. Sin decisión.
-35. **Steam instala "vacío" si el depot que elige no tiene clave.** Sin error
+34. **Steam instala "vacío" si el depot que elige no tiene clave.** Sin error
     en `content_log.txt`: `finished update, 0 mounted depots`, `.acf` con
     `SizeOnDisk 0` e `InstalledDepots` vacío, baja solo el depot de shaders y
     al lanzar sale "Missing game executable" (medido 2026-10-13, Celeste sin
@@ -1440,7 +1437,7 @@ lo incoherente, luego lo muerto.
     frontend, que Steam sí persiste; un `CompatToolMapping` escrito en
     `localconfig.vdf` desde el backend se pierde (§2.9). Sin decisión.
 
-36. **El estado `done` de una descarga nunca se borra.** `DOWNLOAD_STATE`
+35. **El estado `done` de una descarga nunca se borra.** `DOWNLOAD_STATE`
     queda en `done` tras un add hasta que Decky se reinicie
     (`downloads.py:40,1511`), y la página del juego pinta "Download → Done!"
     cada vez que se abre, aunque el juego lleve días instalado
@@ -1468,8 +1465,8 @@ nuestra (`api_manifest.py:180-205`).
 
 | Dependencia | Qué deja de funcionar | Evidencia |
 |---|---|---|
-| Release de SLSsteam (tag numérico de 14 dígitos, asset `SLSsteam-Any[-release].7z` con `bin/SLSsteam.so` y `res/config.yaml`) | `setup.sh` aborta: no hay instalación ni reinstalación. Un cambio de nombre de asset ya dejó la instalación en 404 ~44 h (2026-08-19) | `setup.sh:445-480,1062-1107` |
-| Assets de CloudRedirect en nuestra release v0.22.3 (`.so` 2.6.6 y `cloudredirect.flatpak`) | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta. Respaldo en la rama `cr-archive`. El upstream (Selectively11) desapareció el 2026-10-16 y no hay más versiones | `setup.sh:490-510,535-564,1091-1102` |
+| Release de SLSsteam (tag numérico de 14 dígitos, asset `SLSsteam-Any[-release].7z` con `bin/SLSsteam.so` y `res/config.yaml`) | `setup.sh` aborta: no hay instalación ni reinstalación. Un cambio de nombre de asset ya dejó la instalación en 404 ~44 h (2026-08-19) | `setup.sh:444-479,1061-1106` |
+| Assets de CloudRedirect en nuestra release v0.22.3 (`.so` 2.6.6 y `cloudredirect.flatpak`) | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta. Respaldo en la rama `cr-archive`. El upstream (Selectively11) desapareció el 2026-10-16 y no hay más versiones | `setup.sh:490-510,535-564,1112-1123` |
 | GitHub raw y releases (`jayool/lumalinux`) | sin `setup.sh`, `downgrade.sh`, herramientas ni `.so`; SafeMode y feed de RVAs desde caché; sin checks de update (caché stale) | `installer.py:502-511`; `update.cpp:86-104`; `rva_feed.cpp:71` |
 | Hubcap | sin zips nuevos (salvo Ryuu), sin manifests sueltos para builds viejos, depots nuevos no se añaden; la clave queda `unknown` | `api_manifest.py:173,524`; `manifests.py:330-380` |
 | Ryuu | solo la fuente 2 y su verificación | `downloads.py:1351-1381` |
@@ -1481,11 +1478,11 @@ nuestra (`api_manifest.py:180-205`).
 | lua.tools / db.lua.tools / files.luatools.work | sin catálogo ni descargas de fixes, sin refresh, sin fixes sin cuenta | `luatools_auth.py:304-356,493-577`; `fixes.py:52-92` |
 | tienda y Web API de Steam | sin búsqueda por nombre, notices ni `DlcData`; applist cae a `applist.morrenus.xyz`; sin esquemas | `api_manifest.py:446-466`; `downloads.py:432-470,671-694` |
 | `media.steampowered.com` (manifests de cliente) | la CI no detecta updates de Steam | `fetch_steamclient.py`; `watch-steam.yml:49-73` |
-| `dot.net`, `yesyes0649/*`, `Detanup01/gbe_fork` | Steamless sin runtime; sin netsock, EOS ni Goldberg (solo al empaquetar) | `dotnet.py`; `setup.sh:1129-1136`; `release.yml:70-122` |
-| `/tmp/dumps` (minidumps) | el crash guard no latchea nunca (sin el directorio, no evalúa) | `setup.sh:938-951` |
+| `dot.net`, `yesyes0649/*`, `Detanup01/gbe_fork` | Steamless sin runtime; sin netsock, EOS ni Goldberg (solo al empaquetar) | `dotnet.py`; `setup.sh:1126-1133`; `release.yml:70-122` |
+| `/tmp/dumps` (minidumps) y `coredumpctl` (`systemd-coredump`) | con SLSsteam ≥ `20261014151919` solo `coredumpctl` ve los crashes del cliente; sin ninguna de las dos fuentes el guard no evalúa y no latchea nunca (una distro sin `systemd-coredump` y con ese SLSsteam queda ciega) | `setup.sh:866-889,936-950` |
 | puerto CEF 8080 | sin página de tienda, sin captura CDP (cookies por disco), sin SteamDB por navegador, `disconnect_luatools` no limpia cookies vivas | `main.py:752`; `cef_cdp.py:39-58` |
 | `steamidra_lite.py` | sin él no hay add, pin, unpin ni set-pin | `downloads.py:69-78` |
-| `systemd --user` | sin guardian de Desktop (el wrapper re-asserta por lanzamiento); el drop-in de Game Mode se escribe igual | `setup.sh:766-825,1013-1018` |
+| `systemd --user` | sin guardian de Desktop (el wrapper re-asserta por lanzamiento); el drop-in de Game Mode se escribe igual | `setup.sh:738-803,990-1017` |
 
 ### 4.3 Lo que SLSsteam tiene y nosotros usamos o no
 
@@ -1517,14 +1514,14 @@ bien: `slssteam.md` §4.3.
 | SDM como segundo proveedor GMRC (mismo pool que 20770407) | aparcado | 10-07 |
 | Parser propio de `appinfo.vdf` (referencia `AppInfoFile.cs` de LuaTools) | aparcado | 10-07 |
 | `libcurl_pin` con CloudRedirect 2.6.6 estático | se mantiene (opción A); preguntar a Ace qué URL revienta Steam | 10-07 |
-| Logros tras la retirada del endpoint de tienda (2026-10-22) | esperar la release de SLSsteam con `51724f5` | 10-07 |
+| Logros tras la retirada del endpoint de tienda (2026-10-22) | cubierto por SLSsteam `20261014151919` (`51724f5`) | 10-07 |
 | Nunca pinear un depot con licencia real; `is_owned` vivo | hecho (v0.11.0) | 10-07 |
 | Ryuu como proveedor completo (login verificado, orden del lua, búsqueda por tienda, sesión viva, borrado de la clave de Hubcap) | hecho (v0.11.0) | 10-07 |
 | Versión de componentes desde el `.so` de disco; Settings y panel con la misma comprobación | hecho (v0.11.0) | 10-08 |
 | Mensaje de `CR-stats` con CloudRedirect mapeado y símbolo oculto | hecho (v0.22.2) | 10-08 |
 | CloudRedirect sin upstream (repo y cuenta borrados): distribuirlo desde nuestras releases (`.so` 2.6.6 archivado de la Deck, app como bundle del `gh-pages` de huanyuejue) con hash fijado, `setup.sh` sin `die`, `DisableCloud` como está, LumaDeck con versión fija y aviso de "sin mantenimiento"; rama `cr-archive` como respaldo, nunca fusionada | hecho (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`) | 10-16 |
 | Enrich del depot Linux y Proton forzado en `localconfig.vdf` al añadir | eliminados (`26d9fec`): el enrich corría antes de que los manifests llegaran a `depotcache/`, así que nunca añadía nada en un primer add y en un re-add pisaba la clave del depot Linux con la del app; el forzado se perdía en la siguiente reescritura de Steam. Steam elige el depot y aplica Proton solo | 10-13 |
-| Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-35 | 10-13 |
+| Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-34 | 10-13 |
 | C1 — máscara de bytes de layout en `patterns.hpp` (moon M1.1) | ya hecha donde tiene sentido (disp32 de ShaderDepot; frame, miembro de `CUser` y spill en Reconcile) y refutada donde no (issue #16, 07-06: comodín al frame deja BuildDep con 70 coincidencias y LoadPackage con 222). Único byte sin decidir: el `0x44` de `mov eax,[eax+0x44]` en ShaderDepot; enmascararlo si un día se mueve por él, validando con `verify_mask.py` | 09-14 |
 | C2 — segundo job del cron sobre `steamdeck_publicbeta` (`LUMA_STEAM_MANIFEST`, `fetch_steamclient.py:65`) | anotado, no ahora: el usuario no usa beta; `probe-steam.yml` sondea a mano | 09-14 |
 | C3 — objetivo del downgrade sin Headcrab: número = build más nuevo con hash en nuestro `updates.yaml` y en el de SLSsteam; **archivo** = manifest de ese build, que hoy solo existe en la rama de headcrab (snapshot manual, solo el build actual; SteamDatabase no rastrea el de Deck). Hace falta que el cron archive el manifest de Valve en cada cambio (Deck y Linux) y que LumaDeck lea número y archivo de ahí. El lado del pin de #26 se cerró el 10-15 | anotado, siguiente tanda: el número solo cambia quién hace la cuenta; sin el archivo no se puede bajar | 09-14, estado 10-15 |
@@ -1532,7 +1529,7 @@ bien: `slssteam.md` §4.3.
 | Antes de anclar un hook en un **sitio de llamada**, el auditor (`classify_hit_count`) tiene que aceptar N coincidencias que **convergen** al mismo destino; hoy marca AMBIGUOUS cualquier n>1 y el primer hook que se mueva saldría BLOCKING sin estarlo (slsteam-moon tropezó con un localizador de veinte llamadores) | requisito, sin trabajo abierto | 09-08 |
 | Lo que no hacemos al instalar o reparar (vectores de SteaMidra que pueden dejar una Deck en OOBE, `steamidra.md` §4.4): nunca escribir en `/usr` ni pedir `steamos-readonly disable` (Game Mode por el drop-in de `steam-launcher.service`); nunca SIGKILL a Steam; no tocar `steam.sh`; mantener el guard (tres crashes → vanilla) por delante de `short_session_recover` | vigente | 09-14 |
 | C5a — `fencepost` / comprobación del slot en runtime (BST) | no: la clave por hash y el resolvedor por nombre ya lo cubren | 09-14 |
-| C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-30) | 09-14 |
+| C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-29) | 09-14 |
 | C5c — segundo mirror del feed (jsDelivr) | no mientras `raw.githubusercontent.com` funcione: un mirror ajeno obliga a firmar el feed (`design/rva-feed-design.md` §14) | 09-14 |
 
 #### Decisiones de diseño de LumaDeck (antes en LumaDeck `DESIGN.md`, borrado el 2026-10-09)
@@ -1618,9 +1615,10 @@ cada prueba hecha con fecha, por función, con su resultado; la columna
   la Deck aplica Proton a la build Windows sin ayuda (2026-10-13, §5.2 F9).
 - **`dev-backend-reference.md` de LumaDeck** describía la cadena con
   P-ToyStore y `--pin` siempre; el doc se borró el 2026-10-09 (el mapa es §1.3).
-- **Sin `/tmp/dumps` el guard es ciego.** Solo cuando el directorio falta al
-  arrancar, y entonces no evalúa nada; tras un crash el directorio y el `.dmp`
-  sobreviven y el siguiente arranque lo cuenta (2026-10-15, §5.2 F1).
+- **Los `.dmp` de `/tmp/dumps` bastaban al guard.** Steam crea el directorio
+  después de que el lanzador mire (tras un reinicio, "cannot assess" en cada
+  arranque) y con SLSsteam ≥ `20261014151919` no escribe ningún `.dmp`; de
+  ahí la segunda fuente, `coredumpctl` (§2.1, §5.2 F1).
 - **Hubcap y Ryuu bajan la clave de Hubcap con permisos por defecto, y
   `steamidra_lite` escribe donde diga `HOME`.** Desde el 2026-10-15 los ficheros
   con secreto nacen 0600 y el script recibe las tres rutas del backend (§2.9,
@@ -1698,6 +1696,8 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-09-14 | CI (`watch-steam-selftest.yml`, build `bc54101b`) | Nueve runs del autotest sobre el binario estable real | #4 (shaderdepot, exit 2) verde en 15 min: Ghidra rederiva BuildDep, GMRC y ShaderDepot UNIQUE; el auto-derive RTTI de Reconcile no resuelve ("type_info not referenced by any function") y no bloquea. #5 rojo: corromper BuildDep+GMRC (diagnósticos) daba CLEAN y nunca llegaba a Ghidra (`dda90dc`). #6 rojo: `blocking_constants.py` no conocía `DepotKey-RTTI:no-slot-matches-pattern` y un DepotKey movido iba a issue (`63a5a0a`). #7 rojo en 20 min: Ghidra no resuelve el `CALL [reg+0x18]` y `derive_patterns.py` validaba una copia rancia. #8 rojo: `KeyError` en un `print` de la herramienta nueva. **#9 verde en 23 s**: exit 3 → `derive_depotkey_byname.py` (GetBinary → slot 6 → `0x11a4500`, 30 bytes UNIQUE) → aplicar → revalidar con RTTI y nombre de acuerdo, sin Ghidra | hasta el #9 el camino del único crítico no era autónomo; la Deck no se habría roto (rescate RTTI desde 07-06) |
 | 2026-09-14 | estático | Requisitos de versión del `.so` | `liblumalinux.so` exige GLIBCXX 3.4.32 / GLIBC 2.38 | dato de portabilidad; SteamOS lo cumple |
 | 2026-10-15 | codespace SteamOS | Crash guard con un crash provocado (`kill -SEGV` al cliente a los 20 s del arranque) | Dos `assert_*.dmp` en `/tmp/dumps`; el supervisor relanzó Steam y el guard apuntó `previous boot crashed at startup -> fail 1/3`. Un milisegundo después una segunda pasada (el `steam-launcher` emulado llama a `steam` por el PATH) apuntó `previous boot ok -> reset fail count`: contador a 0. Es un artefacto del codespace (su `steam-launcher` emulado invoca `steam` por el PATH y entra en `path/steam`); en la Deck, Game Mode y Desktop, ninguna hora repetida en `guard.log` (medido el mismo día). Los siete arranques anteriores, con `/tmp` vacío por reanudar el codespace: `no dumps dir -> cannot assess`; con el directorio presente y sin volcados, un arranque sano pasa en silencio y actualiza `good_client` | esta sesión |
+| 2026-10-16 13:57-14:25 | Deck (SLSsteam `20261014151919`, cliente `1791918634`) | ¿Escribe Steam minidumps con esa release? | `crashhandler` no mapeado en `steam` (0 en `/proc/<pid>/maps`); `/tmp/dumps` existe (creado por Steam a las 14:25, después de que el guard mirase) y vacío; `guard.log` dice "no dumps dir -> cannot assess" en los arranques de las 13:57 y 14:25. `coredumpctl list` sí lista un `steamwebhelper` `SIGTRAP` del 15 a las 22:41; `kernel.core_pattern` es el gancho `steamos_log_submitter.hooks.coredump`; `--since=@epoch` funciona | `slssteam.md` §4.2 |
+| 2026-10-16 14:47-14:48 | Deck (guard `f86659d` instalado con `setup.sh` de la rama) | Crash provocado (`kill -SEGV` al cliente ~30 s tras el arranque) | `coredumpctl`: core `SIGSEGV` de `ubuntu12_32/steam` a las 14:47:56; al relanzar, `guard.log` 14:48:07 `previous boot crashed at startup -> fail 1/3`, `boot_fail_count` = 1. Primer crash contado sin ningún `.dmp` | `f86659d` |
 
 #### Función 2 — Propiedad y licencias
 
@@ -1849,9 +1849,9 @@ convivencia con CloudRedirect y el orden del `LD_PRELOAD` están en
 | sin fecha | test determinista (dos bibliotecas) | El patch de error del `.acf` y `hasGameFiles` con el juego en la biblioteca secundaria (D1, D2) | El patch creaba un stub en la raíz y dejaba intacto el `.acf` real (`UpdateResult=8`); la tarjeta salía en gris. Ambos corregidos leyendo todas las bibliotecas | — (informe de la #41, borrado el 2026-10-09) |
 | 2026-10-13 | codespace SteamOS, Balatro 2379780 y Vampire Survivors 1794680 | Proton forzado por LumaDeck en `localconfig.vdf` con Steam abierto | La entrada `proton_experimental` está nada más añadir y ha desaparecido tras pulsar Install (Steam reescribe el fichero desde memoria); 0 entradas al final en los dos juegos. Balatro arranca igualmente bajo Proton Experimental (`reaper … proton waitforexitandrun`), sin `CompatToolMapping` global en `config.vdf` | esta sesión |
 | 2026-10-13 | codespace SteamOS, Vampire Survivors y Celeste 504230 | Qué depot pide Steam con las claves de las tres plataformas en `keys.txt` | Vampire Survivors: `1 mounted depots: 1794681` (Windows) con 1794685 keyed y su manifest en `depotcache/`. Celeste: `1 mounted depots: 504233` (Linux), 1,2 GB. Lo decide la recomendación de Valve para la Deck, no nuestras claves | esta sesión |
-| 2026-10-13 | codespace SteamOS, Celeste | Install con la clave y el manifest de 504233 quitados de `keys.txt`, `config.vdf` y `depotcache/` (zip sin depot Linux simulado) | Sin error: `missing required app 1070560` (SLR scout, señal de que eligió la build Linux), baja solo el depot de shaders, `finished update, 0 mounted depots`, `.acf` con `SizeOnDisk 0` e `InstalledDepots {}`, "Missing game executable" al lanzar | esta sesión; §4.1-35 |
+| 2026-10-13 | codespace SteamOS, Celeste | Install con la clave y el manifest de 504233 quitados de `keys.txt`, `config.vdf` y `depotcache/` (zip sin depot Linux simulado) | Sin error: `missing required app 1070560` (SLR scout, señal de que eligió la build Linux), baja solo el depot de shaders, `finished update, 0 mounted depots`, `.acf` con `SizeOnDisk 0` e `InstalledDepots {}`, "Missing game executable" al lanzar | esta sesión; §4.1-34 |
 | 2026-10-13 | codespace, terminal | ¿Traen Hubcap y Ryuu el depot Linux? 12 juegos con build nativa: Stardew Valley, Terraria, Baba Is You, Undertale, Risk of Rain, Dome Keeper, Celeste, Slay the Spire, Crypt of the NecroDancer, FTL, más Vampire Survivors y Celeste de los adds | 13 depots Linux (PICS `oslist=linux`, sin `dlcappid`): Hubcap 13/13 con clave de 64 hex y manifest en el zip; Ryuu 12/12 de los que sirve (Dome Keeper 403, no lo tiene). Ninguno incompleto | esta sesión |
-| 2026-10-13 | codespace SteamOS, Celeste | Quitar desde Steam y LumaDeck y volver a añadir sin reiniciar Steam | LumaDeck lo trata como poseído ("Owned game: only its DLC"): la licencia de SLSsteam sigue en memoria de Steam. Instaló bien porque el lua no tenía DLC que filtrar | esta sesión; §4.1-34 |
+| 2026-10-13 | codespace SteamOS, Celeste | Quitar desde Steam y LumaDeck y volver a añadir sin reiniciar Steam | LumaDeck lo trata como poseído ("Owned game: only its DLC"): la licencia de SLSsteam sigue en memoria de Steam. Instaló bien porque el lua no tenía DLC que filtrar | esta sesión; §4.1-33 |
 | sin fecha | Deck (9 `.acf`) + Windows (4) | Campos presentes en `.acf` reales (D5) | `StateFlags` y `ScheduledAutoUpdate` en 13/13; `UpdateResult` y `BytesToDownload` en 10/13; `FullValidateAfterNextUpdate` en 1/13. `ScheduledAutoUpdate` distinto de 0 en Proton 11.0 y en Halo (`StateFlags=6`). Por eso el patch no debe exigir campos que no existen | — (informe de la #41, borrado el 2026-10-09) |
 | sin fecha | devcontainer SteamOS, Jump King | Add sin stub con el código enviado | `no .acf yet — Steam writes it on Install`; tras instalar, `StateFlags=4` y tamaño real | — (informe de la #41, borrado el 2026-10-09) |
 | sin fecha | Discord (segunda mano), app 2111550 | `UpdateResult=8` | "content still encrypted" al lanzar; arreglado editando `StateFlags 36→4` y `UpdateResult 8→0`. Pista fuerte de fallo de descifrado, no prueba | — (informe de la #41, borrado el 2026-10-09) |

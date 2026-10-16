@@ -476,11 +476,11 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   `la_preinit` / `la_objopen` audit entry points are still compiled
   (`main.cpp:393-419`) but are not the supported path.
 - **Injection point: the `setup.sh` wrapper.** `setup.sh` writes
-  `~/.local/share/SLSsteam/path/steam` (`setup.sh:1150-1202`), which resolves the
+  `~/.local/share/SLSsteam/path/steam` (`setup.sh:1173-1225`), which resolves the
   real Steam launcher (`LUMA_STEAM_BIN`, else `PATH` skipping itself, else
   `/usr/bin/steam` and friends), runs the shared crash-loop guard, sets the loader
   environment and `exec`s Steam. The environment (`luma_set_injection_env`,
-  `setup.sh:884-898`):
+  `setup.sh:901-915`):
   - `LD_AUDIT=library-inject.so:SLSsteam.so`, or `SLSsteam.so` alone when
     `library-inject.so` is empty (as upstream ships it). SLSsteam therefore
     hooks before lumalinux's constructor runs — which is why
@@ -488,7 +488,7 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   - `LD_PRELOAD=liblumalinux.so:cloud_redirect.so` — lumalinux **first**, on
     purpose: `cr_stats_fix` interposes a CloudRedirect symbol and must precede it
     (`cr_stats_fix.hpp:28`). CloudRedirect never goes in `LD_AUDIT` (it corrupts
-    the client heap, `setup.sh:1154-1156`). Under Wayland `libextest.so` is
+    the client heap, `setup.sh:1177-1179`). Under Wayland `libextest.so` is
     appended.
 
   The wrapper is reached from the rewritten `Exec=` of the Steam `.desktop`
@@ -499,7 +499,7 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
 - **`steam.sh` stays vanilla.** Steam re-extracts it whenever its size differs
   from its manifest, so an injection there does not survive Steam updates;
   `setup.sh` restores a vanilla `steam.sh` if Headcrab or the old installer had
-  modified it (`neutralize_steam_sh`, `setup.sh:264-333`). `/usr/bin/steam` is
+  modified it (`neutralize_steam_sh`, `setup.sh:263-332`). `/usr/bin/steam` is
   not touched either.
 - `install.sh` is the legacy installer (it inserted an `LD_PRELOAD` export into
   Headcrab's `~/.local/share/Steam/steam.sh`). It is still in the repository and
@@ -1071,7 +1071,7 @@ has been decided is in its §4.4. This section keeps the reverse-engineering one
 Closed since the previous version of this list:
 - The Headcrab `steam.sh` re-patching problem is gone. `setup.sh` injects
   through a wrapper at `~/.local/share/SLSsteam/path/steam` and restores a
-  vanilla `steam.sh` (`setup.sh:18-26, 244-261`; nosotros §2.1).
+  vanilla `steam.sh` (`setup.sh:18-26, 243-260`; nosotros §2.1).
 # Part II — Log
 
 Each section below describes the code as it was on its date and is not rewritten afterwards.

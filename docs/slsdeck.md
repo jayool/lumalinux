@@ -447,7 +447,7 @@ arrancar con auto-update.
 | `<Steam>/config/stplug-in/*.lua` | lua de cada juego; los trata todos como suyos | **LumaDeck** (copia de cada `.lua`) |
 | `<Steam>/config/config.vdf` | `DecryptionKey` de todos los lua con Steam parado | Steam, LumaDeck |
 | `<Steam>/depotcache/`, `steamapps/appmanifest_*.acf` | manifests; borra los ACF "fantasma" | Steam, LumaDeck |
-| `~/.local/share/CloudRedirect/cloud_redirect.so` | fork de moon, escrito en el sitio | **lumalinux** (`setup.sh:834,1102`) |
+| `~/.local/share/CloudRedirect/cloud_redirect.so` | fork de moon, escrito en el sitio | **lumalinux** (`setup.sh:831,1112-1123`) |
 | `~/.config/lumalinux`, `~/.local/share/lumalinux`, `keys.txt` | renombrados a `*.slsdeck-disabled` | **lumalinux** |
 | `<Steam>/compatibilitytools.d/` | GE-Proton propio, GE-Proton10-34 | Steam, otros |
 | `/etc/default/grub`, módulos de kernel, `iptables` | hipervisor, Zapret | sistema |
@@ -477,7 +477,7 @@ pila en la misma Deck.
    - **Desactiva nuestro guardián.** Sobrescribe con `exit 0` nuestros
      `ensure-desktop-coverage.sh` y `desktop-coverage.lib.sh`
      (`slssteam.py:2803-2823`). El guardián systemd que llama al primero
-     (`setup.sh:765`) sigue corriendo, pero ya no hace nada.
+     (`setup.sh:746-803`) sigue corriendo, pero ya no hace nada.
    - **Quita la cobertura de Desktop.** Reescribe a `/usr/bin/steam` todo
      `*steam*.desktop` que apunte a `path/steam`, de usuario o de sistema
      (`:2826-2870`). Steam en Desktop arranca vanilla.
@@ -525,7 +525,7 @@ pila en la misma Deck.
    incluidos si pasaron por su registro.
 
 4. **`cloud_redirect.so` compartido.** `setup.sh` instala el de Selectively11 en
-   `~/.local/share/CloudRedirect/cloud_redirect.so` (`setup.sh:834,1100-1102`).
+   `~/.local/share/CloudRedirect/cloud_redirect.so` (`setup.sh:831,1112-1123`).
    SLSDeck escribe ahí el de `swwayps/cloudredirect-moon@master`
    (`cloudredirect.py:1362-1373`). Es un fork hecho para moon que, según su
    comentario, necesita el `steamclient` de moon (`:50-56`), y nuestro wrapper
@@ -602,8 +602,8 @@ pila en la misma Deck.
 |---|---|---|---|
 | S1 | ¿Lee Steam `config/depotcache`? Pregunta previa a todo lo demás | 2026-08-26 | **contestado**: no lo lee (medido 2026-09-11, `nosotros.md` §0); el archivo propio de LumaDeck repone `depotcache` |
 | S2 | `downloads.py` `extractall()` de un zip de terceros como root | 2026-08-26 | **no es hallazgo**: `zipfile` de Python quita las rutas absolutas y los `..` al extraer y no crea symlinks; sigue en `downloads.py:1083` y `self_update.py:127` |
-| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-27) |
-| S4 | `setup.sh` sin checksums | 2026-08-26 | sin decisión (`nosotros.md` §4.1-24) |
+| S3 | Detectar los `*.slsdeck-disabled` y ofrecer la vuelta | 2026-08-26 | sin hacer (`nosotros.md` §4.1-26) |
+| S4 | `setup.sh` sin checksums | 2026-08-26 | sin decisión (`nosotros.md` §4.1-23) |
 | S5 | Credenciales con permisos por defecto (`0600`) | 2026-08-26 | hecho el 2026-10-15 (`utils.write_private_text`, `nosotros.md` §2.10) |
 | S6 | `self_update.py` crea `~/Downloads` como root sin `chown` | 2026-08-26 | sin cambio (`self_update.py:207-220`) |
 | S7 | Depots compartidos detectados por cabecera y lista, no por señal viva | 2026-08-26 | **superado**: desde el hook v1.0 servir cualquiera no corrompe; los redists van a `keys.txt` y nunca se pinean (`nosotros.md` §2.2) |
