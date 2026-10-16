@@ -46,7 +46,8 @@ def extract_guard(src: str) -> str:
     return m.group(1)
 
 
-def run(guard: str, home: str, bindir: str, launch_epoch, fails_before: int, cores: str, dumps_dir: str | None):
+def run(guard: str, home: str, bindir: str, launch_epoch, fails_before: int, cores: str, dumps_dir: str | None,
+        path: str | None = None):
     state = os.path.join(home, ".local/state/lumalinux")
     shutil.rmtree(state, ignore_errors=True); os.makedirs(state)
     if launch_epoch is not None:
@@ -61,7 +62,7 @@ luma_exec_vanilla() {{ echo "VANILLA"; exit 0; }}
 luma_guard_run
 echo "RETURNED"
 '''
-    env = dict(os.environ, HOME=home, PATH=bindir + os.pathsep + os.environ["PATH"],
+    env = dict(os.environ, HOME=home, PATH=path if path is not None else bindir + os.pathsep + os.environ["PATH"],
                FAKE_CORES=cores, LUMA_GUARD_DUMPS_DIR=dumps_dir or os.path.join(home, "no-such-dumps"))
     p = subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=env)
     log = ""
@@ -120,9 +121,15 @@ def main() -> int:
     check("third startup crash latches safe mode and execs vanilla",
           safe and "latching safe mode" in log and "VANILLA" in out)
 
-    # No coredumpctl on PATH and no dumps dir: blind, counters untouched.
-    env_bin = os.path.join(base, "emptybin"); os.makedirs(env_bin, exist_ok=True)
-    out, log, count, safe = run(guard, home, env_bin, launch, 1, "", None)
+    # No coredumpctl on PATH and no dumps dir: blind, counters untouched. The
+    # CI runner ships a real coredumpctl, so PATH is rebuilt from scratch with
+    # only the tools the guard needs, and nothing else.
+    tools_bin = os.path.join(base, "toolsbin"); os.makedirs(tools_bin, exist_ok=True)
+    for tool in ("sh", "cat", "stat", "find", "touch", "rm", "mkdir", "date", "head", "grep", "timeout", "env", "printf"):
+        src = shutil.which(tool)
+        if src:
+            os.symlink(src, os.path.join(tools_bin, tool))
+    out, log, count, safe = run(guard, home, tools_bin, launch, 1, "", None, path=tools_bin)
     check("no coredumpctl and no dumps dir -> cannot assess, counter kept",
           "cannot assess previous boot" in log and count == "1")
 
