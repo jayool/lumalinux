@@ -561,7 +561,9 @@ Validación: inflado "Pro", magic `d0 17 f6 71`, depot y gid leídos del bloque
 de metadatos (`manifests.py:134-213`). Los zips de Hubcap no traen el manifest
 del depot de shaders (`<appid>_*.manifest`) (medido, §5 F4).
 
-**Códigos de petición de manifest (GMRC).** Lo pide lumalinux, no LumaDeck.
+**Códigos de petición de manifest (GMRC).** Lo pide lumalinux, no LumaDeck,
+para cualquier manifest de un depot de `keys.txt`, los items del Workshop
+incluidos (su depot es el AppID).
 Cascada en `gmrc_store.hpp:154-159`: `20770407.xyz/manifest/<depot>/<gid>`
 (UA `lumalinux/<ver>`), `manifest.manifestdex.com/<gid>` (UA `ManifestDeX/1.0`),
 `gmrc.wudrm.com/manifest/<gid>` (HTTP), `manifest.steam.run/api/manifest/<gid>`
@@ -925,6 +927,17 @@ shadercache/compatdata solo raíz + biblioteca del juego;
 `config/libraryfolders.vdf`; `--pin-installed` solo la raíz. Los cinco defectos
 originales (issue #41) están arreglados; sus mediciones en §5.2 F9 y las
 decisiones en §4.4.
+
+**Workshop.** Nada propio. El usuario se suscribe desde el cliente de Steam y
+Steam baja el item como un update más: el depot del Workshop es el propio
+AppID, cuya clave raíz está en `keys.txt`, así que el hook GMRC lo trata como
+nuestro y sirve el código del manifest del item (§2.4). Hace falta la clave
+raíz del juego en `keys.txt` (un lua sin ella deja el item sin descifrar;
+LumaDeck no lo avisa). La suscripción es estado de la cuenta en Valve: el
+botón solo mira la propiedad que el cliente declara, Valve la acepta, y
+sobrevive a quitar el juego. ASSella lo hace fuera de Steam con
+DepotDownloader porque su plugin no consigue esos códigos (`assella.md`
+§4.3). Medido 2026-10-17 con dos juegos nativos y uno por Proton (§5.2 F4).
 
 **Lista de control.** Entradas: appid, página abierta, nombre; sin zip local;
 sin elección de disco. Escribe: lo de arriba. Quita: lo de arriba, con lo que
@@ -1792,6 +1805,9 @@ el frontend.
 | 2026-10-07 10:54 | codespace (clave de usuario) | Manifest suelto de Hubcap (`/generate/manifest`) | 200, 271 bytes, idéntico byte a byte al de depotcache. Cuota `single` 1500/día | RESEARCH §19.4 |
 | 2026-10-07 | codespace | `api.993499094.xyz/depotkeys.json` | 240103 claves, 18 MB, modificado el mismo día; 32/32 depots de las luas cacheadas con la clave correcta; no es day-one (STAR WARS: Galactic Racer, salido el 10-06, sin sus depots). Aparcado | RESEARCH §19.4 |
 | 2026-10-07 19:13 | codespace SteamOS, sin clave de Hubcap | Descarga por `api.json` | `Morrenus status=401` → `Forced Ryu (Cookie) status=200`; añadir queda habilitado solo con Ryuu | log de LumaDeck |
+| 2026-10-17 16:24-16:28 | codespace SteamOS, Ravenfield 636480 añadido e instalado desde LumaDeck | Workshop nativo: suscribirse a un item desde el cliente de Steam | Steam baja el item sin más: `Downloading 36 chunks for depot 636480 (8464017239690452565)`, commit a `workshop/content/636480/3818689694`, `result No Error`. El código lo sirvió lumalinux: `GMRC: fetching … from 20770407` → `got code … attempt 1` → `CDN accepted (HTTP 206)` → `INJECTED request code 6250730422840636086 for manifest 8464017239690452565 (depot 636480)`. Al lanzar, Ravenfield lo carga: "LOADING m1 abrams pack.rfc (LoadContent)" (item 3818689694, M1 Abrams MBT Pack). Nada construido; cierra `assella.md` A9 | `lumalinux.log:2854-2859` |
+| 2026-10-17 16:55 | codespace SteamOS, Brotato 1942280 añadido e instalado desde LumaDeck | Workshop nativo con dos items | Ambos bajados y confirmados en `workshop/content/1942280/{3779529366,3817655214}`, `result No Error`; dos códigos por lumalinux (manifests `6095258365563705054` y `1385306705576014569`, 20770407 a la primera, CDN 206); los dos mods aparecen en el menú del juego | `lumalinux.log:2904-2914` |
+| 2026-10-17 17:21 | codespace SteamOS, Noita 881100 (Windows, Proton) añadido e instalado desde LumaDeck | Workshop nativo por Proton | Un item de 344 chunks bajado y confirmado en `workshop/content/881100/3813350195` (354 ficheros), `result No Error`; código por lumalinux (manifest `667511103502155620`, 20770407 a la primera, CDN 206); el mod aparece en el menú de mods de Noita | `lumalinux.log:3022-3027` |
 
 #### Función 5 — Updates de juegos
 

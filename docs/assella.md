@@ -788,7 +788,7 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 | 4 | descarga fuera de Steam (DepotDownloader) | Steam descarga | descartado por diseño |
 | 5 | rollback a un build, `voices.json` de builds recomendados | `pins.py`, Change version | |
 | 6 | Steamless, Goldberg, EOS, netsock, tickets, editor de logros; Steamless, Goldberg y SLScheevo bajo demanda desde su R2 con hash | fixes por botón; Goldberg y el proxy EOS los baja `release.yml` al empaquetar, Steamless va en el zip | tickets aparcados con la fila de SLSsteam |
-| 9 | Workshop (DepotDownloader `-ugc`) | nada | §4.4 A9 |
+| 9 | Workshop (DepotDownloader `-ugc`, fuera de Steam) | nativo: el usuario se suscribe en el cliente y Steam baja el item; el código del manifest lo sirve lumalinux (el depot del Workshop es el AppID, cuya clave raíz está en `keys.txt`) | §4.4 A9; `nosotros.md` §2.9 |
 | 9 | detección del watcher de SLSsteam muerto | nada | §4.4 A4 |
 | 11 | reparador del config que reescribe | completado que solo añade | |
 | 11 | componentes de terceros verificados por SHA-256 contra un manifest de un bucket propio, descarga atómica | `setup.sh` baja los `.so` de terceros sin hash | `nosotros.md` §4.1-23; matriz §3.1 |
@@ -806,7 +806,7 @@ nuestra pila en la misma máquina, o que use los mismos servicios. Lo demás de
 | A6 | Spliced tickets como **plugin**, no como hook inline (un cuarto punto de choque) | 2026-09-29 | **hecho** (LumaDeck `b70ea44`) |
 | A7 | Exclusiones: rollback a build antiguo, Workshop, Steamless/Goldberg/EOS/netsock dentro de la descarga, tickets, logros con `schema-grabber`, scraper de SteamDB | 2026-09-14 | vigente salvo Workshop (A9) |
 | A8 | Aviso en la ficha de LumaDeck si `FakeAppIds` tiene `0` (y en Denuvo con `SmartTickets` sin `0x2`); baja prioridad; volcarlo en un futuro *exportar diagnóstico* | 2026-10-04 | sin hacer (§4.1-4) |
-| A9 | Workshop: medir el nativo con nuestra pila antes de construir nada (Steam intentó bajar los items solo, con el juego desbloqueado, y falló solo por los códigos) | 2026-10-06 | pendiente de medir |
+| A9 | Workshop: medir el nativo con nuestra pila antes de construir nada (Steam intentó bajar los items solo, con el juego desbloqueado, y falló solo por los códigos) | 2026-10-06 | **hecho**: funciona nativo, nada que construir (`nosotros.md` §5.2 F4, 2026-10-17) |
 | A10 | AGPL: si algo de lumalinux/LumaDeck aparece en ASSella, se dice una vez con el enlace; pacto con niwia de avisarse antes de culpar al otro si alguien llega con un crash y las dos herramientas | 2026-10-01 | vigente |
 | A11 | Exportar diagnóstico desde el plugin (versión, canal de Steam, `status.json`, hash de `steamclient.so`, `FakeAppIds`, `SmartTickets`) para soporte | 2026-10-01 | sin hacer |
 | A12 | Catálogo "Voices" de builds recomendados: idea limpia, sin acción | 2026-09-23 | vigente |
