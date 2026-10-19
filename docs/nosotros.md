@@ -1724,6 +1724,7 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-19 | codespace | Cierre SIN el `atexit(_exit(0))` (build de prueba, 5 cierres seguidos con el stack completo) | los 5 en 3-4 s y `rc=0`, pero el primero dejó `assert_*.dmp` en `/tmp/dumps` | La carrera de teardown sigue existiendo con CloudRedirect 2.6.6 y SLSsteam 20261014; el corte se queda (§4.1-21) |
 | 2026-10-19 | codespace | Verificación de Steam al arrancar ("all executable checksums" 3 s frente a "file sizes only" 0 s) | tras un cierre normal con el stack (`_exit`), el siguiente arranque verifica solo tamaños; la completa aparece tras un `kill -9` o un lanzamiento fuera del launcher | El `_exit(0)` no dispara la verificación completa |
 | 2026-10-19 | codespace | Qué hace lumalinux entre ver `steamclient.so` y tener los hooks | 6 s: `updates.yaml` 4 s (cargar libcurl + fetch, con `curl` externo el fetch son 0,05 s), sha256 1 s, feed de RVAs 1 s, hooks 0 s. Las dos descargas van a GitHub en cada arranque aunque la copia local sea válida | En el codespace corre en el hilo del Ctor (no bloquea a Steam); en la Deck en `la_objopen` (bloquea) |
+| 2026-10-19 | codespace | Lo mismo con las copias servidas primero (`6aa9400`) | 1 s el primer arranque, 0 s el segundo, sin `Curl Res`; a los 30 s `FeedRefresh` sustituye las dos copias; cierre 3 s | Pendiente de medir en la Deck, donde el tramo bloquea a Steam |
 
 #### Función 2 — Propiedad y licencias
 
