@@ -961,14 +961,17 @@ Rules:
   the files survive a release being deleted.
 - The release asset is what users download; the branch is the backup. If one
   is ever lost, restore it from the other and keep the hashes above.
-- Source code: `madoiscool/CloudRedirect` holds upstream's full tree as of
-  deletion (`master` with tag `v2.6.6` = `00969da`, `gh-pages` = `83100b8`,
-  `ost`), plus one Windows-UI commit of its own; `huanyuejue/CloudRedirect`
+- Source code: `jayool/CloudRedirect` is a GitHub fork of
+  `madoiscool/CloudRedirect` made on 2026-10-19, `master` only: it carries
+  `00969da` (upstream's `v2.6.6`, the commit this doc reads) plus one
+  madoiscool commit that only touches the Windows UI. No tags or other
+  branches were copied; the 2.6.6 flatpak that `gh-pages` served is already
+  in our release assets and on `cr-archive`.
+  It sits in the same fork network as the deleted original;
+  `madoiscool/CloudRedirect` is the second copy, `huanyuejue/CloudRedirect`
   and Software Heritage (snapshot 2026-08-20) stop at v2.6.5. If something
-  must ever be changed, mirror madoiscool's into `jayool` first (`git clone
-  --mirror` + `git push --mirror`, not a GitHub fork, so it survives the fork
-  network) and build `v2.6.6` with `-m32` from `src/platform/linux/`
-  (`CMakeLists.txt`, `LINUX_32BIT=ON`).
+  must ever be changed, build `v2.6.6` from `jayool/CloudRedirect` with
+  `-m32` from `src/platform/linux/` (`CMakeLists.txt`, `LINUX_32BIT=ON`).
 - CloudRedirect is 32-bit and cannot follow Steam's 64-bit client
   (`docs/steam-rt3-x64.md`). When Valve ships that to SteamOS, cloud saves
   end; there is no port to wait for.

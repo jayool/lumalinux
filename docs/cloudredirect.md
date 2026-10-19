@@ -13,11 +13,12 @@ CloudRedirect.
 
 **El repo ya no existe.** El 2026-10-16 desaparecieron `Selectively11/CloudRedirect`
 y la cuenta de su autor (§2.12, §5.3). Lo leído aquí sigue valiendo para el
-binario que corre en la Deck. La copia completa del repo al borrarse es
-`madoiscool/CloudRedirect`: `master` con el tag `v2.6.6` = `00969da` (el
-commit leído aquí), `gh-pages` en `83100b8` (el flatpak 2.6.6 publicado) y
-`ost`, con un solo commit propio encima, de UI de Windows (§2.12). Por
-detrás, `huanyuejue/CloudRedirect` y Software Heritage llegan solo a v2.6.5.
+binario que corre en la Deck. La copia del repo al borrarse está en
+`jayool/CloudRedirect` (fork de `madoiscool/CloudRedirect` del 2026-10-19,
+solo `master`: lleva `00969da`, el `v2.6.6` upstream y el commit leído aquí,
+más un commit de madoiscool que solo toca la interfaz de Windows) (§2.12).
+Por detrás, `huanyuejue/CloudRedirect` y Software Heritage llegan solo a
+v2.6.5.
 Lo único que no existe en ningún sitio es el árbol privado `3434d9d` desde el
 que se compiló el binario; el binario sí, y lo distribuimos nosotros (§0
 "Hoy").
@@ -565,7 +566,7 @@ compilando el `v2.6.6` de `madoiscool/CloudRedirect`.
 | `DisableCloud: yes` (lo escriba quien lo escriba) | sin nube para los juegos que SLSsteam no ve como poseídos; los nuestros van por package-0 y no les afecta (`slssteam.md` §2.8) |
 | los assets de `jayool/lumalinux` v0.22.3 (`.so` y `.flatpak`) inaccesibles o con otro hash | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta (`setup.sh:490-510,535-564,1112-1123`). Copia de respaldo en la rama `cr-archive` |
 | Valve lleva el cliente de 64 bits (`steamrt64`) al canal estable de SteamOS | `cloud_redirect.so` es de 32 bits y no carga (`wrong ELF class`); sin autor, un port a 64 bits sería nuestro, desde el `v2.6.6` de madoiscool (`steam-rt3-x64.md` §2) |
-| madoiscool borra su fork | se pierde la fuente del `v2.6.6` y del flatpak publicado (huanyuejue y Software Heritage se quedan en v2.6.5); nuestros binarios no dependen de él. El espejo en `jayool` lo cubre |
+| madoiscool borra su fork | nada: `jayool/CloudRedirect` tiene lo mismo. Si GitHub cerrase la red de forks entera, quedarían `cr-archive`, nuestros assets y la captura v2.6.5 de Software Heritage |
 | SLSDeck en la misma Deck | `cloud_redirect.so` sustituido por el de moon, que sin slsteam-moon no sirve logros (`slsdeck.md` §4.1-4) |
 | la retirada del endpoint de tienda que usa SLSsteam para los schemas (2026-10-22) | los juegos nuevos no consiguen schema hasta la release de SLSsteam con el arreglo; CloudRedirect solo guarda lo que Steam reciba |
 
@@ -597,7 +598,7 @@ compilando el `v2.6.6` de `madoiscool/CloudRedirect`.
 | C12 | Actualizar a 2.6.6 | 2026-10-07 | **hecho** en la Deck 22:16 (`2.6.6+3434d9d`, `DoInit: SUCCESS`) |
 | C13 | Espera de 10 s como requisito del port a CachyOS | 2026-09-28 | vigente: sigue en `init.cpp:541-545` (`cachyos-port.md`) |
 | C14 | Tras la desaparición del upstream, distribuir CloudRedirect nosotros: el `.so` 2.6.6 archivado de la Deck y la app como bundle del `gh-pages` 2.6.6 (el de huanyuejue, 2.6.5, lo sirvió del 16 al 19), como assets de lumalinux v0.22.3 con hash fijado en `setup.sh`; copia en la rama `cr-archive`; `setup.sh` no aborta sin él; `DisableCloud` se queda en `no`; LumaDeck compara contra 2.6.6 fijo y avisa en la tarjeta de que no hay mantenimiento | 2026-10-16 | **hecho** (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`). Sin CloudRedirect, Steam lanza igual y al salir Valve deniega la subida: "unable to sync" y un toast en cada cierre, la partida local intacta (§5.2 F8) |
-| C15 | No compilar: el `v2.6.6` de madoiscool solo si algún día hace falta cambiar algo (C11 sigue), desde un espejo en `jayool` | 2026-10-16 | vigente; C3 y C9 quedan **superadas**: no hay a quién enviar nada |
+| C15 | No compilar: el `v2.6.6` de `jayool/CloudRedirect` solo si algún día hace falta cambiar algo (C11 sigue) | 2026-10-16 | vigente; C3 y C9 quedan **superadas**: no hay a quién enviar nada |
 
 ---
 
@@ -702,4 +703,5 @@ compilando el `v2.6.6` de `madoiscool/CloudRedirect`.
   `cr-archive`; `setup.sh` ya no aborta sin CloudRedirect; LumaDeck deja de
   consultar el repo (C14).
 - **2026-10-19.** Bundle de la app rehecho desde el `gh-pages` 2.6.6; el
-  `.so` que lleva dentro es el archivado (`86a40032…`).
+  `.so` que lleva dentro es el archivado (`86a40032…`). `jayool/CloudRedirect`
+  pasa a ser fork de `madoiscool/CloudRedirect` (`master`, con el v2.6.6).
