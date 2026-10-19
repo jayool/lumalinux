@@ -24,8 +24,17 @@ std::atomic<bool>  g_keysChanged{false};
 // Wake primitive for the package-0 finder: lets it sleep on a timeout but wake
 // the instant a game is added (keys.txt change), instead of on its next slow
 // tick. The flag above doubles as the CV predicate.
-std::mutex              g_wakeMtx;
-std::condition_variable g_wakeCv;
+//
+// Heap-allocated once and never destroyed, on purpose. As plain globals they
+// had destructors, and at Steam's exit ~condition_variable ran while the finder
+// was still asleep on it: pthread_cond_destroy blocks until every waiter has
+// left, so Steam's main thread sat in __cxa_finalize for whatever was left of
+// the finder's 15 s nap (measured 2026-10-19: 9-18 s with the stack vs 3 s
+// without; 3 s again with the finder off). The process ends with _exit(0)
+// right after anyway, so nothing is lost by skipping the destructors; the
+// kernel reclaims the two objects with the rest of the address space.
+std::mutex&              WakeMtx() { static auto* m = new std::mutex; return *m; }
+std::condition_variable& WakeCv()  { static auto* cv = new std::condition_variable; return *cv; }
 
 // CUser::NotifyLicensesUpdated is cdecl, single arg (`this`). It rebuilds the
 // LicensesUpdated_t callback from this user's own license vector and posts it.
@@ -105,10 +114,10 @@ void NotifyKeysChanged() {
     // miss the wakeup (every set-true is locked + notified). Still safe from the
     // inotify thread: it touches only this primitive, never Steam.
     {
-        std::lock_guard<std::mutex> lk(g_wakeMtx);
+        std::lock_guard<std::mutex> lk(WakeMtx());
         g_keysChanged.store(true, std::memory_order_release);
     }
-    g_wakeCv.notify_all();
+    WakeCv().notify_all();
 }
 
 bool TakeKeysChanged() {
@@ -116,14 +125,14 @@ bool TakeKeysChanged() {
 }
 
 void WaitForKeysChangeOr(int timeoutSec) {
-    std::unique_lock<std::mutex> lk(g_wakeMtx);
+    std::unique_lock<std::mutex> lk(WakeMtx());
     // Wake early if a change is already pending or arrives during the wait; else
     // time out at the finder's normal cadence. Does NOT consume the flag (the
     // finder consumes it via TakeKeysChanged() after re-injecting). A false-going
     // transition from TakeKeysChanged() — not under this mutex — can only cause a
     // harmless spurious re-wait, never a missed wake, since every true-transition
     // goes through the locked notify above.
-    g_wakeCv.wait_for(lk, std::chrono::seconds(timeoutSec),
+    WakeCv().wait_for(lk, std::chrono::seconds(timeoutSec),
                       [] { return g_keysChanged.load(std::memory_order_acquire); });
 }
 
