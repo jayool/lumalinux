@@ -944,8 +944,9 @@ be published there, so we ship it ourselves. What `setup.sh` installs:
 
 | File | What | Where it lives | sha256 |
 |---|---|---|---|
-| `cloud_redirect-2.6.6+3434d9d.so` | the last Linux build (32-bit, 7,573,924 bytes), copied off a Deck. Its source commit `3434d9d` was never public: there is no code for 2.6.6 anywhere | asset of release `v0.22.3`; `vendor/cloudredirect/` on branch `cr-archive` | `86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b` |
-| `cloudredirect.flatpak` | the sign-in app as a single bundle (2.6.5, the last `gh-pages` publish; carries `cloud_redirect_cli` and its own 2.6.5 `.so`). Built with `flatpak build-bundle <ostree repo> cloudredirect.flatpak org.cloudredirect.CloudRedirect master` from the `gh-pages` branch of the preservation fork `huanyuejue/CloudRedirect` | same two places | `a0a916bbd305852149b99d5c90d8765396951a518136a0b677063c4b519d77cc` |
+| `cloud_redirect-2.6.6+3434d9d.so` | the last Linux build (32-bit, 7,573,924 bytes), copied off a Deck. Byte-identical to the `.so` inside upstream's published 2.6.6 flatpak, so it is the build Selectively11 shipped; its private build tree `3434d9d` was never public, the source is the `v2.6.6` tag (`00969da`) | asset of release `v0.22.3`; `vendor/cloudredirect/` on branch `cr-archive` | `86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b` |
+| `cloudredirect-2.6.6.flatpak` | the sign-in app as a single bundle: upstream's published 2.6.6 (`gh-pages` commit `83100b8`), carrying `cloud_redirect_cli` and the same `.so` as above. Built with `flatpak build-bundle <ostree repo> cloudredirect-2.6.6.flatpak org.cloudredirect.CloudRedirect master` from the `gh-pages` branch of `madoiscool/CloudRedirect` | same two places | `bd361482c990ebdd9f05db25846b9b1d0545599d09e269c22be6a04fcb96f52c` |
+| `cloudredirect.flatpak` | the earlier bundle (2.6.5, from `huanyuejue/CloudRedirect`'s `gh-pages`), shipped by `setup.sh` from 2026-10-16 to 10-19. Its embedded 2.6.5 `.so` made the app offer "Update" over our 2.6.6. Kept only as history; nothing points at it | same two places | `a0a916bbd305852149b99d5c90d8765396951a518136a0b677063c4b519d77cc` |
 
 `setup.sh` pins both URLs and hashes (`CR_SO_URL`/`CR_SO_SHA256`,
 `CR_FLATPAK_URL`/`CR_FLATPAK_SHA256`, `setup.sh:69-88`). A failed download or a
@@ -960,12 +961,14 @@ Rules:
   the files survive a release being deleted.
 - The release asset is what users download; the branch is the backup. If one
   is ever lost, restore it from the other and keep the hashes above.
-- Source code (up to 2.6.5, `bc5e38a`) exists only in `huanyuejue/CloudRedirect`
-  and in Software Heritage (snapshot 2026-08-20). If something must ever be
-  changed, fork that into `jayool` first and build 2.6.5 with `-m32` from
-  `src/platform/linux/` (`CMakeLists.txt`, `LINUX_32BIT=ON`); 2.6.6's fixes
-  (hidden symbols, the empty-store stats bug) are not in it, and lumalinux's
-  `cr_stats_fix` covers the stats one.
+- Source code: `madoiscool/CloudRedirect` holds upstream's full tree as of
+  deletion (`master` with tag `v2.6.6` = `00969da`, `gh-pages` = `83100b8`,
+  `ost`), plus one Windows-UI commit of its own; `huanyuejue/CloudRedirect`
+  and Software Heritage (snapshot 2026-08-20) stop at v2.6.5. If something
+  must ever be changed, mirror madoiscool's into `jayool` first (`git clone
+  --mirror` + `git push --mirror`, not a GitHub fork, so it survives the fork
+  network) and build `v2.6.6` with `-m32` from `src/platform/linux/`
+  (`CMakeLists.txt`, `LINUX_32BIT=ON`).
 - CloudRedirect is 32-bit and cannot follow Steam's 64-bit client
   (`docs/steam-rt3-x64.md`). When Valve ships that to SteamOS, cloud saves
   end; there is no port to wait for.

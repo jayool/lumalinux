@@ -73,10 +73,11 @@ SLS_TAG=""
 # Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
 # archived off a Deck (sha256-pinned below; it still hooks the 2026-10-14 client,
 # measured on the Deck) and the sign-in app as a single .flatpak bundle built from
-# upstream's last gh-pages ostree repo (2.6.5, the build that also carries
-# cloud_redirect_cli — see deploy_cloudredirect_cli). Both are assets of the
-# v0.22.3 release; the .so is also on the `cr-archive` branch
-# (vendor/cloudredirect/, never merged). See docs/maintenance.md.
+# upstream's last gh-pages publish (2.6.6, commit 83100b8, preserved in
+# madoiscool/CloudRedirect; it embeds that same .so and cloud_redirect_cli — see
+# deploy_cloudredirect_cli). Both are assets of the v0.22.3 release and both are
+# on the `cr-archive` branch (vendor/cloudredirect/, never merged). See
+# docs/maintenance.md.
 CR_SO_URL="${CLOUDREDIRECT_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloud_redirect-2.6.6%2B3434d9d.so}"
 CR_SO_SHA256="86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
@@ -84,8 +85,8 @@ NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
 CR_FLATPAK_ID="org.cloudredirect.CloudRedirect"
 CR_FLATPAK_RUNTIME="${CR_FLATPAK_RUNTIME:-org.kde.Platform//6.10}"
-CR_FLATPAK_URL="${CLOUDREDIRECT_FLATPAK_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloudredirect.flatpak}"
-CR_FLATPAK_SHA256="a0a916bbd305852149b99d5c90d8765396951a518136a0b677063c4b519d77cc"
+CR_FLATPAK_URL="${CLOUDREDIRECT_FLATPAK_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloudredirect-2.6.6.flatpak}"
+CR_FLATPAK_SHA256="bd361482c990ebdd9f05db25846b9b1d0545599d09e269c22be6a04fcb96f52c"
 FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
 
 RUNTIME_TOOLS=( steamidra_lite.py vdf_inject_keys.py )

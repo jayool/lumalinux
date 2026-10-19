@@ -799,8 +799,9 @@ intercepta los RPC de Steam Cloud y los sirve desde Google Drive, OneDrive,
 S3, R2 o una carpeta (`cloudredirect.md` §2.10). **Su upstream ya no existe**
 (repo y cuenta borrados el 2026-10-16, `cloudredirect.md` §2.12): lo
 distribuimos nosotros. `setup.sh` baja el `.so` 2.6.6 (archivado de una Deck)
-y la app como bundle `cloudredirect.flatpak` (2.6.5, construido del último
-`gh-pages`) de los assets de la release v0.22.3 de lumalinux, cada uno con su
+y la app como bundle `cloudredirect-2.6.6.flatpak` (el flatpak 2.6.6
+publicado, que lleva dentro ese mismo `.so`) de los assets de la release
+v0.22.3 de lumalinux, cada uno con su
 sha256 fijado (`:69-88`; `CLOUDREDIRECT_URL` y `CLOUDREDIRECT_FLATPAK_URL`
 fuerzan otro origen y saltan el pin); instala el bundle con la runtime KDE de
 Flathub, borra el remoto `cloudredirect` muerto que añadían los setups
@@ -1090,7 +1091,7 @@ Cada una con su función.
 | `github.com/jayool/lumalinux/releases/latest/download/{liblumalinux.so,version.txt}` (y su redirect a `releases/tag/<tag>`) | `setup.sh:61,120-130`; `headcrab_compat.py:56` | el `.so` y el grupo SafeMode de la release | 1, 11 |
 | `github.com/AceSLS/SLSsteam/releases/…/SLSsteam-Any[-release].7z` | `setup.sh:453-470` | SLSsteam (tag por redirect 302) | 1 |
 | `raw.githubusercontent.com/AceSLS/SLSsteam/main/res/{config.yaml,updates.yaml}` | `slssteam_schema.py:50`; `slssteam_version.py:64` | esquema de config; VERSION para deducir la versión instalada | 2, 11 |
-| `github.com/jayool/lumalinux/releases/download/v0.22.3/{cloud_redirect-2.6.6+3434d9d.so,cloudredirect.flatpak}` (sha256 fijados) | `setup.sh:80-88,490-510,535-564` | `cloud_redirect.so` 2.6.6 y la app (bundle 2.6.5); el upstream desapareció el 2026-10-16 | 8 |
+| `github.com/jayool/lumalinux/releases/download/v0.22.3/{cloud_redirect-2.6.6+3434d9d.so,cloudredirect-2.6.6.flatpak}` (sha256 fijados) | `setup.sh:80-88,490-510,535-564` | `cloud_redirect.so` 2.6.6 y la app 2.6.6; el upstream desapareció el 2026-10-16 | 8 |
 | `dl.flathub.org/repo/flathub.flatpakrepo` | `setup.sh:89` | runtime KDE 6.10 de la app | 8 |
 | `github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so` | `setup.sh:82` | `netsock.so` para fixes online | 6 |
 | `github.com/yesyes0649/eos-proxy/…`, `github.com/Detanup01/gbe_fork/…` | `release.yml:70-122` | proxy EOS y Goldberg, solo al empaquetar | 6 |
@@ -1360,19 +1361,7 @@ lo incoherente, luego lo muerto.
     `status.json`, que tampoco se escribiría) y nombrar al culpable si se ve su
     marca ("neutralised by SLSDeck" en el script, `.slsdeck-disabled`). Sin
     decisión.
-27. **El `.so` de CloudRedirect llega por dos caminos que no se coordinan.**
-    `setup.sh` (y LumaDeck al actualizar) despliega el 2.6.6 de nuestro asset
-    (`setup.sh:69-88,490-510`); la app, que instalamos de nuestro bundle y
-    pedimos abrir para el login, lleva dentro el 2.6.5 y ofrece reemplazar el
-    desplegado al ver que la versión difiere (`cloudredirect.md` §4.1-6).
-    LumaDeck compara la versión en disco con la 2.6.6 fija
-    (`components.py:55-64,162-174`): tras pulsar "Update" en la app, la
-    tarjeta ofrece volver a subir. Desde el 2026-10-16 las versiones no se
-    moverán más, así que el bucle es siempre 2.6.5 ↔ 2.6.6. Opciones: que
-    `setup.sh` tome el `.so` del Flatpak igual que toma el CLI (sería 2.6.5,
-    con el bug de stats que `cr_stats_fix` tapa), o avisar en LumaDeck cuando
-    la versión en disco no sea la 2.6.6. Sin decisión.
-28. **La rederivación automática nunca ha corrido sobre un movimiento real.**
+27. **La rederivación automática nunca ha corrido sobre un movimiento real.**
     Desde junio Valve no ha movido ningún patrón nuestro (§5.2 F1); la cadena
     solo se ha ensayado con patrones corrompidos a propósito, y el ensayo del
     2026-09-14 destapó tres huecos en un día que 75 runs del cron no habían
@@ -1380,13 +1369,13 @@ lo incoherente, luego lo muerto.
     cron solo mira `steamdeck_stable`: una beta que recompila el cliente es
     invisible hasta que llega a estable (§5.2 F1, 2026-09-19). Lo que pasará
     el día que Valve mueva DepotKey de verdad sigue sin ensayar. Sin decisión.
-29. **El hash es consultivo: un patrón que resuelva UNIQUE en el sitio
+28. **El hash es consultivo: un patrón que resuelva UNIQUE en el sitio
     equivocado se engancha igual.** La defensa es el guard anti crash-loop, no
     un bloqueo (`main.cpp:107-126`; §4.1-11). `status.json` dice `installed`
     pero no distingue "instalado" de "instalado y sirviendo" (`status.cpp`, sin
     contadores). Candidato anotado: un contador por pieza (§4.4, C5). Sin
     decisión.
-30. **El pin de build de LumaDeck sigue saliendo de Headcrab, a medias desde
+29. **El pin de build de LumaDeck sigue saliendo de Headcrab, a medias desde
     el 2026-10-14.** `HeadcrabCompatibleClientVer` del `headcrab.sh` de
     `Deadboy666/h3adcr-b` (`headcrab_compat.py:36`) sigue leyéndose para
     `lumalinux_ready` y `current_build_supported_by_latest`, y el manifest de
@@ -1404,7 +1393,7 @@ lo incoherente, luego lo muerto.
     §4.4 (C3): número de nuestras listas y manifests archivados por nuestro
     cron. Si Headcrab desaparece o fija un build raro, la bajada no sabe a
     dónde ir; la vuelta ya no depende de él.
-31. **Comentarios y un interruptor del `.so` que no decían lo que hace el
+30. **Comentarios y un interruptor del `.so` que no decían lo que hace el
     código — corregido 2026-10-10.** Eran comentarios que describían DepotKey
     con un paso RTTI que ya no existe, ponían a lumalinux el último del
     `LD_PRELOAD`, daban a CloudRedirect un libcurl por `dlopen` (desde 2.6.6 lo
@@ -1419,7 +1408,7 @@ lo incoherente, luego lo muerto.
     puesta; el finder sigue ahora la misma regla que `main.cpp` y que el resto de
     `LUMA_NO_*` (`package_zero_finder.cpp:583`). Sin cambio de comportamiento:
     con `=0` el finder ya no arrancaba.
-32. **El `stealth` de SLSsteam no cubre a nuestros juegos.** Desde
+31. **El `stealth` de SLSsteam no cubre a nuestros juegos.** Desde
     `94474f9` (2026-10-12, publicado en `20261014151919`) SLSsteam deja de enviar a Valve, para
     las apps que `isSubscribed` da como no poseídas, los `ClientGamesPlayed*`,
     la petición `ClientGetAppOwnershipTicket` y el `StoreUserStats2`
@@ -1433,7 +1422,7 @@ lo incoherente, luego lo muerto.
     cubren el ticket vacío) y los `GamesPlayed` (el tiempo de juego lo lleva
     CloudRedirect en local) no rompe nada nuestro. Sin decisión.
 
-33. **Re-añadir sin reiniciar Steam entra por el camino poseído.** Quitar un
+32. **Re-añadir sin reiniciar Steam entra por el camino poseído.** Quitar un
     juego desde LumaDeck lo saca de `AdditionalApps`, pero Steam conserva en
     memoria la licencia que SLSsteam le dio hasta el siguiente arranque;
     `is_owned` la ve como real (`pins.py:276-293`) y el siguiente add del mismo
@@ -1442,7 +1431,7 @@ lo incoherente, luego lo muerto.
     instalado solo los DLC. Opciones: `is_owned` ignora las licencias de apps
     que lumalinux acaba de retirar de `keys.txt`, o LumaDeck pide reinicio
     tras quitar. Sin decisión.
-34. **Steam instala "vacío" si el depot que elige no tiene clave.** Sin error
+33. **Steam instala "vacío" si el depot que elige no tiene clave.** Sin error
     en `content_log.txt`: `finished update, 0 mounted depots`, `.acf` con
     `SizeOnDisk 0` e `InstalledDepots` vacío, baja solo el depot de shaders y
     al lanzar sale "Missing game executable" (medido 2026-10-13, Celeste sin
@@ -1453,7 +1442,7 @@ lo incoherente, luego lo muerto.
     frontend, que Steam sí persiste; un `CompatToolMapping` escrito en
     `localconfig.vdf` desde el backend se pierde (§2.9). Sin decisión.
 
-35. **El estado `done` de una descarga nunca se borra.** `DOWNLOAD_STATE`
+34. **El estado `done` de una descarga nunca se borra.** `DOWNLOAD_STATE`
     queda en `done` tras un add hasta que Decky se reinicie
     (`downloads.py:40,1511`), y la página del juego pinta "Download → Done!"
     cada vez que se abre, aunque el juego lleve días instalado
@@ -1482,7 +1471,7 @@ nuestra (`api_manifest.py:180-205`).
 | Dependencia | Qué deja de funcionar | Evidencia |
 |---|---|---|
 | Release de SLSsteam (tag numérico de 14 dígitos, asset `SLSsteam-Any[-release].7z` con `bin/SLSsteam.so` y `res/config.yaml`) | `setup.sh` aborta: no hay instalación ni reinstalación. Un cambio de nombre de asset ya dejó la instalación en 404 ~44 h (2026-08-19) | `setup.sh:444-479,1061-1106` |
-| Assets de CloudRedirect en nuestra release v0.22.3 (`.so` 2.6.6 y `cloudredirect.flatpak`) | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta. Respaldo en la rama `cr-archive`. El upstream (Selectively11) desapareció el 2026-10-16 y no hay más versiones | `setup.sh:490-510,535-564,1112-1123` |
+| Assets de CloudRedirect en nuestra release v0.22.3 (`.so` 2.6.6 y `cloudredirect-2.6.6.flatpak`) | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta. Respaldo en la rama `cr-archive`. El upstream (Selectively11) desapareció el 2026-10-16 y no hay más versiones | `setup.sh:490-510,535-564,1112-1123` |
 | GitHub raw y releases (`jayool/lumalinux`) | sin `setup.sh`, `downgrade.sh`, herramientas ni `.so`; SafeMode y feed de RVAs desde caché; sin checks de update (caché stale) | `installer.py:502-511`; `update.cpp:86-104`; `rva_feed.cpp:71` |
 | Hubcap | sin zips nuevos (salvo Ryuu), sin manifests sueltos para builds viejos, depots nuevos no se añaden; la clave queda `unknown` | `api_manifest.py:173,524`; `manifests.py:330-380` |
 | Ryuu | solo la fuente 2 y su verificación | `downloads.py:1351-1381` |
@@ -1535,9 +1524,9 @@ bien: `slssteam.md` §4.3.
 | Ryuu como proveedor completo (login verificado, orden del lua, búsqueda por tienda, sesión viva, borrado de la clave de Hubcap) | hecho (v0.11.0) | 10-07 |
 | Versión de componentes desde el `.so` de disco; Settings y panel con la misma comprobación | hecho (v0.11.0) | 10-08 |
 | Mensaje de `CR-stats` con CloudRedirect mapeado y símbolo oculto | hecho (v0.22.2) | 10-08 |
-| CloudRedirect sin upstream (repo y cuenta borrados): distribuirlo desde nuestras releases (`.so` 2.6.6 archivado de la Deck, app como bundle del `gh-pages` de huanyuejue) con hash fijado, `setup.sh` sin `die`, `DisableCloud` como está, LumaDeck con versión fija y aviso de "sin mantenimiento"; rama `cr-archive` como respaldo, nunca fusionada | hecho (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`) | 10-16 |
+| CloudRedirect sin upstream (repo y cuenta borrados): distribuirlo desde nuestras releases (`.so` 2.6.6 archivado de la Deck, app como bundle del `gh-pages` 2.6.6) con hash fijado, `setup.sh` sin `die`, `DisableCloud` como está, LumaDeck con versión fija y aviso de "sin mantenimiento"; rama `cr-archive` como respaldo, nunca fusionada | hecho (lumalinux `b3d40db`, `3fbfc58`; LumaDeck `250d675`) | 10-16 |
 | Enrich del depot Linux y Proton forzado en `localconfig.vdf` al añadir | eliminados (`26d9fec`): el enrich corría antes de que los manifests llegaran a `depotcache/`, así que nunca añadía nada en un primer add y en un re-add pisaba la clave del depot Linux con la del app; el forzado se perdía en la siguiente reescritura de Steam. Steam elige el depot y aplica Proton solo | 10-13 |
-| Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-34 | 10-13 |
+| Detección previa de un zip sin depot Linux (PICS + `SpecifyCompatTool`) | descartado: 0/12 zips incompletos en Hubcap y Ryuu; ruta apuntada en §4.1-33 | 10-13 |
 | C1 — máscara de bytes de layout en `patterns.hpp` (moon M1.1) | ya hecha donde tiene sentido (disp32 de ShaderDepot; frame, miembro de `CUser` y spill en Reconcile) y refutada donde no (issue #16, 07-06: comodín al frame deja BuildDep con 70 coincidencias y LoadPackage con 222). Único byte sin decidir: el `0x44` de `mov eax,[eax+0x44]` en ShaderDepot; enmascararlo si un día se mueve por él, validando con `verify_mask.py` | 09-14 |
 | C2 — segundo job del cron sobre `steamdeck_publicbeta` (`LUMA_STEAM_MANIFEST`, `fetch_steamclient.py:65`) | anotado, no ahora: el usuario no usa beta; `probe-steam.yml` sondea a mano | 09-14 |
 | C3 — objetivo del downgrade sin Headcrab: número = build más nuevo con hash en nuestro `updates.yaml` y en el de SLSsteam; **archivo** = manifest de ese build, que hoy solo existe en la rama de headcrab (snapshot manual, solo el build actual; SteamDatabase no rastrea el de Deck). Hace falta que el cron archive el manifest de Valve en cada cambio (Deck y Linux) y que LumaDeck lea número y archivo de ahí. El lado del pin de #26 se cerró el 10-15 | anotado, siguiente tanda: el número solo cambia quién hace la cuenta; sin el archivo no se puede bajar | 09-14, estado 10-15 |
@@ -1545,7 +1534,7 @@ bien: `slssteam.md` §4.3.
 | Antes de anclar un hook en un **sitio de llamada**, el auditor (`classify_hit_count`) tiene que aceptar N coincidencias que **convergen** al mismo destino; hoy marca AMBIGUOUS cualquier n>1 y el primer hook que se mueva saldría BLOCKING sin estarlo (slsteam-moon tropezó con un localizador de veinte llamadores) | requisito, sin trabajo abierto | 09-08 |
 | Lo que no hacemos al instalar o reparar (vectores de SteaMidra que pueden dejar una Deck en OOBE, `steamidra.md` §4.4): nunca escribir en `/usr` ni pedir `steamos-readonly disable` (Game Mode por el drop-in de `steam-launcher.service`); nunca SIGKILL a Steam; no tocar `steam.sh`; mantener el guard (tres crashes → vanilla) por delante de `short_session_recover` | vigente | 09-14 |
 | C5a — `fencepost` / comprobación del slot en runtime (BST) | no: la clave por hash y el resolvedor por nombre ya lo cubren | 09-14 |
-| C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-29) | 09-14 |
+| C5b — atestación de hooks (contador por pieza en `status.json`, ~30 líneas) | anotado, candidato real para una release futura (§4.1-28) | 09-14 |
 | C5c — segundo mirror del feed (jsDelivr) | no mientras `raw.githubusercontent.com` funcione: un mirror ajeno obliga a firmar el feed (`design/rva-feed-design.md` §14) | 09-14 |
 
 #### Decisiones de diseño de LumaDeck (antes en LumaDeck `DESIGN.md`, borrado el 2026-10-09)
@@ -1870,9 +1859,9 @@ subir, "unable to sync" en cada cierre, sin bloquear) están en
 | sin fecha | test determinista (dos bibliotecas) | El patch de error del `.acf` y `hasGameFiles` con el juego en la biblioteca secundaria (D1, D2) | El patch creaba un stub en la raíz y dejaba intacto el `.acf` real (`UpdateResult=8`); la tarjeta salía en gris. Ambos corregidos leyendo todas las bibliotecas | — (informe de la #41, borrado el 2026-10-09) |
 | 2026-10-13 | codespace SteamOS, Balatro 2379780 y Vampire Survivors 1794680 | Proton forzado por LumaDeck en `localconfig.vdf` con Steam abierto | La entrada `proton_experimental` está nada más añadir y ha desaparecido tras pulsar Install (Steam reescribe el fichero desde memoria); 0 entradas al final en los dos juegos. Balatro arranca igualmente bajo Proton Experimental (`reaper … proton waitforexitandrun`), sin `CompatToolMapping` global en `config.vdf` | esta sesión |
 | 2026-10-13 | codespace SteamOS, Vampire Survivors y Celeste 504230 | Qué depot pide Steam con las claves de las tres plataformas en `keys.txt` | Vampire Survivors: `1 mounted depots: 1794681` (Windows) con 1794685 keyed y su manifest en `depotcache/`. Celeste: `1 mounted depots: 504233` (Linux), 1,2 GB. Lo decide la recomendación de Valve para la Deck, no nuestras claves | esta sesión |
-| 2026-10-13 | codespace SteamOS, Celeste | Install con la clave y el manifest de 504233 quitados de `keys.txt`, `config.vdf` y `depotcache/` (zip sin depot Linux simulado) | Sin error: `missing required app 1070560` (SLR scout, señal de que eligió la build Linux), baja solo el depot de shaders, `finished update, 0 mounted depots`, `.acf` con `SizeOnDisk 0` e `InstalledDepots {}`, "Missing game executable" al lanzar | esta sesión; §4.1-34 |
+| 2026-10-13 | codespace SteamOS, Celeste | Install con la clave y el manifest de 504233 quitados de `keys.txt`, `config.vdf` y `depotcache/` (zip sin depot Linux simulado) | Sin error: `missing required app 1070560` (SLR scout, señal de que eligió la build Linux), baja solo el depot de shaders, `finished update, 0 mounted depots`, `.acf` con `SizeOnDisk 0` e `InstalledDepots {}`, "Missing game executable" al lanzar | esta sesión; §4.1-33 |
 | 2026-10-13 | codespace, terminal | ¿Traen Hubcap y Ryuu el depot Linux? 12 juegos con build nativa: Stardew Valley, Terraria, Baba Is You, Undertale, Risk of Rain, Dome Keeper, Celeste, Slay the Spire, Crypt of the NecroDancer, FTL, más Vampire Survivors y Celeste de los adds | 13 depots Linux (PICS `oslist=linux`, sin `dlcappid`): Hubcap 13/13 con clave de 64 hex y manifest en el zip; Ryuu 12/12 de los que sirve (Dome Keeper 403, no lo tiene). Ninguno incompleto | esta sesión |
-| 2026-10-13 | codespace SteamOS, Celeste | Quitar desde Steam y LumaDeck y volver a añadir sin reiniciar Steam | LumaDeck lo trata como poseído ("Owned game: only its DLC"): la licencia de SLSsteam sigue en memoria de Steam. Instaló bien porque el lua no tenía DLC que filtrar | esta sesión; §4.1-33 |
+| 2026-10-13 | codespace SteamOS, Celeste | Quitar desde Steam y LumaDeck y volver a añadir sin reiniciar Steam | LumaDeck lo trata como poseído ("Owned game: only its DLC"): la licencia de SLSsteam sigue en memoria de Steam. Instaló bien porque el lua no tenía DLC que filtrar | esta sesión; §4.1-32 |
 | sin fecha | Deck (9 `.acf`) + Windows (4) | Campos presentes en `.acf` reales (D5) | `StateFlags` y `ScheduledAutoUpdate` en 13/13; `UpdateResult` y `BytesToDownload` en 10/13; `FullValidateAfterNextUpdate` en 1/13. `ScheduledAutoUpdate` distinto de 0 en Proton 11.0 y en Halo (`StateFlags=6`). Por eso el patch no debe exigir campos que no existen | — (informe de la #41, borrado el 2026-10-09) |
 | sin fecha | devcontainer SteamOS, Jump King | Add sin stub con el código enviado | `no .acf yet — Steam writes it on Install`; tras instalar, `StateFlags=4` y tamaño real | — (informe de la #41, borrado el 2026-10-09) |
 | sin fecha | Discord (segunda mano), app 2111550 | `UpdateResult=8` | "content still encrypted" al lanzar; arreglado editando `StateFlags 36→4` y `UpdateResult 8→0`. Pista fuerte de fallo de descifrado, no prueba | — (informe de la #41, borrado el 2026-10-09) |
@@ -1905,7 +1894,7 @@ subir, "unable to sync" en cada cierre, sin bloquear) están en
 | 2026-09-08 | CI | `verify-fix.yml` (smoke test en runtime) | Nunca ha dado verde: sus primeras ejecuciones reales fallaron en el arnés antes de cualquier aserción. El "verde" que se citaba era de otro workflow | maintenance §C |
 | sin fecha | código | Regresión de sesión para CachyOS | Una revisión anterior metía CachyOS en la familia ChimeraOS y le enviaba `desktop`, que CachyOS rechaza; corregido (verificado en `CachyOS/gamescope-session`) | LumaDeck docs/porting-cachyos.md |
 | 2026-10-07 | Deck | Versiones de componentes que mostraba Settings | CloudRedirect: `.so` en `2.6.5+870afdb-dirty`, caché de releases en `v2.6.6`, pero Settings leía 2.6.3 porque tomaba la primera línea de un `cr_debug.log` acumulativo desde agosto. SLSsteam `20261001163836`, lumalinux v0.22.1. Corregido leyendo la versión del `.so` en disco | LumaDeck `c4776ce`, `be36d92` |
-| 2026-10-16 | GitHub, codespace | Desaparición de `Selectively11/CloudRedirect` | Repo, releases, raw y `gh-pages` en 404, la cuenta también; `setup.sh` moría en "Downloading CloudRedirect" y LumaDeck recibía 404 en cada refresco. El fork `huanyuejue/CloudRedirect` llega a `bc5e38a` (v2.6.5) y su release no trae el `.so`; Software Heritage, captura del 08-20, tags hasta v2.6.5. El único 2.6.6 (`86a40032…`) estaba en la Deck y el codespace. `setup.sh` de `main` en el codespace con todo borrado: `exit=0`, `.so` con ese sha, app 2.6.5 del bundle, CLI copiado, remoto muerto eliminado | `cloudredirect.md` §0, §5.2 F8; `maintenance.md` §G |
+| 2026-10-16 | GitHub, codespace | Desaparición de `Selectively11/CloudRedirect` | Repo, releases, raw y `gh-pages` en 404, la cuenta también; `setup.sh` moría en "Downloading CloudRedirect" y LumaDeck recibía 404 en cada refresco. El fork `huanyuejue/CloudRedirect` llega a `bc5e38a` (v2.6.5) y su release no trae el `.so`; Software Heritage, captura del 08-20, tags hasta v2.6.5. El 2.6.6 (`86a40032…`) estaba en la Deck y el codespace; el 19 apareció entero en `madoiscool/CloudRedirect` (`v2.6.6` = `00969da`, `gh-pages` `83100b8`), y el `.so` de su flatpak es byte a byte el archivado. `setup.sh` de `main` en el codespace con todo borrado: `exit=0`, `.so` con ese sha, app 2.6.5 del bundle, CLI copiado, remoto muerto eliminado | `cloudredirect.md` §0, §5.2 F8; `maintenance.md` §G |
 | 2026-10-08 06:51 | CI | Releases lumalinux v0.22.2 y LumaDeck v0.11.0 | `build.yml` run 534 con `liblumalinux.so` (9,5 MB) y `version.txt`; `release.yml` run 143 estampa `0.11.0` del tag | — |
 | 2026-07-22 → 09-02 | CI | Latencia del whitelist automático | PR #22 creado 06:03:32 y mergeado 06:03:35; #27 12:08:50 → 12:08:53. SLSsteam en los mismos builds: 07-22 el mismo día, 07-25 tres días después, 07-28, 08-04, 09-02 el mismo día | `slssteam.md` §5.2 F11 |
 | 2026-10-15 | arnés de 64 bits con el `status.cpp` real | Lector en bucle sobre `gmrc.json` contra 2000 escrituras | Con `fopen("w")`: 24.417 lecturas vacías o truncadas de 2.035.545. Con `.tmp` + `rename`: 0 de 1.855.903; salida y rutas iguales, ningún `.tmp` residual | esta sesión |
