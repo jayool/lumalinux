@@ -45,6 +45,8 @@ __attribute__((used)) static const char kLumalinuxCopyright[] =
 #include "status.hpp"
 #ifndef LUMA_NO_UPDATE
 #include "update.hpp"
+#include "rva_feed.hpp"
+#include "sha256.hpp"
 #endif
 #include "version.hpp"
 
@@ -125,7 +127,9 @@ void InstallHooks() {
     // behaviour is unchanged. status.json is written once at the end of
     // InstallHooks regardless, reflecting the real per-hook outcomes.
 #ifndef LUMA_NO_UPDATE
-    if (!Updater::init() || !Updater::verifySafeModeHash()) {
+    std::string clientHash;
+    try { clientHash = Utils::getFileSHA256(g_modSteamClient.path); } catch (...) {}
+    if (!Updater::init(clientHash) || !Updater::verifySafeModeHash()) {
         Log::Notify(LUMALINUX_VERSION_STRING ": steamclient.so hash not in the "
                     "verified list (Steam may have updated). Proceeding on the "
                     "pattern scan — if the patterns still match, hooks load "
@@ -369,6 +373,18 @@ void InstallHooks() {
     // Snapshot for external consumers (LumaDeck reads $XDG_RUNTIME_DIR/lumalinux/
     // status.json to render the Settings health badge). Best-effort.
     Status::Write();
+
+    // Feed refresh, off the install path. Whatever init()/load() served from
+    // the disk copies is re-fetched now, once Steam has had time to come up,
+    // so the copies are current for the next start. Network + two cache files
+    // only; nothing the hooks read. Detached: _exit(0) ends it with the rest.
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds(30));
+#ifndef LUMA_NO_UPDATE
+        if (Updater::refreshPending()) Updater::refreshCache();
+#endif
+        RvaFeed::RefreshCache();
+    }).detach();
 }
 
 bool IsSteamclient(const char* name) {

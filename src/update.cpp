@@ -31,6 +31,52 @@
 // it locally so the rest of this file stays byte-identical to SLSsteam.
 namespace { constexpr uint64_t VERSION = LUMALINUX_SAFEMODE_VERSION; }
 
+namespace {
+
+constexpr const char* kFeedUrl = "https://raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml";
+bool g_refreshPending = false;
+
+// Parse the feed into clientHashMap (replacing it). False on a parse error,
+// with the map left as it was.
+bool parseFeed(const std::string& data)
+{
+	try
+	{
+		std::map<uint64_t, std::unordered_set<std::string>> fresh;
+		YAML::Node node = YAML::Load(data);
+		for (const auto& sub : node["SafeModeHashes"])
+		{
+			uint64_t version = sub.first.as<uint64_t>();
+			fresh[version] = std::unordered_set<std::string>();
+
+			Log::Debug("Parsing version %llu", version);
+
+			for(const auto& hash : sub.second)
+			{
+				auto str = hash.as<std::string>();
+				fresh[version].emplace(str);
+
+				Log::Debug("Added %s to lumalinux version %llu", str.c_str(), version);
+			}
+		}
+		Updater::clientHashMap = std::move(fresh);
+		return true;
+	}
+	catch(...)
+	{
+		Log::Info("Failed to parse updates!");
+		return false;
+	}
+}
+
+bool listsHash(const std::string& hash)
+{
+	auto it = Updater::clientHashMap.find(VERSION);
+	return it != Updater::clientHashMap.end() && it->second.contains(hash);
+}
+
+} // namespace
+
 std::map<uint64_t, std::unordered_set<std::string>> Updater::clientHashMap = std::map<uint64_t, std::unordered_set<std::string>>();
 
 // Does this body actually look like the feed?
@@ -66,10 +112,31 @@ static bool looksLikeFeed(const std::string& data)
 	return false;
 }
 
-bool Updater::init()
+bool Updater::init(const std::string& clientHash)
 {
+	// Cache first. The list of verified clients only ever grows, so a cached
+	// copy that already names the installed steamclient.so answers the check
+	// without the network — and without loading libcurl inside Steam while it
+	// is still starting (measured 2026-10-19: this fetch was 4 of the 6 s
+	// between seeing steamclient.so and having the hooks; on the Deck that is
+	// time Steam's loader thread sits blocked, and with no wifi yet, a 15 s
+	// connect timeout). The copy is refreshed afterwards (refreshCache()), so
+	// a new entry still lands by the next start. A client the copy does not
+	// know — a fresh Steam update — fetches now, as before.
+	if(!clientHash.empty())
+	{
+		std::string cached = loadFromCache();
+		if(looksLikeFeed(cached) && parseFeed(cached) && listsHash(clientHash))
+		{
+			Log::Info("updates.yaml: the cached copy already lists this steamclient.so — "
+			          "no fetch at startup, refresh after install");
+			g_refreshPending = true;
+			return true;
+		}
+	}
+
 	std::string data;
-	int res = Curl::getString("https://raw.githubusercontent.com/jayool/lumalinux/main/res/updates.yaml", data);
+	int res = Curl::getString(kFeedUrl, data);
 	Log::Info("Curl Res: %u", res);
 
 	// A curl res of 0 means the TRANSFER succeeded, not that the feed arrived: a
@@ -105,33 +172,37 @@ bool Updater::init()
 
 	Log::Debug("updates.yaml:\n%s", data.c_str());
 
-	try
+	if(!parseFeed(data))
 	{
-		YAML::Node node = YAML::Load(data);
-		for (const auto& sub : node["SafeModeHashes"])
-		{
-			uint64_t version = sub.first.as<uint64_t>();
-			clientHashMap[version] = std::unordered_set<std::string>();
-
-			Log::Debug("Parsing version %llu", version);
-
-			for(const auto& hash : sub.second)
-			{
-				auto str = hash.as<std::string>();
-				clientHashMap[version].emplace(str);
-
-				Log::Debug("Added %s to lumalinux version %llu", str.c_str(), version);
-			}
-		}
-	}
-	catch(...)
-	{
-		Log::Info("Failed to parse updates!");
 		return false;
 	}
 
 	saveToCache(data);
 	return true;
+}
+
+bool Updater::refreshPending()
+{
+	return g_refreshPending;
+}
+
+// Background refresh of the cached updates.yaml, after the hooks are in. Only
+// the file on disk changes; the in-memory list stays what init() loaded (the
+// check already ran against it).
+void Updater::refreshCache()
+{
+	std::string data;
+	int res = Curl::getString(kFeedUrl, data);
+	if(res == 0 && looksLikeFeed(data))
+	{
+		saveToCache(data);
+		Log::Info("FeedRefresh: updates.yaml refreshed (%zu bytes)", data.size());
+	}
+	else
+	{
+		Log::Info("FeedRefresh: updates.yaml not refreshed (curl %d, %zu bytes) — keeping the copy", res, data.size());
+	}
+	g_refreshPending = false;
 }
 
 std::string Updater::getCacheFilePath()
@@ -147,9 +218,22 @@ void Updater::saveToCache(std::string yaml)
 {
 	auto path = Updater::getCacheFilePath();
 
-	std::ofstream stream = std::ofstream(path.c_str());
-	stream << yaml;
-	stream.close();
+	// Write beside and rename: the copy is now read at every start, so a
+	// half-written file (Steam exiting mid-refresh) must never be what the
+	// next start finds.
+	const std::string tmp = path + ".tmp";
+	{
+		std::ofstream stream = std::ofstream(tmp.c_str());
+		stream << yaml;
+	}
+	std::error_code ec;
+	std::filesystem::rename(tmp, path, ec);
+	if(ec)
+	{
+		Log::Warn("updates.yaml: could not replace the cache (%s)", ec.message().c_str());
+		std::filesystem::remove(tmp, ec);
+		return;
+	}
 
 	Log::Debug("Cached res/updates.yaml!");
 }

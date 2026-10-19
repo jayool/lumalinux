@@ -51,7 +51,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `src/reconcile_anchor*.{cpp,hpp}` | 63+140+22 | tercer localizador de Reconcile: `push 0x7d; push eax; call` + lectura de `this` + `jle`, único o 0 | 1 |
 | `src/patterns.cpp/.hpp` | 288+253 | seis patrones de bytes y el sigscan sobre el r-x de `steamclient.so`; "único o nada" | 1 |
 | `src/rtti.cpp/.hpp` | 388+61 | walk RTTI (nombre → type_info → vtable) y slot por nombre de método | 1 |
-| `src/rva_feed.cpp/.hpp` | 252+64 | descarga `res/rvas/<sha256>.yaml` de GitHub, caché en `~/.cache/lumalinux/rvas/`, traduce RVAs | 1 |
+| `src/rva_feed.cpp/.hpp` | 300+71 | feed `res/rvas/<sha256>.yaml`: copia en `~/.cache/lumalinux/rvas/` primero, descarga de GitHub si no hay copia, refresco en segundo plano tras instalar; traduce RVAs | 1 |
 | `src/vaddr_xlate.cpp/.hpp` | 100+53 | file vaddr → dirección runtime vía PT_LOAD + `/proc/self/maps` | 1 |
 | `src/eh_frame.cpp/.hpp` | 250+46 | límites de función desde `.eh_frame_hdr` (fail-closed) | 1 |
 | `src/gmrc_xref.cpp`, `gmrc_xref_core.hpp` | 181+179 | localizador por xref de string (nombre del job GMRC; `FindFunctionByString` para cualquier hook) | 1 |
@@ -61,7 +61,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `src/sls_achievement_unblock.cpp/.hpp` | 363+39 | repunta dos `call CUser::isSubscribed` en `SLSsteam.so` a un guard `subscribed && !added`; captura el `CUser*` | 7, 2 |
 | `src/cr_stats_fix.cpp/.hpp` | 299+64 | stub que interpone `StatsHandlers::HandleGetUserStats` de CloudRedirect y vacía la respuesta "crc 0" | 7, 8 |
 | `src/sha256.cpp`, `src/curl.cpp` | 151+138 | SHA-256 propio; libcurl por `dlopen("libcurl.so.4")`, `CURLOPT_NOSIGNAL`, timeouts | 1, 4 |
-| `src/update.cpp/.hpp` | 204+22 | SafeMode: descarga `updates.yaml`, caché `.updates.yaml`, compara hash (de SLSsteam, AGPL) | 1, 11 |
+| `src/update.cpp/.hpp` | 288+28 | SafeMode: `updates.yaml` desde la caché `.updates.yaml` si ya lista el hash, si no descarga; refresco en segundo plano; compara hash (de SLSsteam, AGPL) | 1, 11 |
 | `src/steam_types.hpp`, `globals.*`, `version.hpp.in` | 40+13+16 | layouts `CUtlVector`/`DepotEntry`; módulo steamclient; versión | 2, 5, 11 |
 | `src/hooks/depot_key_hook.cpp` | 210 | hook del accessor KeyValues `…\Depots\<id>\DecryptionKey`; sirve la clave de KeyStore | 4, 1 |
 | `src/hooks/depot_dependency_hook.cpp` | 198 | hook `BuildDepotDependency`: PATCH del gid en `pDepotInfo` (OFF por defecto) | 5, 2 |
@@ -209,12 +209,16 @@ layouts conocidos `0xc58/0xc6c` y `0xf90/0xfa4`, `:67-70, 337-437`), camina el
 nada": una ambigüedad nunca se parchea (`patterns.cpp:156-162`,
 `package_zero_finder.cpp:410-415`).
 
-El feed de RVAs (`rva_feed.cpp:74-147`) hashea el `steamclient.so` en disco,
-descarga `raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml`
-(acepta el cuerpo si contiene `hooks:`), lo cachea en
-`~/.cache/lumalinux/rvas/` y traduce cada RVA con `VaddrXlate` exigiendo que
-caiga en un mapping `r-x` de steamclient. Los patrones y los localizadores de
-rescate son el respaldo cuando el feed no tiene el build.
+El feed de RVAs (`rva_feed.cpp`) hashea el `steamclient.so` en disco (una
+sola vez por proceso, `sha256.cpp` memoriza por tamaño y fecha) y usa la copia
+de `~/.cache/lumalinux/rvas/<sha256>.yaml` si existe; si no, descarga
+`raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/<sha256>.yaml`
+(acepta el cuerpo si contiene `hooks:`) y la guarda. Traduce cada RVA con
+`VaddrXlate` exigiendo que caiga en un mapping `r-x` de steamclient. Los
+patrones y los localizadores de rescate son el respaldo cuando el feed no tiene
+el build. Cuando sirvió la copia, un hilo aparte vuelve a descargar el feed 30 s
+después de instalar y sustituye la copia (escritura a `.tmp` + rename), así
+que una corrección publicada llega al siguiente arranque sin bloquear ninguno.
 
 **Por qué estas anclas.** Hay cinco formas de encontrar una función en un binario
 sin nombres que Valve recompila cada pocas semanas, de más frágil a más
@@ -239,9 +243,12 @@ reordena.
 
 **Qué pasa cuando Steam actualiza.** Dos capas:
 
-1. En el `.so`: el hash SafeMode (`update.cpp`, copiado de SLSsteam) descarga
-   `updates.yaml`, comprueba que el SHA-256 de `steamclient.so` esté en el grupo
-   `LUMALINUX_SAFEMODE_VERSION` (= `res/version.txt` compilado) y, si no está,
+1. En el `.so`: el hash SafeMode (`update.cpp`, copiado de SLSsteam) comprueba
+   que el SHA-256 de `steamclient.so` esté en el grupo
+   `LUMALINUX_SAFEMODE_VERSION` (= `res/version.txt` compilado) de
+   `updates.yaml`. Si la copia `~/.cache/lumalinux/.updates.yaml` ya lo lista,
+   no descarga nada al arrancar (la lista solo crece) y la refresca en segundo
+   plano después; si no lo lista, descarga ahora. Si el hash no está,
    **solo emite un toast** y sigue con el scan de patrones (`main.cpp:107-126`).
    `Status::SetBlocked` existe pero nunca se llama: `status.json.blocked` es
    siempre `null` (`main.cpp:270-276`). El gate real es por hook: cada uno

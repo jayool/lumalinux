@@ -61,16 +61,50 @@ bool readFile(const std::filesystem::path& p, std::string& out) {
 // turns "can write a file in $HOME" into "can run code inside Steam", so the
 // overrides are gone. To test against a branch, point this URL at it in a local
 // build; do NOT reintroduce a runtime override in a release path.
-bool obtainYaml(const std::string& hash, std::string& out) {
+std::string g_refreshHash;   // set when load() used the disk copy
+
+std::filesystem::path cachePath(const std::string& hash) {
+    return std::filesystem::path(cacheDir()) / (hash + ".yaml");
+}
+
+bool fetchYaml(const std::string& hash, std::string& out) {
     const std::string url =
         "https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/" + hash + ".yaml";
-    if (Curl::getString(url.c_str(), out) == 0 && out.find("hooks:") != std::string::npos) {
-        std::error_code ec;
-        std::filesystem::create_directories(cacheDir(), ec);
-        std::ofstream(std::filesystem::path(cacheDir()) / (hash + ".yaml"), std::ios::binary) << out;
+    return Curl::getString(url.c_str(), out) == 0 && out.find("hooks:") != std::string::npos;
+}
+
+// Write beside and rename, so a start never reads a half-written copy.
+void writeCache(const std::string& hash, const std::string& text) {
+    std::error_code ec;
+    std::filesystem::create_directories(cacheDir(), ec);
+    const auto path = cachePath(hash);
+    const auto tmp  = path.string() + ".tmp";
+    { std::ofstream(tmp, std::ios::binary) << text; }
+    std::filesystem::rename(tmp, path, ec);
+    if (ec) {
+        Log::Warn("RvaFeed: could not replace the cached feed (%s)", ec.message().c_str());
+        std::filesystem::remove(tmp, ec);
+    }
+}
+
+// Disk copy first: a feed for THIS hash is the same file whenever it is
+// fetched, so once it is on disk the hooks can go in without the network
+// (measured 2026-10-19: the fetch was 1 s of the 6 s between seeing
+// steamclient.so and having the hooks; blocking on the Deck). The published
+// copy is still fetched afterwards (RefreshCache()) so a corrected feed lands
+// by the next start. No copy — a client Steam just updated to — fetches now.
+bool obtainYaml(const std::string& hash, std::string& out) {
+    if (readFile(cachePath(hash), out) && out.find("hooks:") != std::string::npos) {
+        Log::Info("RvaFeed: using the cached feed for build %s — refresh after install", hash.c_str());
+        g_refreshHash = hash;
         return true;
     }
-    return readFile(std::filesystem::path(cacheDir()) / (hash + ".yaml"), out);
+    out.clear();
+    if (fetchYaml(hash, out)) {
+        writeCache(hash, out);
+        return true;
+    }
+    return false;
 }
 
 void load() {
@@ -249,6 +283,18 @@ uintptr_t Resolve(const char* hookName) {
     Log::Info("RvaFeed: %s via feed: rva 0x%lx -> 0x%lx",
               hookName, static_cast<unsigned long>(it->second), static_cast<unsigned long>(rt));
     return rt;
+}
+
+void RefreshCache() {
+    if (g_refreshHash.empty()) return;
+    std::string text;
+    if (fetchYaml(g_refreshHash, text)) {
+        writeCache(g_refreshHash, text);
+        Log::Info("FeedRefresh: rvas/%s.yaml refreshed (%zu bytes)", g_refreshHash.c_str(), text.size());
+    } else {
+        Log::Info("FeedRefresh: rvas/%s.yaml not refreshed — keeping the copy", g_refreshHash.c_str());
+    }
+    g_refreshHash.clear();
 }
 
 } // namespace RvaFeed

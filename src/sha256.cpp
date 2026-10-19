@@ -15,10 +15,14 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+
+#include <sys/stat.h>
 
 namespace
 {
@@ -126,6 +130,25 @@ namespace
 
 std::string Utils::getFileSHA256(const char *filePath)
 {
+	// lumalinux addition: memoised per (path, size, mtime) for the life of the
+	// process. steamclient.so is hashed from two places at hook-install time
+	// (the SafeMode check and the RVA feed) and only changes when Steam
+	// updates — one read of the 40 MB file instead of two.
+	static std::mutex memoMtx;
+	static std::map<std::string, std::pair<std::pair<long long, long long>, std::string>> memo;
+	struct stat st{};
+	const bool haveStat = ::stat(filePath, &st) == 0;
+	const auto key = std::make_pair((long long)st.st_size, (long long)st.st_mtime);
+	if (haveStat)
+	{
+		std::lock_guard<std::mutex> lk(memoMtx);
+		auto it = memo.find(filePath);
+		if (it != memo.end() && it->second.first == key)
+		{
+			return it->second.second;
+		}
+	}
+
 	std::ifstream fs(filePath, std::ios::binary);
 	if (!fs.is_open())
 	{
@@ -147,5 +170,10 @@ std::string Utils::getFileSHA256(const char *filePath)
 	}
 
 	fs.close();
+	if (haveStat)
+	{
+		std::lock_guard<std::mutex> lk(memoMtx);
+		memo[filePath] = {key, sha256.str()};
+	}
 	return sha256.str();
 }

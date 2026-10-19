@@ -63,4 +63,9 @@ bool CacheLayout(std::size_t* rootIdxOff, std::size_t* nodesOff);
 //     whole mapping instead.
 uintptr_t GotBase();
 
+// When load() served the feed from the disk copy, fetch the published one and
+// replace the copy for the next start. Network only; touches nothing that the
+// hooks already read. Called from a detached thread after the install.
+void RefreshCache();
+
 } // namespace RvaFeed
