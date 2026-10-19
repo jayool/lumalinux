@@ -298,7 +298,9 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   `res/version.txt`, `res/updates.yaml`) was ported from SLSsteam (AGPL-3.0) with
   minimal adaptations; see the AGPL-3.0 header in each of those files. The full
   AGPL-3.0 text is in [`LICENSE-AGPL`](LICENSE-AGPL); the rest of lumalinux remains
-  under GPL-3.0 ([`LICENSE`](LICENSE)). Per AGPL-3.0 §13 the network-interaction
+  under GPL-3.0 ([`LICENSE`](LICENSE)); every source file carries an SPDX header
+  naming its licence, and `liblumalinux.so` embeds a copyright string
+  (`strings liblumalinux.so | grep jayool`). Per AGPL-3.0 §13 the network-interaction
   clause applies to the combined binary; in practice inert for lumalinux because it
   is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see

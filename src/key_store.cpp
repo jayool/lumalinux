@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 #include "key_store.hpp"
 #include "license_reconcile.hpp"
 #include "log.hpp"

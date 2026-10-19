@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 // lumalinux — function-level hooks for Steam Linux client.
 //
 // v0.1: depot key resolution hook (LoadDepotDecryptionKey equivalent)
@@ -20,6 +22,11 @@
 //         - BuildDep is PATCH-only and honours size==0 → keep original.
 //         - Packet/858 hook REMOVED: SLSsteam already covers ownership
 //           (CheckAppOwnership) and PICS access tokens. Nothing extra.
+
+// Identification string compiled into liblumalinux.so: `strings` shows it in
+// any binary that carries this code, whatever the file is renamed to.
+__attribute__((used)) static const char kLumalinuxCopyright[] =
+    "lumalinux (C) 2026 jayool, GPL-3.0-only, https://github.com/jayool/lumalinux";
 
 #include "log.hpp"
 #include "proc_filter.hpp"

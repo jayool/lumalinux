@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 // RTTI vtable-slot resolver — mirrors CloudRedirect's
 // src/platform/linux/vtable_hook.cpp::FindVtableByRTTIName, stripped to
 // RESOLVE-ONLY (no vtable writes: lumalinux detours the resolved function, it

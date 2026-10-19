@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 #pragma once
 
 // Hook installer using libmem (LM_HookCode) plus a get_pc_thunk fixup for the

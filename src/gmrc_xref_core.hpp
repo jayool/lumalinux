@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 #pragma once
 
 // Pure, address-space-agnostic scanners for the GMRC job-name xref locator.
