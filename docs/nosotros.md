@@ -416,7 +416,11 @@ sanity del vector (`m_Size ≤ 4096`, entradas 0 o >50M rechazadas), dedup,
 `realloc` doblando con el `realloc` de Steam. El finder lo hace cada 2 s hasta
 el primer HIT y luego cada 15 s (`package_zero_finder.cpp:139-140, 827`), y al
 instante cuando cambia `keys.txt` (watcher inotify, `key_store.cpp:231-262`;
-despertar en `license_reconcile.cpp:116-126`). **Retire** (`4f8579c`,
+despertar en `license_reconcile.cpp:111-136`). El mutex y la variable de
+condición de ese despertar se crean una vez en el heap y no se destruyen nunca
+(`license_reconcile.cpp:36-37`): como globales con destructor,
+`pthread_cond_destroy` bloqueaba la salida de Steam hasta que el finder
+terminaba su siesta de 15 s (§5.2 F1, 2026-10-19). **Retire** (`4f8579c`,
 v0.22.2): los ids que lumalinux inyectó y ya no están en `keys.txt` se
 compactan fuera del vector (`load_package_hook.cpp:199-251`); nunca toca
 entradas de Steam.
@@ -1305,9 +1309,14 @@ lo incoherente, luego lo muerto.
 20. El `.so` ejecuta `system("mkdir -p …")` y `system("notify-send …")` desde
     dentro de Steam (`log.cpp:75-76,157-159`): un shell hijo por arranque y por
     toast.
-21. `atexit(_exit(0))` en el constructor (`main.cpp:442`) evita un SIGABRT de
-    teardown entre SLSsteam y CloudRedirect, y de paso salta cualquier
-    destructor del proceso Steam al salir.
+21. `atexit(_exit(0))` en el constructor (`main.cpp:450`) corta la recogida de
+    Steam al salir. Sigue haciendo falta: con las tres librerías cargadas, la
+    recogida completa aún deja volcados de crash en 1 de 5 cierres (§5.2 F1,
+    2026-10-19; la carrera `cloud_redirect.so → __backtrace → ld.so` de
+    RESEARCH §17.3). Consecuencia: ningún destructor del proceso corre al
+    salir, y nada nuestro puede depender de uno; y lo que se destruya ANTES de
+    ese corte (globales de lumalinux registrados después del `atexit`) sí
+    corre, como pasó con el despertar del finder (§2.1).
 22. Las entradas `LD_AUDIT` (`la_preinit`/`la_objopen`) siguen compiladas
     aunque esa ruta corrompe el heap (medido, §5.2 F1); el wrapper no las usa.
     Y `FindBuildDepotDependencyFunction` usa el primer match, no el único
@@ -1703,6 +1712,11 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-15 | codespace SteamOS | Crash guard con un crash provocado (`kill -SEGV` al cliente a los 20 s del arranque) | Dos `assert_*.dmp` en `/tmp/dumps`; el supervisor relanzó Steam y el guard apuntó `previous boot crashed at startup -> fail 1/3`. Un milisegundo después una segunda pasada (el `steam-launcher` emulado llama a `steam` por el PATH) apuntó `previous boot ok -> reset fail count`: contador a 0. Es un artefacto del codespace (su `steam-launcher` emulado invoca `steam` por el PATH y entra en `path/steam`); en la Deck, Game Mode y Desktop, ninguna hora repetida en `guard.log` (medido el mismo día). Los siete arranques anteriores, con `/tmp` vacío por reanudar el codespace: `no dumps dir -> cannot assess`; con el directorio presente y sin volcados, un arranque sano pasa en silencio y actualiza `good_client` | esta sesión |
 | 2026-10-16 13:57-14:25 | Deck (SLSsteam `20261014151919`, cliente `1791918634`) | ¿Escribe Steam minidumps con esa release? | `crashhandler` no mapeado en `steam` (0 en `/proc/<pid>/maps`); `/tmp/dumps` existe (creado por Steam a las 14:25, después de que el guard mirase) y vacío; `guard.log` dice "no dumps dir -> cannot assess" en los arranques de las 13:57 y 14:25. `coredumpctl list` sí lista un `steamwebhelper` `SIGTRAP` del 15 a las 22:41; `kernel.core_pattern` es el gancho `steamos_log_submitter.hooks.coredump`; `--since=@epoch` funciona | `slssteam.md` §4.2 |
 | 2026-10-16 14:47-14:48 | Deck (guard `f86659d` instalado con `setup.sh` de la rama) | Crash provocado (`kill -SEGV` al cliente ~30 s tras el arranque) | `coredumpctl`: core `SIGSEGV` de `ubuntu12_32/steam` a las 14:47:56; al relanzar, `guard.log` 14:48:07 `previous boot crashed at startup -> fail 1/3`, `boot_fail_count` = 1. Primer crash contado sin ningún `.dmp` | `f86659d` |
+| 2026-10-19 | codespace (SteamOS, supervisor de Game Mode) | Tiempo de cierre de Steam (`steam -shutdown` → proceso muerto) | vanilla 2,7 s; stack completo 9 y 18 s; solo CloudRedirect 3 s; solo SLSsteam 4 s; solo lumalinux 11 s; lumalinux con `LUMA_NO_PKG0_FINDER=1` 3 s | `eu-stack` del hilo principal: `exit → __cxa_finalize → ~condition_variable → pthread_cond_destroy`, esperando al finder dormido en la CV del despertar (hasta 15 s) |
+| 2026-10-19 | codespace | Cierre con el mutex y la CV del despertar sin destructor (`d018395`) | stack completo 3 s | Igual que vanilla |
+| 2026-10-19 | codespace | Cierre SIN el `atexit(_exit(0))` (build de prueba, 5 cierres seguidos con el stack completo) | los 5 en 3-4 s y `rc=0`, pero el primero dejó `assert_*.dmp` en `/tmp/dumps` | La carrera de teardown sigue existiendo con CloudRedirect 2.6.6 y SLSsteam 20261014; el corte se queda (§4.1-21) |
+| 2026-10-19 | codespace | Verificación de Steam al arrancar ("all executable checksums" 3 s frente a "file sizes only" 0 s) | tras un cierre normal con el stack (`_exit`), el siguiente arranque verifica solo tamaños; la completa aparece tras un `kill -9` o un lanzamiento fuera del launcher | El `_exit(0)` no dispara la verificación completa |
+| 2026-10-19 | codespace | Qué hace lumalinux entre ver `steamclient.so` y tener los hooks | 6 s: `updates.yaml` 4 s (cargar libcurl + fetch, con `curl` externo el fetch son 0,05 s), sha256 1 s, feed de RVAs 1 s, hooks 0 s. Las dos descargas van a GitHub en cada arranque aunque la copia local sea válida | En el codespace corre en el hilo del Ctor (no bloquea a Steam); en la Deck en `la_objopen` (bloquea) |
 
 #### Función 2 — Propiedad y licencias
 
