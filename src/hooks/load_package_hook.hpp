@@ -41,7 +41,15 @@ void Uninstall();
 // CUtlVector<T> lives in steam_types.hpp (shared with the BuildDep hook).
 
 constexpr std::size_t kOffPackageId = 0x00;
+#ifdef LUMA_X86_64
+// steamrt64 client (measured on 947e5a19…, docs/steam-rt3-x64.md §1.2): the two
+// pointers after the SHA-1 are 8 bytes each, so AppIdVec starts at +0x40
+// (CUtlVector<uint32_t> is 24 bytes there: m_pMemory +0, alloc +8, grow +0xc,
+// m_Size +0x10); DepotIdVec at +0x58.
+constexpr std::size_t kOffAppIdVec  = 0x40;
+#else
 constexpr std::size_t kOffAppIdVec  = 0x38;
+#endif
 
 inline uint32_t PkgId(void* pInfo) {
     return *reinterpret_cast<uint32_t*>(

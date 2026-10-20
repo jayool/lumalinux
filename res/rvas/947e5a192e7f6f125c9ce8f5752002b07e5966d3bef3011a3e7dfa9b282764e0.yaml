@@ -1,0 +1,21 @@
+# steamrt64 (x86-64) client — derived offline from the binary on 2026-10-20
+# (docs/steam-rt3-x64.md §1.2); not emitted by check_patterns.py, which reads
+# the 32-bit client only. Same keys as the 32-bit files, plus the 64-bit
+# finder's cache slot (finder.cache_global_rva, a .bss vaddr: on this client
+# the cache pointer is read rip-relative from a fixed slot, no GOT involved).
+steamclient_sha256: "947e5a192e7f6f125c9ce8f5752002b07e5966d3bef3011a3e7dfa9b282764e0"
+steam_version: 1792192922
+client_arch: steamrt64
+hooks:
+  DepotKey: "0x11e5fd0"
+  ShaderDepot: "0x10a0d20"
+  Reconcile: "0x18d9e00"
+  GMRC: "0x13a4960"
+depotkey_rtti:
+  class: "12CConfigStore"
+  slot: 6
+  rva: "0x11e5fd0"
+finder:
+  cache_global_rva: "0x331f210"
+  cache_root_off: "0x14b0"
+  cache_nodes_off: "0x14c8"

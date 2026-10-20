@@ -94,6 +94,12 @@ uintptr_t SigScan(uintptr_t base, size_t size, const ParsedPattern& p) {
 }
 
 uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
+#ifdef LUMA_X86_64
+    // The byte patterns are the 32-bit client's prologues; scanning the 64-bit
+    // binary with them could only produce a wrong (chance) hit. RVA feed only.
+    Log::Debug("%s: byte pattern not derived for x86_64 — skipped", logName);
+    return 0;
+#endif
     ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
     if (!r.base) return 0;
 
@@ -132,6 +138,10 @@ uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
 // caller here has at least one resolver behind it, so 0 means "next resolver",
 // not "give up". Ambiguity is a real signal and guessing past it is never right.
 uintptr_t FindUniqueInSteamclient(const char* pattern, const char* logName) {
+#ifdef LUMA_X86_64
+    Log::Debug("%s: byte pattern not derived for x86_64 — skipped", logName);
+    return 0;
+#endif
     ModuleRange r = FindModuleRangeFromMaps("steamclient.so");
     if (!r.base) return 0;
 
@@ -230,6 +240,10 @@ uintptr_t FindGmrcFunction() {
 }
 
 uintptr_t FindLoadPackageFunction() {
+#ifdef LUMA_X86_64
+    Log::Debug("LoadPackage: byte pattern not derived for x86_64 — skipped");
+    return 0;
+#endif
     // The prologue `55 89 E5 57 ... 81 EC 1C 01 00 00` may match multiple
     // functions. Enumerate all matches; pick by index via LUMA_LOADPKG_IDX
     // (default 0). Logs all candidates so we can re-tune if a Steam update

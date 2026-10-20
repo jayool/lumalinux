@@ -72,8 +72,18 @@ constexpr int kNumCacheLayouts = static_cast<int>(sizeof(kCacheLayouts) / sizeof
 constexpr std::size_t kNodeLeftOff     = 0x00;
 constexpr std::size_t kNodeRightOff    = 0x04;
 constexpr std::size_t kNodePkgIdOff    = 0x10;
+#ifdef LUMA_X86_64
+// steamrt64 client (CPackageInfoCache::GetPackage on 947e5a19…, docs/steam-rt3-x64.md
+// §1.2): `shl rax,5` → 0x20-byte nodes, PackageInfo* at +0x18 (8-byte pointer).
+// Root index / node array offsets (0x14b0 / 0x14c8 there) come from the feed.
+constexpr std::size_t kNodePkgInfoOff  = 0x18;
+constexpr std::size_t kNodeSize        = 0x20;
+constexpr std::size_t kPkgReadableSpan = 0x58;   // covers AppIdVec at +0x40..+0x58
+#else
 constexpr std::size_t kNodePkgInfoOff  = 0x14;
 constexpr std::size_t kNodeSize        = 0x18;
+constexpr std::size_t kPkgReadableSpan = 0x50;   // covers AppIdVec at +0x38..+0x48 with margin
+#endif
 
 constexpr int kMaxTreeDepth = 64;
 
@@ -517,7 +527,7 @@ void* FindPackage0(uintptr_t cacheGlobal, const CacheLayout& lay) {
         uint32_t key = *reinterpret_cast<uint32_t*>(node + kNodePkgIdOff);
         if (key == 0) {
             void* pkg = *reinterpret_cast<void**>(node + kNodePkgInfoOff);
-            if (!pkg || !IsReadable(pkg, 0x50)) {
+            if (!pkg || !IsReadable(pkg, kPkgReadableSpan)) {
                 Log::Debug("PKG0_FINDER: package-0 node found but PackageInfo %p bad",
                            pkg);
                 return nullptr;
@@ -649,7 +659,40 @@ void Run() {
             // without an address anyway, and nothing observes this thread's
             // liveness (it is absent from status.json). The four hooks are
             // unaffected; only package-0 injection is off for this session.
+#ifdef LUMA_X86_64
+            // steamrt64 client: the cache pointer sits in a fixed .bss slot read
+            // rip-relative (no GOT, no displacement) and the only way we know it
+            // is the feed (finder.cache_global_rva + the root/nodes offsets); the
+            // 32-bit idiom scans below would read 32-bit code shapes in a 64-bit
+            // binary and are not run. No feed → the finder ends, hooks unaffected.
             if (!cacheGlobal) {
+                cacheGlobal = RvaFeed::CacheGlobalAddr();
+                if (cacheGlobal && RvaFeed::CacheLayout(&feedLayout.rootIdxOff,
+                                                        &feedLayout.nodesOff)) {
+                    layout = &feedLayout;
+                    layoutMethod = "rva";
+                } else {
+                    cacheGlobal = 0;
+                }
+                if (!cacheGlobal) {
+                    Log::Error("PKG0_FINDER: x86_64 — the feed carries no "
+                               "cache_global_rva + cache layout for this build; "
+                               "package-0 injection is off for this session, hooks "
+                               "are unaffected");
+                    Log::Warn("Finder resolve: name=PKG0Finder method=none outcome=miss");
+                    return;
+                }
+                gotMethod = dispMethod = "n/a";
+                Log::Info("Finder resolve: name=PKG0Finder method=rva layout=%s "
+                          "layout_method=%s root_off=0x%zx nodes_off=0x%zx "
+                          "cache_global=0x%lx outcome=resolved",
+                          layout->name, layoutMethod, layout->rootIdxOff,
+                          layout->nodesOff, (unsigned long)cacheGlobal);
+            }
+            if (false) {   // the 32-bit derivation below is compiled, never run
+#else
+            if (!cacheGlobal) {
+#endif
                 // Neither call needs an else: each logs its own NOT_FOUND /
                 // AMBIGUOUS cause, with the consequence, at Error severity.
                 // ficha -> escaneo, each step only if the previous came back

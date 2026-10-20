@@ -293,6 +293,11 @@ uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
                                   const char* implMangledName,
                                   int maxSlots, int* outSlot) {
     if (outSlot) *outSlot = -1;
+#ifdef LUMA_X86_64
+    // The method-name xref scan reads i386 GOT-relative lea sites. Not ported.
+    Log::Debug("RTTI byname: rescue not derived for x86_64 — skipped");
+    return 0;
+#endif
 
     uintptr_t base = 0; size_t size = 0;
     std::vector<Range> readable;

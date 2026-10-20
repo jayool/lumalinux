@@ -12,6 +12,11 @@
 namespace ReconcileAnchor {
 
 uintptr_t FindNotifyLicensesUpdated() {
+#ifdef LUMA_X86_64
+    // Anchors on i386 code shapes (push 0x7d; mov eax,[ebp+8]). Not ported.
+    Log::Debug("Reconcile anchor: rescue not derived for x86_64 — skipped");
+    return 0;
+#endif
     using GmrcXrefCore::Region;
     const Region rx = GmrcXref::SteamclientExecRegion();
     if (!rx) {

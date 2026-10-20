@@ -51,5 +51,8 @@ bool Init(const char* steamclientPath);
 
 // file vaddr -> runtime address using the Init()'d state, or 0.
 uintptr_t ToRuntime(uintptr_t fileVaddr);
+// A data address (e.g. a .bss slot) by load bias: not file-backed, so it cannot
+// go through Translate(); 0 before Init() or when no segment translated.
+uintptr_t ToRuntimeData(uintptr_t fileVaddr);
 
 } // namespace VaddrXlate

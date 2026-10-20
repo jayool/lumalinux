@@ -16,6 +16,16 @@ namespace {
 //                              char* branch, uint64* out_code)
 // On success: writes the request code to *out_code and returns 1.
 // For unowned content the Steam server denies it -> returns 0 (failure).
+#ifdef LUMA_X86_64
+// steamrt64 client (SysV x86-64): the manifest id travels in ONE register (rcx),
+// so the function has six parameters: rdi=this, esi=app, edx=depot,
+// rcx=manifest, r8=branch, r9=out_code (docs/steam-rt3-x64.md §1.2).
+using GmrcFn = int32_t (*)(void*, uint32_t, uint32_t, uint64_t, char*, uint64_t*);
+GmrcFn g_origFn = nullptr;
+
+int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id, uint64_t gid,
+               char* branch, uint64_t* out_code) {
+#else
 using GmrcFn = int32_t (*)(void*, uint32_t, uint32_t, uint32_t, uint32_t,
                            char*, uint64_t*);
 GmrcFn g_origFn = nullptr;
@@ -24,6 +34,7 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
                uint32_t manifest_lo, uint32_t manifest_hi,
                char* branch, uint64_t* out_code) {
     uint64_t gid = (uint64_t)manifest_lo | ((uint64_t)manifest_hi << 32);
+#endif
 
     Log::Debug("GMRC: GetManifestRequestCode app=%u depot=%u manifest=%llu out=%p",
                app_id, depot_id, (unsigned long long)gid, (void*)out_code);
@@ -55,7 +66,11 @@ int32_t HookFn(void* this_, uint32_t app_id, uint32_t depot_id,
     }
 
     if (!g_origFn) return 0;
+#ifdef LUMA_X86_64
+    return g_origFn(this_, app_id, depot_id, gid, branch, out_code);
+#else
     return g_origFn(this_, app_id, depot_id, manifest_lo, manifest_hi, branch, out_code);
+#endif
 }
 
 } // namespace

@@ -63,6 +63,14 @@ bool CacheLayout(std::size_t* rootIdxOff, std::size_t* nodesOff);
 //     whole mapping instead.
 uintptr_t GotBase();
 
+// The steamrt64 client's package-cache slot (feed key `finder.cache_global_rva`,
+// a .bss vaddr), translated by load bias to a runtime address, or 0 when the
+// feed has no value. On the 64-bit client the cache pointer is read rip-relative
+// from a fixed slot — no GOT, no displacement — so this one number replaces
+// CacheGlobalDisp()+GotBase(). Not an executable address: no .text guard; the
+// finder checks readability before dereferencing it.
+uintptr_t CacheGlobalAddr();
+
 // When load() served the feed from the disk copy, fetch the published one and
 // replace the copy for the next start. Network only; touches nothing that the
 // hooks already read. Called from a detached thread after the install.

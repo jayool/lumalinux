@@ -10,7 +10,9 @@ namespace {
 
 std::vector<Load>    g_loads;
 std::vector<Mapping> g_maps;
+uintptr_t            g_bias = 0;      // runtime - file vaddr of the first PT_LOAD
 
+uint64_t rd64(const uint8_t* p) { uint64_t v; std::memcpy(&v, p, 8); return v; }
 uint32_t rd32(const uint8_t* p) { uint32_t v; std::memcpy(&v, p, 4); return v; }
 uint16_t rd16(const uint8_t* p) { uint16_t v; std::memcpy(&v, p, 2); return v; }
 
@@ -36,16 +38,19 @@ bool ParseLoads(const char* path, std::vector<Load>& out) {
     FILE* f = std::fopen(path, "rb");
     if (!f) return false;
 
-    uint8_t hdr[52];
+    // ELFCLASS32 (the ubuntu12_32 client) or ELFCLASS64 (the steamrt64 client):
+    // only the program-header geometry differs.
+    uint8_t hdr[64];
     if (std::fread(hdr, 1, sizeof(hdr), f) != sizeof(hdr) ||
-        std::memcmp(hdr, "\x7f" "ELF", 4) != 0 || hdr[4] != 1 /* ELFCLASS32 */) {
+        std::memcmp(hdr, "\x7f" "ELF", 4) != 0 || (hdr[4] != 1 && hdr[4] != 2)) {
         std::fclose(f);
         return false;
     }
-    const uint32_t e_phoff     = rd32(hdr + 0x1C);
-    const uint16_t e_phentsize = rd16(hdr + 0x2A);
-    const uint16_t e_phnum     = rd16(hdr + 0x2C);
-    if (e_phentsize < 32 || e_phnum == 0 || e_phnum > 256) { std::fclose(f); return false; }
+    const bool     is64        = hdr[4] == 2;
+    const uint64_t e_phoff     = is64 ? rd64(hdr + 0x20) : rd32(hdr + 0x1C);
+    const uint16_t e_phentsize = is64 ? rd16(hdr + 0x36) : rd16(hdr + 0x2A);
+    const uint16_t e_phnum     = is64 ? rd16(hdr + 0x38) : rd16(hdr + 0x2C);
+    if (e_phentsize < (is64 ? 56 : 32) || e_phnum == 0 || e_phnum > 256) { std::fclose(f); return false; }
     if (std::fseek(f, static_cast<long>(e_phoff), SEEK_SET) != 0) { std::fclose(f); return false; }
 
     std::vector<uint8_t> ph(static_cast<size_t>(e_phentsize) * e_phnum);
@@ -55,7 +60,12 @@ bool ParseLoads(const char* path, std::vector<Load>& out) {
     for (uint16_t i = 0; i < e_phnum; ++i) {
         const uint8_t* p = ph.data() + static_cast<size_t>(i) * e_phentsize;
         if (rd32(p) != 1) continue;   // PT_LOAD
-        out.push_back({ rd32(p + 4), rd32(p + 8), rd32(p + 16) });  // offset, vaddr, filesz
+        if (is64)
+            out.push_back({ static_cast<uintptr_t>(rd64(p + 8)),     // p_offset
+                            static_cast<uintptr_t>(rd64(p + 16)),    // p_vaddr
+                            static_cast<uintptr_t>(rd64(p + 32)) }); // p_filesz
+        else
+            out.push_back({ rd32(p + 4), rd32(p + 8), rd32(p + 16) });  // offset, vaddr, filesz
     }
     return !out.empty();
 }
@@ -92,11 +102,23 @@ bool Init(const char* steamclientPath) {
     std::fclose(f);
 
     ParseMaps(text, g_maps);
-    return !g_maps.empty();
+    if (g_maps.empty()) return false;
+    // Load bias from the first segment that translates: a data address (.bss)
+    // is not file-backed, so Translate() cannot place it; bias + vaddr can.
+    g_bias = 0;
+    for (const auto& L : g_loads) {
+        const uintptr_t rt = Translate(L.p_vaddr, g_loads, g_maps);
+        if (rt) { g_bias = rt - L.p_vaddr; break; }
+    }
+    return true;
 }
 
 uintptr_t ToRuntime(uintptr_t fileVaddr) {
     return Translate(fileVaddr, g_loads, g_maps);
+}
+
+uintptr_t ToRuntimeData(uintptr_t fileVaddr) {
+    return g_bias ? g_bias + fileVaddr : 0;
 }
 
 } // namespace VaddrXlate

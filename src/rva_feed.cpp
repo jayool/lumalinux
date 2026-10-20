@@ -33,6 +33,7 @@ int32_t                          g_cacheGlobalDisp = 0;
 std::size_t                      g_cacheRootOff = 0;     // finder.cache_root_off
 std::size_t                      g_cacheNodesOff = 0;    // finder.cache_nodes_off
 uintptr_t                        g_gotRva = 0;          // file vaddr, untranslated
+uintptr_t                        g_cacheGlobalRva = 0;  // finder.cache_global_rva (steamrt64)
 
 std::string cacheDir() {
     const char* home = std::getenv("HOME");
@@ -147,6 +148,15 @@ void load() {
                           g_cacheRootOff, g_cacheNodesOff);
             }
         }
+        if (finder && finder.IsMap() && finder["cache_global_rva"]) {
+            const unsigned long v = std::strtoul(
+                finder["cache_global_rva"].as<std::string>().c_str(), nullptr, 16);
+            if (v) {
+                g_cacheGlobalRva = static_cast<uintptr_t>(v);
+                Log::Info("RvaFeed: finder cache_global_rva = 0x%lx from the feed",
+                          static_cast<unsigned long>(g_cacheGlobalRva));
+            }
+        }
         if (finder && finder.IsMap() && finder["got_rva"]) {
             const unsigned long v = std::strtoul(
                 finder["got_rva"].as<std::string>().c_str(), nullptr, 16);
@@ -170,6 +180,7 @@ void load() {
         g_hooks.clear();
         g_cacheGlobalDisp = 0;
         g_gotRva = 0;
+        g_cacheGlobalRva = 0;
         return;
     }
     if (g_hooks.empty()) { Log::Info("RvaFeed: feed has no hooks for %s", hash.c_str()); return; }
@@ -259,6 +270,20 @@ uintptr_t GotBase() {
     }
     Log::Info("RvaFeed: finder GOT via feed: rva 0x%lx -> 0x%lx",
               static_cast<unsigned long>(g_gotRva), static_cast<unsigned long>(rt));
+    return rt;
+}
+
+uintptr_t CacheGlobalAddr() {
+    std::call_once(g_once, load);
+    if (!g_cacheGlobalRva || !g_loaded) return 0;   // needs VaddrXlate, which load() inits
+    const uintptr_t rt = VaddrXlate::ToRuntimeData(g_cacheGlobalRva);
+    if (!rt) {
+        Log::Warn("RvaFeed: finder cache_global_rva 0x%lx did not translate",
+                  static_cast<unsigned long>(g_cacheGlobalRva));
+        return 0;
+    }
+    Log::Info("RvaFeed: finder cache slot via feed: rva 0x%lx -> 0x%lx",
+              static_cast<unsigned long>(g_cacheGlobalRva), static_cast<unsigned long>(rt));
     return rt;
 }
 

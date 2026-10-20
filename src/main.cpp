@@ -179,21 +179,13 @@ void InstallHooks() {
     // With no provider alive the hook falls through and Steam behaves as in
     // v0.20.x: installs from the manifests LumaDeck pre-seeds in depotcache/.
 #ifdef LUMA_X86_64
-    // steamrt64 client: the hooks' byte patterns, calling-convention
-    // declarations, RVA feeds and struct layouts are all the 32-bit client's and
-    // are not derived for this binary yet (docs/steam-rt3-x64.md §3). Installing
-    // them would hook the wrong bytes. This build proves the library loads
-    // inside the steamrt3 container and reports; it installs nothing. The
-    // critical hooks read FAILED so LumaDeck says "Steam build not supported",
-    // which is the truth.
-    for (const char* n : {"DepotKey", "ShaderDepot", "GMRC"}) Status::RecordHook(n, Status::FAILED);
-    for (const char* n : {"BuildDep", "PackageZeroFinder", "SlsAchievementUnblock", "CrStatsFix"})
-        Status::RecordHook(n, Status::DISABLED);
-    Log::Warn("Install: x86_64 build on the steamrt64 client — hooks not derived for this "
-              "binary yet; nothing installed (port in progress)");
-    Log::Notify(LUMALINUX_VERSION_STRING " (x86_64): loaded in the 64-bit client, hooks not ported yet");
-    Status::Write();
-    return;
+    // steamrt64 client: every hook resolves through the RVA feed only. The byte
+    // patterns and the three rescues (string xref, callback anchor, RTTI by
+    // name) are 32-bit code shapes and return 0 on this build (patterns.cpp,
+    // gmrc_xref.cpp, reconcile_anchor.cpp, rtti.cpp), so a build with no feed
+    // file installs nothing and reports FAILED — the truth LumaDeck needs.
+    // Per-build values: docs/steam-rt3-x64.md §1.2.
+    Log::Info("Install: x86_64 build on the steamrt64 client — resolving via the RVA feed only");
 #endif
     std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},

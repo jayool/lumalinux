@@ -81,6 +81,12 @@ uintptr_t FindStringLoaded(const char* needle, std::size_t nlen) {
 // Steps 1-4 for one string. `walkBack` enables the step-4 fallback for a build
 // with no usable .eh_frame_hdr — right only for GMRC's preamble-first shape.
 uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool walkBack) {
+#ifdef LUMA_X86_64
+    // The locator reads i386 PIC shapes (GOT-relative lea, get_pc_thunk); the
+    // 64-bit client addresses strings rip-relative. Not ported: RVA feed only.
+    Log::Debug("%s: string-xref rescue not derived for x86_64 — skipped", tag);
+    return 0;
+#endif
     Region rx = GetExecRegion();
     if (!rx) {
         Log::Debug("%s: steamclient.so r-x mapping not found", tag);
