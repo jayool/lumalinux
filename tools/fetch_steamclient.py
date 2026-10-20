@@ -5,9 +5,14 @@
 # ARCHITECTURE: decided by the manifest name. A `*_ubuntu12` manifest is the
 # 32-bit client and the library is `ubuntu12_32/steamclient.so` (the default);
 # a `*_steamrt64` manifest is the 64-bit steamrt3 client (steamrt64/steam,
-# docs/steam-rt3-x64.md) and the library is `steamrt64/steamclient.so`. The
-# package keys of the steamrt64 manifest were not seen before the first run
-# (the CDN is firewalled from the dev sandbox): --list-packages prints them.
+# docs/steam-rt3-x64.md). Its packages (seen 2026-10-20, --list-packages):
+# bins_steamrt64 (the client, 40 members), bins_sdk_steamrt64, bins_codecs_*,
+# bins_misc_*, bins_hardware_*, bins_steamrt_steamrt64, webkit_*, sdl3_*,
+# steam_steamrt64, runtime_steamrt_steamrt64 (80 MB), plus the *_all packages
+# shared with ubuntu12. Their members carry NO directory prefix (the installer
+# unpacks them into steamrt64/ itself), unlike the ubuntu12 packages whose
+# members are ubuntu12_32/...; so for steamrt64 the library is matched by
+# basename, and SDK copies (linux32/, linux64/) are refused.
 #
 # Used by .github/workflows/watch-steam.yml to get the ubuntu12_32/steamclient.so
 # whose SHA-256 goes into res/updates.yaml so check_patterns.py can validate it
@@ -327,14 +332,22 @@ def extract_steamclient(man, out_path):
     which is the Steamworks SDK's copy inside a later package, and a 504 on the
     bins package made the script return it as if it were the client."""
     want = client_dir() + "steamclient.so"
+    rt64 = client_arch() == "steamrt64"
     for key, plain, vz in package_entries(man):
         zf = open_package_zip(key, plain, vz)
         if zf is None:
-            if _package_rank(key) <= 1:
+            # ubuntu12: any bins package; steamrt64: only bins_steamrt64 itself
+            # (bins_hardware_steamrt64's plain file is not a zip, seen 2026-10-20).
+            if _package_rank(key) <= (0 if rt64 else 1):
                 _bins_unreachable(key)
             continue
         members = zf.namelist()
-        cand = [m for m in members if m.endswith(want)]
+        if rt64:
+            cand = [m for m in members
+                    if m.rsplit("/", 1)[-1] == "steamclient.so"
+                    and "linux32/" not in m and "linux64/" not in m]
+        else:
+            cand = [m for m in members if m.endswith(want)]
         if len(cand) > 1:
             raise RuntimeError("%s: %d members end in %s: %s" % (key, len(cand), want, cand))
         if cand:
@@ -348,6 +361,10 @@ def extract_steamclient(man, out_path):
         # open_package_zip, so plain-vs-vz is already handled there.)
         print("  (%s: %d members, no %s)" % (key, len(members), want),
               file=sys.stderr)
+        if rt64 and _package_rank(key) == 0:
+            # The one package that should carry it: show what it carries.
+            for m in members[:80]:
+                print("      %s" % m, file=sys.stderr)
     raise RuntimeError("%s not found in any client package" % want)
 
 
@@ -377,6 +394,7 @@ def extract_client_tree(man, out_dir):
     `steamrt64/` for a steamrt64 manifest): that is the directory lumalinux
     hooks into, and it keeps the download to the bins package(s)."""
     want = client_dir()
+    rt64 = client_arch() == "steamrt64"
     found_client = False
     names = []
     for key, plain, vz in package_entries(man):
@@ -387,17 +405,22 @@ def extract_client_tree(man, out_dir):
             break
         zf = open_package_zip(key, plain, vz)
         if zf is None:
-            if _package_rank(key) <= 1 and not found_client:
+            if _package_rank(key) <= (0 if rt64 else 1) and not found_client:
                 _bins_unreachable(key)
             continue
-        members = [m for m in zf.namelist()
-                   if want in m and not m.endswith("/") and "ubuntu12_64" not in m]
+        if rt64:
+            # No prefix in the members: everything in the bins packages is the
+            # steamrt64/ tree; prefix it so the result looks like the install.
+            members = [m for m in zf.namelist() if not m.endswith("/")]
+        else:
+            members = [m for m in zf.namelist()
+                       if want in m and not m.endswith("/") and "ubuntu12_64" not in m]
         if not members:
             print("  (%s: %d members, nothing under %s)" % (key, len(zf.namelist()), want),
                   file=sys.stderr)
             continue
         for m in members:
-            rel = m[m.index(want):]
+            rel = want + m if rt64 else m[m.index(want):]
             dst = os.path.join(out_dir, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             with zf.open(m) as src, open(dst, "wb") as f:
@@ -410,7 +433,9 @@ def extract_client_tree(man, out_dir):
             names.append(rel)
         print("  (%s: extracted %d file(s) under %s)" % (key, len(members), want),
               file=sys.stderr)
-        if any(m.endswith(want + "steamclient.so") for m in members):
+        if any(m.rsplit("/", 1)[-1] == "steamclient.so" and "linux32/" not in m
+               and "linux64/" not in m for m in members) if rt64 else \
+           any(m.endswith(want + "steamclient.so") for m in members):
             found_client = True
     if not found_client:
         raise RuntimeError("%ssteamclient.so not found in any client package" % want)
