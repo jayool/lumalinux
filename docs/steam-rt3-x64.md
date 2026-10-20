@@ -1,6 +1,7 @@
 # Steam de 64 bits (steamrt3c) — qué cambia para la pila
 
-Doc de medición, 2026-10-16. Se fusionará con `nosotros.md`, `slssteam.md` y
+Doc de medición, 2026-10-16, ampliado el 2026-10-20 (canales de la Deck y el
+build de 64 bits). Se fusionará con `nosotros.md`, `slssteam.md` y
 `cloudredirect.md` cuando el port tenga forma; hasta entonces vive aquí.
 
 ## §0 Ficha
@@ -8,13 +9,17 @@ Doc de medición, 2026-10-16. Se fusionará con `nosotros.md`, `slssteam.md` y
 | | |
 |---|---|
 | **Qué es** | El cliente de Steam para Linux pasa a ser una aplicación de 64 bits que corre dentro de un contenedor de Steam Runtime 3c (la misma maquinaria de pressure-vessel que usan los juegos). Anunciado en las notas de la beta del 2026-10-15 ("The Steam client is now a 64bit application. The Steam client now runs inside a Steam Runtime container."). Existía como opción desde marzo de 2026 ("Steam RT3 Experimental" en Ajustes, marcador `~/.local/share/Steam/.steam-enable-steamrt64-client`); la beta del 15 lo hace el modo por defecto. |
-| **Medido en** | codespace SteamOS (`deck@codespaces-67b581`), canal `publicbeta` de escritorio, 2026-10-16 06:40-07:10 UTC. Paquete `steam_client_publicbeta_steamrt64` versión `1792110651` (junto a `steam_client_publicbeta_ubuntu12` `1792108788`). |
-| **Lo que no sabemos** | Cuándo llega a estable de escritorio y cuándo al canal de SteamOS (`steam_client_steamdeck_*`). Si Valve conserva el cliente de 32 bits como alternativa. Qué harán SLSsteam y CloudRedirect. |
-| **Fuentes** | Notas de la beta 2026-10-15; `ValveSoftware/steam-for-linux` `README.beta.md` (requisitos) e issue #13015 (hilo del `reaper` de 32 bits, con el comentario de lostgoat, Valve, del 2026-10-15); hilo de r/linux_gaming del mismo día. |
+| **Medido en** | codespace SteamOS (`deck@codespaces-67b581`). 2026-10-16 06:40-07:10 UTC: canal `publicbeta` de escritorio, paquete `steam_client_publicbeta_steamrt64` `1792110651` (junto a `steam_client_publicbeta_ubuntu12` `1792108788`). 2026-10-20 08:50-09:10 UTC: canal beta de la Deck, `steamrt64/steamclient.so` 53.559.264 bytes, sha256 `947e5a192e7f6f12…`, con la `liblumalinux.so` de 64 bits del job `build-linux-x86_64` (run 39398060496) cargada dentro. |
+| **Dónde está hoy** | En la Deck, `steamdeck_publicbeta` ya publica `steamrt64` **por delante** del de 32 (`1792192922` frente a `1792108788`): Valve itera el cliente de 64 en la beta de la Deck. `steamdeck_stable` publica los dos paquetes con la misma versión (`1791918634`) y la Deck estable sigue arrancando el de 32 (es el paquete del opt-in "RT3 Experimental"). Lo que está en la beta de la Deck llega a estable con la siguiente SteamOS, semanas o un par de meses. |
+| **Lo que no sabemos** | Cuándo `steamdeck_stable` arranca el de 64 por defecto. Si Valve conserva el cliente de 32 bits como alternativa. Qué hará Ace con SLSsteam. |
+| **Fuentes** | Notas de la beta 2026-10-15; `ValveSoftware/steam-for-linux` `README.beta.md` (requisitos) e issue #13015 (hilo del `reaper` de 32 bits, con el comentario de lostgoat, Valve, del 2026-10-15); hilo de r/linux_gaming del mismo día; manifiestos `client-update.fastly.steamstatic.com/steam_client_<canal>_<ubuntu12|steamrt64>` (§4). |
 
 ## §1 Lo medido
 
-Todo en el codespace, cliente beta `1792110651`.
+Todo en el codespace. §1.1 con el cliente beta de escritorio `1792110651`
+(2026-10-16); §1.2 con el de la beta de la Deck (2026-10-20).
+
+### §1.1 El cliente nuevo
 
 **Disposición en disco.** El cliente vive en `steamrt64/` (nuevo), no en
 `ubuntu12_64/`; `steamrt32/` existe también con su propio `steamclient.so`
@@ -102,47 +107,128 @@ está soportado. Nada de eso toca el proceso del cliente ni la inyección. Steam
 verifica sus ficheros por tamaño y CRC32 (`-noverifyfiles` lo apaga); no nos
 afecta porque no sustituimos ficheros de Steam.
 
+### §1.2 Nuestra `.so` de 64 bits, dentro del cliente de 64
+
+**Qué se compila.** Las mismas fuentes con `-DLUMA_X86_64=ON` (`CMakeLists.txt`):
+`-m64`, libmem x86_64 (`LUMA_ARCH=x86_64 tools/fetch_libmem.sh`, tarball de
+rdbo fijado por sha256), yaml-cpp 0.8.0 compilado desde el fuente estático y
+PIC (`tools/build_yamlcpp.sh`, instalado en `lib/x86_64/`, ignorado por git) y
+`src/compat_x86_64.cpp`. Tres sitios son solo de 32 bits y quedan fuera del
+build de 64: los `static_assert` de layouts en `steam_types.hpp`, el stub en
+ensamblador de `cr_stats_fix.cpp` (su `Init()` devuelve `Disabled`) y la
+instalación de hooks en `main.cpp`, que en 64 declara `DepotKey`,
+`ShaderDepot` y `GMRC` como `FAILED` y el resto `DISABLED`, avisa en el log y
+en la notificación ("hooks not ported yet") y escribe el estado. Con eso
+LumaDeck diría "Steam build not supported", que es la verdad.
+
+**Dónde se compila y por qué.** El job `build-linux-x86_64` de `build.yml`
+corre dentro de la imagen del SDK de Valve
+(`registry.gitlab.steamos.cloud/steamrt/sniper/sdk`): el mismo Debian 11 del
+contenedor, con su glibc 2.31 y su libstdc++ de GCC 10. En 32 bits nunca
+importó dónde compilar porque el cliente usa la glibc del sistema (Arch,
+moderna) y la Deck siempre tiene algo igual o más nuevo que el runner; en 64 el
+cliente solo ve lo del contenedor, y una `.so` compilada en `ubuntu-latest`
+pediría símbolos de glibc que ahí no existen. El job comprueba que el símbolo
+`GLIBC_` más alto de la `.so` sea ≤ 2.31 (hoy 2.30) y sube el artefacto
+`lumalinux-x86_64`; no se adjunta a las releases mientras no haga nada.
+
+**Los tres fallos de enlace del entorno**, todos por lo mismo (el contenedor es
+de 2020): el `libmem.a` precompilado de rdbo llama a
+`std::__throw_bad_array_new_length`, que la libstdc++ de GCC 10 no exporta; el
+shim `compat_x86_64.cpp` la define (oculta, lanza `bad_array_new_length`). El
+`libyaml-cpp.a` de Debian 11 no es PIC y no entra en una `.so`; de ahí
+compilarlo nosotros. En glibc 2.31 los pthreads van en `libpthread` aparte;
+`Threads::Threads` en CMake (en 32 bits nunca saltó porque las glibc modernas
+los integran).
+
+**La carga, medida.** `liblumalinux.so` del artefacto, lanzada con
+`LD_PRELOAD` desde fuera (`steam.sh -gamepadui`, sin `LD_AUDIT`): el cliente
+de dentro (`steamrt64/steam -gamepadui`, pid 28780) la tiene en `/proc/maps`;
+el log escribe "lumalinux loaded (pid=28780)", "Ctor: steamclient.so
+detected", el hash `947e5a19…` del `steamclient.so` de 64 y el aviso de hooks
+no derivados; `/tmp/steam64.log` sin ningún "cannot be preloaded". Punto 2 de
+§3 cumplido: la puerta se abre; lo de dentro es el punto 3.
+
+**Lo que la prueba dejó ver.** `status.json` no apareció en
+`/run/user/<uid>/lumalinux/` del host: dentro del contenedor `XDG_RUNTIME_DIR`
+pasa pero no es el mismo árbol de ficheros, así que la ruta del estado (y con
+ella la lectura de LumaDeck) es parte del punto 4. Y un Steam lanzado a mano
+desde el terminal, sin las variables de render por software que exporta el
+supervisor del codespace, arranca pero no pinta la ventana; para verlo hay que
+volver a `~/start-gamemode.sh`.
+
 ## §2 Qué nos afecta
 
 | Pieza | Con el cliente de 64 |
 |---|---|
-| `liblumalinux.so` | no carga (32 bits). Port a x86-64: build contra glibc 2.31, rederivar los cinco hooks, `-m64` en CMake y `build.yml` |
+| `liblumalinux.so` | la de 32 no carga. La de 64 (`LUMA_X86_64`, job `build-linux-x86_64` en el SDK de sniper) compila y carga dentro del contenedor (§1.2), sin hooks: `DepotKey`/`ShaderDepot`/`GMRC` `FAILED`, el resto `DISABLED`. Falta rederivar los cinco hooks |
 | Inyección (`LD_PRELOAD`/`LD_AUDIT` desde el wrapper) | funciona; pasa al contenedor por `pv-adverb` |
 | Anclas RTTI y de texto | presentes; los resolvedores por nombre valen |
 | Patrones, RVAs, calling convention, layouts | a rederivar; `check_patterns.py`, `derive_patterns.py` y `fetch_steamclient.py` en modo x86-64 y paquete `steamrt64` |
 | Rutas `ubuntu12_32/steamclient.so` | ahora `steamrt64/steamclient.so`: guard (`g_client_fp`), `headcrab_compat`, `components`, CI, `fetch_steamclient.py` |
 | Crash guard | sigue viendo volcados |
 | SLSsteam | 32 bits (`Makefile` `-m32`); Ace hizo "future proof for 64 bits" en la parte Lua (`f4213e5`, 2026-08-31), sin rama de 64. Sin SLSsteam de 64 no hay propiedad falsa: **cuello de botella** |
-| CloudRedirect | 32 bits; mismo caso, y sin salida: el upstream desapareció el 2026-10-16 y del 2.6.6 solo existe el binario (`cloudredirect.md` §0). La nube redirigida se acaba con el cliente de 64 bits |
+| CloudRedirect | 32 bits; el upstream desapareció el 2026-10-16, pero el código de `v2.6.6` está en `jayool/CloudRedirect` (`cloudredirect.md` §0): se puede compilar en 64 bits, con el mismo entorno del SDK que lumalinux. Es trabajo nuestro, sin upstream que lo haga |
 | LumaDeck | Python, no le afecta la arquitectura; le afectan las rutas y los estados: hoy mostraría los tres componentes "not loaded" y "Steam build not supported"; "Fix in Desktop" (downgrade) es la salida mientras tanto |
-| Codespace como banco de pruebas | sirve con bus de sesión; `start-gamemode.sh` debería lanzarlo |
+| Codespace como banco de pruebas | sirve: en la beta de la Deck arranca el cliente de 64 bajo el supervisor (`start-display.sh` deja el bus de sesión en `/run/user/<uid>/bus`); la prueba con nuestra `.so` en §4 |
 | El resto de la escena (LumaCore, SteaMidra, ASSella, slsteam-moon) | todos de 32 bits |
 
 ## §3 Qué hay que hacer
 
-En orden, cuando se abra el port:
+En orden. El port está abierto desde el 2026-10-20.
 
-1. **Alarma**: `watch-steam.yml` comprueba a diario si aparece un paquete `steamrt64` en `steamdeck_stable` y `steamdeck_publicbeta`. Es el reloj real para la Deck.
-2. **Build de 64 bits contra el runtime**: compilar en el SDK de steamrt3 (sniper, glibc 2.31) y no en el Ubuntu de la CI, para que los símbolos de glibc no superen 2.31.
-3. **Rederivar los cinco hooks** sobre `steamrt64/steamclient.so` `1792110651`: anclas iguales, bytes y ABI nuevos.
-4. **Rutas** `steamrt64/` en guard, LumaDeck y CI.
-5. **SLSsteam**: hablar con Ace; marca la ventana. CloudRedirect ya no tiene con quién hablar: se da por perdido en 64 bits y LumaDeck tendrá que decirlo.
-6. **LumaDeck**: mensaje propio para "cliente de 64 bits, aún sin soporte".
+1. **Alarma**: descartada (2026-10-20). El paquete `steamrt64` ya está en los dos canales de la Deck y se sabe dónde está; los manifiestos se miran a mano con el comando de §4 cuando haga falta. `watch-steam.yml` sigue vigilando solo el cliente de 32.
+2. **Build de 64 bits contra el runtime**: hecho (§1.2). `LUMA_X86_64` en CMake, dependencias de 64 por script, job en el SDK de sniper con la comprobación de glibc, artefacto `lumalinux-x86_64`.
+3. **Rederivar los cinco hooks** sobre `steamrt64/steamclient.so` (hoy el de la beta de la Deck, `947e5a19…`): anclas iguales, bytes, ABI SysV y layouts nuevos. `DepotKey` primero (es el crítico), luego `GMRC`, `ShaderDepot`, el finder de package-0, Reconcile. `check_patterns.py`, `derive_patterns.py` y `fetch_steamclient.py` tienen que aprender x86-64 y el paquete `steamrt64`.
+4. **Rutas y estado** `steamrt64/` en guard (`g_client_fp`), LumaDeck (salud, hash del cliente, downgrade), CI y feeds (`updates.yaml` y `res/rvas/` con grupos por arquitectura); `setup.sh` elige la `.so` según el cliente instalado; ruta de `status.json` que LumaDeck pueda leer desde fuera del contenedor. Dos binarios por release durante la transición.
+5. **CloudRedirect en 64**, desde `jayool/CloudRedirect`, con el mismo entorno de build.
+6. **SLSsteam**: es de Ace y de 32 bits; sin SLSsteam de 64 no hay propiedad falsa y el resto no sirve de nada. Decisión pendiente: esperar, o fork propio. No se le escribe.
+7. **LumaDeck**: mensaje propio para "cliente de 64 bits, aún sin soporte".
 
 ## §4 Cómo reproducirlo en el codespace
 
+**Qué publica cada canal de la Deck** (lo que llega a la Deck, no a escritorio):
+
 ```bash
-# optar a la beta (Steam cerrado)
-echo publicbeta > ~/.local/share/Steam/package/beta
-# bus de sesión, sin él el cliente nuevo sale con 125
-export DBUS_SESSION_BUS_ADDRESS=$(dbus-daemon --session --fork --print-address | head -1)
-# arrancar vanilla, sin terminal de por medio
-env -u LD_PRELOAD -u LD_AUDIT DISPLAY=:1 setsid ~/.local/share/Steam/steam.sh -gamepadui -no-cef-sandbox </dev/null >/tmp/vanilla.log 2>&1 &
-# el cliente de dentro
-P=$(pgrep -f 'steamrt64/steam -gamepadui' | tail -1); grep -oE '[^ ]*steamclient\.so' /proc/$P/maps | sort -u
-tr '\0' '\n' < /proc/$P/environ | grep -E '^(LD_PRELOAD|LD_AUDIT|PRESSURE_VESSEL_RUNTIME)='
-# volver a estable: borrar package/beta y arrancar
+for c in steamdeck_stable steamdeck_publicbeta; do echo "== $c"; for a in ubuntu12 steamrt64; do printf '  %-10s ' "$a"; curl -s "https://client-update.fastly.steamstatic.com/steam_client_${c}_${a}" | grep -m1 -oE '"version"\s+"[0-9]+"'; done; done
 ```
+
+**Arrancar el cliente de 64** (2026-10-20, bajo el supervisor del codespace,
+que ya deja el bus de sesión en `/run/user/<uid>/bus`):
+
+```bash
+# optar a la beta (Steam cerrado); el supervisor relanza y Steam baja el paquete steamrt64
+echo publicbeta > ~/.local/share/Steam/package/beta
+# comprobar: el cliente de dentro, su steamclient.so y el hash
+pgrep -af 'steamrt64/steam' | head -3 | cut -c1-120
+P=$(pgrep -f 'steamrt64/steam -gamepadui' | tail -1); grep -oE '[^ ]*steamclient\.so' /proc/$P/maps | sort -u
+sha256sum ~/.local/share/Steam/steamrt64/steamclient.so | cut -c1-16
+# volver a estable: borrar package/beta y relanzar (baja de nuevo el de 32)
+```
+
+**Probar nuestra `.so` de 64** (artefacto `lumalinux-x86_64` del job, con el
+`GITHUB_TOKEN` del codespace; el Steam lanzado así no pinta la ventana, ver
+§1.2):
+
+```bash
+cd /tmp && rm -rf ll64 && mkdir ll64 && cd ll64
+curl -sL -H "Authorization: Bearer $GITHUB_TOKEN" -o a.zip https://api.github.com/repos/jayool/lumalinux/actions/artifacts/<id>/zip && python3 -c "import zipfile; zipfile.ZipFile('a.zip').extractall('.')"
+file liblumalinux.so; objdump -T liblumalinux.so | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1
+echo desktop > /tmp/lumadev-session; steam -shutdown; while pgrep -x steam >/dev/null; do sleep 1; done
+: > ~/.cache/lumalinux/lumalinux.log
+export DISPLAY=:1 XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus
+env -u LD_AUDIT LD_PRELOAD=/tmp/ll64/liblumalinux.so setsid ~/.local/share/Steam/steam.sh -gamepadui -no-cef-sandbox </dev/null >/tmp/steam64.log 2>&1 &
+sleep 90; P=$(pgrep -f 'steamrt64/steam ' | head -1); grep -c liblumalinux /proc/$P/maps
+grep -E 'lumalinux loaded|detected|x86_64|hash is' ~/.cache/lumalinux/lumalinux.log | head
+grep -i 'cannot be preloaded' /tmp/steam64.log | sort -u
+# devolverlo al supervisor
+pkill -f 'steamrt64/steam'; sleep 3; ~/start-gamemode.sh
+```
+
+Receta del 2026-10-16 (beta de escritorio, sin supervisor): `echo publicbeta >
+package/beta`, bus propio con `dbus-daemon --session --fork --print-address`
+en `DBUS_SESSION_BUS_ADDRESS` (sin él el cliente sale con 125), y
+`env -u LD_PRELOAD -u LD_AUDIT DISPLAY=:1 setsid steam.sh -gamepadui -no-cef-sandbox`.
 
 La prueba de inyección: dos `.so` de 64 bits (constructor y `la_version` que
 escriben pid y `comm` en `/tmp`), lanzadas con `LD_PRELOAD` y `LD_AUDIT`, y
