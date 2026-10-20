@@ -1,0 +1,113 @@
+name: fetch-steamclient
+
+# Manual: download the current steamclient.so of ANY Steam client channel from
+# Valve's CDN and park it where the dev sandbox can read it — a throwaway
+# branch (git fetch works there; Actions artifacts and the CDN do not). Made for
+# the 64-bit port (docs/steam-rt3-x64.md §3 point 3): the steamrt64 binary has
+# to be analysed to re-derive the hooks, and the sandbox cannot reach the CDN.
+#
+# It writes nothing to main or to any existing branch. The branch it creates,
+# steamclient/<manifest>-<version>, holds one orphan commit with the library
+# and an INFO.txt (version, size, sha256, build-id); delete it when done with
+# it. Each run force-pushes that branch, so re-running the same manifest and
+# version replaces, never piles up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: "Steam client manifest"
+        type: choice
+        default: steam_client_steamdeck_publicbeta_steamrt64
+        options:
+          - steam_client_steamdeck_publicbeta_steamrt64
+          - steam_client_steamdeck_stable_steamrt64
+          - steam_client_publicbeta_steamrt64
+          - steam_client_steamrt64
+          - steam_client_steamdeck_publicbeta_ubuntu12
+          - steam_client_steamdeck_stable_ubuntu12
+      manifest_custom:
+        description: "Any other manifest name (overrides the choice above)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write             # push the steamclient/<...> branch; nothing else
+
+concurrency:
+  group: fetch-steamclient
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LUMA_STEAM_MANIFEST: ${{ inputs.manifest_custom != '' && inputs.manifest_custom || inputs.manifest }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Packages in the manifest
+        run: python3 tools/fetch_steamclient.py --list-packages
+
+      - name: Fetch steamclient.so (${{ env.LUMA_STEAM_MANIFEST }})
+        id: dl
+        run: |
+          V=$(python3 tools/fetch_steamclient.py --version-only)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          OUT=$(python3 tools/fetch_steamclient.py --output steamclient.so)
+          SHA=${OUT#sha256=}
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          SIZE=$(stat -c %s steamclient.so)
+          BID=$(readelf -n steamclient.so 2>/dev/null | awk '/Build ID/{print $3}')
+          CLASS=$(file -b steamclient.so | cut -d, -f1)
+          {
+            echo "manifest=$LUMA_STEAM_MANIFEST"
+            echo "version=$V"
+            echo "size=$SIZE"
+            echo "sha256=$SHA"
+            echo "buildid=${BID:-n/a}"
+            echo "elf=$CLASS"
+            echo "fetched=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } | tee INFO.txt
+          echo "branch=steamclient/${LUMA_STEAM_MANIFEST}-${V}" >> "$GITHUB_OUTPUT"
+
+      - name: Push to the throwaway branch
+        env:
+          BR: ${{ steps.dl.outputs.branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          rm -rf bin-branch && mkdir bin-branch
+          cp steamclient.so INFO.txt bin-branch/
+          cd bin-branch
+          git init -q -b "$BR"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "steamclient.so ${LUMA_STEAM_MANIFEST} $(sed -n 's/^version=//p' INFO.txt) — throwaway branch, delete when done"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BR}"
+          echo "pushed ${BR}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: steamclient-${{ env.LUMA_STEAM_MANIFEST }}-${{ steps.dl.outputs.version }}
+          path: |
+            steamclient.so
+            INFO.txt
+
+      - name: Job summary
+        env:
+          BR: ${{ steps.dl.outputs.branch }}
+        run: |
+          {
+            echo "## fetch-steamclient: \`$LUMA_STEAM_MANIFEST\`"
+            echo
+            echo '```'; cat INFO.txt; echo '```'
+            echo
+            echo "Branch: \`$BR\` (delete when done)."
+          } >> "$GITHUB_STEP_SUMMARY"

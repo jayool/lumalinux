@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# fetch_steamclient.py — download the CURRENT 32-bit steamclient.so from Valve.
+# fetch_steamclient.py — download the CURRENT steamclient.so from Valve.
+#
+# ARCHITECTURE: decided by the manifest name. A `*_ubuntu12` manifest is the
+# 32-bit client and the library is `ubuntu12_32/steamclient.so` (the default);
+# a `*_steamrt64` manifest is the 64-bit steamrt3 client (steamrt64/steam,
+# docs/steam-rt3-x64.md) and the library is `steamrt64/steamclient.so`. The
+# package keys of the steamrt64 manifest were not seen before the first run
+# (the CDN is firewalled from the dev sandbox): --list-packages prints them.
 #
 # Used by .github/workflows/watch-steam.yml to get the ubuntu12_32/steamclient.so
 # whose SHA-256 goes into res/updates.yaml so check_patterns.py can validate it
@@ -64,6 +71,19 @@ CDN = "https://media.steampowered.com/client/"
 # used by the port validator) or beta ("steam_client_steamdeck_publicbeta_ubuntu12").
 MANIFEST_NAME = os.environ.get("LUMA_STEAM_MANIFEST", "steam_client_steamdeck_stable_ubuntu12")
 MANIFEST_URL = CDN + MANIFEST_NAME
+
+
+def client_arch(manifest_name=None):
+    """'ubuntu12' (32-bit client) or 'steamrt64' (64-bit steamrt3 client), from
+    the manifest's suffix."""
+    name = manifest_name or MANIFEST_NAME
+    return "steamrt64" if name.endswith("_steamrt64") else "ubuntu12"
+
+
+def client_dir(manifest_name=None):
+    """The directory (with trailing slash) the client library lives under inside
+    the packages: ubuntu12_32/ or steamrt64/."""
+    return "steamrt64/" if client_arch(manifest_name) == "steamrt64" else "ubuntu12_32/"
 UA = "Mozilla/5.0 (X11; Linux x86_64) lumalinux-watch-steam/1.0"
 
 
@@ -219,15 +239,26 @@ def _packages_container(man):
     return man
 
 
-def _package_rank(key):
-    # steamclient.so lives in the 32-bit client binaries package (bins_ubuntu12);
-    # try it (then sibling bins_*_ubuntu12) before the big runtime/webkit blobs
-    # so we download ~40 MB instead of ~600 MB.
-    if key == "bins_ubuntu12":
+def _package_rank(key, arch=None):
+    # steamclient.so lives in the client binaries package (bins_ubuntu12 for the
+    # 32-bit client; the steamrt64 manifest's keys are expected to carry
+    # "steamrt64" the same way); try it (then sibling bins_*) before the big
+    # runtime/webkit blobs so we download ~40 MB instead of ~600 MB. In the
+    # ubuntu12 manifest the "steamrt" keys are the runtime blobs, not the client.
+    arch = arch or client_arch()
+    if arch == "ubuntu12":
+        if key == "bins_ubuntu12":
+            return 0
+        if "bins" in key and "ubuntu12" in key and "steamrt" not in key:
+            return 1
+        if "ubuntu12" in key and "steamrt" not in key:
+            return 2
+        return 3
+    if key == "bins_steamrt64":
         return 0
-    if "bins" in key and "ubuntu12" in key and "steamrt" not in key:
+    if "bins" in key and "steamrt64" in key:
         return 1
-    if "ubuntu12" in key and "steamrt" not in key:
+    if "steamrt64" in key and "runtime" not in key:
         return 2
     return 3
 
@@ -277,25 +308,25 @@ def open_package_zip(key, plain, vz):
 
 
 def _bins_unreachable(key):
-    """The bins packages (rank <= 1) are where ubuntu12_32/steamclient.so lives.
+    """The bins packages (rank <= 1) are where <client dir>/steamclient.so lives.
     One of them failing to download is not something to skip past: nothing
     later in the manifest carries the client library (the SDK package carries
     a linux32/ copy that is NOT it), so stop here with a clear message."""
     raise RuntimeError(
         "package %s could not be downloaded after %d attempts — it is the one "
-        "carrying ubuntu12_32/steamclient.so; not falling back to another "
-        "package (transient CDN error? re-run)" % (key, RETRIES))
+        "carrying %ssteamclient.so; not falling back to another "
+        "package (transient CDN error? re-run)" % (key, RETRIES, client_dir()))
 
 
 def extract_steamclient(man, out_path):
-    """Download packages until we find ubuntu12_32/steamclient.so; extract it to
-    out_path. Returns the member name.
+    """Download packages until we find <client dir>/steamclient.so (ubuntu12_32/
+    or steamrt64/, by manifest); extract it to out_path. Returns the member name.
 
     Only that exact member is accepted. Until 2026-09-22 any member ending in
     steamclient.so that was not 64-bit qualified, with linux32/ preferred —
     which is the Steamworks SDK's copy inside a later package, and a 504 on the
     bins package made the script return it as if it were the client."""
-    want = "ubuntu12_32/steamclient.so"
+    want = client_dir() + "steamclient.so"
     for key, plain, vz in package_entries(man):
         zf = open_package_zip(key, plain, vz)
         if zf is None:
@@ -342,9 +373,10 @@ def extract_client_tree(man, out_dir):
     steamclient.so makes it SELF-CONSISTENT and current, and removes the pinned
     asset entirely.
 
-    Only `ubuntu12_32/` members are taken: that is the 32-bit client directory
-    lumalinux hooks into, and it keeps the download to the bins package(s)."""
-    want = "ubuntu12_32/"
+    Only the client directory's members are taken (`ubuntu12_32/`, or
+    `steamrt64/` for a steamrt64 manifest): that is the directory lumalinux
+    hooks into, and it keeps the download to the bins package(s)."""
+    want = client_dir()
     found_client = False
     names = []
     for key, plain, vz in package_entries(man):
@@ -381,12 +413,13 @@ def extract_client_tree(man, out_dir):
         if any(m.endswith(want + "steamclient.so") for m in members):
             found_client = True
     if not found_client:
-        raise RuntimeError("ubuntu12_32/steamclient.so not found in any client package")
+        raise RuntimeError("%ssteamclient.so not found in any client package" % want)
     return len(names), names
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Fetch the current 32-bit steamclient.so from Valve's client CDN.")
+    ap = argparse.ArgumentParser(description="Fetch the current steamclient.so from Valve's client CDN "
+                                 "(32-bit ubuntu12 or 64-bit steamrt64, by LUMA_STEAM_MANIFEST).")
     ap.add_argument("--version-only", action="store_true",
                     help="print just the manifest version and exit (cheap gate)")
     ap.add_argument("--output", help="path to write the extracted steamclient.so")
@@ -394,8 +427,8 @@ def main():
                     help="print the manifest's package keys and file names and exit "
                          "(no downloads) — use it to find where a given file lives")
     ap.add_argument("--extract-tree", metavar="DIR",
-                    help="extract the whole current ubuntu12_32/ client tree into DIR "
-                         "(for the runtime smoke test; replaces the pinned tarball)")
+                    help="extract the whole current client tree (ubuntu12_32/ or steamrt64/) "
+                         "into DIR (for the runtime smoke test; replaces the pinned tarball)")
     args = ap.parse_args()
 
     try:
@@ -405,7 +438,8 @@ def main():
             print(ver)
             return 0
         if args.list_packages:
-            print("version=%s" % ver, file=sys.stderr)
+            print("version=%s arch=%s client=%ssteamclient.so" % (ver, client_arch(), client_dir()),
+                  file=sys.stderr)
             for key, plain, vz in package_entries(man):
                 print("%-28s rank=%d file=%s vz=%s" % (key, _package_rank(key),
                                                        plain, vz))
@@ -414,7 +448,7 @@ def main():
             n, names = extract_client_tree(man, args.extract_tree)
             print("version=%s" % ver, file=sys.stderr)
             print("tree=%s files=%d" % (args.extract_tree, n), file=sys.stderr)
-            sc = os.path.join(args.extract_tree, "ubuntu12_32", "steamclient.so")
+            sc = os.path.join(args.extract_tree, client_dir().rstrip("/"), "steamclient.so")
             print("sha256=%s" % sha256_file(sc))
             return 0
         if not args.output:
