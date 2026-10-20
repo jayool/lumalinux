@@ -162,6 +162,12 @@ endif()
 
 add_library(lumalinux SHARED ${LUMA_SOURCES})
 
+# std::thread / condition_variable need libpthread explicitly on glibc < 2.34
+# (the Steam Runtime 3 container's 2.31; merged into libc since). Threads::Threads
+# is the portable spelling and a no-op where it is already in libc.
+find_package(Threads REQUIRED)
+target_link_libraries(lumalinux PRIVATE Threads::Threads)
+
 if(LUMA_NO_UPDATE)
     target_compile_definitions(lumalinux PRIVATE LUMA_NO_UPDATE)
 endif()
