@@ -139,6 +139,7 @@ void cr_stats_fix_unreachable() {
 // Init). Stack alignment: GCC's i386 ABI wants %esp ≡ 0 (mod 16) at every
 // call; entry is ≡ 12, `push %ebp` makes it ≡ 8, and the sub/pushes below are
 // sized so each call site lands on ≡ 0. Only caller-saved registers are used.
+#if defined(__i386__)
 asm(R"(
     .text
     .globl _ZN13StatsHandlers18HandleGetUserStatsEjRKSt6vectorIN2PB5FieldESaIS2_EE
@@ -174,10 +175,19 @@ cr_stats_fix_stub:
     .size _ZN13StatsHandlers18HandleGetUserStatsEjRKSt6vectorIN2PB5FieldESaIS2_EE, .-_ZN13StatsHandlers18HandleGetUserStatsEjRKSt6vectorIN2PB5FieldESaIS2_EE
     .section .note.GNU-stack,"",@progbits
 )");
+#else
+// x86_64 build (steamrt64 client): the stub is i386 cdecl assembly and the
+// library it patches, cloud_redirect.so, is 32-bit only — there is nothing to
+// fix in a 64-bit process. Init() reports Disabled; the symbol is not defined.
+#endif
 
 namespace CrStatsFix {
 
 Result Init() {
+#if !defined(__i386__)
+    Log::Info("CR-stats: x86_64 build — CloudRedirect is 32-bit only, nothing to patch");
+    return Result::Disabled;
+#else
     if (std::getenv("LUMA_NO_CR_STATS_FIX")) {
         Log::Info("CR-stats: disabled via LUMA_NO_CR_STATS_FIX (stub forwards untouched)");
         return Result::Disabled;
@@ -296,6 +306,7 @@ Result Init() {
               "sret ok), bound from lumalinux; empty-store answers will pass through",
               ver, real, size);
     return Result::Applied;
+#endif
 }
 
 } // namespace CrStatsFix

@@ -15,6 +15,8 @@ compile_commands.json
 # Fetched from the libmem release tarball by tools/fetch_libmem.sh,
 # pinned to a specific upstream version. Not vendored.
 /lib/liblibmem.a
+# the x86_64 copies (tools/fetch_libmem.sh with LUMA_ARCH=x86_64)
+/lib/x86_64/
 /include/libmem/
 
 # yaml-cpp is vendored as a committed blob (SLSsteam parity): the .a file

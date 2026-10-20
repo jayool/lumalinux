@@ -178,6 +178,23 @@ void InstallHooks() {
     // pre-cache, dead provider, bogus code (docs/nosotros.md §5.2 F4, 2026-09-15/16).
     // With no provider alive the hook falls through and Steam behaves as in
     // v0.20.x: installs from the manifests LumaDeck pre-seeds in depotcache/.
+#ifdef LUMA_X86_64
+    // steamrt64 client: the hooks' byte patterns, calling-convention
+    // declarations, RVA feeds and struct layouts are all the 32-bit client's and
+    // are not derived for this binary yet (docs/steam-rt3-x64.md §3). Installing
+    // them would hook the wrong bytes. This build proves the library loads
+    // inside the steamrt3 container and reports; it installs nothing. The
+    // critical hooks read FAILED so LumaDeck says "Steam build not supported",
+    // which is the truth.
+    for (const char* n : {"DepotKey", "ShaderDepot", "GMRC"}) Status::RecordHook(n, Status::FAILED);
+    for (const char* n : {"BuildDep", "PackageZeroFinder", "SlsAchievementUnblock", "CrStatsFix"})
+        Status::RecordHook(n, Status::DISABLED);
+    Log::Warn("Install: x86_64 build on the steamrt64 client — hooks not derived for this "
+              "binary yet; nothing installed (port in progress)");
+    Log::Notify(LUMALINUX_VERSION_STRING " (x86_64): loaded in the 64-bit client, hooks not ported yet");
+    Status::Write();
+    return;
+#endif
     std::vector<HookSpec> specs = {
         {"DepotKey",    "LUMA_NO_DEPOTKEY", &Hooks::DepotKey::Install},
         {"ShaderDepot", "LUMA_NO_SHADERSKIP", &Hooks::ShaderDepot::Install},

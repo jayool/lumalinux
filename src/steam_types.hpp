@@ -8,6 +8,9 @@
 // copies of the same struct. When Valve changes a layout, or a defensive tweak
 // is needed (volatile, bounds check, a new field), it's edited here once. The
 // static_asserts pin the sizes — the build fails if a layout assumption breaks.
+// They are the 32-bit client's layouts. The x86_64 (steamrt64) client's are
+// not derived yet (docs/steam-rt3-x64.md §3); the 64-bit build compiles these
+// types unchecked and never touches them (src/main.cpp installs no hooks there).
 //
 // See issue #10.
 
@@ -23,7 +26,9 @@ struct CUtlVector {
     int      m_nGrowSize;
     uint32_t m_Size;
 };
+#if defined(__i386__)
 static_assert(sizeof(CUtlVector<uint32_t>) == 16, "CUtlVector header must be 16 bytes");
+#endif
 
 // DepotEntry — one depot inside a BuildDepotDependency CUtlVector. 32 bytes on
 // i386 (the BuildDep hook patches ManifestGid/ManifestSize in place).
@@ -38,5 +43,9 @@ struct DepotEntry {
     uint8_t  SharedInstall;
     uint8_t  _pad;
 };
+#if defined(__i386__)
 static_assert(sizeof(DepotEntry) == 0x20, "DepotEntry must be 32 bytes");
+#endif
+#if defined(__i386__)
 static_assert(sizeof(CUtlVector<DepotEntry>) == 16, "CUtlVector<DepotEntry> header must be 16 bytes");
+#endif

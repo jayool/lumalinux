@@ -125,3 +125,55 @@ jobs:
             res/version.txt
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # The 64-bit library for Valve's steamrt3 client (steamrt64/steam, Steam Deck
+  # beta channel since 2026-10). Built INSIDE the Steam Runtime 3 "sniper" SDK
+  # so the glibc symbols it needs are the container's (2.31): a .so built on
+  # the ubuntu-latest runner would ask for a newer glibc and never load there.
+  # Its hooks are not derived for the 64-bit binary yet (docs/steam-rt3-x64.md
+  # §3): the artifact loads inside the container, reports, installs nothing.
+  # Not attached to releases until it does something.
+  build-linux-x86_64:
+    name: Build 64-bit Linux .so (steamrt3 sniper SDK)
+    runs-on: ubuntu-latest
+    container:
+      image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Toolchain and yaml-cpp from the runtime SDK
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq cmake ninja-build libyaml-cpp-dev curl ca-certificates file binutils
+
+      - name: Fetch libmem (x86_64)
+        run: LUMA_ARCH=x86_64 ./tools/fetch_libmem.sh
+
+      - name: Configure
+        run: |
+          mkdir -p build64 && cd build64
+          VERSION_ARG=""
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VERSION_ARG="-DLUMALINUX_VERSION_OVERRIDE=${GITHUB_REF#refs/tags/v}"
+          fi
+          cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release -DLUMA_NO_UPDATE=OFF -DLUMA_X86_64=ON $VERSION_ARG
+
+      - name: Build
+        run: cd build64 && ninja -v
+
+      - name: Verify output
+        run: |
+          file build64/liblumalinux.so
+          file build64/liblumalinux.so | grep -q "ELF 64-bit" || { echo "ERROR: not a 64-bit ELF"; exit 1; }
+          # The container's glibc is 2.31: anything newer would not load there.
+          max="$(objdump -T build64/liblumalinux.so | grep -oE 'GLIBC_[0-9.]+' | sort -uV | tail -1)"
+          echo "newest glibc symbol version: ${max}"
+          [[ "$(printf '%s\n' "${max#GLIBC_}" 2.31 | sort -V | tail -1)" == "2.31" ]] || { echo "ERROR: ${max} is newer than the runtime's 2.31"; exit 1; }
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: lumalinux-x86_64
+          path: build64/liblumalinux.so
+

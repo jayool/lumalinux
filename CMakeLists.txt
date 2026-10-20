@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.18)
 project(lumalinux LANGUAGES C CXX VERSION 0.22.1)
 
 # Release builds override the version from the git tag so the binary's
@@ -40,11 +40,32 @@ configure_file(
     @ONLY
 )
 
-# Steam Linux client is 32-bit. We MUST build as 32-bit to be loadable via LD_PRELOAD.
-set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} -m32")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -m32 -D_GLIBCXX_USE_CXX11_ABI=0")
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -m32")
-set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} -m32")
+# The Steam Linux client has been 32-bit (ubuntu12_32/steam) for a decade and
+# the library must match the process it is preloaded into, so the default
+# build is -m32. Valve's steamrt3 client (steamrt64/steam, in the Steam Deck
+# beta channel since 2026-10) is x86_64 inside a Steam Runtime 3 container:
+# LUMA_X86_64=ON builds the same sources as a 64-bit library for it. The
+# 64-bit build must be made against that runtime's glibc (2.31, the sniper
+# SDK — see build.yml), or the .so will not load inside the container. Its
+# hooks are NOT derived for the 64-bit binary yet (docs/steam-rt3-x64.md §3):
+# that build loads, reports, and installs nothing (src/main.cpp).
+option(LUMA_X86_64 "Build the 64-bit library for the steamrt64 (steamrt3) client" OFF)
+if(LUMA_X86_64)
+    set(LUMA_ARCH_FLAG "-m64")
+    set(LUMA_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib/x86_64")
+    add_compile_definitions(LUMA_X86_64)
+    message(STATUS "lumalinux: x86_64 build for the steamrt64 client (hooks not ported yet)")
+else()
+    set(LUMA_ARCH_FLAG "-m32")
+    set(LUMA_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/lib")
+    # Old libstdc++ ABI: what the 32-bit Steam runtime's libstdc++ and the
+    # vendored lib/libyaml-cpp.a were built with.
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_GLIBCXX_USE_CXX11_ABI=0")
+endif()
+set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS} ${LUMA_ARCH_FLAG}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${LUMA_ARCH_FLAG}")
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${LUMA_ARCH_FLAG}")
+set(CMAKE_EXE_LINKER_FLAGS    "${CMAKE_EXE_LINKER_FLAGS} ${LUMA_ARCH_FLAG}")
 
 # Fail the LINK on any undefined symbol instead of shipping a .so that only
 # breaks when LD_PRELOAD'd into Steam (as a conditionally-excluded source once
@@ -150,16 +171,34 @@ endif()
 # system dependency is libdl (CMAKE_DL_LIBS) for dlopen/dlsym, already linked
 # below. No pkg-config / -dev packages are needed even for a SafeMode build.
 
-target_include_directories(lumalinux PRIVATE
-    src/
-    include/
-    ${CMAKE_CURRENT_BINARY_DIR}/generated/
-)
-target_link_libraries(lumalinux PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/liblibmem.a
-    ${CMAKE_CURRENT_SOURCE_DIR}/lib/libyaml-cpp.a
-    ${CMAKE_DL_LIBS}
-)
+if(LUMA_X86_64)
+    # libmem: tools/fetch_libmem.sh with LUMA_ARCH=x86_64 (lib/x86_64/). yaml-cpp:
+    # the runtime SDK's own static library (libyaml-cpp-dev, new libstdc++ ABI),
+    # with its headers — not the vendored 32-bit include/yaml-cpp, which belong
+    # to lib/libyaml-cpp.a.
+    find_library(LUMA_YAMLCPP_STATIC NAMES libyaml-cpp.a REQUIRED)
+    target_include_directories(lumalinux PRIVATE
+        src/
+        ${LUMA_LIB_DIR}/include/
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/
+    )
+    target_link_libraries(lumalinux PRIVATE
+        ${LUMA_LIB_DIR}/liblibmem.a
+        ${LUMA_YAMLCPP_STATIC}
+        ${CMAKE_DL_LIBS}
+    )
+else()
+    target_include_directories(lumalinux PRIVATE
+        src/
+        include/
+        ${CMAKE_CURRENT_BINARY_DIR}/generated/
+    )
+    target_link_libraries(lumalinux PRIVATE
+        ${LUMA_LIB_DIR}/liblibmem.a
+        ${LUMA_LIB_DIR}/libyaml-cpp.a
+        ${CMAKE_DL_LIBS}
+    )
+endif()
 
 set_target_properties(lumalinux PROPERTIES
     OUTPUT_NAME "lumalinux"
