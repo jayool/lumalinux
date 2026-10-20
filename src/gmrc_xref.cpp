@@ -81,12 +81,6 @@ uintptr_t FindStringLoaded(const char* needle, std::size_t nlen) {
 // Steps 1-4 for one string. `walkBack` enables the step-4 fallback for a build
 // with no usable .eh_frame_hdr — right only for GMRC's preamble-first shape.
 uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool walkBack) {
-#ifdef LUMA_X86_64
-    // The locator reads i386 PIC shapes (GOT-relative lea, get_pc_thunk); the
-    // 64-bit client addresses strings rip-relative. Not ported: RVA feed only.
-    Log::Debug("%s: string-xref rescue not derived for x86_64 — skipped", tag);
-    return 0;
-#endif
     Region rx = GetExecRegion();
     if (!rx) {
         Log::Debug("%s: steamclient.so r-x mapping not found", tag);
@@ -98,6 +92,29 @@ uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool wal
         Log::Debug("%s: anchor string not found in steamclient.so", tag);
         return 0;
     }
+
+#ifdef LUMA_X86_64
+    // steamrt64 client: the string is loaded `lea r64,[rip+disp32]`; no GOT and
+    // no PIC prologue to walk back to, so the function entry comes from
+    // .eh_frame_hdr or not at all (docs/steam-rt3-x64.md §1.3).
+    (void)walkBack;
+    const uintptr_t site = GmrcXrefCore::ScanRipLeaUnique(rx, s);
+    if (!site) {
+        Log::Debug("%s: no unique rip-relative lea for the anchor string (ambiguous or absent)", tag);
+        return 0;
+    }
+    uintptr_t ehStart = 0, ehEnd = 0;
+    if (!EhFrame::FindFunction(site, rx.addr + rx.size, ehStart, ehEnd)) {
+        Log::Warn("%s: lea @ 0x%lx found but .eh_frame_hdr placed it in no function — refusing",
+                  tag, (unsigned long)site);
+        return 0;
+    }
+    Log::Info("%s: function at 0x%lx (RVA 0x%lx, size %lu) via rip-relative string "
+              "anchor + .eh_frame_hdr",
+              tag, (unsigned long)ehStart, (unsigned long)(ehStart - rx.addr),
+              (unsigned long)(ehEnd - ehStart));
+    return ehStart;
+#else
 
     // Steps 1-3 (GOT base, the unique lea) are prologue-independent; step 4 —
     // turning the site into the function ENTRY — is the fragile one, and the one
@@ -163,6 +180,7 @@ uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool wal
     Log::Info("%s: derived function at 0x%lx (RVA 0x%lx) via string anchor",
               tag, (unsigned long)entry, (unsigned long)(entry - rx.addr));
     return entry;
+#endif
 }
 
 } // namespace

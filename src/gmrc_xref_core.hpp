@@ -124,6 +124,42 @@ inline uint32_t ScanLeaAll(Region rx, int32_t disp, uintptr_t* out,
 }
 
 // Nearest preceding PIC prologue (`E8 rel32; add reg,imm32`) = function entry.
+// ── x86-64 ───────────────────────────────────────────────────────────────────
+// On the steamrt64 client a string is loaded as `lea r64,[rip+disp32]`
+// (REX.W 8D modrm=00 reg 101 disp32): no GOT, the address is insn_end + disp.
+// Same contract as ScanLeaUnique/ScanLeaAll above, keyed by the string's
+// address instead of a GOT displacement. A REX prefix is optional (a 32-bit
+// `lea r32,[rip+…]` is legal); the site reported is the first byte of the
+// instruction.
+inline uint32_t ScanRipLeaAll(Region rx, uintptr_t target, uintptr_t* out,
+                              uint32_t maxOut, uint32_t* total = nullptr) {
+    if (total) *total = 0;
+    if (!rx || rx.size < 6) return 0;
+    const uint8_t* p = rx.p;
+    const std::size_t n = rx.size - 6;
+    uint32_t written = 0, seen = 0;
+    for (std::size_t i = 0; i <= n; ++i) {
+        if (p[i] != 0x8D) continue;
+        if ((p[i + 1] & 0xC7) != 0x05) continue;
+        const bool rex = i > 0 && (p[i - 1] & 0xF0) == 0x40;
+        int32_t d;
+        std::memcpy(&d, p + i + 2, 4);
+        const uintptr_t insnEnd = rx.addr + i + 6;
+        if (insnEnd + static_cast<uintptr_t>(static_cast<intptr_t>(d)) != target) continue;
+        ++seen;
+        if (written < maxOut) out[written++] = rx.addr + i - (rex ? 1 : 0);
+    }
+    if (total) *total = seen;
+    return written;
+}
+
+inline uintptr_t ScanRipLeaUnique(Region rx, uintptr_t target) {
+    uintptr_t site = 0;
+    uint32_t total = 0;
+    const uint32_t n = ScanRipLeaAll(rx, target, &site, 1, &total);
+    return (n == 1 && total == 1) ? site : 0;
+}
+
 inline uintptr_t WalkBackToPrologue(Region rx, uintptr_t site,
                                     std::size_t maxBack = 0x8000) {
     if (!rx || site < rx.addr) return 0;

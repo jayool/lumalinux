@@ -293,11 +293,6 @@ uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
                                   const char* implMangledName,
                                   int maxSlots, int* outSlot) {
     if (outSlot) *outSlot = -1;
-#ifdef LUMA_X86_64
-    // The method-name xref scan reads i386 GOT-relative lea sites. Not ported.
-    Log::Debug("RTTI byname: rescue not derived for x86_64 — skipped");
-    return 0;
-#endif
 
     uintptr_t base = 0; size_t size = 0;
     std::vector<Range> readable;
@@ -323,11 +318,13 @@ uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
         Log::Warn("RTTI byname: steamclient.so r-x mapping not found");
         return 0;
     }
+#ifndef LUMA_X86_64
     const uintptr_t got = GmrcXrefCore::DeriveGotBaseConsensus(rx);
     if (!got) {
         Log::Warn("RTTI byname: could not derive GOT base");
         return 0;
     }
+#endif
 
     // (3) the interface-map vtable, and its slots sorted by address so a
     // reference can be attributed to the function that contains it.
@@ -353,11 +350,16 @@ uintptr_t ResolveVtableSlotByName(const char* mapMangledName,
     constexpr uint32_t kMaxRefs = 32;
     int best = -1;
     for (uintptr_t s : strAddrs) {
-        const int32_t disp = static_cast<int32_t>(
-            static_cast<intptr_t>(s) - static_cast<intptr_t>(got));
         uintptr_t refs[kMaxRefs];
         uint32_t total = 0;
+#ifdef LUMA_X86_64
+        // steamrt64 client: the name is loaded `lea r64,[rip+disp32]`.
+        const uint32_t n = GmrcXrefCore::ScanRipLeaAll(rx, s, refs, kMaxRefs, &total);
+#else
+        const int32_t disp = static_cast<int32_t>(
+            static_cast<intptr_t>(s) - static_cast<intptr_t>(got));
         const uint32_t n = GmrcXrefCore::ScanLeaAll(rx, disp, refs, kMaxRefs, &total);
+#endif
         if (total > kMaxRefs)
             Log::Debug("RTTI byname: '%s' @0x%lx has %u refs, examining %u",
                        methodName, (unsigned long)s, total, n);

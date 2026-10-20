@@ -47,7 +47,7 @@ constexpr uint8_t kCallbackPost[4] = { 0x6A, kLicensesUpdatedCallback, 0x50, 0xE
 
 constexpr std::size_t kHeadBytes  = 96;   // how far into the function c2/c3 may sit
 constexpr std::size_t kJleWindow  = 16;   // bytes after the this-read for test+jle
-constexpr std::size_t kMaxSites   = 64;   // c1 sites per module (11 seen); more -> refuse
+constexpr std::size_t kMaxSites   = 96;   // c1 sites per module (11 seen on i386, 55 on x86-64); more -> refuse
 
 struct Info {
     std::size_t sites = 0;          // c1 sites found
@@ -132,6 +132,95 @@ inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = 
         if (ends[i] - f < len) len = static_cast<std::size_t>(ends[i] - f);
         uint32_t disp = 0;
         if (!ReadsThisThenBails(rx.p + off, len, &disp)) continue;
+        ++I.kept;
+        if (I.kept == 1) { keep = f; I.first = f; I.memberDisp = disp; }
+        else if (I.kept == 2) { I.second = f; }
+    }
+    return (I.kept == 1) ? keep : 0;
+}
+
+// ── x86-64 ───────────────────────────────────────────────────────────────────
+// Same three criteria on the steamrt64 client (measured on 947e5a19…,
+// docs/steam-rt3-x64.md §1.3), in SysV shape:
+//   c1  posts callback 125:        BE 7D 00 00 00 (mov esi,0x7d) with a CALL
+//       (E8) within the next kCallWindow64 bytes — 55 functions per build
+//   c2  reads a field of `this`:   [44] 8B modrm(mod=10, rm=rdi) disp32, i.e.
+//       `mov r32,[rdi+disp32]` early in the head (the member was 0x23c4; free)
+//   c3  bails when it is <= 0:     [REX] 85 /r … 0F 8E (test; jle) within the window
+//   c1+c2+c3 leaves exactly ONE function (0x18d9e00 on 947e5a19…).
+constexpr uint8_t kCallbackPost64[5] = { 0xBE, kLicensesUpdatedCallback, 0x00, 0x00, 0x00 };
+constexpr std::size_t kCallWindow64 = 24;
+
+inline bool ReadsThisThenBails64(const uint8_t* head, std::size_t len, uint32_t* disp) {
+    if (len < 12) return false;
+    for (std::size_t k = 0; k + 7 < len; ++k) {
+        std::size_t o = k;
+        if ((head[o] & 0xF0) == 0x40) ++o;                // optional REX
+        if (o + 6 > len || head[o] != 0x8B) continue;
+        const uint8_t m = head[o + 1];
+        if ((m & 0xC7) != 0x87) continue;                  // mod=10, rm=111 (rdi)
+        uint32_t d = 0;
+        std::memcpy(&d, head + o + 2, 4);
+        if (disp) *disp = d;
+        const std::size_t w0 = o + 6;
+        const std::size_t w1 = (w0 + kJleWindow * 2 < len) ? w0 + kJleWindow * 2 : len;
+        for (std::size_t m2 = w0; m2 + 4 < w1; ++m2) {
+            std::size_t t = m2;
+            if ((head[t] & 0xF0) == 0x40) ++t;
+            if (t + 4 <= w1 && head[t] == 0x85 && head[t + 2] == 0x0F && head[t + 3] == 0x8E)
+                return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+inline std::size_t FindCallbackPostSites64(Region rx, uintptr_t* out, std::size_t maxOut) {
+    std::size_t n = 0;
+    if (!rx || rx.size < sizeof(kCallbackPost64) + kCallWindow64) return 0;
+    const std::size_t end = rx.size - sizeof(kCallbackPost64) - kCallWindow64;
+    for (std::size_t i = 0; i <= end; ++i) {
+        if (rx.p[i] != kCallbackPost64[0] ||
+            std::memcmp(rx.p + i, kCallbackPost64, sizeof(kCallbackPost64)) != 0) continue;
+        bool call = false;
+        for (std::size_t j = i + sizeof(kCallbackPost64); j < i + sizeof(kCallbackPost64) + kCallWindow64; ++j)
+            if (rx.p[j] == 0xE8) { call = true; break; }
+        if (!call) continue;
+        if (n < maxOut) out[n] = rx.addr + i;
+        ++n;
+    }
+    return n;
+}
+
+template <class FnOf>
+inline uintptr_t LocateNotifyLicensesUpdated64(Region rx, FnOf fnOf, Info* info = nullptr) {
+    Info local;
+    Info& I = info ? *info : local;
+    I = Info{};
+    if (!rx) return 0;
+    uintptr_t sites[kMaxSites];
+    const std::size_t total = FindCallbackPostSites64(rx, sites, kMaxSites);
+    I.sites = total;
+    if (total == 0 || total > kMaxSites) return 0;
+    uintptr_t fns[kMaxSites], ends[kMaxSites];
+    std::size_t nf = 0;
+    for (std::size_t i = 0; i < total; ++i) {
+        uintptr_t f = 0, e = 0;
+        if (!fnOf(sites[i], f, e) || !f || e <= f) continue;
+        bool seen = false;
+        for (std::size_t j = 0; j < nf; ++j) if (fns[j] == f) { seen = true; break; }
+        if (!seen) { fns[nf] = f; ends[nf] = e; ++nf; }
+    }
+    I.candidates = nf;
+    uintptr_t keep = 0;
+    for (std::size_t i = 0; i < nf; ++i) {
+        const uintptr_t f = fns[i];
+        if (f < rx.addr || f >= rx.addr + rx.size) continue;
+        const std::size_t off = static_cast<std::size_t>(f - rx.addr);
+        std::size_t len = (rx.size - off < kHeadBytes) ? rx.size - off : kHeadBytes;
+        if (ends[i] - f < len) len = static_cast<std::size_t>(ends[i] - f);
+        uint32_t disp = 0;
+        if (!ReadsThisThenBails64(rx.p + off, len, &disp)) continue;
         ++I.kept;
         if (I.kept == 1) { keep = f; I.first = f; I.memberDisp = disp; }
         else if (I.kept == 2) { I.second = f; }

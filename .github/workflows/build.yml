@@ -175,6 +175,9 @@ jobs:
           g++ -O1 -std=c++20 -masm=intel -I src -I lib/x86_64/include \
             tools/rip_fixup_selftest.cpp src/compat_x86_64.cpp lib/x86_64/liblibmem.a -lpthread -o build64/rip_fixup_selftest
           build64/rip_fixup_selftest
+          # Compile-only here (no steamclient.so on the runner); fetch-steamclient.yml
+          # runs it against every steamrt64 client it downloads.
+          g++ -O2 -std=c++17 tools/x64_rescues_selftest.cpp -o build64/x64_rescues_selftest
 
       - name: Verify output
         shell: bash

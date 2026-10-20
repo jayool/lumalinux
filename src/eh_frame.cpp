@@ -92,26 +92,38 @@ std::string SteamclientPath() {
 uintptr_t EhFrameHdrVaddr(const char* path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return 0;
-    uint8_t eh[52] = {};
+    // ELFCLASS32 (the ubuntu12_32 client) or ELFCLASS64 (the steamrt64 client).
+    uint8_t eh[64] = {};
     f.read(reinterpret_cast<char*>(eh), sizeof(eh));
     if (f.gcount() < static_cast<std::streamsize>(sizeof(eh))) return 0;
-    if (std::memcmp(eh, "\x7f" "ELF", 4) != 0 || eh[4] != 1) return 0;
+    if (std::memcmp(eh, "\x7f" "ELF", 4) != 0 || (eh[4] != 1 && eh[4] != 2)) return 0;
+    const bool is64 = eh[4] == 2;
 
-    uint32_t phoff = 0; uint16_t phentsize = 0, phnum = 0;
-    std::memcpy(&phoff, eh + 0x1C, 4);
-    std::memcpy(&phentsize, eh + 0x2A, 2);
-    std::memcpy(&phnum, eh + 0x2C, 2);
-    if (!phoff || !phnum || phentsize < 32) return 0;
-
+    uint64_t phoff = 0; uint16_t phentsize = 0, phnum = 0;
+    if (is64) {
+        std::memcpy(&phoff, eh + 0x20, 8);
+        std::memcpy(&phentsize, eh + 0x36, 2);
+        std::memcpy(&phnum, eh + 0x38, 2);
+    } else {
+        uint32_t phoff32 = 0;
+        std::memcpy(&phoff32, eh + 0x1C, 4);
+        phoff = phoff32;
+        std::memcpy(&phentsize, eh + 0x2A, 2);
+        std::memcpy(&phnum, eh + 0x2C, 2);
+    }
+    const size_t phsz = is64 ? 56 : 32;
+    if (!phoff || !phnum || phentsize < phsz) return 0;
     for (uint16_t i = 0; i < phnum; ++i) {
-        uint8_t ph[32] = {};
-        f.seekg(phoff + static_cast<size_t>(i) * phentsize);
-        f.read(reinterpret_cast<char*>(ph), sizeof(ph));
-        if (f.gcount() < static_cast<std::streamsize>(sizeof(ph))) return 0;
-        uint32_t type = 0, vaddr = 0;
+        uint8_t ph[56] = {};
+        f.seekg(static_cast<std::streamoff>(phoff + static_cast<uint64_t>(i) * phentsize));
+        f.read(reinterpret_cast<char*>(ph), static_cast<std::streamsize>(phsz));
+        if (f.gcount() < static_cast<std::streamsize>(phsz)) return 0;
+        uint32_t type = 0;
         std::memcpy(&type, ph + 0, 4);
-        std::memcpy(&vaddr, ph + 8, 4);
-        if (type == kPtGnuEhFrame) return vaddr;
+        if (type != kPtGnuEhFrame) continue;
+        if (is64) { uint64_t v = 0; std::memcpy(&v, ph + 16, 8); return static_cast<uintptr_t>(v); }
+        uint32_t v = 0; std::memcpy(&v, ph + 8, 4);
+        return v;
     }
     return 0;
 }

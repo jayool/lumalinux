@@ -12,11 +12,6 @@
 namespace ReconcileAnchor {
 
 uintptr_t FindNotifyLicensesUpdated() {
-#ifdef LUMA_X86_64
-    // Anchors on i386 code shapes (push 0x7d; mov eax,[ebp+8]). Not ported.
-    Log::Debug("Reconcile anchor: rescue not derived for x86_64 — skipped");
-    return 0;
-#endif
     using GmrcXrefCore::Region;
     const Region rx = GmrcXref::SteamclientExecRegion();
     if (!rx) {
@@ -35,7 +30,11 @@ uintptr_t FindNotifyLicensesUpdated() {
     };
 
     ReconcileAnchorCore::Info info;
+#ifdef LUMA_X86_64
+    const uintptr_t entry = ReconcileAnchorCore::LocateNotifyLicensesUpdated64(rx, fnOf, &info);
+#else
     const uintptr_t entry = ReconcileAnchorCore::LocateNotifyLicensesUpdated(rx, fnOf, &info);
+#endif
 
     if (info.sites == 0) {
         Log::Debug("Reconcile anchor: no `push 0x7d; push eax; call` site in steamclient.so");

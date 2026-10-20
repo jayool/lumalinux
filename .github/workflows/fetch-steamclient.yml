@@ -11,6 +11,14 @@ name: fetch-steamclient
 # and an INFO.txt (version, size, sha256, build-id); delete it when done with
 # it. Each run force-pushes that branch, so re-running the same manifest and
 # version replaces, never piles up.
+#
+# For a steamrt64 (x86-64) client it also runs tools/check_patterns_x64.py —
+# the feed deriver + validator for that client — and the offline C++ rescue
+# self-test (tools/x64_rescues_selftest.cpp) against the same binary, cross-
+# checked on the tool's result. On a non-BLOCKING verdict the derived
+# res/rvas/<sha256>.yaml rides along on the throwaway branch and in the
+# artifact: copying it into res/rvas/ on main is what publishes it (the .so
+# fetches the feed from main), and that stays a human decision.
 
 on:
   workflow_dispatch:
@@ -82,7 +90,29 @@ jobs:
             echo "elf=$CLASS"
             echo "fetched=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           } | tee INFO.txt
+          echo "elf=$CLASS" >> "$GITHUB_OUTPUT"
           echo "branch=steamclient/${LUMA_STEAM_MANIFEST}-${V}" >> "$GITHUB_OUTPUT"
+
+      - name: Derive and validate the x86-64 feed (steamrt64 only)
+        id: x64
+        if: contains(steps.dl.outputs.elf, '64-bit')
+        shell: bash
+        run: |
+          pip install -q capstone
+          set +e
+          python3 tools/check_patterns_x64.py steamclient.so --json x64-result.json \
+            --emit-rvas rvas-out --steam-version "${{ steps.dl.outputs.version }}" | tee x64-report.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "check_patterns_x64.py exit: $code (0 clean / 2 non-critical missing / 3 blocking)"
+          # The runtime's own rescues, offline, must land where the tool did.
+          EXP=$(python3 -c "
+          import json; r=json.load(open('x64-result.json'))
+          print(' '.join('%s=%s' % (k, v['rva']) for k, v in r['hooks'].items() if v.get('status') == 'UNIQUE' and v.get('rva')))")
+          g++ -O2 -std=c++17 tools/x64_rescues_selftest.cpp -o x64_rescues_selftest
+          ./x64_rescues_selftest steamclient.so $EXP | tee -a x64-report.txt
+          if [ "$code" = "3" ]; then echo "::error::check_patterns_x64.py: BLOCKING — no feed for this build"; exit 1; fi
 
       - name: Push to the throwaway branch
         env:
@@ -91,6 +121,10 @@ jobs:
         run: |
           rm -rf bin-branch && mkdir bin-branch
           cp steamclient.so INFO.txt bin-branch/
+          if ls rvas-out/*.yaml >/dev/null 2>&1; then
+            mkdir -p bin-branch/res/rvas && cp rvas-out/*.yaml bin-branch/res/rvas/
+            cp x64-result.json x64-report.txt bin-branch/
+          fi
           cd bin-branch
           git init -q -b "$BR"
           git config user.name "github-actions[bot]"
@@ -107,6 +141,9 @@ jobs:
           path: |
             steamclient.so
             INFO.txt
+            rvas-out/
+            x64-result.json
+            x64-report.txt
 
       - name: Job summary
         env:
@@ -118,4 +155,13 @@ jobs:
             echo '```'; cat INFO.txt; echo '```'
             echo
             echo "Branch: \`$BR\` (delete when done)."
+            if [ -f x64-report.txt ]; then
+              echo
+              echo "### x86-64 feed (tools/check_patterns_x64.py + tools/x64_rescues_selftest.cpp)"
+              echo; echo '```'; cat x64-report.txt; echo '```'
+              if ls rvas-out/*.yaml >/dev/null 2>&1; then
+                echo; echo "Derived feed (copy into \`res/rvas/\` on main to publish):"
+                echo; echo '```yaml'; cat rvas-out/*.yaml; echo '```'
+              fi
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
