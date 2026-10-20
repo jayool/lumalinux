@@ -230,6 +230,20 @@ hook se dispare con una descarga real (sin SLSsteam de 64 no hay propiedad
 falsa, Steam no pide claves ni códigos), ni ShaderDepot delegando en la
 original dentro de Steam (solo offline).
 
+**LumaDeck sobre el cliente de 64** (codespace, 2026-10-20, rama de LumaDeck
+`ccr-93082cee-iz5gzi`): el backend sabe qué cliente corre
+(`paths.detect_steam_client_arch`: el binario del proceso de Steam, luego el
+marcador de Valve, si no 32), hashea el `steamclient.so` de ese cliente
+(`947e5a19…` en la beta, `0d01ab4f…` en estable) y lleva `client.arch` en el
+payload; el QAM no lo pinta todavía. `status.json` existe en dos sitios a la
+vez tras cambiar de cliente sin reiniciar (`/run/user` del cliente de 32,
+`~/.cache` del de 64): LumaDeck elige el que tenga el proceso vivo. Con la
+`.so` de 64 en el sitio de la instalada, `read_lumalinux_health` = healthy.
+**Decky Loader 3.2.10 no pinta el QAM con el cliente de 64** en el codespace
+("This error likely occurred in the Decky frontend", con todos los plugins
+desactivados también): antes que LumaDeck, en una Deck de 64 tiene que
+funcionar Decky.
+
 **Abierto.** El puntero `CUser` de Reconcile: en 32 lo da el hook de
 `isSubscribed` de SLSsteam (`sls_achievement_unblock.cpp`); sin SLSsteam en
 64 no hay de dónde sacarlo, y los llamadores de `0x18d9e00` lo reciben como
