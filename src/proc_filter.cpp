@@ -22,9 +22,15 @@ bool Probe() {
     size_t len = std::strlen(comm);
     if (len > 0 && comm[len - 1] == '\n') comm[len - 1] = '\0';
 
+    // Only the client process (`steam`) maps steamclient.so. `steamwebhelper`
+    // used to be listed too, harmlessly: it is a 64-bit process and the 32-bit
+    // library never loaded there. The 64-bit library DOES load there, and the
+    // constructor's threads/atexit inside Chromium's helper made it die and
+    // respawn every ~10 s (codespace, steamrt64 client, 2026-10-20: 13 CEF
+    // asserts in 120 s against 1 vanilla; one `steam` pid maps steamclient.so,
+    // the helper maps none). So: the client only.
     static const char* const allowed[] = {
         "steam",
-        "steamwebhelper",
     };
     for (const char* a : allowed) {
         if (std::strcmp(comm, a) == 0) return true;

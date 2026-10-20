@@ -4,6 +4,7 @@
 #include "log.hpp"
 
 #include "libmem/libmem.h"
+#include "rip_fixup_core.hpp"
 
 #include <cstring>
 #include <cstdio>
@@ -12,6 +13,7 @@
 
 namespace {
 
+#ifndef LUMA_X86_64   // i386 only: PIC thunks and SLSsteam's chained jmp
 std::vector<std::string> SplitOn(const char* s, char sep) {
     std::vector<std::string> out;
     std::string cur;
@@ -124,6 +126,7 @@ bool RelocateChainedJmp(uintptr_t fn, uintptr_t tramp) {
     return true;
 }
 
+#endif // !LUMA_X86_64
 } // namespace
 
 namespace LmHook {
@@ -151,11 +154,45 @@ bool Install(uintptr_t target, void* hookFn, void** outTrampoline) {
     // Branch on prologue kind: a chained jmp prologue (already hooked by
     // a third party) needs rel32 relocation; the original PIC prologue
     // needs the get_pc_thunk fixup. The two are mutually exclusive.
+#ifdef LUMA_X86_64
+    // x86-64: no PIC thunks, but libmem copies the relocated prologue verbatim,
+    // so a rip-relative instruction in it must be rebased (src/rip_fixup_core.hpp)
+    // — and when it cannot be, the hook is undone rather than left to fault on
+    // the first call through the trampoline.
+    (void)already_hooked;
+    const auto verdict = RipFixupCore::FixRelocated(
+        target, static_cast<uintptr_t>(tramp), static_cast<std::size_t>(size),
+        [](uintptr_t at, RipFixupCore::Inst* out) {
+            static thread_local lm_inst_t li;
+            if (!LM_Disassemble(static_cast<lm_address_t>(at), &li)) return false;
+            out->address = at; out->size = static_cast<unsigned>(li.size);
+            out->mnemonic = li.mnemonic; out->op_str = li.op_str;
+            return true;
+        },
+        [](uintptr_t at, int32_t* v) { std::memcpy(v, reinterpret_cast<const void*>(at), 4); },
+        [](uintptr_t at, int32_t v) {
+            lm_prot_t oldProt;
+            LM_ProtMemory(static_cast<lm_address_t>(at), 4, LM_PROT_XRW, &oldProt);
+            LM_WriteMemory(static_cast<lm_address_t>(at), reinterpret_cast<lm_byte_t*>(&v), 4);
+            LM_ProtMemory(static_cast<lm_address_t>(at), 4, oldProt, nullptr);
+        },
+        [](const char* why) { Log::Error("LmHook: trampoline fix-up: %s", why); });
+    if (verdict == RipFixupCore::Verdict::Unfixable) {
+        LM_UnhookCode(static_cast<lm_address_t>(target), tramp, size);
+        Log::Error("LmHook: hook on 0x%lx UNDONE — its relocated prologue cannot be "
+                   "rebased (see the line above)", (unsigned long)target);
+        return false;
+    }
+    if (verdict == RipFixupCore::Verdict::Fixed)
+        Log::Info("LmHook: rebased rip-relative displacement(s) in the trampoline of 0x%lx",
+                  (unsigned long)target);
+#else
     if (already_hooked) {
         RelocateChainedJmp(target, static_cast<uintptr_t>(tramp));
     } else {
         FixPicThunk(target, static_cast<uintptr_t>(tramp));
     }
+#endif
 
     *outTrampoline = reinterpret_cast<void*>(tramp);
     Log::Info("LmHook: hooked 0x%lx (size=%zu tramp=0x%lx)",

@@ -166,6 +166,16 @@ jobs:
       - name: Build
         run: cd build64 && ninja -v
 
+      # Proof that the x86-64 trampoline fix-up works against THIS libmem and
+      # this toolchain (src/rip_fixup_core.hpp): libmem copies a rip-relative
+      # prologue verbatim; the hook on the 64-bit client's GetShaderCacheDepot
+      # depends on the rebase, and on the refusal when it cannot rebase.
+      - name: Trampoline fix-up self-test
+        run: |
+          g++ -O1 -std=c++20 -masm=intel -I src -I lib/x86_64/include \
+            tools/rip_fixup_selftest.cpp lib/x86_64/liblibmem.a -lpthread -o build64/rip_fixup_selftest
+          build64/rip_fixup_selftest
+
       - name: Verify output
         shell: bash
         run: |

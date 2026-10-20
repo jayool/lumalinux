@@ -7,8 +7,9 @@ namespace ProcFilter {
 //
 // lumalinux is loaded into EVERY child of the Steam launcher via LD_PRELOAD
 // (steamerrorreporter, steam-runtime-launcher-service, game processes under
-// Proton, …). Only `steam` and `steamwebhelper` ever map steamclient.so, so
-// everywhere else we must return immediately with zero side effects.
+// Proton, …). Only `steam` maps steamclient.so (the webhelper does not, and the
+// 64-bit library loading into it made it respawn in a loop — proc_filter.cpp),
+// so everywhere else we must return immediately with zero side effects.
 //
 // Fail-open: if /proc is unreadable we allow, because a false negative here
 // silently disables lumalinux while a false positive only costs a worker that
