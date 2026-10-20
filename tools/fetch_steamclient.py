@@ -5,17 +5,22 @@
 # ARCHITECTURE: decided by the manifest name. A `*_ubuntu12` manifest is the
 # 32-bit client and the library is `ubuntu12_32/steamclient.so` (the default);
 # a `*_steamrt64` manifest is the 64-bit steamrt3 client (steamrt64/steam,
-# docs/steam-rt3-x64.md). Its packages (seen 2026-10-20, --list-packages):
-# bins_steamrt64 (the client, 40 members), bins_sdk_steamrt64, bins_codecs_*,
-# bins_misc_*, bins_hardware_*, bins_steamrt_steamrt64, webkit_*, sdl3_*,
-# steam_steamrt64, runtime_steamrt_steamrt64 (80 MB), plus the *_all packages
-# shared with ubuntu12. bins_steamrt64 ALSO carries ubuntu12_32/steamclient.so
-# (the 32-bit library, the steamrt32/ tree on disk — run 2 extracted that one
-# and called it the client); so for steamrt64 the library is matched by
-# basename, every 32-bit or SDK directory (ubuntu12_32/, linux32/, linux64/)
-# is refused, and the extracted file must be ELFCLASS64 or the run fails.
-# --list-members prints every member of the bins packages when the layout
-# needs looking at again.
+# docs/steam-rt3-x64.md) and the library is `steamrt64/steamclient.so`.
+# That manifest's layout (fetch-steamclient.yml runs 1-3, 2026-10-20):
+#   bins_steamrt_steamrt64   the runtime client trees: steamrt64/steamclient.so
+#                            (53.5 MB, the one) AND steamrt32/steamclient.so
+#                            (56 MB, the 32-bit library the new client ships
+#                            for 32-bit games — not the client, refused)
+#   bins_steamrt64           the LEGACY trees ubuntu12_32/ (with its own
+#                            steamclient.so, 32-bit, refused) and ubuntu12_64/
+#   bins_codecs_steamrt_steamrt64, bins_misc_steamrt_steamrt64: more steamrt*/
+#   bins_sdk/codecs/misc/hardware_steamrt64: legacy; hardware's plain file is
+#                            not a zip
+#   webkit/sdl3/steam/miles_steamrt64, runtime_steamrt_steamrt64 (80 MB), the
+#                            *_all packages shared with ubuntu12
+# The extracted file must be ELFCLASS64 for steamrt64 (ELFCLASS32 for
+# ubuntu12) or the run fails. --list-members prints every member of the bins
+# packages when the layout needs looking at again.
 #
 # Used by .github/workflows/watch-steam.yml to get the ubuntu12_32/steamclient.so
 # whose SHA-256 goes into res/updates.yaml so check_patterns.py can validate it
@@ -262,12 +267,12 @@ def _package_rank(key, arch=None):
         if "ubuntu12" in key and "steamrt" not in key:
             return 2
         return 3
-    if key == "bins_steamrt64":
+    if key == "bins_steamrt_steamrt64":
         return 0
-    if "bins" in key and "steamrt64" in key:
+    if "bins" in key and "steamrt_steamrt64" in key:
         return 1
-    if "steamrt64" in key and "runtime" not in key:
-        return 2
+    if "bins" in key and "steamrt64" in key:
+        return 2                             # the legacy ubuntu12_* trees
     return 3
 
 
@@ -326,15 +331,11 @@ def _bins_unreachable(key):
         "package (transient CDN error? re-run)" % (key, RETRIES, client_dir()))
 
 
-_RT64_REFUSED = ("ubuntu12_32/", "linux32/", "linux64/")
-
-
 def _is_rt64_client(member):
-    """A steamrt64 package member that is the 64-bit client library: basename
-    steamclient.so outside the 32-bit (ubuntu12_32/) and SDK (linux32/, linux64/)
-    directories."""
-    return (member.rsplit("/", 1)[-1] == "steamclient.so"
-            and not any(d in member for d in _RT64_REFUSED))
+    """The 64-bit client library inside a steamrt64 package: exactly the
+    steamrt64/steamclient.so member (steamrt32/, ubuntu12_32/ and the SDK's
+    linux*/ copies are other files)."""
+    return member == "steamrt64/steamclient.so" or member.endswith("/steamrt64/steamclient.so")
 
 
 def _check_elf_class(path, want64):
@@ -452,9 +453,8 @@ def extract_client_tree(man, out_dir):
                 _bins_unreachable(key)
             continue
         if rt64:
-            # No prefix in the members: everything in the bins packages is the
-            # steamrt64/ tree; prefix it so the result looks like the install.
-            members = [m for m in zf.namelist() if not m.endswith("/")]
+            members = [m for m in zf.namelist()
+                       if want in m and not m.endswith("/") and "steamrt32" not in m]
         else:
             members = [m for m in zf.namelist()
                        if want in m and not m.endswith("/") and "ubuntu12_64" not in m]
@@ -463,7 +463,7 @@ def extract_client_tree(man, out_dir):
                   file=sys.stderr)
             continue
         for m in members:
-            rel = want + m if rt64 else m[m.index(want):]
+            rel = m[m.index(want):]
             dst = os.path.join(out_dir, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             with zf.open(m) as src, open(dst, "wb") as f:
