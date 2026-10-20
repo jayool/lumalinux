@@ -380,6 +380,7 @@ void InstallHooks() {
     Log::Info("Install: lumalinux active pieces: %s", installed.empty() ? "none" : installed.c_str());
 
     // Snapshot for external consumers (LumaDeck reads $XDG_RUNTIME_DIR/lumalinux/
+    // — or ~/.cache/lumalinux/ from the 64-bit build, see status.cpp —
     // status.json to render the Settings health badge). Best-effort.
     Status::Write();
 

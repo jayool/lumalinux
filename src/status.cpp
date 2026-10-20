@@ -37,7 +37,18 @@ const char* OutcomeStr(Status::Outcome o) {
 // → $HOME/.cache → /tmp. mkdir -p the directory; ignore errors.
 std::string ResolvePath() {
     std::string dir;
-    if (const char* xdgRun = std::getenv("XDG_RUNTIME_DIR"); xdgRun && *xdgRun) {
+#ifdef LUMA_X86_64
+    // steamrt64 client: the library runs inside the Steam Runtime container,
+    // where XDG_RUNTIME_DIR is set but is NOT the host's /run/user/<uid> tree —
+    // a file written there is invisible to LumaDeck (docs/steam-rt3-x64.md
+    // §1.3). $HOME is bind-mounted, so the cache fallback below is the path
+    // both sides see; LumaDeck already lists ~/.cache/lumalinux/status.json
+    // among its candidates (backend/paths.py find_lumalinux_status_path).
+    const char* xdgRun = nullptr;
+#else
+    const char* xdgRun = std::getenv("XDG_RUNTIME_DIR");
+#endif
+    if (xdgRun && *xdgRun) {
         dir = xdgRun;
     } else if (const char* xdgCache = std::getenv("XDG_CACHE_HOME"); xdgCache && *xdgCache) {
         dir = xdgCache;
