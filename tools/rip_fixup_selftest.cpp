@@ -6,7 +6,10 @@
 // Two scenarios: [far] the fail-closed refusal, [near] the rebased trampoline.
 //
 //   g++ -O1 -std=c++20 -masm=intel -I src -I lib/x86_64/include \
-//       tools/rip_fixup_selftest.cpp lib/x86_64/liblibmem.a -lpthread -o /tmp/rf && /tmp/rf
+//       tools/rip_fixup_selftest.cpp src/compat_x86_64.cpp lib/x86_64/liblibmem.a \
+//       -lpthread -o /tmp/rf && /tmp/rf
+// (src/compat_x86_64.cpp: the prebuilt libmem wants a libstdc++ symbol the
+// runtime SDK's GCC 10 does not export — the same shim the library links.)
 //
 // Measured 2026-10-20 with libmem 5.1.5: LM_HookCode copies the 7 bytes verbatim
 // (disp32 unchanged) and the unfixed trampoline SIGSEGVs; with FixRelocated the
@@ -19,7 +22,7 @@
 
 struct Mgr { char pad[0x7c]; int v; };
 static Mgr g_mgr{{}, 0};
-extern "C" Mgr* g_ptr = &g_mgr;             // the global the first instruction reads
+extern "C" { Mgr* g_ptr = &g_mgr; }         // the global the first instruction reads
 extern "C" __attribute__((noinline)) unsigned target(void* appinfo);
 asm(R"(
 .text

@@ -173,7 +173,7 @@ jobs:
       - name: Trampoline fix-up self-test
         run: |
           g++ -O1 -std=c++20 -masm=intel -I src -I lib/x86_64/include \
-            tools/rip_fixup_selftest.cpp lib/x86_64/liblibmem.a -lpthread -o build64/rip_fixup_selftest
+            tools/rip_fixup_selftest.cpp src/compat_x86_64.cpp lib/x86_64/liblibmem.a -lpthread -o build64/rip_fixup_selftest
           build64/rip_fixup_selftest
 
       - name: Verify output
