@@ -157,14 +157,92 @@ desde el terminal, sin las variables de render por software que exporta el
 supervisor del codespace, arranca pero no pinta la ventana; para verlo hay que
 volver a `~/start-gamemode.sh`.
 
+### §1.3 Los hooks en el cliente de 64 (2026-10-20)
+
+**Derivación, sin ejecutar nada.** Sobre `steamrt64/steamclient.so`
+`947e5a19…` (beta de la Deck `1792192922`, build-id `2c850bc9…`), con las
+relocaciones `R_X86_64_RELATIVE` aplicadas (173.505; en 64 las vtables van
+en `.rela.dyn`, el fichero lleva ceros) y `.eh_frame_hdr` (143.381
+funciones). Las anclas de 32 valen todas; solo cambia cómo se leen (`lea
+reg,[rip+disp32]` en vez de `lea reg,[got+disp32]`, slots de 8 bytes):
+
+| Hook | RVA | Cómo | En 32 |
+|---|---|---|---|
+| DepotKey (accessor `CConfigStore::GetBinary`) | `0x11e5fd0` | por nombre: "GetBinary" → slot 6 de `IClientConfigStoreMap` → `CConfigStore`; el slot 7 es la sobrecarga | slot 6 |
+| GMRC | `0x13a4960` | único `lea` de `ContentServerDirectory.GetManifestRequestCode#1`; un llamador | ancla de texto |
+| ShaderDepot (`GetShaderCacheDepot`) | `0x10a0d20` | único `lea` de `shadercachedepot`; su único llamador es el job "Getting shader depot manifests"; lee `[global+0x7c]` (era `+0x44`), `test`, `ret 0` | igual |
+| Reconcile (`CUser::NotifyLicensesUpdated`) | `0x18d9e00` | publica el callback 125, lee `[rdi+0x23c4]` (era `0x1b14`), sale si ≤ 0: uno solo entre 55 publicadores | criterios de moon |
+| BuildDep | `0x106f840` | único `lea` de `BuildDepotDependency` | apagado por defecto |
+| LoadPackage | `0x10521a0` | lee el símbolo global de "appids" que rellena el inicializador `0x1055f20` | solo diagnóstico |
+
+Firmas SysV: DepotKey `(rdi=pObject, esi=foo, rdx=KeyName, rcx=Key,
+r8d=KeySize)`, sin cambio de declaración; **GMRC pasa a seis parámetros**,
+el manifest viaja entero en `rcx` (`gmrc_hook.cpp` bajo `LUMA_X86_64`);
+ShaderDepot `(rdi=appinfo)`; Reconcile `(rdi=CUser*)`; BuildDep seis en
+registros y dos en pila.
+
+**Cache de paquetes** (de `CPackageInfoCache::GetPackage`, la función de "No
+package info for packageID"): el puntero al objeto está en un slot fijo de
+`.bss` (`0x331f210`, lo leen 2.235 funciones: es el singleton del cliente)
+que se lee relativo a `rip`, sin GOT ni desplazamiento; raíz del árbol en
+`+0x14b0`, array de nodos en `+0x14c8`, nodo de `0x20` bytes (`shl rax,5`):
+`+0x00` izquierda, `+0x04` derecha, `+0x10` packageId, `+0x18` `PackageInfo*`.
+`PackageInfo` (de las escrituras de `LoadPackage`): `+0x04` ChangeNumber,
+`+0x1c` SHA-1, dos punteros en `+0x30`/`+0x38`, **`AppIdVec` en `+0x40`**
+(`CUtlVector` de 24 bytes: `m_pMemory` +0, alloc +8, grow +0xc, `m_Size`
++0x10), `DepotIdVec` en `+0x58`.
+
+**Lo que corre en el runtime de 64** (todo bajo `LUMA_X86_64`, el de 32 sin
+tocar): resolución **solo por feed**. `res/rvas/947e5a19….yaml` lleva los
+cuatro RVAs y, para el finder, `cache_global_rva` + `cache_root_off` /
+`cache_nodes_off`; `vaddr_xlate` lee cabeceras ELF64 y coloca una dirección
+de `.bss` por el sesgo de carga (`ToRuntimeData`); el finder usa el layout
+de 64 y no escanea; los patrones de bytes y los tres rescates (xref de
+cadena, ancla del callback, RTTI por nombre) devuelven 0 (son formas de
+código i386), así que **sin fichero en el feed no se instala nada y se
+reporta FAILED**. `proc_filter` solo admite `steam`: la `.so` de 64 entraba
+en cada subproceso de `steamwebhelper` y lo hacía morir y renacer cada 10 s
+(13 asserts de CEF en 120 s contra 1 vanilla; con el filtro, 1).
+
+**libmem y el trampolín.** `LM_HookCode` copia los bytes recolocados tal
+cual. El prólogo de ShaderDepot empieza por `mov rax,[rip+disp32]`: en el
+trampolín leía otra dirección y el primer paso por la función original
+habría caído (reproducido offline con la misma `liblibmem.a`: SIGSEGV).
+`src/rip_fixup_core.hpp` recalcula cada `disp32` relativo a `rip` de los
+bytes recolocados; lo que no puede recomponer (inmediato detrás del
+operando, salto relativo, destino a más de 2 GB) deshace el hook con
+`LM_UnhookCode` y lo reporta fallido. `tools/rip_fixup_selftest.cpp` prueba
+los dos caminos contra el libmem real y corre en el job del SDK. DepotKey
+(5 bytes recolocados) y GMRC (7) no llevan nada relativo a `rip` en el
+prólogo.
+
+**Medido en el codespace** (beta de la Deck, `.so` del job `build-linux-x86_64`
+en `cc402b9`, feed copiado a `~/.cache/lumalinux/rvas/`, lanzado a mano con
+`LD_PRELOAD`): `RvaFeed: loaded 4 hook RVA(s)`; `LmHook: rebased
+rip-relative displacement(s)` para ShaderDepot; `Hook install:
+name=DepotKey|ShaderDepot|GMRC method=rva … outcome=installed`, "lumalinux
+active (3/3 hooks)"; `Finder resolve: … method=rva … outcome=resolved` y
+`PKG0_FINDER: HIT PackageId=0 AppIdVec{size=196 alloc=202}` seguido de la
+inyección de nuestros depots en el package 0; Reconcile resuelto; Steam
+vivo a los dos minutos, un assert de CEF en 120 s (igual que vanilla),
+cuatro procesos cargan la `.so` (la cadena `steam`). **No probado**: que un
+hook se dispare con una descarga real (sin SLSsteam de 64 no hay propiedad
+falsa, Steam no pide claves ni códigos), ni ShaderDepot delegando en la
+original dentro de Steam (solo offline).
+
+**Abierto.** El puntero `CUser` de Reconcile: en 32 lo da el hook de
+`isSubscribed` de SLSsteam (`sls_achievement_unblock.cpp`); sin SLSsteam en
+64 no hay de dónde sacarlo, y los llamadores de `0x18d9e00` lo reciben como
+`this`, sin global a la vista. Reconcile se resuelve pero no se llama.
+
 ## §2 Qué nos afecta
 
 | Pieza | Con el cliente de 64 |
 |---|---|
-| `liblumalinux.so` | la de 32 no carga. La de 64 (`LUMA_X86_64`, job `build-linux-x86_64` en el SDK de sniper) compila y carga dentro del contenedor (§1.2), sin hooks: `DepotKey`/`ShaderDepot`/`GMRC` `FAILED`, el resto `DISABLED`. Falta rederivar los cinco hooks |
+| `liblumalinux.so` | la de 32 no carga. La de 64 (`LUMA_X86_64`, job `build-linux-x86_64` en el SDK de sniper) carga dentro del contenedor e instala DepotKey, ShaderDepot y GMRC por feed, con el finder inyectando en el package 0 (§1.3). Sin patrones ni rescates: un build sin fichero en `res/rvas/` instala nada y reporta FAILED |
 | Inyección (`LD_PRELOAD`/`LD_AUDIT` desde el wrapper) | funciona; pasa al contenedor por `pv-adverb` |
-| Anclas RTTI y de texto | presentes; los resolvedores por nombre valen |
-| Patrones, RVAs, calling convention, layouts | a rederivar; `check_patterns.py`, `derive_patterns.py` y `fetch_steamclient.py` en modo x86-64 y paquete `steamrt64` |
+| Anclas RTTI y de texto | presentes; derivadas en 64 offline (§1.3) |
+| Patrones, RVAs, calling convention, layouts | RVAs y layouts derivados y en el feed; los rescates del runtime (`gmrc_xref`, `reconcile_anchor`, `rtti` por nombre) siguen siendo de 32: en 64 devuelven 0. `fetch_steamclient.py` baja ya el paquete `steamrt64`; `check_patterns.py` / `derive_*` no saben x86-64 |
 | Rutas `ubuntu12_32/steamclient.so` | ahora `steamrt64/steamclient.so`: guard (`g_client_fp`), `headcrab_compat`, `components`, CI, `fetch_steamclient.py` |
 | Crash guard | sigue viendo volcados |
 | SLSsteam | 32 bits (`Makefile` `-m32`); Ace hizo "future proof for 64 bits" en la parte Lua (`f4213e5`, 2026-08-31), sin rama de 64. Sin SLSsteam de 64 no hay propiedad falsa: **cuello de botella** |
@@ -179,7 +257,7 @@ En orden. El port está abierto desde el 2026-10-20.
 
 1. **Alarma**: descartada (2026-10-20). El paquete `steamrt64` ya está en los dos canales de la Deck y se sabe dónde está; los manifiestos se miran a mano con el comando de §4 cuando haga falta. `watch-steam.yml` sigue vigilando solo el cliente de 32.
 2. **Build de 64 bits contra el runtime**: hecho (§1.2). `LUMA_X86_64` en CMake, dependencias de 64 por script, job en el SDK de sniper con la comprobación de glibc, artefacto `lumalinux-x86_64`.
-3. **Rederivar los cinco hooks** sobre `steamrt64/steamclient.so` (hoy el de la beta de la Deck, `947e5a19…`): anclas iguales, bytes, ABI SysV y layouts nuevos. `DepotKey` primero (es el crítico), luego `GMRC`, `ShaderDepot`, el finder de package-0, Reconcile. `check_patterns.py`, `derive_patterns.py` y `fetch_steamclient.py` tienen que aprender x86-64 y el paquete `steamrt64`.
+3. **Hooks en 64**: hecho para `947e5a19…` (§1.3): derivados offline, feed `res/rvas/947e5a19….yaml`, runtime solo por feed, trampolín corregido, probado en el codespace. Queda: (a) la derivación en herramienta (`check_patterns.py`/`derive_*` en x86-64, hoy está en scripts de sesión), para que cada build nuevo de 64 tenga su fichero sin trabajo a mano; (b) los rescates del runtime en versión 64, para no depender solo del feed; (c) el `CUser` de Reconcile.
 4. **Rutas y estado** `steamrt64/` en guard (`g_client_fp`), LumaDeck (salud, hash del cliente, downgrade), CI y feeds (`updates.yaml` y `res/rvas/` con grupos por arquitectura); `setup.sh` elige la `.so` según el cliente instalado; ruta de `status.json` que LumaDeck pueda leer desde fuera del contenedor. Dos binarios por release durante la transición.
 5. **CloudRedirect en 64**, desde `jayool/CloudRedirect`, con el mismo entorno de build.
 6. **SLSsteam**: es de Ace y de 32 bits; sin SLSsteam de 64 no hay propiedad falsa y el resto no sirve de nada. Decisión pendiente: esperar, o fork propio. No se le escribe.
@@ -208,7 +286,14 @@ sha256sum ~/.local/share/Steam/steamrt64/steamclient.so | cut -c1-16
 
 **Probar nuestra `.so` de 64** (artefacto `lumalinux-x86_64` del job, con el
 `GITHUB_TOKEN` del codespace; el Steam lanzado así no pinta la ventana, ver
-§1.2):
+§1.2). Mientras el feed de ese build no esté en main, la `.so` lo toma de la
+caché local: copiar `res/rvas/<hash>.yaml` a `~/.cache/lumalinux/rvas/`
+antes de lanzar. Lo que debe salir en el log: `RvaFeed: loaded 4 hook
+RVA(s)`, `LmHook: rebased rip-relative` (ShaderDepot), tres `Hook install: …
+outcome=installed`, `Finder resolve: … outcome=resolved`, `PKG0_FINDER: HIT`;
+y, contra un arranque vanilla de la misma duración, el mismo número de
+`assert_*.dmp` en `/tmp/dumps` (los asserts de `CefCrashReportingEnabled()`
+son del webhelper sin GPU, uno por arranque; más de eso es nuestro):
 
 ```bash
 cd /tmp && rm -rf ll64 && mkdir ll64 && cd ll64
