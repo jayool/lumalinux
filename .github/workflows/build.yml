@@ -142,15 +142,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Toolchain and yaml-cpp from the runtime SDK
+      - name: Toolchain from the runtime SDK
         run: |
           apt-get update -qq
-          apt-get install -y -qq cmake ninja-build libyaml-cpp-dev curl ca-certificates file binutils
+          apt-get install -y -qq cmake ninja-build git curl ca-certificates file binutils
 
       - name: Fetch libmem (x86_64)
         run: LUMA_ARCH=x86_64 ./tools/fetch_libmem.sh
 
+      - name: Build yaml-cpp (x86_64, static, PIC)
+        run: ./tools/build_yamlcpp.sh
+
       - name: Configure
+        shell: bash
         run: |
           mkdir -p build64 && cd build64
           VERSION_ARG=""
@@ -163,6 +167,7 @@ jobs:
         run: cd build64 && ninja -v
 
       - name: Verify output
+        shell: bash
         run: |
           file build64/liblumalinux.so
           file build64/liblumalinux.so | grep -q "ELF 64-bit" || { echo "ERROR: not a 64-bit ELF"; exit 1; }

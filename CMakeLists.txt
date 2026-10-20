@@ -172,11 +172,11 @@ endif()
 # below. No pkg-config / -dev packages are needed even for a SafeMode build.
 
 if(LUMA_X86_64)
-    # libmem: tools/fetch_libmem.sh with LUMA_ARCH=x86_64 (lib/x86_64/). yaml-cpp:
-    # the runtime SDK's own static library (libyaml-cpp-dev, new libstdc++ ABI),
-    # with its headers — not the vendored 32-bit include/yaml-cpp, which belong
-    # to lib/libyaml-cpp.a.
-    find_library(LUMA_YAMLCPP_STATIC NAMES libyaml-cpp.a REQUIRED)
+    # Both from lib/x86_64/: libmem via tools/fetch_libmem.sh (LUMA_ARCH=x86_64),
+    # yaml-cpp via tools/build_yamlcpp.sh (static, PIC, new libstdc++ ABI), each
+    # with its headers there — not the vendored 32-bit include/yaml-cpp, which
+    # belongs to lib/libyaml-cpp.a.
+    target_sources(lumalinux PRIVATE src/compat_x86_64.cpp)
     target_include_directories(lumalinux PRIVATE
         src/
         ${LUMA_LIB_DIR}/include/
@@ -184,7 +184,7 @@ if(LUMA_X86_64)
     )
     target_link_libraries(lumalinux PRIVATE
         ${LUMA_LIB_DIR}/liblibmem.a
-        ${LUMA_YAMLCPP_STATIC}
+        ${LUMA_LIB_DIR}/libyaml-cpp.a
         ${CMAKE_DL_LIBS}
     )
 else()
