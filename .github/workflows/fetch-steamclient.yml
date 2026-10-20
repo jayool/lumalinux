@@ -30,6 +30,10 @@ on:
         description: "Any other manifest name (overrides the choice above)"
         type: string
         default: ""
+      members:
+        description: "Also list every member of the bins packages (diagnostic, downloads them twice)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write             # push the steamclient/<...> branch; nothing else
@@ -53,6 +57,10 @@ jobs:
 
       - name: Packages in the manifest
         run: python3 tools/fetch_steamclient.py --list-packages
+
+      - name: Members of the bins packages
+        if: inputs.members
+        run: python3 tools/fetch_steamclient.py --list-members
 
       - name: Fetch steamclient.so (${{ env.LUMA_STEAM_MANIFEST }})
         id: dl

@@ -9,10 +9,13 @@
 # bins_steamrt64 (the client, 40 members), bins_sdk_steamrt64, bins_codecs_*,
 # bins_misc_*, bins_hardware_*, bins_steamrt_steamrt64, webkit_*, sdl3_*,
 # steam_steamrt64, runtime_steamrt_steamrt64 (80 MB), plus the *_all packages
-# shared with ubuntu12. Their members carry NO directory prefix (the installer
-# unpacks them into steamrt64/ itself), unlike the ubuntu12 packages whose
-# members are ubuntu12_32/...; so for steamrt64 the library is matched by
-# basename, and SDK copies (linux32/, linux64/) are refused.
+# shared with ubuntu12. bins_steamrt64 ALSO carries ubuntu12_32/steamclient.so
+# (the 32-bit library, the steamrt32/ tree on disk — run 2 extracted that one
+# and called it the client); so for steamrt64 the library is matched by
+# basename, every 32-bit or SDK directory (ubuntu12_32/, linux32/, linux64/)
+# is refused, and the extracted file must be ELFCLASS64 or the run fails.
+# --list-members prints every member of the bins packages when the layout
+# needs looking at again.
 #
 # Used by .github/workflows/watch-steam.yml to get the ubuntu12_32/steamclient.so
 # whose SHA-256 goes into res/updates.yaml so check_patterns.py can validate it
@@ -323,6 +326,47 @@ def _bins_unreachable(key):
         "package (transient CDN error? re-run)" % (key, RETRIES, client_dir()))
 
 
+_RT64_REFUSED = ("ubuntu12_32/", "linux32/", "linux64/")
+
+
+def _is_rt64_client(member):
+    """A steamrt64 package member that is the 64-bit client library: basename
+    steamclient.so outside the 32-bit (ubuntu12_32/) and SDK (linux32/, linux64/)
+    directories."""
+    return (member.rsplit("/", 1)[-1] == "steamclient.so"
+            and not any(d in member for d in _RT64_REFUSED))
+
+
+def _check_elf_class(path, want64):
+    """Refuse a library of the wrong word size: the steamrt64 packages carry
+    both, and a 32-bit file named steamclient.so is not the client we asked for."""
+    with open(path, "rb") as fh:
+        head = fh.read(5)
+    if head[:4] != b"\x7fELF":
+        raise RuntimeError("%s is not an ELF file" % path)
+    is64 = head[4] == 2
+    if is64 != want64:
+        raise RuntimeError("%s is ELFCLASS%d, expected ELFCLASS%d for this manifest"
+                           % (path, 64 if is64 else 32, 64 if want64 else 32))
+
+
+def list_members(man, max_rank=1):
+    """Print every member of the packages up to max_rank (the bins ones) — the
+    diagnostic for a package layout we have not seen."""
+    for key, plain, vz in package_entries(man):
+        if _package_rank(key) > max_rank:
+            continue
+        zf = open_package_zip(key, plain, vz)
+        if zf is None:
+            print("%s: unreadable" % key)
+            continue
+        names = zf.namelist()
+        print("%s: %d members" % (key, len(names)))
+        for m in names:
+            info = zf.getinfo(m)
+            print("    %10d  %s" % (info.file_size, m))
+
+
 def extract_steamclient(man, out_path):
     """Download packages until we find <client dir>/steamclient.so (ubuntu12_32/
     or steamrt64/, by manifest); extract it to out_path. Returns the member name.
@@ -343,9 +387,7 @@ def extract_steamclient(man, out_path):
             continue
         members = zf.namelist()
         if rt64:
-            cand = [m for m in members
-                    if m.rsplit("/", 1)[-1] == "steamclient.so"
-                    and "linux32/" not in m and "linux64/" not in m]
+            cand = [m for m in members if _is_rt64_client(m)]
         else:
             cand = [m for m in members if m.endswith(want)]
         if len(cand) > 1:
@@ -355,6 +397,7 @@ def extract_steamclient(man, out_path):
                   file=sys.stderr)
             with zf.open(cand[0]) as src, open(out_path, "wb") as dst:
                 dst.write(src.read())
+            _check_elf_class(out_path, rt64)
             return cand[0]
         # A valid zip without the file: move on to the NEXT PACKAGE. (The
         # variant retry that this used to skip now lives inside
@@ -433,9 +476,8 @@ def extract_client_tree(man, out_dir):
             names.append(rel)
         print("  (%s: extracted %d file(s) under %s)" % (key, len(members), want),
               file=sys.stderr)
-        if any(m.rsplit("/", 1)[-1] == "steamclient.so" and "linux32/" not in m
-               and "linux64/" not in m for m in members) if rt64 else \
-           any(m.endswith(want + "steamclient.so") for m in members):
+        if (any(_is_rt64_client(m) for m in members) if rt64
+                else any(m.endswith(want + "steamclient.so") for m in members)):
             found_client = True
     if not found_client:
         raise RuntimeError("%ssteamclient.so not found in any client package" % want)
@@ -451,6 +493,9 @@ def main():
     ap.add_argument("--list-packages", action="store_true",
                     help="print the manifest's package keys and file names and exit "
                          "(no downloads) — use it to find where a given file lives")
+    ap.add_argument("--list-members", action="store_true",
+                    help="download the bins packages and print every member with its "
+                         "size (diagnostic for an unknown package layout)")
     ap.add_argument("--extract-tree", metavar="DIR",
                     help="extract the whole current client tree (ubuntu12_32/ or steamrt64/) "
                          "into DIR (for the runtime smoke test; replaces the pinned tarball)")
@@ -468,6 +513,10 @@ def main():
             for key, plain, vz in package_entries(man):
                 print("%-28s rank=%d file=%s vz=%s" % (key, _package_rank(key),
                                                        plain, vz))
+            return 0
+        if args.list_members:
+            print("version=%s arch=%s" % (ver, client_arch()), file=sys.stderr)
+            list_members(man)
             return 0
         if args.extract_tree:
             n, names = extract_client_tree(man, args.extract_tree)
