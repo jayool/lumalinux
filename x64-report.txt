@@ -1,0 +1,16 @@
+check_patterns_x64: CLEAN  (sha256 dca1e95f78d393cb…, 173487 relocs, 143388 functions)
+  DepotKey     UNIQUE     0x11e6010  [rtti-byname]
+  GMRC         UNIQUE     0x13a49a0  [string-xref]
+  ShaderDepot  UNIQUE     0x10a0d60  [string-xref]
+  BuildDep     UNIQUE     0x106f880  [string-xref]
+  Reconcile    UNIQUE     0x18daac0  [callback-anchor]
+  finder       UNIQUE     slot=0x3321190 cache=0x3321190 root=0x14b0 nodes=0x14c8 stride=0x20 pkginfo=0x18
+  pkginfo      UNIQUE     loadpackage=0x10521e0 appidvec=0x40
+  wrote rvas-out/dca1e95f78d393cbf6cca89ed65074531106be12e57bb7a8ba2f73aaa0f8785a.yaml
+exec 0xed4834+0x225dadb, 143388 function starts
+  GMRC         -> 0x13a49a0  (== expected)
+  ShaderDepot  -> 0x10a0d60  (== expected)
+  BuildDep     -> 0x106f880  (== expected)
+  Reconcile: 50 callback-125 sites in 40 functions, 1 kept (member disp 0x23c4)
+  Reconcile    -> 0x18daac0  (== expected)
+PASS

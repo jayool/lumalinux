@@ -1,0 +1,7 @@
+manifest=steam_client_steamdeck_publicbeta_steamrt64
+version=1792626604
+size=53567328
+sha256=dca1e95f78d393cbf6cca89ed65074531106be12e57bb7a8ba2f73aaa0f8785a
+buildid=d2006b9524832cba083916967ab8c6b2c31b10d1
+elf=ELF 64-bit LSB shared object
+fetched=2026-10-22T14:51:40Z

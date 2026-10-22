@@ -1,0 +1,101 @@
+{
+  "steamclient_sha256": "dca1e95f78d393cbf6cca89ed65074531106be12e57bb7a8ba2f73aaa0f8785a",
+  "client_arch": "steamrt64",
+  "relocs_applied": 173487,
+  "functions": 143388,
+  "hooks": {
+    "DepotKey": {
+      "status": "UNIQUE",
+      "rva": "0x11e6010",
+      "method": "rtti-byname"
+    },
+    "GMRC": {
+      "status": "UNIQUE",
+      "rva": "0x13a49a0",
+      "method": "string-xref",
+      "strings": [
+        "0xbdc1d8"
+      ],
+      "sites": [
+        "0x13a4ac1"
+      ]
+    },
+    "ShaderDepot": {
+      "status": "UNIQUE",
+      "rva": "0x10a0d60",
+      "method": "string-xref",
+      "strings": [
+        "0xba7b4b"
+      ],
+      "sites": [
+        "0x10a0def"
+      ]
+    },
+    "BuildDep": {
+      "status": "UNIQUE",
+      "rva": "0x106f880",
+      "method": "string-xref",
+      "strings": [
+        "0xba4653"
+      ],
+      "sites": [
+        "0x106f8ef"
+      ]
+    },
+    "Reconcile": {
+      "status": "UNIQUE",
+      "rva": "0x18daac0",
+      "method": "callback-anchor",
+      "sites": 50,
+      "candidates": 40,
+      "kept": [
+        "0x18daac0"
+      ],
+      "member_disp": "0x23c4"
+    }
+  },
+  "rtti_byname": {
+    "status": "UNIQUE",
+    "class": "12CConfigStore",
+    "slot": 6,
+    "rva": "0x11e6010",
+    "overloads": [
+      6,
+      7
+    ],
+    "map_vtable": "0x318fa60",
+    "impl_vtable": "0x3160368"
+  },
+  "finder": {
+    "status": "UNIQUE",
+    "string_sites": [
+      "0x104aa04"
+    ],
+    "function": "0x104a980",
+    "cache_global_rva": "0x3321190",
+    "cache_root_off": "0x14b0",
+    "cache_nodes_off": "0x14c8",
+    "node_stride": "0x20",
+    "node_pkginfo_off": "0x18",
+    "layout_matches_runtime": true
+  },
+  "pkginfo": {
+    "status": "UNIQUE",
+    "symbol_slot": "0x3306218",
+    "readers": [
+      "0x10521e0"
+    ],
+    "loadpackage": "0x10521e0",
+    "vector_candidates": [
+      "0x40",
+      "0x58",
+      "0x70"
+    ],
+    "appidvec_off": "0x40",
+    "layout_matches_runtime": true
+  },
+  "blocking": [],
+  "noncritical_moved": [],
+  "verdict": "CLEAN",
+  "exit_code": 0
+}
