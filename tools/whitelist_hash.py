@@ -26,7 +26,7 @@ import argparse
 import sys
 
 
-def _insert_into_safemode(lines, group, sha, steam_version, build_id, note, caps):
+def _insert_into_safemode(lines, group, sha, steam_version, build_id, note, caps, arch=""):
     """Append `  - <sha>` under SafeModeHashes[<group>], preceded by a
     `# steam_version: <n>` comment and (when given) a `# caps: <tokens>` comment
     (both read by LumaDeck's text-scan gate; ignored by lumalinux). Returns
@@ -63,6 +63,12 @@ def _insert_into_safemode(lines, group, sha, steam_version, build_id, note, caps
         ins.append("%s# build %s" % (item_indent, build_id))
     if caps:
         ins.append("%s# caps: %s" % (item_indent, caps))
+    if arch:
+        # `# arch: steamrt64` marks a 64-bit (steamrt64) client hash. lumalinux's
+        # runtime ignores it (each .so looks its own hash up); LumaDeck's and
+        # downgrade.sh's text scans use it so a 64-bit entry never answers for
+        # the ubuntu12_32 tree that shares the same steam_version.
+        ins.append("%s# arch: %s" % (item_indent, arch))
     if note:
         for nl in note.splitlines():
             ins.append("%s# %s" % (item_indent, nl))
@@ -78,6 +84,9 @@ def main():
     ap.add_argument("--note", default="")
     ap.add_argument("--steam-version", default="")
     ap.add_argument("--build-id", default="")
+    ap.add_argument("--arch", default="",
+                    help="client architecture of the hash when not ubuntu12_32, e.g. steamrt64 "
+                         "(written as a `# arch:` comment next to the hash)")
     ap.add_argument("--caps", default="",
                     help="per-build non-critical capability tokens, e.g. "
                          "'shader=ok reconcile=moved' (from check_patterns caps_str). "
@@ -122,7 +131,7 @@ def main():
         print("SafeModeHashes: hash already present.")
     else:
         ok, msg = _insert_into_safemode(lines, group, sha, args.steam_version,
-                                        args.build_id, args.note, args.caps)
+                                        args.build_id, args.note, args.caps, args.arch)
         if not ok:
             print("ERROR: %s in %s" % (msg, args.updates), file=sys.stderr)
             return 1

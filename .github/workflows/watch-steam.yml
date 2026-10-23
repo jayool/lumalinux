@@ -681,11 +681,22 @@ jobs:
         run: |
           BR="watch-steam-x64/$SHORT"
           mkdir -p res/rvas && cp rvas-out/*.yaml res/rvas/
+          # Whitelist the 64-bit hash too, marked `# arch: steamrt64`: the 64-bit
+          # .so looks its own hash up in its version group (no "hash not in the
+          # verified list" toast once listed); LumaDeck's and downgrade.sh's text
+          # scans use the arch mark so this entry never answers for the
+          # ubuntu12_32 tree that shares the same steam_version.
+          CAPS=$(python3 -c "
+          import json; r=json.load(open('x64-result.json'))['hooks']
+          ok=lambda k: 'ok' if r.get(k,{}).get('status')=='UNIQUE' else 'moved'
+          print('shader=%s reconcile=%s gmrc=%s' % (ok('ShaderDepot'), ok('Reconcile'), ok('GMRC')))")
+          python3 tools/whitelist_hash.py "$SHA" --steam-version "$VER" --arch steamrt64 --caps "$CAPS" \
+            --note "auto-added by watch-steam.yml (x86-64 job) $(date -u +%Y-%m-%d): feed derived CLEAN + self-test PASS ($LUMA_STEAM_MANIFEST $VER)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$BR"
-          git add res/rvas
-          git commit -m "chore(rvas): publish x86-64 feed for steamclient $SHORT ($LUMA_STEAM_MANIFEST $VER; CI: derived, self-test PASS)"
+          git add res/rvas res/updates.yaml
+          git commit -m "chore(rvas): publish x86-64 feed + whitelist steamclient $SHORT ($LUMA_STEAM_MANIFEST $VER; CI: derived, self-test PASS)"
           git push -u origin "$BR"
           {
             echo "Automated by \`watch-steam-x64.yml\`. A new 64-bit Steam client shipped on"

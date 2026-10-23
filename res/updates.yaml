@@ -61,6 +61,16 @@ SafeModeHashes:
     # auto-added by watch-steam.yml 2026-10-23: patterns verified by CI
     # (Steam client version 1792108788). Live-install test on a Deck still recommended.
     - 6a8aa9f194fa644bc55894a17514207aead6f9ed8d360b0cbbfae5a40ada904c
+    # steam_version: 1792618285
+    # caps: shader=ok reconcile=ok gmrc=ok
+    # arch: steamrt64
+    # steamdeck_stable steamrt64 (64-bit client, behind the RT3 opt-in): feed res/rvas/17652d59….yaml, derived CLEAN + self-test PASS 2026-10-22
+    - 17652d599bb46b6f316d59c37215efeb74ef892c8c3e7589df7d766ea3a9efa2
+    # steam_version: 1792711043
+    # caps: shader=ok reconcile=ok gmrc=ok
+    # arch: steamrt64
+    # steamdeck_publicbeta steamrt64 (64-bit client): feed res/rvas/c3247a95….yaml, derived CLEAN + self-test PASS; 3/3 hooks live in the codespace 2026-10-23
+    - c3247a95f38775a655e95d415ce9d56721e99d985389b87bcad89dee02573883
   20260611150000:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
