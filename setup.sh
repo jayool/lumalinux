@@ -59,6 +59,13 @@ ENSURE_SCRIPT="${SLS_DIR}/ensure-desktop-coverage.sh"
 
 LL_SO_NAME="liblumalinux.so"
 LL_SO_URL="${LUMALINUX_SO_URL:-https://github.com/${REPO}/releases/latest/download/${LL_SO_NAME}}"
+# 64-bit twin for Valve's steamrt64 client (Deck beta since 2026-10; stable
+# behind the "Steam RT3 Experimental" opt-in). Both go into LD_PRELOAD: each
+# client's ld.so loads the one of its own ELF class and rejects the other
+# ("wrong ELF class ... ignored") before mapping it — measured 2026-10-23 on
+# both channels. Releases before v0.22.5 do not carry it: optional download.
+LL64_SO_NAME="liblumalinux-x86_64.so"
+LL64_SO_URL="${LUMALINUX64_SO_URL:-https://github.com/${REPO}/releases/latest/download/${LL64_SO_NAME}}"
 # SLSsteam's release asset was renamed upstream: the single `SLSsteam-Any.7z`
 # became per-variant `SLSsteam-Any-release.7z` / `-debug.7z` (AceSLS 6a06652,
 # first published in the 20260819131545 release). We want the plain release
@@ -831,6 +838,7 @@ write_guard_lib() {
 SLS_DIR="$HOME/.local/share/SLSsteam"
 CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
 LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
+LL64_SO="$HOME/.local/share/lumalinux/liblumalinux-x86_64.so"
 GDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
 G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
 G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
@@ -842,13 +850,18 @@ g_log()    { printf '%s %s\n' "$(date '+%F %T' 2>/dev/null)" "$1" >> "$G_LOG" 2>
 g_notify() { command -v notify-send >/dev/null 2>&1 && notify-send -u normal -t 10000 "Steam recovery mode" "$1" >/dev/null 2>&1 || true; }
 g_int()    { _v="$(cat "$1" 2>/dev/null)"; case "$_v" in ''|*[!0-9]*) printf 0 ;; *) printf '%s' "$_v" ;; esac; }
 g_client_fp() {
+    # Both clients ship in one package since 2026-10-21 (ubuntu12_32 boots on
+    # stable, steamrt64 on beta / opt-in): fingerprint whichever exist, joined.
     for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
-        _c="$_r/ubuntu12_32/steamclient.so"
-        [ -e "$_c" ] && { stat -c '%s:%Y' "$_c" 2>/dev/null || stat -f '%z:%m' "$_c" 2>/dev/null || printf '?'; return 0; }
+        _fp=''
+        for _c in "$_r/ubuntu12_32/steamclient.so" "$_r/steamrt64/steamclient.so"; do
+            [ -e "$_c" ] && _fp="$_fp$(stat -c '%s:%Y' "$_c" 2>/dev/null || stat -f '%z:%m' "$_c" 2>/dev/null || printf '?')/"
+        done
+        [ -n "$_fp" ] && { printf '%s' "$_fp"; return 0; }
     done; printf ''
 }
 g_fingerprint() {
-    for _f in "$SLS_DIR/SLSsteam.so" "$CR_SO" "$LL_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
+    for _f in "$SLS_DIR/SLSsteam.so" "$CR_SO" "$LL_SO" "$LL64_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
         if [ -e "$_f" ]; then stat -c '%s:%Y' "$_f" 2>/dev/null || stat -f '%z:%m' "$_f" 2>/dev/null || printf '?'; else printf -- '-'; fi
         printf '|'
     done
@@ -900,7 +913,9 @@ luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$ST
 # actually meant for the three .so files WE install and name. The libextest test
 # below stays -f on purpose: that one is the distro's, not ours to second-guess.
 luma_set_injection_env() {
-    for _p in "$CR_SO" "$LL_SO"; do [ -s "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
+    # LL_SO (i386) and LL64_SO (x86_64) both named: each process's ld.so keeps
+    # the one of its ELF class and skips the other with a one-line warning.
+    for _p in "$CR_SO" "$LL_SO" "$LL64_SO"; do [ -s "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
     [ -n "${LD_PRELOAD:-}" ] && export LD_PRELOAD
     if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
         for _e in /usr/lib/extest/libextest.so /usr/lib64/extest/libextest.so \
@@ -1139,6 +1154,14 @@ curl -fL --progress-bar -o "${TMP_DIR}/${LL_SO_NAME}" "$LL_SO_URL" \
     || die "Failed to download ${LL_SO_NAME} ($LL_SO_URL)."
 install -m 0755 "${TMP_DIR}/${LL_SO_NAME}" "${LL_DIR}/${LL_SO_NAME}"
 ok "Deployed ${LL_DIR}/${LL_SO_NAME}"
+if curl -fsL -o "${TMP_DIR}/${LL64_SO_NAME}" "$LL64_SO_URL" && [[ -s "${TMP_DIR}/${LL64_SO_NAME}" ]]; then
+    install -m 0755 "${TMP_DIR}/${LL64_SO_NAME}" "${LL_DIR}/${LL64_SO_NAME}"
+    ok "Deployed ${LL_DIR}/${LL64_SO_NAME} (64-bit client)"
+elif [[ -s "${LL_DIR}/${LL64_SO_NAME}" ]]; then
+    warn "${LL64_SO_NAME} download failed — keeping the installed one."
+else
+    warn "${LL64_SO_NAME} not in this release — the 64-bit (steamrt64) client gets no lumalinux hooks until a release ships it."
+fi
 
 # keys.txt + runtime tools.
 if [[ ! -f "${KEYS_DIR}/keys.txt" ]]; then

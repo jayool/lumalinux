@@ -130,11 +130,14 @@ jobs:
   # beta channel since 2026-10). Built INSIDE the Steam Runtime 3 "sniper" SDK
   # so the glibc symbols it needs are the container's (2.31): a .so built on
   # the ubuntu-latest runner would ask for a newer glibc and never load there.
-  # Its hooks are not derived for the 64-bit binary yet (docs/steam-rt3-x64.md
-  # §3): the artifact loads inside the container, reports, installs nothing.
-  # Not attached to releases until it does something.
+  # It resolves its hooks through the RVA feed (res/rvas/<sha>.yaml, published
+  # by watch-steam.yml) and ships in every v* release next to the 32-bit .so as
+  # liblumalinux-x86_64.so: setup.sh installs both and the launcher names both
+  # in LD_PRELOAD, each client loads its own (docs/steam-rt3-x64.md §3 point 4).
+  # Runs after the i386 job so the release exists before this asset is attached.
   build-linux-x86_64:
     name: Build 64-bit Linux .so (steamrt3 sniper SDK)
+    needs: build-linux-i386
     runs-on: ubuntu-latest
     container:
       image: registry.gitlab.steamos.cloud/steamrt/sniper/sdk:latest
@@ -194,4 +197,14 @@ jobs:
         with:
           name: lumalinux-x86_64
           path: build64/liblumalinux.so
+
+      - name: Attach to the release on tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: cp build64/liblumalinux.so liblumalinux-x86_64.so
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          files: liblumalinux-x86_64.so
+          fail_on_unmatched_files: true
 
