@@ -74,6 +74,18 @@ LL64_SO_URL="${LUMALINUX64_SO_URL:-https://github.com/${REPO}/releases/latest/do
 SLS_7Z_ASSETS=("SLSsteam-Any-release.7z" "SLSsteam-Any.7z")
 SLS_7Z_URL=""
 SLS_TAG=""
+# Two Steam clients coexist for a while (32-bit ubuntu12_32 on stable, 64-bit
+# steamrt64 on the beta and the RT3 opt-in) and an SLSsteam.so serves exactly
+# one of them. Each archive's SLSsteam.so is placed by its ELF class, never by
+# the asset's name: 32-bit at $SLS_DIR/SLSsteam.so (as always), 64-bit at
+# $SLS_DIR/x86_64/SLSsteam.so (same file name: SLSsteam itself matches its own
+# name, e.g. when it strips itself from LD_AUDIT). The launcher names both in
+# LD_AUDIT and each client's ld.so rejects the other ("wrong ELF class").
+# A 64-bit archive is never installed over the 32-bit file, whatever upstream
+# calls the asset. Where a 64-bit build is published is not known yet
+# (2026-10-23: a prerelease exists, unpublished); until then it is optional,
+# by URL (a .7z with bin/SLSsteam.so, like the release archive).
+SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # CloudRedirect's upstream (Selectively11/CloudRedirect) was deleted on
 # 2026-10-16 together with its author's account; nothing is published there any
 # more and nobody expects it back (docs/cloudredirect.md §0). We ship the last
@@ -839,6 +851,7 @@ SLS_DIR="$HOME/.local/share/SLSsteam"
 CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
 LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
 LL64_SO="$HOME/.local/share/lumalinux/liblumalinux-x86_64.so"
+SLS64_SO="$SLS_DIR/x86_64/SLSsteam.so"
 GDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
 G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
 G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
@@ -861,7 +874,7 @@ g_client_fp() {
     done; printf ''
 }
 g_fingerprint() {
-    for _f in "$SLS_DIR/SLSsteam.so" "$CR_SO" "$LL_SO" "$LL64_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
+    for _f in "$SLS_DIR/SLSsteam.so" "$SLS64_SO" "$CR_SO" "$LL_SO" "$LL64_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
         if [ -e "$_f" ]; then stat -c '%s:%Y' "$_f" 2>/dev/null || stat -f '%z:%m' "$_f" 2>/dev/null || printf '?'; else printf -- '-'; fi
         printf '|'
     done
@@ -923,11 +936,14 @@ luma_set_injection_env() {
             [ -f "$_e" ] && { export LD_PRELOAD="${LD_PRELOAD:+$LD_PRELOAD:}$_e"; break; }
         done
     fi
-    if [ -s "$SLS_DIR/library-inject.so" ]; then
-        export LD_AUDIT="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
-    else
-        export LD_AUDIT="$SLS_DIR/SLSsteam.so"
-    fi
+    # library-inject.so first (when non-empty), then the 32-bit SLSsteam.so, then
+    # the 64-bit one under x86_64/ (when installed): each client's ld.so keeps
+    # the auditor of its own ELF class and skips the other with a warning.
+    _aud=""
+    for _p in "$SLS_DIR/library-inject.so" "$SLS_DIR/SLSsteam.so" "$SLS64_SO"; do
+        [ -s "$_p" ] && _aud="${_aud:+$_aud:}$_p"
+    done
+    [ -n "$_aud" ] && export LD_AUDIT="$_aud"
 }
 luma_guard_run() {
     mkdir -p "$GDIR" 2>/dev/null || true
@@ -1085,8 +1101,43 @@ curl -fL --progress-bar -o "${TMP_DIR}/sls.7z" "$SLS_7Z_URL" \
     || die "Failed to extract the SLSsteam archive."
 [[ -f "${TMP_DIR}/sls/bin/SLSsteam.so" ]] \
     || die "SLSsteam.so not found in the archive (upstream layout changed?)."
-install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/SLSsteam.so"
-ok "Deployed ${SLS_DIR}/SLSsteam.so"
+# ELF class byte (offset 4): 1 = 32-bit, 2 = 64-bit. Decides the destination.
+elf_class() { od -An -tu1 -j4 -N1 "$1" 2>/dev/null | tr -d ' '; }
+case "$(elf_class "${TMP_DIR}/sls/bin/SLSsteam.so")" in
+    1)
+        install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/SLSsteam.so"
+        ok "Deployed ${SLS_DIR}/SLSsteam.so (32-bit client)"
+        ;;
+    2)
+        mkdir -p "${SLS_DIR}/x86_64"
+        install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/x86_64/SLSsteam.so"
+        ok "Deployed ${SLS_DIR}/x86_64/SLSsteam.so (64-bit client)"
+        if [[ -s "${SLS_DIR}/SLSsteam.so" ]]; then
+            warn "This SLSsteam release is 64-bit only; keeping the installed 32-bit ${SLS_DIR}/SLSsteam.so for the 32-bit client."
+        else
+            warn "This SLSsteam release is 64-bit only and no 32-bit SLSsteam.so is installed: the 32-bit client gets no SLSsteam."
+        fi
+        ;;
+    *)
+        die "SLSsteam.so in the archive is not an ELF file."
+        ;;
+esac
+if [[ -n "$SLS64_7Z_URL" ]]; then
+    info "Downloading the 64-bit SLSsteam archive (SLSSTEAM64_URL)..."
+    if curl -fsL -o "${TMP_DIR}/sls64.7z" "$SLS64_7Z_URL" \
+        && "$SEVENZIP" x -aoa -o"${TMP_DIR}/sls64" "${TMP_DIR}/sls64.7z" >/dev/null \
+        && [[ -f "${TMP_DIR}/sls64/bin/SLSsteam.so" ]]; then
+        if [[ "$(elf_class "${TMP_DIR}/sls64/bin/SLSsteam.so")" == "2" ]]; then
+            mkdir -p "${SLS_DIR}/x86_64"
+            install -m 0755 "${TMP_DIR}/sls64/bin/SLSsteam.so" "${SLS_DIR}/x86_64/SLSsteam.so"
+            ok "Deployed ${SLS_DIR}/x86_64/SLSsteam.so (64-bit client, from SLSSTEAM64_URL)"
+        else
+            warn "SLSSTEAM64_URL archive does not carry a 64-bit SLSsteam.so — ignored."
+        fi
+    else
+        warn "64-bit SLSsteam archive download/extract failed ($SLS64_7Z_URL) — ignored."
+    fi
+fi
 if [[ -f "${TMP_DIR}/sls/bin/library-inject.so" ]]; then
     install -m 0755 "${TMP_DIR}/sls/bin/library-inject.so" "${SLS_DIR}/library-inject.so"
     ok "Deployed ${SLS_DIR}/library-inject.so"
