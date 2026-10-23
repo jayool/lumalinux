@@ -721,7 +721,7 @@ jobs:
           rm -rf bin-branch && mkdir bin-branch
           cp steamclient.so bin-branch/
           { echo "manifest=$LUMA_STEAM_MANIFEST"; echo "version=$VER"; echo "sha256=${{ steps.dl.outputs.sha }}";
-            echo "fetched=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "source=watch-steam-x64.yml"; } > bin-branch/INFO.txt
+            echo "fetched=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; echo "source=watch-steam.yml (check-x64)"; } > bin-branch/INFO.txt
           cp x64-report.txt bin-branch/ 2>/dev/null || true
           cp x64-result.json bin-branch/ 2>/dev/null || true
           if ls rvas-out/*.yaml >/dev/null 2>&1; then mkdir -p bin-branch/res/rvas && cp rvas-out/*.yaml bin-branch/res/rvas/; fi
