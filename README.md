@@ -45,9 +45,12 @@ For driving lumalinux directly with Hubcap-style zips.
    curl -fsSL https://raw.githubusercontent.com/jayool/lumalinux/main/setup.sh | bash
    ```
 
-   One idempotent script: fetches SLSsteam (its `library-inject.so` has been an
-   empty placeholder since SLSsteam 20260903, and the wrapper skips it while it
-   is empty) + CloudRedirect + netsock + `liblumalinux.so`, writes the injection **wrapper** at
+   One idempotent script: fetches SLSsteam, one build per Steam client (the
+   last 32-bit release for `ubuntu12_32`, since upstream went 64-bit only; the
+   latest release for `steamrt64` once it is a 64-bit build; each placed by its
+   ELF class; its `library-inject.so` has been an empty placeholder since
+   SLSsteam 20260903, and the wrapper skips it while it is empty) + CloudRedirect
+   + netsock + `liblumalinux.so` and `liblumalinux-x86_64.so`, writes the injection **wrapper** at
    `~/.local/share/SLSsteam/path/steam`, and wires coverage (patched `*steam*.desktop`
    for Desktop, a PATH drop-in for terminals, and a systemd drop-in on
    `steam-launcher.service` for Game Mode). Your `steam.sh` and `/usr/bin/steam` stay **vanilla**.

@@ -123,13 +123,14 @@ jobs:
       - name: Fetch CURRENT SLSsteam + CloudRedirect, build fix_atexit shim
         run: |
           mkdir -p sos && cd sos
-          # SLSsteam (latest release): SLSsteam.so + library-inject.so.
-          # The asset name changed upstream (SLSsteam-Any.7z -> per-variant
-          # SLSsteam-Any-release.7z / -debug.7z, first shipped in 20260819131545),
-          # so try the current name and fall back to the legacy one instead of
-          # 404ing. Mirrors resolve_slssteam_asset() in setup.sh.
-          TAG=$(curl -sSL -o /dev/null -w "%{url_effective}" "https://github.com/AceSLS/SLSsteam/releases/latest")
-          TAG="${TAG##*/}"; echo "SLSsteam latest: $TAG"
+          # SLSsteam for the 32-bit client this job boots: the last 32-bit
+          # release (setup.sh SLS32_TAG; upstream went 64-bit only after it, so
+          # `latest` would hand this job a 64-bit SLSsteam.so). SLSsteam.so +
+          # library-inject.so. The asset name changed upstream (SLSsteam-Any.7z
+          # -> per-variant SLSsteam-Any-release.7z / -debug.7z, first shipped in
+          # 20260819131545), so try the current name and fall back to the legacy
+          # one instead of 404ing. Mirrors slssteam_release_asset_url() in setup.sh.
+          TAG=20261014151919; echo "SLSsteam (32-bit, last release): $TAG"
           for ASSET in SLSsteam-Any-release.7z SLSsteam-Any.7z; do
             URL="https://github.com/AceSLS/SLSsteam/releases/download/$TAG/$ASSET"
             if wget -q "$URL" -O SLSsteam.7z; then echo "SLSsteam asset: $ASSET"; break; fi

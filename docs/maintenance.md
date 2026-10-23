@@ -980,6 +980,31 @@ LumaDeck's side: `components.py` compares the installed `.so` against a
 constant 2.6.6 and never asks GitHub; the Components card says upstream is
 gone.
 
+## H) SLSsteam: one build per client
+
+Upstream recompiled SLSsteam in 64-bit for Valve's `steamrt64` client and
+dropped 32-bit support (release notes of the first x86_64 build, 2026-10-22).
+Two Steam clients coexist on the Deck for a while (`ubuntu12_32` on stable,
+`steamrt64` on the beta and the RT3 opt-in; `docs/steam-rt3-x64.md`), so the
+stack carries one SLSsteam build per client and nothing assumes "the" SLSsteam:
+
+| | 32-bit client | 64-bit client |
+|---|---|---|
+| File | `~/.local/share/SLSsteam/SLSsteam.so` | `~/.local/share/SLSsteam/x86_64/SLSsteam.so` |
+| Source (`setup.sh`) | release `SLS32_TAG` (`20261014151919`, the last 32-bit build), or `latest` while that is still a 32-bit build; `SLSSTEAM32_URL` overrides | `latest`, once it is a 64-bit build; `SLSSTEAM64_URL` meanwhile |
+| Placement | by the ELF class byte of `bin/SLSsteam.so`, never by the asset name (`install_slssteam_archive`); a 64-bit archive never lands on the 32-bit file | idem |
+| `library-inject.so` | from the 32-bit archive (an empty placeholder since 20260903) | none |
+| Version record | `~/.config/SLSsteam/.slssteam.version` | `~/.config/SLSsteam/.slssteam.version.x86_64` |
+| LumaDeck "latest" | `slssteam_version.LAST_32BIT_TAG` (same tag), never GitHub `latest` | GitHub `latest` |
+| LumaDeck "does the latest SLSsteam hook this client" | the `SafeModeHashes` group of `LAST_32BIT_TAG`; a client listed nowhere is not supported | the newest group, but unknown (not "not supported") while the feed lists no 64-bit hash at all |
+| `LD_AUDIT` (wrapper) | both files; each client's `ld.so` keeps its own class and ignores the other | idem |
+
+The 32-bit build is frozen the way CloudRedirect is (G): if upstream ever
+publishes another 32-bit build, bump `SLS32_TAG` in `setup.sh` and
+`LAST_32BIT_TAG` in LumaDeck's `slssteam_version.py` together. If upstream
+renames the release asset again, `SLS_7Z_ASSETS` (both the 32-bit tag and
+`latest` resolve through it). `config.yaml` is one file for both builds.
+
 ## TL;DR — which fix to try, in order
 
 1. **No banner in the log** → B (wrapper not reached: re-run `setup.sh` / Reapply;
