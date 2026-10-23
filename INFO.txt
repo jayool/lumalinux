@@ -1,0 +1,5 @@
+manifest=steam_client_steamdeck_publicbeta_steamrt64
+version=1792711043
+sha256=c3247a95f38775a655e95d415ce9d56721e99d985389b87bcad89dee02573883
+fetched=2026-10-23T07:46:02Z
+source=watch-steam-x64.yml
