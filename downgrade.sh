@@ -205,16 +205,25 @@ sha256_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
 # changing the file: 1788291500 == 1788652215), which this handles because an
 # unrelated annotation in between does not clear the match. Empty when unknown.
 # (No {n} interval in the regex: mawk lacks them; gawk on SteamOS has them.)
-hash_for_build() {  # hash_for_build FILE BUILD
+hash_for_build() {  # hash_for_build FILE BUILD  (ubuntu12_32 entries only)
+    # An entry annotated `# arch: steamrt64` is the 64-bit client's hash: same
+    # steam_version as the 32-bit one (one manifest, two packages), different
+    # file. This script pins the ubuntu12_32 tree, so those entries are skipped
+    # (the `arch` flag resets at every hash line). Same rule as LumaDeck's
+    # headcrab_compat._hash_for_build — keep the two in step.
     awk -v b="$2" '
         /^[[:space:]]*#[[:space:]]*steam_version:[[:space:]]*[0-9]+/ {
             if ($0 ~ ("steam_version:[[:space:]]*" b "([^0-9]|$)")) want = 1
             next
         }
-        want && /^[[:space:]]*-[[:space:]]*[0-9a-f]+/ {
-            sub(/^[[:space:]]*-[[:space:]]*/, "")
-            h = substr($0, 1, 64)
-            if (length(h) == 64 && h ~ /^[0-9a-f]+$/) { print h; exit }
+        /^[[:space:]]*#[[:space:]]*arch:/ { arch = 1; next }
+        /^[[:space:]]*-[[:space:]]*[0-9a-f]+/ {
+            if (want && !arch) {
+                sub(/^[[:space:]]*-[[:space:]]*/, "")
+                h = substr($0, 1, 64)
+                if (length(h) == 64 && h ~ /^[0-9a-f]+$/) { print h; exit }
+            }
+            arch = 0
         }
     ' "$1" 2>/dev/null
 }
