@@ -74,9 +74,9 @@ sudo chmod 1777 /tmp/.X11-unix
 sudo mkdir -p "\$XDG_RUNTIME_DIR"
 sudo chown "\$(id -u):\$(id -g)" "\$XDG_RUNTIME_DIR"
 chmod 700 "\$XDG_RUNTIME_DIR"
-if [ ! -S "\$XDG_RUNTIME_DIR/bus" ]; then
-    dbus-daemon --session --address="unix:path=\$XDG_RUNTIME_DIR/bus" --fork
-fi
+# Preguntando al bus, no mirando el socket: tras un reinicio del codespace el
+# socket sigue ahi sin demonio detras (ensure-session-bus.sh).
+"\$HOME/ensure-session-bus.sh"
 
 pkill -f "Xvfb :1"            2>/dev/null || true
 pkill -f "x11vnc -display :1" 2>/dev/null || true
@@ -266,74 +266,9 @@ esac
 SWITCH
 sudo chmod 755 /usr/local/lib/lumadev/session-switch.sh
 
-sudo tee /usr/local/lib/lumadev/gamemode-supervisor.sh >/dev/null <<'SUPER'
-#!/usr/bin/env bash
-# Emula la supervision de Steam que hace gamescope-session en la Deck: relanza
-# Steam cada vez que muere, mientras la "sesion" (/tmp/lumadev-session) siga
-# siendo gamescope. LumaDeck cuenta con este comportamiento: su restart_steam()
-# hace solo `steam -shutdown` ("Game Mode auto-restarts it"), y el final del
-# Quick Install reinicia igual — sin supervisor, cualquier restart desde el QAM
-# deja la pantalla en negro.
-set +e
-STATE=/tmp/lumadev-session
-PIDFILE=/tmp/lumadev-supervisor.pid
-
-# Un solo supervisor vivo.
-if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null; then
-    exit 0
-fi
-echo $$ > "$PIDFILE"
-
-export DISPLAY=:1
-export XDG_RUNTIME_DIR="/run/user/$(id -u)"
-export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-export LIBGL_ALWAYS_SOFTWARE=1
-export __GLX_VENDOR_LIBRARY_NAME=mesa
-export VK_LOADER_DRIVERS_DISABLE='nvidia*'
-export PATH="$HOME/.local/bin:$PATH"
-
-log() { echo "$(date '+%T') [supervisor $$] $*" >> /tmp/session-select.log; }
-
-log "arranca (session=$(cat "$STATE" 2>/dev/null))"
-FAILS=0
-while [ "$(cat "$STATE" 2>/dev/null)" = "gamescope" ]; do
-    log "lanzando steam gamepadui"
-    T0=$SECONDS
-    # Ruta REAL del Deck: Game Mode va por steam-launcher.service -> (nuestro
-    # systemd drop-in) -> GM_LAUNCHER (guard + wrapper) -> real steam-launcher.
-    # El codespace no tiene systemd --user, asi que replicamos ESA cadena: si
-    # lumalinux instalo su GM_LAUNCHER (post-migracion), lanzamos por el, de modo
-    # que Game Mode pasa por el guard + wrapper e inyecta AUTOMATICO en cada
-    # relanzamiento (como en la consola). Si no existe (pre-migracion / stack
-    # viejo), steam normal. GM_LAUNCHER hace `exec /usr/lib/steamos/steam-launcher`
-    # (stubeado mas abajo) -> steam gamepadui.
-    GM_L="$HOME/.local/share/SLSsteam/lumalinux-steam-launcher"
-    if [ -x "$GM_L" ]; then
-        "$GM_L" >>/tmp/steam.log 2>&1
-    else
-        steam -gamepadui -no-cef-sandbox >>/tmp/steam.log 2>&1
-    fi
-    RC=$?
-    DUR=$((SECONDS - T0))
-    [ "$(cat "$STATE" 2>/dev/null)" != "gamescope" ] && break
-    # Guardia anti crash-loop: 5 muertes seguidas en <15s = algo roto de verdad
-    # (en la Deck real gamescope-session tambien corta el bucle).
-    if [ "$DUR" -lt 15 ]; then
-        FAILS=$((FAILS+1))
-        if [ "$FAILS" -ge 5 ]; then
-            log "steam muere en bucle (rc=$RC, ${DUR}s); paro — mira /tmp/steam.log"
-            break
-        fi
-    else
-        FAILS=0
-    fi
-    log "steam salio (rc=$RC, ${DUR}s); relanzo en 2s (como gamescope-session)"
-    sleep 2
-done
-rm -f "$PIDFILE"
-log "termina (session=$(cat "$STATE" 2>/dev/null))"
-SUPER
-sudo chmod 755 /usr/local/lib/lumadev/gamemode-supervisor.sh
+# El supervisor vive como fichero en .devcontainer/steamos/lib/ (este script
+# corre desde la raiz del repo: postCreateCommand).
+sudo install -Dm755 .devcontainer/steamos/lib/gamemode-supervisor.sh /usr/local/lib/lumadev/gamemode-supervisor.sh
 
 sudo tee /usr/bin/steamos-session-select >/dev/null <<'SEL'
 #!/usr/bin/env bash
@@ -431,22 +366,10 @@ KWINRC
 # =============================================================================
 # start-gamemode.sh — Steam en gamepadui (la UI de Game Mode real de la Deck).
 # =============================================================================
-cat > "$HOME/start-gamemode.sh" <<'GM'
-#!/usr/bin/env bash
-# Arranca Game Mode: Steam en gamepadui sobre :1 BAJO EL SUPERVISOR que emula
-# gamescope-session (si Steam muere o algo hace `steam -shutdown` — el boton
-# Restart Steam de LumaDeck, el final del Quick Install — se relanza solo,
-# como en la Deck). El QAM donde vive Decky/LumaDeck se abre con el boton de
-# acceso rapido de la barra inferior.
-set -e
-[ -x "$HOME/start-net.sh" ] && "$HOME/start-net.sh" || true
-
-echo gamescope > /tmp/lumadev-session
-( nohup setsid /usr/local/lib/lumadev/gamemode-supervisor.sh </dev/null >>/tmp/session-select.log 2>&1 & )
-echo "Steam gamepadui arrancando bajo el supervisor. Mirala en noVNC (:6080)."
-echo "Logs: /tmp/steam.log (Steam) y /tmp/session-select.log (supervisor)."
-GM
-chmod +x "$HOME/start-gamemode.sh"
+# start-gamemode.sh y ensure-session-bus.sh viven como ficheros en
+# .devcontainer/steamos/home/ (ver cada uno).
+install -m755 .devcontainer/steamos/home/ensure-session-bus.sh "$HOME/ensure-session-bus.sh"
+install -m755 .devcontainer/steamos/home/start-gamemode.sh "$HOME/start-gamemode.sh"
 
 # =============================================================================
 # test-handoff.sh — smoke test del round-trip de sesion SIN LumaDeck: arma un
