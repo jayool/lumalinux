@@ -106,6 +106,11 @@ Resolution Resolve() {
 std::atomic<bool> g_pending{false};
 void Reconcile();
 
+// Armed by every broadcast, consumed by the SLSsteam config reload that
+// follows it (reported by the plugin): the broadcast is repeated then. See
+// RebroadcastOnReload for why the order matters.
+std::atomic<bool> g_rebroadcastOnReload{false};
+
 void SetUser(void* cuser) {
     if (!cuser) return;
     void* expected = nullptr;
@@ -175,8 +180,30 @@ void Reconcile() {
     }
 
     reinterpret_cast<NotifyFn>(addr)(user);
+    g_rebroadcastOnReload.store(true, std::memory_order_release);
     Log::Info("Reconcile: broadcast LicensesUpdated_t (CUser=%p) — "
               "appinfo/ownership refresh, no restart", user);
+}
+
+// The SLSsteam plugin calls luma_set_cuser on every SLSsteam config reload.
+// LumaDeck adds a game in two writes: keys.txt first (the finder injects the
+// depots into package 0 and fires Reconcile() at once), SLSsteam's config a
+// moment later (AdditionalApps: from then on SLSsteam answers "owned" for the
+// game, and reloads). The order decides on the 64-bit client: a broadcast
+// before SLSsteam lists the game makes Steam settle on "not owned" and the
+// install ends in "0 target depots" (measured 2026-10-24, 1/1); the same
+// broadcast after the reload makes Steam process the licence (3/3). So every
+// broadcast arms a repeat, and the first reload the plugin reports after it
+// fires that repeat. No reload (a game added by something that does not touch
+// SLSsteam's config) leaves it armed for the next one, a harmless extra
+// broadcast. The 32-bit client, where the first broadcast already works, gets
+// the second one too (the Lua test posted three per add with no ill effect).
+void RebroadcastOnReload() {
+    if (g_rebroadcastOnReload.exchange(false, std::memory_order_acq_rel)) {
+        Log::Info("Reconcile: SLSsteam reloaded its config after a broadcast — broadcasting again");
+        Reconcile();
+        g_rebroadcastOnReload.store(false, std::memory_order_release);  // the repeat does not arm another
+    }
 }
 
 }  // namespace LicenseReconcile
@@ -197,7 +224,8 @@ void Reconcile() {
 extern "C" __attribute__((visibility("default")))
 void luma_set_cuser(void* cuser) {
     if (!cuser) return;
-    Log::Info("Reconcile: CUser %p handed over by the SLSsteam plugin", cuser);
+    Log::Debug("Reconcile: CUser %p handed over by the SLSsteam plugin", cuser);
     LicenseReconcile::SetUser(cuser);
     LicenseReconcile::FirePendingIfAny();
+    LicenseReconcile::RebroadcastOnReload();
 }

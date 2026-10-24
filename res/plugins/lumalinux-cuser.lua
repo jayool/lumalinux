@@ -24,7 +24,8 @@
 -- matched by pid so a stale file of an earlier Steam never gives an address.
 -- Fail-safe: no engine yet, no user yet (not logged in), no status.json of
 -- this process (lumalinux not loaded, or not yet) -> nothing happens and the
--- next event tries again. Handed over once per pointer.
+-- next event tries again. Handed over once per pointer, and again on every
+-- SLSsteam config reload (lumalinux re-broadcasts after an add).
 LumaCUser = LumaCUser or { setup = false, sent = nil }
 
 local ffi = require("ffi")
@@ -58,15 +59,24 @@ LumaCUser.send = function(why)
     local user = engine:getUser(0)
     if not user then return end
     local cuser = ffi.cast("void**", user)[1]
-    if cuser == nil or cuser == LumaCUser.sent then return end
+    if cuser == nil then return end
+    -- Every config reload is handed over, same pointer or not: lumalinux uses
+    -- the reload that follows an add to repeat its broadcast (the 64-bit
+    -- client ignores the one fired at the keys.txt write; see
+    -- license_reconcile.cpp RebroadcastOnReload). Other events only once.
+    if why ~= "configLoaded" and cuser == LumaCUser.sent then return end
     local addr = LumaCUser.handover()
     if not addr then
         log.debug("lumalinux-cuser: no lumalinux status.json for this process yet (" .. why .. ")")
         return
     end
     ffi.cast("void(*)(void*)", ffi.cast("uintptr_t", tonumber(addr)))(cuser)
+    if cuser ~= LumaCUser.sent then
+        log.info(string.format("lumalinux-cuser: CUser %s handed to lumalinux at %s (%s)", tostring(cuser), addr, why))
+    else
+        log.debug("lumalinux-cuser: config reload reported to lumalinux (" .. why .. ")")
+    end
     LumaCUser.sent = cuser
-    log.info(string.format("lumalinux-cuser: CUser %s handed to lumalinux at %s (%s)", tostring(cuser), addr, why))
 end
 
 if not LumaCUser.setup then
