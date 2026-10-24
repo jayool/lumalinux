@@ -1,0 +1,7 @@
+manifest=steam_client_steamdeck_publicbeta_ubuntu12
+version=1792108788
+size=53499952
+sha256=6a8aa9f194fa644bc55894a17514207aead6f9ed8d360b0cbbfae5a40ada904c
+buildid=fc232387be98862cdbe5e773c56d86d8e2525bb2
+elf=ELF 32-bit LSB shared object
+fetched=2026-10-24T20:39:05Z
