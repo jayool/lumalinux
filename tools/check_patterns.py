@@ -608,6 +608,43 @@ def _got_base_consensus(data, secs):
     return max(votes.items(), key=lambda kv: kv[1])[0]
 
 
+# The three profiler labels around the beta client's licence re-check (2026-10):
+# CUser::RunFrame clears a CUser flag byte and calls BCheckUserLicensesUpdate,
+# which clears the next byte and calls RebuildLicensesCache. On a build that
+# carries them, Reconcile's call alone no longer rebuilds Steam's app<->package
+# table: the runtime must also store 0x0101 at reconcile.licenses_check_off,
+# which tools/check_patterns_x64.py derives for the steamrt64 client. No 32-bit
+# build has carried them so far (stable c770a8b1, the beta's 6a8aa9f1), so this
+# tool only DETECTS them — a derivation written without a binary to check it
+# against would be a guess. The day they appear, derive the i386 offset by hand
+# against that binary and teach this tool the shape (docs/steam-rt3-x64.md §1.3).
+LICENSE_CHECK_LABELS = (b"CUser::RunFrame - BCheckUserLicensesUpdate",
+                        b"BCheckUserLicensesUpdate - package/app info walk",
+                        b"RebuildLicensesCache")
+
+
+def license_check_labels(path):
+    """Count NUL-terminated occurrences of each licence re-check label in the
+    non-executable sections. {"status": "ABSENT"|"PRESENT"|"LOAD_FAILED",
+    "labels": {label: count}}. PRESENT means the build needs
+    reconcile.licenses_check_off and this tool cannot derive it (see above)."""
+    try:
+        data, secs = _load_sections(path)
+    except (OSError, ValueError) as e:
+        return {"status": "LOAD_FAILED", "note": "load:%s" % e, "labels": {}}
+    counts = {}
+    for label in LICENSE_CHECK_LABELS:
+        needle = label + b"\x00"
+        n = 0
+        for _nm, (a, o, sz) in secs.items():
+            if not a or not sz:
+                continue
+            n += data[o:o + sz].count(needle)
+        counts[label.decode()] = n
+    present = any(counts.values())
+    return {"status": "PRESENT" if present else "ABSENT", "labels": counts}
+
+
 def eh_frame_starts(path):
     """Sorted function-start table from .eh_frame_hdr. Port of the runtime
     src/eh_frame.cpp, and of tools/experiment_eh_frame.py which measured it
@@ -933,6 +970,7 @@ def main():
         "rtti": {},           # DepotKey RTTI ground-truth (slot/rva/status)
         "rtti_byname": {},    # DepotKey slot derived from the METHOD NAME
         "gmrc_xref": {},      # GMRC's rescue path: job-name anchor + .eh_frame_hdr
+        "license_check": {},  # the beta client's licence re-check labels (detector only)
         "verdict": None,
         "exit_code": None,
     }
@@ -1122,6 +1160,11 @@ def main():
     if tail_status != "UNIQUE":
         result["blocking"].append("finder:gmrc_tail:%s" % tail_status)
 
+    # 5) the licence re-check labels (detector only, see LICENSE_CHECK_LABELS).
+    # Never changes the verdict: installs work on such a build, only the
+    # add-without-restart path needs the offset this tool does not derive.
+    result["license_check"] = license_check_labels(args.steamclient)
+
     # ── verdict + exit code ──────────────────────────────────────────────────
     if result["blocking"]:
         result["verdict"] = "BLOCKING"
@@ -1189,6 +1232,19 @@ def main():
         # falls back to this resolver, so a dead one must not pass unnoticed.
         print("  %-12s %s  (%s)  <- runtime fallback unavailable on this build"
               % ("DepotKey-name", bn.get("status"), bn.get("note")))
+    lc = result.get("license_check", {})
+    if lc.get("status") == "PRESENT":
+        print("  %-12s PRESENT  <- ACTION NEEDED: this build has the licence re-check flags"
+              % "licensechk")
+        print("  %-12s (%s); Reconcile's call alone no longer rebuilds Steam's table on it."
+              % ("", ", ".join("%s x%d" % (k.split(" - ")[0], v) for k, v in lc["labels"].items() if v)))
+        print("  %-12s Derive reconcile.licenses_check_off for i386 by hand against this"
+              % "")
+        print("  %-12s binary (the steamrt64 derivation: tools/check_patterns_x64.py)."
+              % "")
+    else:
+        print("  %-12s %s  (no licence re-check flags on this build; Reconcile's call suffices)"
+              % ("licensechk", lc.get("status", "?")))
     print("")
     print("VERDICT: %s (exit %d)" % (result["verdict"], result["exit_code"]))
     if result["blocking"]:

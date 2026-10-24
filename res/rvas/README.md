@@ -22,7 +22,10 @@ stable client has none, the key is absent, and there Reconcile's call rebuilds
 the table itself. Derived from three profiler labels (`CUser::RunFrame -
 BCheckUserLicensesUpdate`, `BCheckUserLicensesUpdate - package/app info walk`,
 `RebuildLicensesCache`) plus Steam's own `mov word [rdi+off], 0x0101` store. A
-struct offset, never translated.
+struct offset, never translated. For the 32-bit client `check_patterns.py` only
+reports whether a build carries the labels (`licensechk PRESENT`, action needed):
+no 32-bit build has so far, and the i386 derivation is written the day one does,
+against that binary.
 
 One file per `steamclient.so` build, named `<sha256>.yaml`, mirroring
 steam-monitor's `<sha256>.toml` layout. Each file holds the hook RVAs (file
