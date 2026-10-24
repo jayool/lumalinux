@@ -451,11 +451,42 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   `0x188c950` on `bc54101b`, `0x1a0d010` on `9cf4720f`.
 - When it fires: from the finder thread, after an inject/retire pass, if the
   `keys.txt` watcher flagged a change (`package_zero_finder.cpp:814-817`). The
-  `CUser*` is captured by `sls_ach_combined_guard`, the replacement that
-  `sls_achievement_unblock` points SLSsteam's achievement-guard call sites at
-  (`sls_achievement_unblock.cpp:60-64` → `LicenseReconcile::SetUser`); without
-  SLSsteam (or that patch), or before the guard has run once, the call is
-  skipped and a restart is still needed.
+  `CUser*` comes from two sources, first non-null wins: `sls_ach_combined_guard`,
+  the replacement that `sls_achievement_unblock` points SLSsteam's
+  achievement-guard call sites at (`sls_achievement_unblock.cpp:60-64` →
+  `LicenseReconcile::SetUser`; 32-bit client only, the 64-bit SLSsteam build is
+  stripped), and SLSsteam's plugin system: `res/plugins/lumalinux-cuser.lua`
+  (installed by setup.sh) reads `SLS.steamEngine:getUser(0)`, takes the raw
+  pointer LuaBridge 3 keeps after the userdata's vtable, and calls
+  `luma_set_cuser` through LuaJIT's ffi at the address status.json publishes
+  (`cuser_handover`; SLSsteam is an LD_AUDIT module, in the loader's audit
+  namespace, where a symbol lookup cannot see our library — 2026-10-24; the
+  only source on the 64-bit client, see `steam-rt3-x64.md` §1.3). A Reconcile() skipped for want
+  of the pointer is remembered and fired from that hand-over (it runs on
+  SLSsteam's config-reload thread, outside any Steam call); the guard never
+  fires it, it runs inside a Steam call into SLSsteam. Without either source
+  the call is skipped and a restart is still needed.
+- What the call does depends on the client (2026-10-24). On the stable client
+  it is the whole job: Steam rebuilds its app↔package table from the package
+  list in memory and posts the callback (32-bit `c770a8b1`, Into the Breach
+  added mid-session: "1 mounted depots"). The beta client (`1792711043`,
+  steamrt64 `c3247a95`) split it: the function at the Reconcile RVA is
+  `SendAppLicenseUpdates` (posts `LicensesUpdated_t`/`AppLicensesChanged_t`,
+  requests the listed apps' records); the table is rebuilt by
+  `RebuildLicensesCache`, called only from `BCheckUserLicensesUpdate` out of
+  `CUser::RunFrame`, gated by two CUser flag bytes (`+0x2370` re-check,
+  `+0x2371` rebuild) that Steam's appinfo-update callback stores as the word
+  `0x0101` when a record changed ("apps updated > 0"). Injected depot ids have
+  no records, so nothing changed and the table stayed as it was ("0 target
+  depots", 5/5) until some DLC record arrived for any added game. So
+  `RequestLicenseCheck` (`license_reconcile.cpp`) stores the same two bytes
+  after the broadcast — at injection and again on SLSsteam's config reload —
+  when the feed names the offset (`reconcile.licenses_check_off`, derived by
+  `tools/check_patterns_x64.py` from the profiler labels
+  `CUser::RunFrame - BCheckUserLicensesUpdate`, `BCheckUserLicensesUpdate -
+  package/app info walk`, `RebuildLicensesCache` and Steam's own `0x0101`
+  store; `ABSENT` on the stable client, where no byte is written). The
+  arch does not decide this, the feed key does. `steam-rt3-x64.md` §1.3.
 - Status: `Reconcile` = `INSTALLED` (resolved) / `FAILED` (unresolved; LumaDeck
   then holds back the premature library appearance) / `DISABLED` (kill-switch)
   (`main.cpp:349-356`). How it was ported from moon and validated: §18.
@@ -2622,7 +2653,9 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
   (`FindNotifyLicensesUpdatedFunction`) — a wrong-build pattern disables the
   feature rather than calling garbage.
 - **`CUser*`** captured from the SLSsteam achievement guard (a Steam thread with a
-  valid pipe-0 `CUser`) — no new hook, no `CSteamEngine::getUser` resolution.
+  valid pipe-0 `CUser`), or handed over by SLSsteam's plugin system
+  (`res/plugins/lumalinux-cuser.lua` → `luma_set_cuser`, 2026-10-24; §4) — no
+  new hook, no `CSteamEngine::getUser` resolution of our own.
 - **Trigger**: the re-enabled `keys.txt` watcher reloads the KeyStore and *arms*
   the reconcile (it never calls Steam itself); the **package-0 finder** fires it
   on its own thread **after** re-injecting the new depots (correct ordering).

@@ -9,12 +9,14 @@
 // list for it (only refreshes on restart) — so an install before restarting
 // shows "0 target depots" / "Fully Installed, files missing".
 //
-// This module wires the missing "license reconcile" (moon/OST): broadcast
+// This module wires the missing "license reconcile" (moon/OST): call
 // CUser::NotifyLicensesUpdated (LicensesUpdated_t) so Steam re-reads
-// ownership + appinfo for the newly-owned apps WITHOUT a restart. The keys
-// are refreshed by the keys.txt watcher (gated on Enabled()); the depots are
-// re-injected by the existing package-0 finder; then the finder fires the
-// reconcile.
+// ownership + appinfo for the newly-owned apps WITHOUT a restart, and, on a
+// client whose Steam only rebuilds its app<->package table from its main loop
+// (the beta client, 2026-10), set the two request flags that loop consults —
+// the feed says where (reconcile.licenses_check_off). The keys are refreshed
+// by the keys.txt watcher (gated on Enabled()); the depots are re-injected by
+// the existing package-0 finder; then the finder fires the reconcile.
 //
 // ALL of this degrades gracefully. Worst case: the NotifyLicensesUpdated
 // pattern doesn't resolve uniquely on this Steam build -> no-op -> the restart
@@ -39,9 +41,17 @@ enum class Resolution { Disabled, Resolved, Unresolved };
 // too). Reconcile() reuses the same cached address.
 Resolution Resolve();
 
-// Capture a live CUser* (called from the SLSsteam achievement guard, which
-// receives one). First non-null wins. Needed to call NotifyLicensesUpdated.
+// Capture a live CUser* — from the SLSsteam achievement guard (32-bit client,
+// which receives one) or from SLSsteam's plugin system (luma_set_cuser, the
+// exported entry res/plugins/lumalinux-cuser.lua calls; the only source on the
+// 64-bit client). First non-null wins. Needed to call NotifyLicensesUpdated.
+// A Reconcile() skipped for want of the pointer is fired as soon as it lands.
 void SetUser(void* cuser);
+// SLSsteam has finished reloading its config (the plugin hand-over calls this
+// on every reload, never from inside a Steam call): fire a reconcile skipped
+// for want of the pointer, or re-arm the licence re-check flags a Reconcile()
+// just set (second arming, after SLSsteam lists the game).
+void OnSlsConfigReload();
 
 // Mark that keys.txt changed (a game was added). Called from the keys.txt
 // watcher (inotify thread) — it must NOT call into Steam itself.
@@ -62,9 +72,17 @@ bool TakeKeysChanged();
 void WaitForKeysChangeOr(int timeoutSec);
 
 // Fire CUser::NotifyLicensesUpdated once, if enabled + a CUser is known + the
-// function resolves uniquely. Broadcasts LicensesUpdated_t -> Steam refreshes
-// appinfo/ownership, no restart. Safe no-op otherwise. Call from a Steam
-// thread (the finder), never from the inotify thread.
+// function resolves uniquely (Steam refreshes appinfo/ownership, no restart),
+// and set the licence re-check flags when the feed names them. Safe no-op
+// otherwise. Call from a Steam thread (the finder), never from the inotify
+// thread.
 void Reconcile();
 
 }  // namespace LicenseReconcile
+
+// The hand-over entry SLSsteam's plugin calls (res/plugins/lumalinux-cuser.lua).
+// Its ADDRESS is published in status.json ("cuser_handover"): SLSsteam is an
+// LD_AUDIT module and lives in the dynamic loader's audit namespace, where a
+// dlsym() cannot see the application's libraries, lumalinux included; a raw
+// address call works across namespaces (same process memory).
+extern "C" void luma_set_cuser(void* cuser);

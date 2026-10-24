@@ -47,7 +47,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `src/log.cpp` | 164 | `~/.cache/lumalinux/lumalinux.log`, nivel `LUMA_LOG_LEVEL`, toast por `notify-send` | 11 |
 | `src/status.cpp` | 165 | `$XDG_RUNTIME_DIR/lumalinux/status.json` (una vez) y `gmrc.json` (en cada lookup), los dos por `.tmp` + `rename` | 11, 4, 5 |
 | `src/key_store.cpp/.hpp` | 345+119 | `keys.txt` y `retired_keys.txt`: tres formatos de línea, mapa, watcher inotify, `Lookup` con fallback a retiradas | 4, 2, 3, 9 |
-| `src/license_reconcile.cpp/.hpp` | 163+70 | resuelve `CUser::NotifyLicensesUpdated` (feed → patrón → anchor), kill-switch, despertar del finder, llamada directa | 2, 9, 1 |
+| `src/license_reconcile.cpp/.hpp` | 270+90 | resuelve `CUser::NotifyLicensesUpdated` (feed → patrón → anchor), kill-switch, despertar del finder, llamada directa; en la beta además pone los dos bytes de "revisa licencias" de `CUser` (`reconcile.licenses_check_off` del feed); recibe el `CUser*` del plugin de SLSsteam (`luma_set_cuser`) | 2, 9, 1 |
 | `src/reconcile_anchor*.{cpp,hpp}` | 63+140+22 | tercer localizador de Reconcile: `push 0x7d; push eax; call` + lectura de `this` + `jle`, único o 0 | 1 |
 | `src/patterns.cpp/.hpp` | 288+253 | seis patrones de bytes y el sigscan sobre el r-x de `steamclient.so`; "único o nada" | 1 |
 | `src/rtti.cpp/.hpp` | 388+61 | walk RTTI (nombre → type_info → vtable) y slot por nombre de método | 1 |
@@ -199,7 +199,7 @@ con una cadena de localizadores que solo avanza si el anterior devolvió 0:
 | ShaderDepot | `CShaderCacheManager::GetShaderCacheDepot(appinfo)` | feed → patrón → xref del string `shadercachedepot` | devuelve 0 (salta el pre-cache de shaders) para juegos sin clave o cuando ningún proveedor GMRC responde (`shader_depot_hook.cpp:57-96`) | no crítico |
 | GMRC | `BYieldingGetManifestRequestCode(this, app, depot, gid, branch, out_code*)` | feed → patrón → xref del nombre del job (`ContentServerDirectory.GetManifestRequestCode#1`) con `.eh_frame_hdr` o walk-back | para depots nuestros pide un código a la cascada (§2.4) y lo escribe en `*out_code` (`gmrc_hook.cpp:43-58`) | no crítico: se pierde la descarga nativa y el pre-cache de shaders; instala desde manifests pre-sembrados |
 | BuildDep | `CUserAppManager::BuildDepotDependency(...)` | feed → patrón (primer match, no único, `patterns.cpp:94-118`) → xref | tras el original, PATCH del `ManifestGid` de los depots de `keys.txt` en `pDepotInfo`; nunca inyecta, nunca toca `pSharedDepotInfo` (`depot_dependency_hook.cpp:61-128`) | **OFF por defecto** (`main.cpp:186-197`): SLSsteam hookea la misma función y el pin vive en `ManifestIds`; `LUMA_FORCE_BUILDDEP` lo activa |
-| Reconcile | `CUser::NotifyLicensesUpdated(this)` — llamada directa, no detour | feed → patrón → anchor del callback 125 (`push 0x7d; push eax; call` + `this` + `jle`, `reconcile_anchor_core.hpp:101-138`) | hace que Steam reprocese licencias sin reiniciar (§2.2) | `Reconcile: failed` → Add Game necesita reinicio |
+| Reconcile | `CUser::NotifyLicensesUpdated(this)` — llamada directa, no detour; en la beta (`SendAppLicenseUpdates`) además la palabra `0x0101` en `CUser+licenses_check_off` | feed → patrón → anchor del callback 125 (`push 0x7d; push eax; call` + `this` + `jle`, `reconcile_anchor_core.hpp:101-138`); el offset de los bytes solo por feed | hace que Steam reprocese licencias sin reiniciar (§2.2) | `Reconcile: failed` → Add Game necesita reinicio |
 
 Más el **finder de package-0** (`package_zero_finder.cpp`), que no es un hook:
 un hilo que localiza el puntero global a `CPackageInfoCache` (GOT por consenso
@@ -434,14 +434,24 @@ entradas de Steam.
 
 **Reconcile sin reiniciar.** Tras inyectar o retirar, si `keys.txt` cambió,
 lumalinux llama a `CUser::NotifyLicensesUpdated` con el `CUser*` que captura el
-guard de logros de SLSsteam (`sls_achievement_unblock.cpp:64` →
-`license_reconcile.cpp:103-109`): Steam reprocesa licencias y el juego aparece
-("added depots") sin reinicio. Sin SLSsteam, o antes de que el guard haya
-disparado, no hay `CUser*` y se salta ("restart still works",
-`:132-135`). Medido en vivo 2026-07-20 y en frío 2026-09-04 (§5 F2). SLSsteam
-solo emite `AppLicensesChanged_t` para apps **nuevas** en su diff de config
-(`146e28f`): al añadir el juego aparece; al quitarlo sigue en la biblioteca
-hasta reiniciar (medido 2026-10-07 09:59, §5 F9).
+guard de logros de SLSsteam en 32 (`sls_achievement_unblock.cpp:64`) o que le
+pasa el plugin `res/plugins/lumalinux-cuser.lua` por la API de plugins de
+SLSsteam (la única fuente en 64, donde el guard no aplica; `luma_set_cuser`, en
+la dirección que publica `status.json` como `cuser_handover`). En el cliente
+estable esa llamada es el trabajo entero: Steam rehace su tabla juego↔paquete y
+el juego aparece ("added depots") sin reinicio (medido 2026-07-20, 2026-09-04 y
+2026-10-24 19:08 con Into the Breach en 32). En la beta (`1792711043`) Valve
+partió esa función: la llamada solo avisa y pide fichas; la tabla la rehace el
+bucle principal de Steam cuando dos bytes de `CUser` (`+0x2370`/`+0x2371`) se
+lo piden, y nuestro aviso no los toca. Por eso allí lumalinux, tras el
+broadcast, escribe esos dos bytes (y otra vez cuando el plugin avisa de la
+recarga de SLSsteam); el offset viene del feed (`reconcile.licenses_check_off`,
+ausente en el estable, derivado por `tools/check_patterns_x64.py`). Sin CUser
+el Reconcile queda pendiente y se dispara cuando llega el puntero ("restart
+still works" si nunca llega). SLSsteam solo emite `AppLicensesChanged_t` para
+apps **nuevas** en su diff de config (`146e28f`): al añadir el juego aparece;
+al quitarlo sigue en la biblioteca hasta reiniciar (medido 2026-10-07 09:59,
+§5 F9). El detalle del binario de 64: `steam-rt3-x64.md` §1.3.
 
 **Juegos que la cuenta posee de verdad: LumaDeck decide.**
 `steam_licenses.licensed_appids()` parsea `appcache/packageinfo.vdf` (el fichero
@@ -1023,10 +1033,14 @@ obsoletas, `:156-192`). Las herramientas de runtime se bajan de `main`, el
 **Update de componentes.** Versión instalada: CloudRedirect y lumalinux por la
 cadena compilada en el `.so` de disco (`version=X.Y.Z`, `lumalinux/vX.Y.Z`),
 con `status.json` de respaldo para lumalinux; SLSsteam por el tag que
-`setup.sh` grabó en `.slssteam.version` (vacío si se instaló con
-`SLSSTEAM_7Z_URL`) o un mínimo deducido buscando en `SLSsteam.so` las VERSION
-de su `updates.yaml` (`slssteam_version.py`); plugin por `package.json`.
-Última: GitHub Releases con caché 6 h en `~/.cache/lumadeck/releases/`;
+`setup.sh` grabó para el build del cliente que corre (`.slssteam.version` el
+de 32, `.slssteam.version.x86_64` el de 64; vacío si se instaló con
+`SLSSTEAM_7Z_URL`/`SLSSTEAM64_URL`) o un mínimo deducido buscando en ese
+`SLSsteam.so` las VERSION de su `updates.yaml` (`slssteam_version.py`);
+plugin por `package.json`. Última: GitHub Releases con caché 6 h en
+`~/.cache/lumadeck/releases/`; SLSsteam en el cliente de 32 contra
+`LAST_32BIT_TAG` (`20261014151919`, la última release de 32: upstream dejó
+el 32 el 2026-10-22), constante sin red, y en el de 64 contra `latest`;
 CloudRedirect contra la 2.6.6 que distribuimos, constante sin red (su
 upstream desapareció el 2026-10-16); stale OK sin red; "no update" en silencio
 si no se sabe (`update_checks.py`, `components.py`).
@@ -1134,7 +1148,7 @@ Cada una con su función.
 |---|---|---|
 | `~/.local/share/SLSsteam/{SLSsteam.so,library-inject.so,path/steam,ensure-desktop-coverage.sh,lumalinux-guard.sh,lumalinux-steam-launcher}` | `setup.sh` (W) | SLSsteam y el wrapper, cobertura, guard, launcher de Game Mode |
 | `~/.config/SLSsteam/config.yaml` (+ `.lumalinux.bak`, `.bak`, `.tmp`) | `setup.sh`, `steamidra_lite.py`, `slssteam_ops.py`, `installer.py`, `slssteam_schema.py` (R/W); `pins.py` (R `ManifestIds`) | configuración de SLSsteam (claves en §3.4) |
-| `~/.config/SLSsteam/.slssteam.version`, `plugins/lumadeck-spliced-tickets.lua`, `tools/netsock/netsock.so`, `~/.SLSsteam.log` | `setup.sh` (W); `installer.py` (W); `fixes.py` (R); `paths.py` (R) | tag instalado; plugin Lua; netsock; log de SLSsteam |
+| `~/.config/SLSsteam/.slssteam.version` (build de 32), `.slssteam.version.x86_64` (build de 64), `plugins/lumalinux-cuser.lua` (el `CUser` para Reconcile), `plugins/lumadeck-spliced-tickets.lua`, `tools/netsock/netsock.so`, `~/.SLSsteam.log` | `setup.sh` (W); `installer.py` (W); `fixes.py` (R); `paths.py` (R) | tag instalado; plugins Lua; netsock; log de SLSsteam |
 | `~/.local/share/CloudRedirect/{cloud_redirect.so,cloud_redirect_cli}`, `~/.config/CloudRedirect/{config.json,tokens_<provider>.json,disable,cr_debug.log,cloud_redirect.log}` | `setup.sh` (W); `paths.py`, `components.py` (R) | CloudRedirect y su estado |
 | `~/.local/share/lumalinux/{liblumalinux.so,tools/steamidra_lite.py,tools/vdf_inject_keys.py}` | `setup.sh` (W); `downloads.py`, `pins.py` (ejecución); `components.py` (R versión) | el `.so` y las herramientas |
 | `~/.config/lumalinux/keys.txt`, `retired_keys.txt`, `no_reconcile`, `no_acf_sweep` | `steamidra_lite.py`, `slssteam_ops.py` (W); `key_store.cpp` (R + inotify); `pins.py`, `steam_utils.py`, `downloads.py:748` (R) | claves; claves retiradas; kill-switches |
@@ -1161,7 +1175,7 @@ Cada una con su función.
 |---|---|---|
 | `LUMA_NO_DEPOTKEY`, `LUMA_NO_SHADERSKIP`, `LUMA_NO_GMRC`, `LUMA_NO_PKG0_FINDER`, `LUMA_NO_RECONCILE`, `LUMA_NO_SLS_ACH_UNBLOCK`, `LUMA_NO_CR_STATS_FIX`, `LUMA_NO_LIBCURL_FIX` | `main.cpp:182-184,295,320`; `license_reconcile.cpp:87`; `cr_stats_fix.cpp:179`; `libcurl_pin.cpp:94` | apagan cada pieza del `.so` |
 | `LUMA_FORCE_BUILDDEP`, `LUMA_NO_BUILDDEP`, `LUMA_LOADPKG_DEBUG`, `LUMA_NO_LOADPKG`, `LUMA_LOADPKG_IDX`, `LUMA_PKG0_FINDER=diag`, `LUMA_SLS_ACH_TRACE`, `LUMA_GMRC_URL`, `LUMA_PROCESS_ANY`, `LUMA_LOG_LEVEL`, `LUMA_NO_NOTIFY` | `main.cpp`; `patterns.cpp:264-270`; `package_zero_finder.cpp:589-593`; `gmrc_store.hpp:183`; `proc_filter.cpp:11`; `log.cpp:37-51,150` | diagnóstico y pruebas |
-| `LUMALINUX_SO_URL`, `SLSSTEAM_7Z_URL`, `CLOUDREDIRECT_URL`, `NETSOCK_SO_URL`, `CR_FLATPAK_RUNTIME`, `LUMA_SKIP_DOTNET`, `LUMA_SKIP_CR_APP`, `VANILLA_STEAM_SH_URL`, `LUMA_STEAM_BIN`, `LUMA_GUARD_MAX_FAILS` (3), `LUMA_GUARD_STARTUP_SECS` (180), `LUMA_GUARD_DUMPS_DIR` (`/tmp/dumps`), `LUMA_GUARD_NO_COREDUMP` (0) | `setup.sh` | fuentes alternativas, saltos, binario real, parámetros del guard |
+| `LUMALINUX_SO_URL`, `LUMALINUX64_SO_URL`, `SLSSTEAM_7Z_URL`, `SLSSTEAM32_URL`, `SLSSTEAM64_URL`, `CLOUDREDIRECT_URL`, `NETSOCK_SO_URL`, `CR_FLATPAK_RUNTIME`, `LUMA_SKIP_DOTNET`, `LUMA_SKIP_CR_APP`, `VANILLA_STEAM_SH_URL`, `LUMA_STEAM_BIN`, `LUMA_GUARD_MAX_FAILS` (3), `LUMA_GUARD_STARTUP_SECS` (180), `LUMA_GUARD_DUMPS_DIR` (`/tmp/dumps`), `LUMA_GUARD_NO_COREDUMP` (0) | `setup.sh` | fuentes alternativas, saltos, binario real, parámetros del guard |
 | `DOWNGRADE_URL`, `DECK_MANIFEST_URL`, `LINUX_MANIFEST_URL`, `STEAM_DIR_OVERRIDE` | `downgrade.sh:35-46` | espejo y manifests del downgrade, directorio de Steam |
 | `LD_AUDIT`, `LD_PRELOAD`, `LD_LIBRARY_PATH` | wrapper (`setup.sh:888,901-915`) | inyección; el guard en vanilla las des-exporta |
 | `LUMADECK_SETUP_URL`, `LUMADECK_DOWNGRADE_URL`, `LUMA_NO_ACF_SWEEP`, `LUMA_NO_RECONCILE` | `installer.py:47-50`; `desktop_handoff.py:60-67`; `downloads.py:1688`; `slssteam_ops.py:33` | overrides y kill-switches de LumaDeck |
@@ -1757,6 +1771,7 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-07 07:20 | codespace SteamOS | `SetDLCEnabled(true)` tras un uninstall sin reiniciar, con el vector append-only | Steam vuelve a bajar los DLC enteros: licencia rancia en el vector, manifests en depotcache, clave retirada | — |
 | 2026-10-07 08:10 | codespace SteamOS (`4f8579c`) | Quitar una línea de `keys.txt` → `erase` del vector + reconcile | `- AppIdVec` ×12; un Verify ya no baja nada (`4 target`). "Your stuff" sigue mostrando el juego hasta reiniciar | — |
 | 2026-10-07 09:59 | codespace SteamOS, Brotato | Aparecer y desaparecer en caliente | Al añadir aparece (SLSsteam emite `AppLicensesChanged_t` solo para apps nuevas); al quitar, `Config reloaded!` ×6 sin callback y el `LicensesUpdated_t` de lumalinux no suelta la entrada; al reiniciar desaparece | — |
+| 2026-10-24 | codespace SteamOS, estable 32 (`c770a8b1`) y beta 64 (`c3247a95`) | Reconcile a mitad de sesión por cliente | En 32, Into the Breach (sin DLC) baja tras el broadcast: `1 mounted depots`. En la beta, 0/5 con el broadcast en cualquier momento (`app_status`: `Subscribed,Pending Gift`, sin `Legacy Free Sub`); al añadir Brotato (ficha de DLC nueva) Steam rehace su tabla y Into the Breach queda enganchado sin tocarlo. En el binario: la beta parte `NotifyLicensesUpdated` en `SendAppLicenseUpdates` + `RebuildLicensesCache`, este último solo desde `RunFrame` cuando `CUser+0x2370/0x2371` lo piden | `steam-rt3-x64.md` §1.3 |
 
 #### Función 3 — DLC
 

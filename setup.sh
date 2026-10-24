@@ -82,9 +82,22 @@ SLS_TAG=""
 # name, e.g. when it strips itself from LD_AUDIT). The launcher names both in
 # LD_AUDIT and each client's ld.so rejects the other ("wrong ELF class").
 # A 64-bit archive is never installed over the 32-bit file, whatever upstream
-# calls the asset. Where a 64-bit build is published is not known yet
-# (2026-10-23: a prerelease exists, unpublished); until then it is optional,
-# by URL (a .7z with bin/SLSsteam.so, like the release archive).
+# calls the asset.
+#
+# Upstream recompiled SLSsteam in 64-bit and dropped 32-bit support (release
+# notes of the first x86_64 build, 2026-10-22: "Recompile in 64 bit; dropped
+# 32 bit support"). So `latest` describes the 64-bit build from the day that
+# build is published, and the 32-bit client's SLSsteam is frozen at the last
+# 32-bit release, SLS32_TAG, the way CloudRedirect is frozen at 2.6.6: when
+# `latest` is not a 32-bit build, that tag is installed for the 32-bit client
+# (skipped when it is already in place). Bump SLS32_TAG only if upstream ever
+# publishes another 32-bit build; LumaDeck carries the same tag
+# (slssteam_version.LAST_32BIT_TAG) as the latest the 32-bit client is compared
+# against. SLSSTEAM32_URL overrides where the 32-bit archive comes from (a .7z
+# with a 32-bit bin/SLSsteam.so), SLSSTEAM64_URL where a 64-bit one comes from
+# (optional; what `latest` carries once upstream publishes the 64-bit build).
+SLS32_TAG="20261014151919"
+SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # CloudRedirect's upstream (Selectively11/CloudRedirect) was deleted on
 # 2026-10-16 together with its author's account; nothing is published there any
@@ -265,6 +278,9 @@ edit_slssteam_config() {
     _sls_ensure_kv DisableCloud   no
     _sls_ensure_kv SafeMode       no
     _sls_ensure_kv DisableUpdates no
+    # Our SLSsteam plugin (lumalinux-cuser.lua, deployed below) needs the
+    # plugin system on; LumaDeck sets this too for its spliced-tickets plugin.
+    _sls_ensure_kv Plugins        yes
 
     # Only claim success once the three functional keys are verified. If any is
     # still wrong (e.g. the append couldn't write), warn loudly instead of lying.
@@ -486,16 +502,107 @@ resolve_slssteam_asset() {
     [[ "$tag" =~ ^[0-9]{14}$ ]] || return 1
 
     # Step 2 — which asset name this release actually publishes.
+    url="$(slssteam_release_asset_url "$tag")" || return 1
+    SLS_7Z_URL="$url"
+    SLS_TAG="$tag"
+    return 0
+}
+
+# The archive URL of release <tag>: the first of SLS_7Z_ASSETS that the release
+# really ships (-L and the FINAL status, see above). Prints it; fails when none.
+slssteam_release_asset_url() {
+    local tag="$1" base="https://github.com/AceSLS/SLSsteam/releases" asset url code
     for asset in "${SLS_7Z_ASSETS[@]}"; do
         url="${base}/download/${tag}/${asset}"
         code="$(curl -sS -I -L --connect-timeout 15 --max-time 60 -o /dev/null \
                 -w '%{http_code}' "$url" 2>/dev/null || true)"
         [[ "$code" == "200" ]] || continue
-        SLS_7Z_URL="$url"
-        SLS_TAG="$tag"
+        printf '%s\n' "$url"
         return 0
     done
     return 1
+}
+
+# ELF class byte (offset 4): 1 = 32-bit, 2 = 64-bit. Decides where an
+# SLSsteam.so goes.
+elf_class() { od -An -tu1 -j4 -N1 "$1" 2>/dev/null | tr -d ' '; }
+
+# Download one SLSsteam archive and install its SLSsteam.so where the client of
+# its ELF class looks. install_slssteam_archive <url> <tag> <label> [<class>]:
+# <tag> is recorded for that class ("" records nothing: an archive that is not
+# an AceSLS release has no tag); <label> names the archive in messages; <class>
+# (1 or 2) refuses an archive of the other class instead of installing it.
+# Sets SLS_INSTALLED_CLASS to the class installed; the first archive's
+# res/config.yaml becomes SLS_CFG_TEMPLATE. Never fatal: the caller decides
+# what a missing build means for each client.
+SLS_INSTALLED_CLASS=""
+SLS_CFG_TEMPLATE=""
+install_slssteam_archive() {
+    local url="$1" tag="$2" label="$3" want="${4:-}" dir cls
+    dir="${TMP_DIR}/sls-$(printf '%s' "$label" | tr -c 'A-Za-z0-9' '_')"
+    SLS_INSTALLED_CLASS=""
+    info "Downloading SLSsteam (${label})${tag:+, release ${tag}}..."
+    if ! curl -fL --progress-bar -o "${dir}.7z" "$url"; then
+        warn "SLSsteam (${label}) download failed ($url)."
+        return 1
+    fi
+    if ! "$SEVENZIP" x -aoa -o"$dir" "${dir}.7z" >/dev/null; then
+        warn "SLSsteam (${label}) archive could not be extracted."
+        return 1
+    fi
+    if [[ ! -f "$dir/bin/SLSsteam.so" ]]; then
+        warn "SLSsteam.so not found in the ${label} archive (upstream layout changed?)."
+        return 1
+    fi
+    cls="$(elf_class "$dir/bin/SLSsteam.so")"
+    if [[ -n "$want" && "$cls" != "$want" ]]; then
+        warn "SLSsteam (${label}) archive does not carry a $([[ "$want" == 2 ]] && echo 64 || echo 32)-bit SLSsteam.so — ignored."
+        return 1
+    fi
+    case "$cls" in
+        1)
+            install -m 0755 "$dir/bin/SLSsteam.so" "${SLS_DIR}/SLSsteam.so"
+            ok "Deployed ${SLS_DIR}/SLSsteam.so (32-bit client, ${label})"
+            # library-inject.so belongs to the 32-bit stack: it ships next to
+            # the 32-bit build (an empty placeholder since 20260903, which the
+            # wrapper skips; the 64-bit archive carries an empty one too).
+            if [[ -f "$dir/bin/library-inject.so" ]]; then
+                install -m 0755 "$dir/bin/library-inject.so" "${SLS_DIR}/library-inject.so"
+                ok "Deployed ${SLS_DIR}/library-inject.so"
+            else
+                warn "library-inject.so not in the ${label} archive — the wrapper will load SLSsteam.so alone."
+            fi
+            [[ -n "$tag" ]] && record_slssteam_version "$tag" ".slssteam.version"
+            ;;
+        2)
+            mkdir -p "${SLS_DIR}/x86_64"
+            install -m 0755 "$dir/bin/SLSsteam.so" "${SLS_DIR}/x86_64/SLSsteam.so"
+            ok "Deployed ${SLS_DIR}/x86_64/SLSsteam.so (64-bit client, ${label})"
+            [[ -n "$tag" ]] && record_slssteam_version "$tag" ".slssteam.version.x86_64"
+            ;;
+        *)
+            warn "SLSsteam.so in the ${label} archive is not an ELF file — ignored."
+            return 1
+            ;;
+    esac
+    SLS_INSTALLED_CLASS="$cls"
+    [[ -z "$SLS_CFG_TEMPLATE" && -f "$dir/res/config.yaml" ]] && SLS_CFG_TEMPLATE="$dir/res/config.yaml"
+    return 0
+}
+
+# Record the installed SLSsteam release so LumaDeck can detect updates. SLSsteam
+# embeds its version ONLY inside the compiled .so and writes nothing readable to
+# disk — unlike lumalinux, whose injected .so drops a status.json with its
+# version — so "which release is installed" has to be remembered at install time,
+# the way a package manager does. One file per client: `.slssteam.version` for
+# the 32-bit build, `.slssteam.version.x86_64` for the 64-bit one (LumaDeck's
+# slssteam_version.py reads the one of the client that runs).
+record_slssteam_version() {
+    local tag="$1" file="$2"
+    mkdir -p "$SLS_CFG_DIR"
+    printf '%s\n' "$tag" > "$SLS_CFG_DIR/$file" 2>/dev/null \
+        && ok "Recorded SLSsteam version: $tag ($file)" \
+        || warn "Could not write $SLS_CFG_DIR/$file (update detection will be skipped)."
 }
 
 # ── CloudRedirect .so: ours to ship now ────────────────────────────────────
@@ -1089,86 +1196,47 @@ info "Installing lumalinux unlock stack (self-contained, wrapper injection)..."
 TMP_DIR="$(mktemp -d)"
 mkdir -p "$SLS_DIR" "$SLS_CFG_DIR" "$CR_DIR" "$LL_DIR" "$KEYS_DIR" "$WRAPPER_DIR"
 
-# SLSsteam + library-inject (bundled in the release archive under bin/).
-info "Downloading SLSsteam..."
-resolve_slssteam_asset || die "Could not resolve the SLSsteam release asset (tried: ${SLS_7Z_ASSETS[*]}). Upstream may have renamed it again — see SLS_7Z_ASSETS."
-if [[ -n "$SLS_TAG" ]]; then
-    info "SLSsteam release: ${SLS_TAG}"
+# SLSsteam (+ library-inject, bundled in the 32-bit release archive under
+# bin/). `latest` first; then the 32-bit client's build when `latest` is not
+# one (SLS32_TAG, see the top); then an optional 64-bit archive by URL.
+latest_class=""
+if resolve_slssteam_asset; then
+    [[ -n "$SLS_TAG" ]] && info "SLSsteam release: ${SLS_TAG}"
+    install_slssteam_archive "$SLS_7Z_URL" "$SLS_TAG" "latest" && latest_class="$SLS_INSTALLED_CLASS"
+else
+    warn "Could not resolve the latest SLSsteam release asset (tried: ${SLS_7Z_ASSETS[*]}). Upstream may have renamed it again — see SLS_7Z_ASSETS. Falling back to the last 32-bit release (${SLS32_TAG}); the 64-bit client gets no new SLSsteam."
 fi
-curl -fL --progress-bar -o "${TMP_DIR}/sls.7z" "$SLS_7Z_URL" \
-    || die "Failed to download the SLSsteam archive ($SLS_7Z_URL)."
-"$SEVENZIP" x -aoa -o"${TMP_DIR}/sls" "${TMP_DIR}/sls.7z" >/dev/null \
-    || die "Failed to extract the SLSsteam archive."
-[[ -f "${TMP_DIR}/sls/bin/SLSsteam.so" ]] \
-    || die "SLSsteam.so not found in the archive (upstream layout changed?)."
-# ELF class byte (offset 4): 1 = 32-bit, 2 = 64-bit. Decides the destination.
-elf_class() { od -An -tu1 -j4 -N1 "$1" 2>/dev/null | tr -d ' '; }
-case "$(elf_class "${TMP_DIR}/sls/bin/SLSsteam.so")" in
-    1)
-        install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/SLSsteam.so"
-        ok "Deployed ${SLS_DIR}/SLSsteam.so (32-bit client)"
-        ;;
-    2)
-        mkdir -p "${SLS_DIR}/x86_64"
-        install -m 0755 "${TMP_DIR}/sls/bin/SLSsteam.so" "${SLS_DIR}/x86_64/SLSsteam.so"
-        ok "Deployed ${SLS_DIR}/x86_64/SLSsteam.so (64-bit client)"
-        if [[ -s "${SLS_DIR}/SLSsteam.so" ]]; then
-            warn "This SLSsteam release is 64-bit only; keeping the installed 32-bit ${SLS_DIR}/SLSsteam.so for the 32-bit client."
-        else
-            warn "This SLSsteam release is 64-bit only and no 32-bit SLSsteam.so is installed: the 32-bit client gets no SLSsteam."
-        fi
-        ;;
-    *)
-        die "SLSsteam.so in the archive is not an ELF file."
-        ;;
-esac
-if [[ -n "$SLS64_7Z_URL" ]]; then
-    info "Downloading the 64-bit SLSsteam archive (SLSSTEAM64_URL)..."
-    if curl -fsL -o "${TMP_DIR}/sls64.7z" "$SLS64_7Z_URL" \
-        && "$SEVENZIP" x -aoa -o"${TMP_DIR}/sls64" "${TMP_DIR}/sls64.7z" >/dev/null \
-        && [[ -f "${TMP_DIR}/sls64/bin/SLSsteam.so" ]]; then
-        if [[ "$(elf_class "${TMP_DIR}/sls64/bin/SLSsteam.so")" == "2" ]]; then
-            mkdir -p "${SLS_DIR}/x86_64"
-            install -m 0755 "${TMP_DIR}/sls64/bin/SLSsteam.so" "${SLS_DIR}/x86_64/SLSsteam.so"
-            ok "Deployed ${SLS_DIR}/x86_64/SLSsteam.so (64-bit client, from SLSSTEAM64_URL)"
-        else
-            warn "SLSSTEAM64_URL archive does not carry a 64-bit SLSsteam.so — ignored."
-        fi
+if [[ "$latest_class" != "1" ]]; then
+    if [[ -n "$SLS32_7Z_URL" ]]; then
+        install_slssteam_archive "$SLS32_7Z_URL" "" "32-bit, SLSSTEAM32_URL" 1 || true
+    elif [[ -s "${SLS_DIR}/SLSsteam.so" && "$(cat "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null)" == "$SLS32_TAG" ]]; then
+        ok "32-bit SLSsteam ${SLS32_TAG} already installed (the last 32-bit release)."
     else
-        warn "64-bit SLSsteam archive download/extract failed ($SLS64_7Z_URL) — ignored."
+        [[ "$latest_class" == "2" ]] && info "The latest SLSsteam release is 64-bit only: installing the last 32-bit release (${SLS32_TAG}) for the 32-bit client."
+        if url32="$(slssteam_release_asset_url "$SLS32_TAG")"; then
+            install_slssteam_archive "$url32" "$SLS32_TAG" "32-bit" 1 || true
+        else
+            warn "Release ${SLS32_TAG} has no archive named ${SLS_7Z_ASSETS[*]} (see SLS32_TAG / SLS_7Z_ASSETS)."
+        fi
+    fi
+    if [[ ! -s "${SLS_DIR}/SLSsteam.so" ]]; then
+        warn "No 32-bit SLSsteam on this machine: the 32-bit client gets no SLSsteam."
     fi
 fi
-if [[ -f "${TMP_DIR}/sls/bin/library-inject.so" ]]; then
-    install -m 0755 "${TMP_DIR}/sls/bin/library-inject.so" "${SLS_DIR}/library-inject.so"
-    ok "Deployed ${SLS_DIR}/library-inject.so"
-else
-    warn "library-inject.so not in the archive — the wrapper will load SLSsteam.so alone."
+if [[ -n "$SLS64_7Z_URL" ]]; then
+    install_slssteam_archive "$SLS64_7Z_URL" "" "64-bit, SLSSTEAM64_URL" 2 || true
 fi
-
-# Record the installed SLSsteam version so LumaDeck can detect updates. SLSsteam
-# embeds its version ONLY inside the compiled .so and writes nothing readable to
-# disk — unlike lumalinux, whose injected .so drops a status.json with its
-# version — so "which release is installed" has to be remembered at install time,
-# the way a package manager does.
-#
-# SLS_TAG comes from the SAME redirect that produced SLS_7Z_URL (see
-# resolve_slssteam_asset), so it always describes the archive we just unpacked.
-# It is empty only when SLSSTEAM_7Z_URL pinned a custom archive, which the AceSLS
-# release tags do not describe; we then record nothing rather than a wrong value.
-if [[ -n "$SLS_TAG" ]]; then
-    printf '%s\n' "$SLS_TAG" > "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null \
-        && ok "Recorded SLSsteam version: $SLS_TAG" \
-        || warn "Could not write the SLSsteam version file (update detection will be skipped)."
-fi
+[[ -s "${SLS_DIR}/SLSsteam.so" || -s "${SLS_DIR}/x86_64/SLSsteam.so" ]] \
+    || die "No SLSsteam.so installed for either client."
 
 # Config: seed from the template if absent, else merge (preserving your values);
 # then apply headcrab's functional settings (minus SafeMode — the freno).
-if [[ -f "${TMP_DIR}/sls/res/config.yaml" ]]; then
+if [[ -n "$SLS_CFG_TEMPLATE" ]]; then
     if [[ ! -f "${SLS_CFG_DIR}/config.yaml" ]]; then
-        install -m 0644 "${TMP_DIR}/sls/res/config.yaml" "${SLS_CFG_DIR}/config.yaml"
+        install -m 0644 "$SLS_CFG_TEMPLATE" "${SLS_CFG_DIR}/config.yaml"
         ok "Seeded ${SLS_CFG_DIR}/config.yaml (default)"
     else
-        merge_slssteam_config "${TMP_DIR}/sls/res/config.yaml" "${SLS_CFG_DIR}/config.yaml"
+        merge_slssteam_config "$SLS_CFG_TEMPLATE" "${SLS_CFG_DIR}/config.yaml"
     fi
 fi
 edit_slssteam_config "${SLS_CFG_DIR}/config.yaml"
@@ -1238,6 +1306,22 @@ for tool in "${RUNTIME_TOOLS[@]}"; do
         warn "Failed to download ${tool} from ${TOOLS_REF_URL} (continuing; runtime helper, not needed for injection)."
     fi
 done
+
+# Our SLSsteam plugin: hands Steam's CUser to lumalinux's license reconcile
+# (res/plugins/lumalinux-cuser.lua; the file says why). Same ref as the .so and
+# the tools. SLSsteam runs every .lua in its plugins dir and wants them owner-only.
+SLS_PLUGIN="lumalinux-cuser.lua"
+mkdir -p "${SLS_CFG_DIR}/plugins"
+PLUGIN_REF_URL="https://raw.githubusercontent.com/${REPO}/${TOOLS_REF}/res/plugins"
+if curl -fsSL -o "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "${PLUGIN_REF_URL}/${SLS_PLUGIN}" \
+   || { [[ "$TOOLS_REF" != "main" ]] && curl -fsSL -o "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "https://raw.githubusercontent.com/${REPO}/main/res/plugins/${SLS_PLUGIN}"; }; then
+    chmod 0600 "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp"
+    mv -f "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}"
+    ok "Deployed SLSsteam plugin ${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}"
+else
+    rm -f "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp"
+    warn "Failed to download ${SLS_PLUGIN} (continuing; on the 64-bit client a game added while Steam runs then needs a Steam restart before it installs)."
+fi
 
 # .NET 9 runtime (Steamless) — LumaDeck installs this during deps; headcrab doesn't.
 install_dotnet9
