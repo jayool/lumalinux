@@ -71,6 +71,16 @@ uintptr_t GotBase();
 // finder checks readability before dereferencing it.
 uintptr_t CacheGlobalAddr();
 
+// The CUser offset of the client's licence re-check request flags for THIS
+// build (feed key `reconcile.licenses_check_off`), or 0 when the feed has no
+// value. Two adjacent bytes: [off] "re-check licences on the next frame" (read
+// by CUser::RunFrame), [off+1] "rebuild the app<->package table" (read by the
+// check RunFrame runs). The beta client (1792711043, 2026-10) consults them;
+// the stable client has none and the key is absent for it. A struct offset, not
+// an address: no translation, no mapping check, same kind of number as
+// CacheGlobalDisp().
+std::size_t LicensesCheckOff();
+
 // When load() served the feed from the disk copy, fetch the published one and
 // replace the copy for the next start. Network only; touches nothing that the
 // hooks already read. Called from a detached thread after the install.

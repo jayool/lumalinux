@@ -466,6 +466,27 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   SLSsteam's config-reload thread, outside any Steam call); the guard never
   fires it, it runs inside a Steam call into SLSsteam. Without either source
   the call is skipped and a restart is still needed.
+- What the call does depends on the client (2026-10-24). On the stable client
+  it is the whole job: Steam rebuilds its app↔package table from the package
+  list in memory and posts the callback (32-bit `c770a8b1`, Into the Breach
+  added mid-session: "1 mounted depots"). The beta client (`1792711043`,
+  steamrt64 `c3247a95`) split it: the function at the Reconcile RVA is
+  `SendAppLicenseUpdates` (posts `LicensesUpdated_t`/`AppLicensesChanged_t`,
+  requests the listed apps' records); the table is rebuilt by
+  `RebuildLicensesCache`, called only from `BCheckUserLicensesUpdate` out of
+  `CUser::RunFrame`, gated by two CUser flag bytes (`+0x2370` re-check,
+  `+0x2371` rebuild) that Steam's appinfo-update callback stores as the word
+  `0x0101` when a record changed ("apps updated > 0"). Injected depot ids have
+  no records, so nothing changed and the table stayed as it was ("0 target
+  depots", 5/5) until some DLC record arrived for any added game. So
+  `RequestLicenseCheck` (`license_reconcile.cpp`) stores the same two bytes
+  after the broadcast — at injection and again on SLSsteam's config reload —
+  when the feed names the offset (`reconcile.licenses_check_off`, derived by
+  `tools/check_patterns_x64.py` from the profiler labels
+  `CUser::RunFrame - BCheckUserLicensesUpdate`, `BCheckUserLicensesUpdate -
+  package/app info walk`, `RebuildLicensesCache` and Steam's own `0x0101`
+  store; `ABSENT` on the stable client, where no byte is written). The
+  arch does not decide this, the feed key does. `steam-rt3-x64.md` §1.3.
 - Status: `Reconcile` = `INSTALLED` (resolved) / `FAILED` (unresolved; LumaDeck
   then holds back the premature library appearance) / `DISABLED` (kill-switch)
   (`main.cpp:349-356`). How it was ported from moon and validated: §18.

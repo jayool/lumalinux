@@ -47,7 +47,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `src/log.cpp` | 164 | `~/.cache/lumalinux/lumalinux.log`, nivel `LUMA_LOG_LEVEL`, toast por `notify-send` | 11 |
 | `src/status.cpp` | 165 | `$XDG_RUNTIME_DIR/lumalinux/status.json` (una vez) y `gmrc.json` (en cada lookup), los dos por `.tmp` + `rename` | 11, 4, 5 |
 | `src/key_store.cpp/.hpp` | 345+119 | `keys.txt` y `retired_keys.txt`: tres formatos de línea, mapa, watcher inotify, `Lookup` con fallback a retiradas | 4, 2, 3, 9 |
-| `src/license_reconcile.cpp/.hpp` | 163+70 | resuelve `CUser::NotifyLicensesUpdated` (feed → patrón → anchor), kill-switch, despertar del finder, llamada directa | 2, 9, 1 |
+| `src/license_reconcile.cpp/.hpp` | 270+90 | resuelve `CUser::NotifyLicensesUpdated` (feed → patrón → anchor), kill-switch, despertar del finder, llamada directa; en la beta además pone los dos bytes de "revisa licencias" de `CUser` (`reconcile.licenses_check_off` del feed); recibe el `CUser*` del plugin de SLSsteam (`luma_set_cuser`) | 2, 9, 1 |
 | `src/reconcile_anchor*.{cpp,hpp}` | 63+140+22 | tercer localizador de Reconcile: `push 0x7d; push eax; call` + lectura de `this` + `jle`, único o 0 | 1 |
 | `src/patterns.cpp/.hpp` | 288+253 | seis patrones de bytes y el sigscan sobre el r-x de `steamclient.so`; "único o nada" | 1 |
 | `src/rtti.cpp/.hpp` | 388+61 | walk RTTI (nombre → type_info → vtable) y slot por nombre de método | 1 |
@@ -199,7 +199,7 @@ con una cadena de localizadores que solo avanza si el anterior devolvió 0:
 | ShaderDepot | `CShaderCacheManager::GetShaderCacheDepot(appinfo)` | feed → patrón → xref del string `shadercachedepot` | devuelve 0 (salta el pre-cache de shaders) para juegos sin clave o cuando ningún proveedor GMRC responde (`shader_depot_hook.cpp:57-96`) | no crítico |
 | GMRC | `BYieldingGetManifestRequestCode(this, app, depot, gid, branch, out_code*)` | feed → patrón → xref del nombre del job (`ContentServerDirectory.GetManifestRequestCode#1`) con `.eh_frame_hdr` o walk-back | para depots nuestros pide un código a la cascada (§2.4) y lo escribe en `*out_code` (`gmrc_hook.cpp:43-58`) | no crítico: se pierde la descarga nativa y el pre-cache de shaders; instala desde manifests pre-sembrados |
 | BuildDep | `CUserAppManager::BuildDepotDependency(...)` | feed → patrón (primer match, no único, `patterns.cpp:94-118`) → xref | tras el original, PATCH del `ManifestGid` de los depots de `keys.txt` en `pDepotInfo`; nunca inyecta, nunca toca `pSharedDepotInfo` (`depot_dependency_hook.cpp:61-128`) | **OFF por defecto** (`main.cpp:186-197`): SLSsteam hookea la misma función y el pin vive en `ManifestIds`; `LUMA_FORCE_BUILDDEP` lo activa |
-| Reconcile | `CUser::NotifyLicensesUpdated(this)` — llamada directa, no detour | feed → patrón → anchor del callback 125 (`push 0x7d; push eax; call` + `this` + `jle`, `reconcile_anchor_core.hpp:101-138`) | hace que Steam reprocese licencias sin reiniciar (§2.2) | `Reconcile: failed` → Add Game necesita reinicio |
+| Reconcile | `CUser::NotifyLicensesUpdated(this)` — llamada directa, no detour; en la beta (`SendAppLicenseUpdates`) además la palabra `0x0101` en `CUser+licenses_check_off` | feed → patrón → anchor del callback 125 (`push 0x7d; push eax; call` + `this` + `jle`, `reconcile_anchor_core.hpp:101-138`); el offset de los bytes solo por feed | hace que Steam reprocese licencias sin reiniciar (§2.2) | `Reconcile: failed` → Add Game necesita reinicio |
 
 Más el **finder de package-0** (`package_zero_finder.cpp`), que no es un hook:
 un hilo que localiza el puntero global a `CPackageInfoCache` (GOT por consenso
@@ -434,14 +434,24 @@ entradas de Steam.
 
 **Reconcile sin reiniciar.** Tras inyectar o retirar, si `keys.txt` cambió,
 lumalinux llama a `CUser::NotifyLicensesUpdated` con el `CUser*` que captura el
-guard de logros de SLSsteam (`sls_achievement_unblock.cpp:64` →
-`license_reconcile.cpp:103-109`): Steam reprocesa licencias y el juego aparece
-("added depots") sin reinicio. Sin SLSsteam, o antes de que el guard haya
-disparado, no hay `CUser*` y se salta ("restart still works",
-`:132-135`). Medido en vivo 2026-07-20 y en frío 2026-09-04 (§5 F2). SLSsteam
-solo emite `AppLicensesChanged_t` para apps **nuevas** en su diff de config
-(`146e28f`): al añadir el juego aparece; al quitarlo sigue en la biblioteca
-hasta reiniciar (medido 2026-10-07 09:59, §5 F9).
+guard de logros de SLSsteam en 32 (`sls_achievement_unblock.cpp:64`) o que le
+pasa el plugin `res/plugins/lumalinux-cuser.lua` por la API de plugins de
+SLSsteam (la única fuente en 64, donde el guard no aplica; `luma_set_cuser`, en
+la dirección que publica `status.json` como `cuser_handover`). En el cliente
+estable esa llamada es el trabajo entero: Steam rehace su tabla juego↔paquete y
+el juego aparece ("added depots") sin reinicio (medido 2026-07-20, 2026-09-04 y
+2026-10-24 19:08 con Into the Breach en 32). En la beta (`1792711043`) Valve
+partió esa función: la llamada solo avisa y pide fichas; la tabla la rehace el
+bucle principal de Steam cuando dos bytes de `CUser` (`+0x2370`/`+0x2371`) se
+lo piden, y nuestro aviso no los toca. Por eso allí lumalinux, tras el
+broadcast, escribe esos dos bytes (y otra vez cuando el plugin avisa de la
+recarga de SLSsteam); el offset viene del feed (`reconcile.licenses_check_off`,
+ausente en el estable, derivado por `tools/check_patterns_x64.py`). Sin CUser
+el Reconcile queda pendiente y se dispara cuando llega el puntero ("restart
+still works" si nunca llega). SLSsteam solo emite `AppLicensesChanged_t` para
+apps **nuevas** en su diff de config (`146e28f`): al añadir el juego aparece;
+al quitarlo sigue en la biblioteca hasta reiniciar (medido 2026-10-07 09:59,
+§5 F9). El detalle del binario de 64: `steam-rt3-x64.md` §1.3.
 
 **Juegos que la cuenta posee de verdad: LumaDeck decide.**
 `steam_licenses.licensed_appids()` parsea `appcache/packageinfo.vdf` (el fichero
@@ -1761,6 +1771,7 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-07 07:20 | codespace SteamOS | `SetDLCEnabled(true)` tras un uninstall sin reiniciar, con el vector append-only | Steam vuelve a bajar los DLC enteros: licencia rancia en el vector, manifests en depotcache, clave retirada | — |
 | 2026-10-07 08:10 | codespace SteamOS (`4f8579c`) | Quitar una línea de `keys.txt` → `erase` del vector + reconcile | `- AppIdVec` ×12; un Verify ya no baja nada (`4 target`). "Your stuff" sigue mostrando el juego hasta reiniciar | — |
 | 2026-10-07 09:59 | codespace SteamOS, Brotato | Aparecer y desaparecer en caliente | Al añadir aparece (SLSsteam emite `AppLicensesChanged_t` solo para apps nuevas); al quitar, `Config reloaded!` ×6 sin callback y el `LicensesUpdated_t` de lumalinux no suelta la entrada; al reiniciar desaparece | — |
+| 2026-10-24 | codespace SteamOS, estable 32 (`c770a8b1`) y beta 64 (`c3247a95`) | Reconcile a mitad de sesión por cliente | En 32, Into the Breach (sin DLC) baja tras el broadcast: `1 mounted depots`. En la beta, 0/5 con el broadcast en cualquier momento (`app_status`: `Subscribed,Pending Gift`, sin `Legacy Free Sub`); al añadir Brotato (ficha de DLC nueva) Steam rehace su tabla y Into the Breach queda enganchado sin tocarlo. En el binario: la beta parte `NotifyLicensesUpdated` en `SendAppLicenseUpdates` + `RebuildLicensesCache`, este último solo desde `RunFrame` cuando `CUser+0x2370/0x2371` lo piden | `steam-rt3-x64.md` §1.3 |
 
 #### Función 3 — DLC
 

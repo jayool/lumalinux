@@ -14,6 +14,16 @@ GOT, no displacement) instead of `cache_global_disp`/`got_rva`. The 64-bit
 runtime resolves through the feed only (no byte patterns), so a 64-bit build
 without a file here installs nothing — `docs/steam-rt3-x64.md` §1.3.
 
+A file may also carry `reconcile.licenses_check_off`: the CUser offset of the
+two flag bytes the client's main loop consults to re-check licences and rebuild
+its app↔package table (`[off]` request, `[off+1]` rebuild). The beta client
+(1792711043, 2026-10) has them and Reconcile sets both after injecting; the
+stable client has none, the key is absent, and there Reconcile's call rebuilds
+the table itself. Derived from three profiler labels (`CUser::RunFrame -
+BCheckUserLicensesUpdate`, `BCheckUserLicensesUpdate - package/app info walk`,
+`RebuildLicensesCache`) plus Steam's own `mov word [rdi+off], 0x0101` store. A
+struct offset, never translated.
+
 One file per `steamclient.so` build, named `<sha256>.yaml`, mirroring
 steam-monitor's `<sha256>.toml` layout. Each file holds the hook RVAs (file
 vaddrs, image base 0) that the CI derived and validated for that exact binary:
@@ -36,6 +46,8 @@ finder:                     # package-0 finder's per-build values
   cache_root_off: "0xc58"   # root/nodes offsets only appear next to a UNIQUE disp
   cache_nodes_off: "0xc6c"
   got_rva: "0x2f4a34c"
+reconcile:                  # only when the build has the flags (beta, 2026-10)
+  licenses_check_off: "0x2370"
 ```
 
 The runtime resolver (see `docs/design/rva-feed-design.md`) consumes these **RVA-first**,

@@ -196,7 +196,8 @@ que se lee relativo a `rip`, sin GOT ni desplazamiento; raíz del árbol en
 tocar): resolución **solo por feed**. `res/rvas/947e5a19….yaml` (beta de la Deck)
 y `res/rvas/17652d59….yaml` (`steamdeck_stable` `1792618285`) llevan los
 cuatro RVAs y, para el finder, `cache_global_rva` + `cache_root_off` /
-`cache_nodes_off`; `vaddr_xlate` lee cabeceras ELF64 y coloca una dirección
+`cache_nodes_off` (y, en la beta, `reconcile.licenses_check_off`, abajo);
+`vaddr_xlate` lee cabeceras ELF64 y coloca una dirección
 de `.bss` por el sesgo de carga (`ToRuntimeData`); el finder usa el layout
 de 64 y no escanea; los patrones de bytes y los tres rescates (xref de
 cadena, ancla del callback, RTTI por nombre) devuelven 0 (son formas de
@@ -246,41 +247,57 @@ vez tras cambiar de cliente sin reiniciar (`/run/user` del cliente de 32,
 desactivados también): antes que LumaDeck, en una Deck de 64 tiene que
 funcionar Decky.
 
-**El `CUser` de Reconcile (resuelto 2026-10-24).** En 32 lo da el parche de
+**El `CUser` de Reconcile (2026-10-24).** En 32 lo da el parche de
 `isSubscribed` de SLSsteam (`sls_achievement_unblock.cpp`). Con el build de 64
 de SLSsteam ese parche no resuelve sus símbolos (`SLS-ach: could not resolve
 SLSsteam symbols` sobre `x86_64/SLSsteam.so`) y queda `disabled`; sin él
 Reconcile se resolvía pero no se llamaba (`Reconcile: no CUser captured yet`).
-Lo que eso costaba, medido en limpio (caché de fichas borrada, sin el puntero):
-Steam solo tramita la licencia de un juego añadido (pide su token y su ficha
-completa, y con ella mapea los depots) si **después** de entrar en el paquete 0
-le llega alguna ficha relacionada: la de un DLC (Binding of Isaac, baja 1/1),
-la de una app compartida (Broforce, depot 228985 de la 228980, baja 2/2) o la
-del propio juego pedida con token (Brotato). Un juego sin nada de eso (Into the
-Breach) se queda con la ficha ligera y el Install acaba en `0 target`, `0
-mounted depots`, "Fully Installed" con 0 bytes (2/2), hasta el siguiente
-arranque, donde Steam tramita todo el paquete 0 en el login. `NotifyLicensesUpdated`
-es justo el trámite forzado. Ahora el puntero lo da SLSsteam por su API de
-plugins: `SLS.steamEngine:getUser(0)` (LuaBridge 3 guarda el puntero crudo tras
-la vtable del userdata), y `res/plugins/lumalinux-cuser.lua` se lo pasa a
-lumalinux llamando a `luma_set_cuser` en la dirección que `status.json` publica
-(`cuser_handover`: SLSsteam es módulo `LD_AUDIT`, vive en el namespace de
-auditoría del cargador y desde ahí `dlsym` no ve nuestras librerías, medido:
-"undefined symbol" con lumalinux cargada; la llamada por dirección sí cruza); un Reconcile saltado
-por falta del puntero se dispara en cuanto llega. Y el momento decide: Steam evalúa un
-juego nuevo UNA vez por sesión y se queda con esa respuesta. Un broadcast al
-escribirse `keys.txt` (el finder reacciona antes de que SLSsteam termine de
-recargar su YAML y liste el juego) hace que esa primera evaluación salga "no
-es tuyo": `0 target`, y ni un broadcast en la recarga ni otro minutos después
-lo cambian (17:02, 17:05). Sin broadcast hasta la recarga de SLSsteam, el
-juego baja a la primera (14:39, 1/1; y los experimentos solo-Lua, 3/3). Por eso
-en el build de 64 `Reconcile()` no dispara al inyectar: deja el broadcast
-"debido" y `OnSlsConfigReload` lo paga cuando el plugin avisa de que SLSsteam
-ha aplicado su config (`SLSsteam::configLoaded`). Sin relojes: orden, no
-tiempo. En 32 todo sigue igual (allí el broadcast al inyectar funciona).
-Descartado por el camino: publicar el callback 125 a pelo desde un plugin no
-tramita nada (Steam solo refresca la UI). Los logros nativos de juegos añadidos
-siguen apagados en 64: ese trozo del parche no tiene sustituto.
+Ahora el puntero lo da SLSsteam por su API de plugins: `SLS.steamEngine:getUser(0)`
+(LuaBridge 3 guarda el puntero crudo tras la vtable del userdata), y
+`res/plugins/lumalinux-cuser.lua` se lo pasa a lumalinux llamando a
+`luma_set_cuser` en la dirección que `status.json` publica (`cuser_handover`:
+SLSsteam es módulo `LD_AUDIT`, vive en el namespace de auditoría del cargador y
+desde ahí `dlsym` no ve nuestras librerías, medido: "undefined symbol" con
+lumalinux cargada; la llamada por dirección sí cruza). El plugin avisa además de
+cada recarga de config de SLSsteam (`SLSsteam::configLoaded`). Un Reconcile
+saltado por falta del puntero se dispara en cuanto llega. Los logros nativos de
+juegos añadidos siguen apagados en 64: ese trozo del parche no tiene sustituto.
+
+**Reconcile en la beta: la tabla de licencias ya no la rehace nuestra llamada
+(2026-10-24).** Con el puntero en la mano, el mismo broadcast que en 32 baja un
+juego añadido a mitad de sesión (medido en estable 32 con Into the Breach, 19:08:
+`1 mounted depots`), en la beta de 64 no hacía nada: Into the Breach quedaba en
+`0 target depots` (5/5, con el broadcast al inyectar, en la recarga de SLSsteam,
+minutos después o repetido), `app_status` lo daba como `Subscribed,Pending Gift`
+sin `Legacy Free Sub`, es decir, sin enganchar al paquete 0; Broforce e Isaac
+bajaban, y añadir Brotato (18:06) enganchó a Into the Breach sin tocarlo. La
+razón está en el binario: la beta (`c3247a95`, `1792711043`; también `947e5a19`
+y `dca1e95f`; no el estable de 64 `17652d59`) parte en dos la función que
+Reconcile llama. `0x18e3640` es ahora `SendAppLicenseUpdates`: publica
+`LicensesUpdated_t`/`AppLicensesChanged_t` y pide las fichas de las apps que
+lista. La tabla juego↔paquete la rehace `RebuildLicensesCache` (`0x18e0c80`,
+7680 bytes), y solo la llama `BCheckUserLicensesUpdate` (`0x18ea710`, etiqueta
+"BCheckUserLicensesUpdate - package/app info walk") desde `CUser::RunFrame`
+(`0x1914ea0`), gobernado por dos bytes de `CUser`: `+0x2370` "revisa licencias en
+el próximo frame" (RunFrame lo limpia y llama a la comprobación) y `+0x2371`
+"rehaz la tabla" (la comprobación lo limpia y llama a `RebuildLicensesCache`,
+después `SendAppLicenseUpdates`, cuando todos los paquetes de la lista de
+licencias están cargados y todas las fichas de sus apps asentadas; recorre
+`AppIdVec` de cada paquete, nuestros ids incluidos). Quien los pone es el
+callback de "appinfo actualizado" que el constructor de `CUser` registra
+(`0x18c1bf0`): si cambió algo (`apps updated > 0`) escribe la palabra `0x0101`
+en `+0x2370`; si no, como mucho pide la comprobación. De ahí todo lo medido: los
+depots inyectados no tienen ficha ("updated 0"), nada nuevo, sin rehacer; la
+ficha de un DLC que llega sí. Lo que hace lumalinux ahora en cualquier cliente
+cuyo feed lleve `reconcile.licenses_check_off` (`tools/check_patterns_x64.py`
+lo deriva de las tres etiquetas más el `mov word [rdi+off],0x0101`; `ABSENT` en
+el estable): tras inyectar, el broadcast de siempre (Steam pide las fichas de
+los ids nuevos) y los dos bytes a 1; otra vez los dos bytes cuando el plugin
+avisa de la recarga de SLSsteam. El bucle principal de Steam hace el resto, en
+su hilo y en su orden. Sin la clave en el feed, solo el broadcast, que en el
+estable es el trabajo entero. Descartado por el camino: publicar el callback 125
+a pelo desde un plugin no tramita nada (Steam solo refresca la UI); ningún orden
+ni espera del broadcast cambiaba el resultado.
 
 ## §2 Qué nos afecta
 

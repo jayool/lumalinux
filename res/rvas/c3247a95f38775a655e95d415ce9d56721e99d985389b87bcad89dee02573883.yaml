@@ -18,3 +18,5 @@ finder:
   cache_global_rva: "0x332aa10"
   cache_root_off: "0x14b0"
   cache_nodes_off: "0x14c8"
+reconcile:
+  licenses_check_off: "0x2370"

@@ -9,9 +9,11 @@
 # callback anchor and RTTI by name. So this tool DERIVES the feed values from
 # the binary with the same locators the runtime uses, and VALIDATES the struct
 # constants the 64-bit runtime hardcodes (node stride / PackageInfo* offset in
-# the package cache, AppIdVec offset in PackageInfo). Nothing here is a byte
-# pattern; everything is anchored on strings, RTTI and the shape of three
-# functions. docs/steam-rt3-x64.md §1.3 is the measured reference.
+# the package cache, AppIdVec offset in PackageInfo), and derives the CUser
+# offset of the licence re-check flags the beta client's main loop consults
+# (reconcile.licenses_check_off; absent on a build without them). Nothing here
+# is a byte pattern; everything is anchored on strings, RTTI and the shape of
+# a few functions. docs/steam-rt3-x64.md §1.3 is the measured reference.
 #
 # Usage:
 #   python3 tools/check_patterns_x64.py <steamrt64/steamclient.so>
@@ -19,8 +21,9 @@
 #
 # Exit codes (the workflow branches on these, like check_patterns.py):
 #   0  CLEAN      DepotKey + GMRC + finder + layouts resolved; feed emitted
-#   2  NONCRIT    a non-critical hook (ShaderDepot, Reconcile) did not resolve;
-#                 the feed is still emitted without it
+#   2  NONCRIT    a non-critical hook (ShaderDepot, Reconcile) did not resolve,
+#                 or the licence re-check labels are there but their shape
+#                 moved; the feed is still emitted without that value
 #   3  BLOCKING   DepotKey, GMRC, the finder or a hardcoded layout failed —
 #                 no feed (the .so would install nothing on this build)
 #   1  usage / I/O / not an ELF64 / capstone missing
@@ -55,6 +58,13 @@ PKG_LOOKUP_STRING = b"No package info for packageID %u found"
 PKG_APPIDS_KEY    = b"appids"
 CRITICAL = ("DepotKey", "GMRC")
 NONCRITICAL = ("ShaderDepot", "Reconcile")
+# The licence re-check request (reconcile.licenses_check_off): three profiler
+# labels the beta client (1792711043, 2026-10) carries and the stable client
+# does not. Their absence is a valid answer (status ABSENT): that build has no
+# such flag and Reconcile's call does the whole job itself.
+LIC_RUNFRAME_STR = b"CUser::RunFrame - BCheckUserLicensesUpdate"
+LIC_BCHECK_STR   = b"BCheckUserLicensesUpdate - package/app info walk"
+LIC_REBUILD_STR  = b"RebuildLicensesCache"
 
 
 # ── ELF64 ────────────────────────────────────────────────────────────────────
@@ -412,6 +422,94 @@ def derive_pkginfo_layout(e, md, starts, exec_end):
     return info
 
 
+# ── the licence re-check request flag (reconcile.licenses_check_off) ─────────
+def flag_clear_before_call(md, code, va, callee, lookback=6):
+    """In `code` (at `va`): the displacement D of a `mov byte ptr [reg+D], 0`
+    among the `lookback` instructions right before a `call callee`, or None.
+    This is how Steam consumes a request flag: clear it, then run the check."""
+    from capstone import x86
+    ins = list(md.disasm(code, va))
+    for k, i in enumerate(ins):
+        if i.mnemonic != "call" or not i.operands or i.operands[0].type != x86.X86_OP_IMM:
+            continue
+        if i.operands[0].imm != callee:
+            continue
+        for j in reversed(ins[max(0, k - lookback):k]):     # nearest clear first
+            if j.mnemonic != "mov" or len(j.operands) != 2:
+                continue
+            dst, src = j.operands
+            if (dst.type == x86.X86_OP_MEM and dst.size == 1 and dst.mem.base
+                    and dst.mem.base != x86.X86_REG_RIP and not dst.mem.index
+                    and src.type == x86.X86_OP_IMM and src.imm == 0 and dst.mem.disp > 0):
+                return dst.mem.disp
+    return None
+
+
+def license_setter_sites(tx, tx_va, disp):
+    """Sites of Steam's own request: `mov ecx,0x101` then, within 8 bytes,
+    `mov word ptr [rdi+disp], cx` (66 89 8F disp32) — both flag bytes set at
+    once, request + rebuild. The runtime mirrors exactly this store."""
+    out = []
+    pat = struct.pack("<I", disp)
+    for m in re.finditer(rb"\xb9\x01\x01\x00\x00", tx):
+        j = m.end()
+        k = tx.find(b"\x66\x89\x8f" + pat, j, j + 8 + 7)
+        if k >= 0:
+            out.append(tx_va + m.start())
+    return out
+
+
+def derive_license_check(e, md, starts, exec_end):
+    """The CUser offset of the two flag bytes the client's main loop consults
+    to re-check licences and rebuild its app<->package table. From three
+    profiler labels: the function logging LIC_RUNFRAME_STR clears byte D and
+    calls the function logging LIC_BCHECK_STR, which clears byte D+1 right
+    before calling the function logging LIC_REBUILD_STR; and some function
+    stores the word 0x0101 at D (Steam's own request, on an appinfo update).
+    ABSENT when the build has none of the labels (stable, 2026-10)."""
+    tx, tx_va = e.exec_region()
+    info = {"status": "NOT_FOUND"}
+
+    def fn_by_label(needle):
+        strs = e.cstrings(needle, nul_after=True, nul_before=True)
+        sites = [s for v in strs for s in rip_lea_sites(tx, tx_va, v)]
+        fns = sorted(set(f for f in (func_of(starts, exec_end, s)[0] for s in sites) if f))
+        return strs, fns
+
+    labels = {}
+    for key, needle in (("runframe", LIC_RUNFRAME_STR), ("bcheck", LIC_BCHECK_STR), ("rebuild", LIC_REBUILD_STR)):
+        strs, fns = fn_by_label(needle)
+        labels[key] = (strs, fns)
+        info[key] = {"strings": len(strs), "functions": ["0x%x" % f for f in fns]}
+    if not any(strs for strs, _ in labels.values()):
+        info["status"] = "ABSENT"
+        return info
+    if any(len(fns) != 1 for _, fns in labels.values()):
+        info["status"] = "AMBIGUOUS"
+        return info
+    runframe, bcheck, rebuild = (labels[k][1][0] for k in ("runframe", "bcheck", "rebuild"))
+    f, en = func_of(starts, exec_end, runframe)
+    req = flag_clear_before_call(md, e.read(f, en - f), f, bcheck)
+    f, en = func_of(starts, exec_end, bcheck)
+    dirty = flag_clear_before_call(md, e.read(f, en - f), f, rebuild)
+    info.update({"request_off": "0x%x" % req if req else None,
+                 "rebuild_off": "0x%x" % dirty if dirty else None})
+    if not req or not dirty:
+        info["status"] = "NO_FLAG_CLEAR"
+        return info
+    if dirty != req + 1:
+        info["status"] = "FLAGS_NOT_ADJACENT"
+        return info
+    setters = license_setter_sites(tx, tx_va, req)
+    info["setter_sites"] = ["0x%x" % s for s in setters]
+    if not setters:
+        info["status"] = "NO_SETTER"
+        return info
+    info["status"] = "UNIQUE"
+    info["licenses_check_off"] = "0x%x" % req
+    return info
+
+
 # ── emit ─────────────────────────────────────────────────────────────────────
 def sha256_file(path):
     h = hashlib.sha256()
@@ -448,6 +546,13 @@ def emit_rvas_file(result, out_dir, steam_version):
                   '  cache_global_rva: "%s"' % fi["cache_global_rva"],
                   '  cache_root_off: "%s"' % fi["cache_root_off"],
                   '  cache_nodes_off: "%s"' % fi["cache_nodes_off"]]
+    lc = result.get("license_check", {})
+    if lc.get("status") == "UNIQUE":
+        # The CUser offset of the client's "re-check licences + rebuild the
+        # app<->package table" request flags; absent on a build without them
+        # (the runtime then calls Reconcile's function, which does the whole job
+        # itself there). A struct offset, not an address: never translated.
+        lines += ["reconcile:", '  licenses_check_off: "%s"' % lc["licenses_check_off"]]
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, sha + ".yaml")
     with open(path, "w", encoding="utf-8") as fh:
@@ -541,6 +646,7 @@ def main():
     # 4) the package-0 finder and the PackageInfo layout
     result["finder"] = derive_finder(e, md, starts, exec_end, result)
     result["pkginfo"] = derive_pkginfo_layout(e, md, starts, exec_end)
+    result["license_check"] = derive_license_check(e, md, starts, exec_end)
 
     # verdict
     for label in CRITICAL:
@@ -557,6 +663,11 @@ def main():
                                   % (fi.get("node_stride"), fi.get("node_pkginfo_off")))
     if pk.get("status") != "UNIQUE":
         result["blocking"].append("pkginfo:%s" % pk.get("status"))
+    lc = result["license_check"]
+    if lc.get("status") not in ("UNIQUE", "ABSENT"):
+        # The labels are there but the shape moved: Reconcile on this build
+        # would fall back to the restart path. Not blocking (installs work).
+        result["noncritical_moved"].append("license_check:%s" % lc.get("status"))
     elif not pk.get("layout_matches_runtime"):
         result["blocking"].append("pkginfo:appidvec-off-differs-from-runtime (%s)" % pk.get("appidvec_off"))
     if result["blocking"]:
@@ -574,6 +685,11 @@ def main():
         "finder", fi.get("status"), fi.get("cache_global_rva"), fi.get("cache_global_rva"),
         fi.get("cache_root_off"), fi.get("cache_nodes_off"), fi.get("node_stride"), fi.get("node_pkginfo_off")))
     print("  %-12s %-10s loadpackage=%s appidvec=%s" % ("pkginfo", pk.get("status"), pk.get("loadpackage"), pk.get("appidvec_off")))
+    print("  %-12s %-10s off=%s runframe=%s bcheck=%s rebuild=%s setters=%d" % (
+        "licensechk", lc.get("status"), lc.get("licenses_check_off") or "-",
+        ",".join(lc.get("runframe", {}).get("functions", [])) or "-",
+        ",".join(lc.get("bcheck", {}).get("functions", [])) or "-",
+        ",".join(lc.get("rebuild", {}).get("functions", [])) or "-", len(lc.get("setter_sites", []))))
     if result["blocking"]:
         print("  BLOCKING: " + ", ".join(result["blocking"]))
     if result["noncritical_moved"]:
