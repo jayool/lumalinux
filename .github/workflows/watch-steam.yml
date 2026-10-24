@@ -567,9 +567,10 @@ jobs:
   # tools/x64_rescues_selftest.cpp on the same binary (fetch-steamclient.yml's
   # steps). CLEAN + PASS -> data-only auto-merged PR (build.yml ignores
   # res/rvas/**); non-critical missing -> publish + issue; BLOCKING or self-test
-  # FAIL -> no publish, throwaway branch with binary + report, issue. The hash
-  # is not added to updates.yaml yet: that file has no per-architecture groups
-  # (docs/steam-rt3-x64.md §3 point 4).
+  # FAIL -> no publish, throwaway branch with binary + report, issue. The same
+  # PR whitelists the hash in updates.yaml under its version group, marked
+  # `# arch: steamrt64` (tools/whitelist_hash.py --arch; docs/steam-rt3-x64.md
+  # §3 point 4).
   check-x64:
     needs: check            # ordering only: one publish to main at a time
     if: ${{ always() }}     # a red 32-bit day must not silence the 64-bit one
