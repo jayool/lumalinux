@@ -278,6 +278,9 @@ edit_slssteam_config() {
     _sls_ensure_kv DisableCloud   no
     _sls_ensure_kv SafeMode       no
     _sls_ensure_kv DisableUpdates no
+    # Our SLSsteam plugin (lumalinux-cuser.lua, deployed below) needs the
+    # plugin system on; LumaDeck sets this too for its spliced-tickets plugin.
+    _sls_ensure_kv Plugins        yes
 
     # Only claim success once the three functional keys are verified. If any is
     # still wrong (e.g. the append couldn't write), warn loudly instead of lying.
@@ -1303,6 +1306,22 @@ for tool in "${RUNTIME_TOOLS[@]}"; do
         warn "Failed to download ${tool} from ${TOOLS_REF_URL} (continuing; runtime helper, not needed for injection)."
     fi
 done
+
+# Our SLSsteam plugin: hands Steam's CUser to lumalinux's license reconcile
+# (res/plugins/lumalinux-cuser.lua; the file says why). Same ref as the .so and
+# the tools. SLSsteam runs every .lua in its plugins dir and wants them owner-only.
+SLS_PLUGIN="lumalinux-cuser.lua"
+mkdir -p "${SLS_CFG_DIR}/plugins"
+PLUGIN_REF_URL="https://raw.githubusercontent.com/${REPO}/${TOOLS_REF}/res/plugins"
+if curl -fsSL -o "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "${PLUGIN_REF_URL}/${SLS_PLUGIN}" \
+   || { [[ "$TOOLS_REF" != "main" ]] && curl -fsSL -o "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "https://raw.githubusercontent.com/${REPO}/main/res/plugins/${SLS_PLUGIN}"; }; then
+    chmod 0600 "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp"
+    mv -f "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp" "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}"
+    ok "Deployed SLSsteam plugin ${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}"
+else
+    rm -f "${SLS_CFG_DIR}/plugins/${SLS_PLUGIN}.tmp"
+    warn "Failed to download ${SLS_PLUGIN} (continuing; on the 64-bit client a game added while Steam runs then needs a Steam restart before it installs)."
+fi
 
 # .NET 9 runtime (Steamless) — LumaDeck installs this during deps; headcrab doesn't.
 install_dotnet9

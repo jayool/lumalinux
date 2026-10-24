@@ -100,12 +100,29 @@ Resolution Resolve() {
     return ResolveAddr() ? Resolution::Resolved : Resolution::Unresolved;
 }
 
+// A reconcile that found no CUser yet (the first game added in a session, on
+// the 64-bit client, lands before the plugin below has handed the pointer
+// over) is remembered here and fired the moment the pointer arrives.
+std::atomic<bool> g_pending{false};
+void Reconcile();
+
 void SetUser(void* cuser) {
     if (!cuser) return;
     void* expected = nullptr;
     g_pCUser.compare_exchange_strong(expected, cuser,
                                      std::memory_order_release,
                                      std::memory_order_relaxed);
+}
+
+// Fire a deferred reconcile. Only the plugin hand-over calls this: it runs on
+// SLSsteam's config-reload thread, outside any Steam call (measured on the
+// 64-bit client, 2026-10-24). The achievement guard also captures the pointer
+// but runs INSIDE a Steam call into SLSsteam, no place to call back into Steam.
+void FirePendingIfAny() {
+    if (g_pending.exchange(false, std::memory_order_acq_rel)) {
+        Log::Info("Reconcile: CUser arrived with a reconcile pending — firing now");
+        Reconcile();
+    }
 }
 
 void NotifyKeysChanged() {
@@ -141,7 +158,9 @@ void Reconcile() {
 
     void* user = g_pCUser.load(std::memory_order_acquire);
     if (!user) {
-        Log::Warn("Reconcile: no CUser captured yet — skipping (restart still works)");
+        g_pending.store(true, std::memory_order_release);
+        Log::Warn("Reconcile: no CUser captured yet — deferred until one arrives "
+                  "(restart still works)");
         return;
     }
 
@@ -161,3 +180,22 @@ void Reconcile() {
 }
 
 }  // namespace LicenseReconcile
+
+// The CUser hand-over from SLSsteam's plugin system (res/plugins/lumalinux-cuser.lua,
+// installed by setup.sh). SLSsteam exposes Steam's CUser to its Lua plugins
+// (SLS.steamEngine:getUser(0)); the plugin passes the raw pointer here through
+// LuaJIT's ffi, which resolves this symbol in the process (lumalinux is in
+// LD_PRELOAD, hence in the global scope). On the 32-bit client the achievement
+// guard patch captures the same pointer; on the 64-bit client that patch does
+// not apply (SLSsteam's build is stripped) and this is the only source. Without
+// it Reconcile never fires on the 64-bit client, and a game added without any
+// related appinfo arriving afterwards (no DLC, no shared depot, no app token)
+// installs with "0 target depots" until Steam restarts (measured 2026-10-24,
+// Into the Breach, 2/2; with the pointer 1/1 at the first try).
+extern "C" __attribute__((visibility("default")))
+void luma_set_cuser(void* cuser) {
+    if (!cuser) return;
+    Log::Info("Reconcile: CUser %p handed over by the SLSsteam plugin", cuser);
+    LicenseReconcile::SetUser(cuser);
+    LicenseReconcile::FirePendingIfAny();
+}

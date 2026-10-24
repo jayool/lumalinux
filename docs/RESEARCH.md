@@ -451,11 +451,19 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   `0x188c950` on `bc54101b`, `0x1a0d010` on `9cf4720f`.
 - When it fires: from the finder thread, after an inject/retire pass, if the
   `keys.txt` watcher flagged a change (`package_zero_finder.cpp:814-817`). The
-  `CUser*` is captured by `sls_ach_combined_guard`, the replacement that
-  `sls_achievement_unblock` points SLSsteam's achievement-guard call sites at
-  (`sls_achievement_unblock.cpp:60-64` → `LicenseReconcile::SetUser`); without
-  SLSsteam (or that patch), or before the guard has run once, the call is
-  skipped and a restart is still needed.
+  `CUser*` comes from two sources, first non-null wins: `sls_ach_combined_guard`,
+  the replacement that `sls_achievement_unblock` points SLSsteam's
+  achievement-guard call sites at (`sls_achievement_unblock.cpp:60-64` →
+  `LicenseReconcile::SetUser`; 32-bit client only, the 64-bit SLSsteam build is
+  stripped), and SLSsteam's plugin system: `res/plugins/lumalinux-cuser.lua`
+  (installed by setup.sh) reads `SLS.steamEngine:getUser(0)`, takes the raw
+  pointer LuaBridge 3 keeps after the userdata's vtable, and calls the exported
+  `luma_set_cuser` through LuaJIT's ffi (2026-10-24; the only source on the
+  64-bit client, see `steam-rt3-x64.md` §1.3). A Reconcile() skipped for want
+  of the pointer is remembered and fired from that hand-over (it runs on
+  SLSsteam's config-reload thread, outside any Steam call); the guard never
+  fires it, it runs inside a Steam call into SLSsteam. Without either source
+  the call is skipped and a restart is still needed.
 - Status: `Reconcile` = `INSTALLED` (resolved) / `FAILED` (unresolved; LumaDeck
   then holds back the premature library appearance) / `DISABLED` (kill-switch)
   (`main.cpp:349-356`). How it was ported from moon and validated: §18.
@@ -2622,7 +2630,9 @@ v0.16.16; kill-switch `LUMA_NO_RECONCILE`):
   (`FindNotifyLicensesUpdatedFunction`) — a wrong-build pattern disables the
   feature rather than calling garbage.
 - **`CUser*`** captured from the SLSsteam achievement guard (a Steam thread with a
-  valid pipe-0 `CUser`) — no new hook, no `CSteamEngine::getUser` resolution.
+  valid pipe-0 `CUser`), or handed over by SLSsteam's plugin system
+  (`res/plugins/lumalinux-cuser.lua` → `luma_set_cuser`, 2026-10-24; §4) — no
+  new hook, no `CSteamEngine::getUser` resolution of our own.
 - **Trigger**: the re-enabled `keys.txt` watcher reloads the KeyStore and *arms*
   the reconcile (it never calls Steam itself); the **package-0 finder** fires it
   on its own thread **after** re-injecting the new depots (correct ordering).

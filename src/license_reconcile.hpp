@@ -39,9 +39,15 @@ enum class Resolution { Disabled, Resolved, Unresolved };
 // too). Reconcile() reuses the same cached address.
 Resolution Resolve();
 
-// Capture a live CUser* (called from the SLSsteam achievement guard, which
-// receives one). First non-null wins. Needed to call NotifyLicensesUpdated.
+// Capture a live CUser* — from the SLSsteam achievement guard (32-bit client,
+// which receives one) or from SLSsteam's plugin system (luma_set_cuser, the
+// exported entry res/plugins/lumalinux-cuser.lua calls; the only source on the
+// 64-bit client). First non-null wins. Needed to call NotifyLicensesUpdated.
+// A Reconcile() skipped for want of the pointer is fired as soon as it lands.
 void SetUser(void* cuser);
+// Run a Reconcile() that was skipped for want of the pointer, if any. Called by
+// luma_set_cuser (the plugin hand-over), never from inside a Steam call.
+void FirePendingIfAny();
 
 // Mark that keys.txt changed (a game was added). Called from the keys.txt
 // watcher (inotify thread) — it must NOT call into Steam itself.

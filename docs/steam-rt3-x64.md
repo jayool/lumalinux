@@ -246,15 +246,29 @@ vez tras cambiar de cliente sin reiniciar (`/run/user` del cliente de 32,
 desactivados también): antes que LumaDeck, en una Deck de 64 tiene que
 funcionar Decky.
 
-**Abierto.** El puntero `CUser` de Reconcile: en 32 lo da el parche de
+**El `CUser` de Reconcile (resuelto 2026-10-24).** En 32 lo da el parche de
 `isSubscribed` de SLSsteam (`sls_achievement_unblock.cpp`). Con el build de 64
 de SLSsteam ese parche no resuelve sus símbolos (`SLS-ach: could not resolve
-SLSsteam symbols` sobre `x86_64/SLSsteam.so`) y queda `disabled`, así que no
-hay de dónde sacarlo, y los llamadores de `0x18d9e00` lo reciben como `this`,
-sin global a la vista. Reconcile se resuelve pero no se llama (`Reconcile: no
-CUser captured yet`); el juego añadido baja y arranca igual porque SLSsteam
-recarga su config en caliente. Los logros nativos de juegos añadidos quedan
-apagados en 64 por la misma causa.
+SLSsteam symbols` sobre `x86_64/SLSsteam.so`) y queda `disabled`; sin él
+Reconcile se resolvía pero no se llamaba (`Reconcile: no CUser captured yet`).
+Lo que eso costaba, medido en limpio (caché de fichas borrada, sin el puntero):
+Steam solo tramita la licencia de un juego añadido (pide su token y su ficha
+completa, y con ella mapea los depots) si **después** de entrar en el paquete 0
+le llega alguna ficha relacionada: la de un DLC (Binding of Isaac, baja 1/1),
+la de una app compartida (Broforce, depot 228985 de la 228980, baja 2/2) o la
+del propio juego pedida con token (Brotato). Un juego sin nada de eso (Into the
+Breach) se queda con la ficha ligera y el Install acaba en `0 target`, `0
+mounted depots`, "Fully Installed" con 0 bytes (2/2), hasta el siguiente
+arranque, donde Steam tramita todo el paquete 0 en el login. `NotifyLicensesUpdated`
+es justo el trámite forzado. Ahora el puntero lo da SLSsteam por su API de
+plugins: `SLS.steamEngine:getUser(0)` (LuaBridge 3 guarda el puntero crudo tras
+la vtable del userdata), y `res/plugins/lumalinux-cuser.lua` se lo pasa a
+lumalinux por `luma_set_cuser` (ffi, símbolo exportado); un Reconcile saltado
+por falta del puntero se dispara en cuanto llega. Con eso Into the Breach bajó
+a la primera (1/1), con el "full data" en el mismo segundo de la llamada.
+Descartado por el camino: publicar el callback 125 a pelo desde un plugin no
+tramita nada (Steam solo refresca la UI). Los logros nativos de juegos añadidos
+siguen apagados en 64: ese trozo del parche no tiene sustituto.
 
 ## §2 Qué nos afecta
 
@@ -266,7 +280,7 @@ apagados en 64 por la misma causa.
 | Patrones, RVAs, calling convention, layouts | RVAs y layouts derivados y en el feed; los rescates del runtime (`gmrc_xref`, `reconcile_anchor`, `rtti` por nombre) siguen siendo de 32: en 64 devuelven 0. `fetch_steamclient.py` baja ya el paquete `steamrt64`; `check_patterns.py` / `derive_*` no saben x86-64 |
 | Rutas `ubuntu12_32/steamclient.so` | ahora `steamrt64/steamclient.so`: guard (`g_client_fp`), `headcrab_compat`, `components`, CI, `fetch_steamclient.py` |
 | Crash guard | sigue viendo volcados |
-| SLSsteam | Ace publicó el 2026-10-22 un build de 64 (rama `dev-X86_64`, prerelease en su canal de previews: "only use on the latest beta", libcurl de nuevo, sin Stealth ni SmartTickets, sin OpenSSL, **sin 32 bits**). Cargado en el codespace sobre la beta `c3247a95…` desde `x86_64/SLSsteam.so`: propiedad falsa, recarga de config en caliente, `spliced-tickets.lua`. El 32 queda congelado en la release `20261014151919` (`setup.sh` `SLS32_TAG`, LumaDeck `LAST_32BIT_TAG`); `setup.sh` coloca cada build por clase ELF y LumaDeck lleva versión, soporte y oferta de actualización por arquitectura. Lo que no encaja en 64: el parche de logros (`SLS-ach`, símbolos) y con él el `CUser` de Reconcile |
+| SLSsteam | Ace publicó el 2026-10-22 un build de 64 (rama `dev-X86_64`, prerelease en su canal de previews: "only use on the latest beta", libcurl de nuevo, sin Stealth ni SmartTickets, sin OpenSSL, **sin 32 bits**). Cargado en el codespace sobre la beta `c3247a95…` desde `x86_64/SLSsteam.so`: propiedad falsa, recarga de config en caliente, `spliced-tickets.lua`. El 32 queda congelado en la release `20261014151919` (`setup.sh` `SLS32_TAG`, LumaDeck `LAST_32BIT_TAG`); `setup.sh` coloca cada build por clase ELF y LumaDeck lleva versión, soporte y oferta de actualización por arquitectura. Lo que no encaja en 64: el parche de logros (`SLS-ach`, símbolos); el `CUser` de Reconcile llega por su API de plugins (`res/plugins/lumalinux-cuser.lua`, §1.3) |
 | CloudRedirect | 32 bits; el upstream desapareció el 2026-10-16, pero el código de `v2.6.6` está en `jayool/CloudRedirect` (`cloudredirect.md` §0): se puede compilar en 64 bits, con el mismo entorno del SDK que lumalinux. Es trabajo nuestro, sin upstream que lo haga |
 | LumaDeck | Python, no le afecta la arquitectura; le afectan las rutas y los estados. Hecho: hash del cliente que corre, `status.json` de 64, whitelist por arquitectura, `liblumalinux-x86_64.so` mapeada, SLSsteam por arquitectura (instalado, versión, soporte, actualización). Queda: CloudRedirect es de 32 y en 64 lee `not_loaded` → el QAM dice "Restart needed" (falso); el frontend no lee `client.supported` |
 | Codespace como banco de pruebas | sirve: en la beta de la Deck arranca el cliente de 64 bajo el supervisor (`start-display.sh` deja el bus de sesión en `/run/user/<uid>/bus`); la prueba con nuestra `.so` en §4 |
@@ -278,10 +292,10 @@ En orden. El port está abierto desde el 2026-10-20.
 
 1. **Alarma**: descartada (2026-10-20). El paquete `steamrt64` ya está en los dos canales de la Deck y se sabe dónde está; los manifiestos se miran a mano con el comando de §4 cuando haga falta. `watch-steam.yml` sigue vigilando solo el cliente de 32.
 2. **Build de 64 bits contra el runtime**: hecho (§1.2). `LUMA_X86_64` en CMake, dependencias de 64 por script, job en el SDK de sniper con la comprobación de glibc, artefacto `lumalinux-x86_64`.
-3. **Hooks en 64**: hecho para `947e5a19…` (beta) y `17652d59…` (stable `1792618285`), los dos feeds publicados en `res/rvas/` (§1.3). (a) La derivación está en herramienta: `tools/check_patterns_x64.py` deriva y valida el feed de un cliente de 64 (DepotKey por nombre, GMRC/ShaderDepot/BuildDep por xref de cadena, Reconcile por el ancla del callback, el cache de paquetes y el layout de `PackageInfo` leyendo `GetPackage` y `LoadPackage` con capstone) y `fetch-steamclient.yml` lo corre sobre cada paquete `steamrt64` que baja, junto con `tools/x64_rescues_selftest.cpp`; el fichero generado viaja en la rama y en el artefacto. Publicarlo en `res/rvas/` de main lo hace el job `check-x64` de `watch-steam.yml` (diario, 07:17 UTC, tras el job de 32; los dos manifests `steamrt64` de la Deck): si la derivación sale CLEAN y el self-test PASS, PR de datos auto-fusionada; si falta un hook no crítico, publica y abre issue; si es BLOCKING o el self-test falla, no publica, deja binario e informe en la rama desechable y abre issue. Añadido 2026-10-23, tras dos días con la beta `dca1e95f…` (1792626604) derivada y sin publicar. Salida 3 = BLOCKING cuando un crítico, el finder o un layout que el runtime lleva fijo (stride de nodo, `PackageInfo*`, `AppIdVec`) no cuadra. (b) Los rescates del runtime existen en 64: xref de cadena por `rip` + `.eh_frame_hdr` (sin walk-back: sin tabla no hay rescate), ancla de Reconcile en forma SysV, RTTI por nombre con sitios `rip`; `x64_rescues_selftest.cpp` los reproduce sobre `947e5a19…`. Queda (c) el `CUser` de Reconcile.
+3. **Hooks en 64**: hecho para `947e5a19…` (beta) y `17652d59…` (stable `1792618285`), los dos feeds publicados en `res/rvas/` (§1.3). (a) La derivación está en herramienta: `tools/check_patterns_x64.py` deriva y valida el feed de un cliente de 64 (DepotKey por nombre, GMRC/ShaderDepot/BuildDep por xref de cadena, Reconcile por el ancla del callback, el cache de paquetes y el layout de `PackageInfo` leyendo `GetPackage` y `LoadPackage` con capstone) y `fetch-steamclient.yml` lo corre sobre cada paquete `steamrt64` que baja, junto con `tools/x64_rescues_selftest.cpp`; el fichero generado viaja en la rama y en el artefacto. Publicarlo en `res/rvas/` de main lo hace el job `check-x64` de `watch-steam.yml` (diario, 07:17 UTC, tras el job de 32; los dos manifests `steamrt64` de la Deck): si la derivación sale CLEAN y el self-test PASS, PR de datos auto-fusionada; si falta un hook no crítico, publica y abre issue; si es BLOCKING o el self-test falla, no publica, deja binario e informe en la rama desechable y abre issue. Añadido 2026-10-23, tras dos días con la beta `dca1e95f…` (1792626604) derivada y sin publicar. Salida 3 = BLOCKING cuando un crítico, el finder o un layout que el runtime lleva fijo (stride de nodo, `PackageInfo*`, `AppIdVec`) no cuadra. (b) Los rescates del runtime existen en 64: xref de cadena por `rip` + `.eh_frame_hdr` (sin walk-back: sin tabla no hay rescate), ancla de Reconcile en forma SysV, RTTI por nombre con sitios `rip`; `x64_rescues_selftest.cpp` los reproduce sobre `947e5a19…`. (c) El `CUser` de Reconcile: por el plugin `lumalinux-cuser.lua` de SLSsteam (§1.3, 2026-10-24).
 4. **Rutas y estado**: hecho. Guard (`g_client_fp` con los dos clientes), LumaDeck (salud, hash del cliente que corre, `status.json` en `~/.cache/lumalinux/` para el de 64), CI y feeds (`updates.yaml` con `# arch: steamrt64` y `res/rvas/` por hash); `setup.sh` instala `liblumalinux.so` y `liblumalinux-x86_64.so` y el wrapper nombra las dos en `LD_PRELOAD` (cada `ld.so` carga la de su clase y rechaza la otra). Dos binarios por release desde `v0.22.5`. Probado en codespace limpio en stable y beta (añadir, descargar y arrancar un juego en cada uno). Queda: `downgrade.sh` fija el árbol de 32 también en una Deck que arranca 64.
 5. **CloudRedirect en 64**, desde `jayool/CloudRedirect`, con el mismo entorno de build.
-6. **SLSsteam**: Ace lo hizo (§2). Nuestra parte: `setup.sh` coloca cada build por clase ELF (`SLSsteam.so` / `x86_64/SLSsteam.so`, `LD_AUDIT` con los dos) y congela el 32 en `SLS32_TAG`; LumaDeck lleva un registro de versión por arquitectura (`.slssteam.version`, `.slssteam.version.x86_64`), compara el 32 contra ese tag y el 64 contra `latest`, y la regla "la última release soporta mi cliente" es por arquitectura (en 64, desconocido hasta que Ace publique hashes de 64). Pendiente: portar el parche de logros al build de 64 (y con él el `CUser` de Reconcile); probar en Deck real el libcurl del build de 64 (`MaxSchemaTries` sigue a 10 en nuestro config, el camino de curl está activo); un juego con fix online y uno con tickets en 64.
+6. **SLSsteam**: Ace lo hizo (§2). Nuestra parte: `setup.sh` coloca cada build por clase ELF (`SLSsteam.so` / `x86_64/SLSsteam.so`, `LD_AUDIT` con los dos) y congela el 32 en `SLS32_TAG`; LumaDeck lleva un registro de versión por arquitectura (`.slssteam.version`, `.slssteam.version.x86_64`), compara el 32 contra ese tag y el 64 contra `latest`, y la regla "la última release soporta mi cliente" es por arquitectura (en 64, desconocido hasta que Ace publique hashes de 64). El `CUser` de Reconcile lo entrega el plugin `lumalinux-cuser.lua` por la API Lua de SLSsteam (§1.3). Pendiente: portar el parche de logros al build de 64; probar en Deck real el libcurl del build de 64 (`MaxSchemaTries` sigue a 10 en nuestro config, el camino de curl está activo); un juego con fix online y uno con tickets en 64.
 7. **LumaDeck**: mensaje propio para "cliente de 64 bits, aún sin soporte".
 
 ## §4 Cómo reproducirlo en el codespace
