@@ -267,13 +267,17 @@ lumalinux llamando a `luma_set_cuser` en la dirección que `status.json` publica
 (`cuser_handover`: SLSsteam es módulo `LD_AUDIT`, vive en el namespace de
 auditoría del cargador y desde ahí `dlsym` no ve nuestras librerías, medido:
 "undefined symbol" con lumalinux cargada; la llamada por dirección sí cruza); un Reconcile saltado
-por falta del puntero se dispara en cuanto llega. Y el momento importa: el
-broadcast que lumalinux dispara al escribirse `keys.txt` (antes de que SLSsteam
-liste el juego) no vale en 64 (`0 target`, 1/1); el mismo broadcast tras la
-recarga de config de SLSsteam que sigue al alta sí (3/3). Por eso cada broadcast
-deja armada una repetición, el plugin avisa en cada recarga, y la primera
-recarga tras el broadcast lo repite (`RebroadcastOnReload`; sin relojes: es
-orden, no tiempo). Con eso Into the Breach bajó a la primera.
+por falta del puntero se dispara en cuanto llega. Y el momento decide: Steam evalúa un
+juego nuevo UNA vez por sesión y se queda con esa respuesta. Un broadcast al
+escribirse `keys.txt` (el finder reacciona antes de que SLSsteam termine de
+recargar su YAML y liste el juego) hace que esa primera evaluación salga "no
+es tuyo": `0 target`, y ni un broadcast en la recarga ni otro minutos después
+lo cambian (17:02, 17:05). Sin broadcast hasta la recarga de SLSsteam, el
+juego baja a la primera (14:39, 1/1; y los experimentos solo-Lua, 3/3). Por eso
+en el build de 64 `Reconcile()` no dispara al inyectar: deja el broadcast
+"debido" y `OnSlsConfigReload` lo paga cuando el plugin avisa de que SLSsteam
+ha aplicado su config (`SLSsteam::configLoaded`). Sin relojes: orden, no
+tiempo. En 32 todo sigue igual (allí el broadcast al inyectar funciona).
 Descartado por el camino: publicar el callback 125 a pelo desde un plugin no
 tramita nada (Steam solo refresca la UI). Los logros nativos de juegos añadidos
 siguen apagados en 64: ese trozo del parche no tiene sustituto.

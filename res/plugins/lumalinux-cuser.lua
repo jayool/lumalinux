@@ -25,7 +25,7 @@
 -- Fail-safe: no engine yet, no user yet (not logged in), no status.json of
 -- this process (lumalinux not loaded, or not yet) -> nothing happens and the
 -- next event tries again. Handed over once per pointer, and again on every
--- SLSsteam config reload (lumalinux re-broadcasts after an add).
+-- SLSsteam config reload (the moment lumalinux's reconcile waits for in 64).
 LumaCUser = LumaCUser or { setup = false, sent = nil }
 
 local ffi = require("ffi")
@@ -60,10 +60,10 @@ LumaCUser.send = function(why)
     if not user then return end
     local cuser = ffi.cast("void**", user)[1]
     if cuser == nil then return end
-    -- Every config reload is handed over, same pointer or not: lumalinux uses
-    -- the reload that follows an add to repeat its broadcast (the 64-bit
-    -- client ignores the one fired at the keys.txt write; see
-    -- license_reconcile.cpp RebroadcastOnReload). Other events only once.
+    -- Every config reload is handed over, same pointer or not: it is the
+    -- moment the 64-bit client's reconcile waits for (SLSsteam has applied
+    -- its config, the added game is listed; license_reconcile.cpp
+    -- OnSlsConfigReload). Other events only once.
     if why ~= "configLoaded" and cuser == LumaCUser.sent then return end
     local addr = LumaCUser.handover()
     if not addr then

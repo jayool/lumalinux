@@ -45,13 +45,10 @@ Resolution Resolve();
 // 64-bit client). First non-null wins. Needed to call NotifyLicensesUpdated.
 // A Reconcile() skipped for want of the pointer is fired as soon as it lands.
 void SetUser(void* cuser);
-// Run a Reconcile() that was skipped for want of the pointer, if any. Called by
-// luma_set_cuser (the plugin hand-over), never from inside a Steam call.
-void FirePendingIfAny();
-// Repeat the last broadcast once, at the SLSsteam config reload that follows
-// it: called by the plugin hand-over on every reload (the reload after an add
-// is the moment the 64-bit client needs; license_reconcile.cpp).
-void RebroadcastOnReload();
+// SLSsteam has finished reloading its config (the plugin hand-over calls this
+// on every reload, never from inside a Steam call): fire the broadcast the
+// 64-bit client owes to this moment, or one skipped for want of the pointer.
+void OnSlsConfigReload();
 
 // Mark that keys.txt changed (a game was added). Called from the keys.txt
 // watcher (inotify thread) — it must NOT call into Steam itself.

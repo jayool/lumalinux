@@ -100,16 +100,13 @@ Resolution Resolve() {
     return ResolveAddr() ? Resolution::Resolved : Resolution::Unresolved;
 }
 
-// A reconcile that found no CUser yet (the first game added in a session, on
-// the 64-bit client, lands before the plugin below has handed the pointer
-// over) is remembered here and fired the moment the pointer arrives.
+// A reconcile asked for before any CUser arrived is remembered here and fired
+// when the pointer lands (the plugin hand-over, see luma_set_cuser).
 std::atomic<bool> g_pending{false};
-void Reconcile();
-
-// Armed by every broadcast, consumed by the SLSsteam config reload that
-// follows it (reported by the plugin): the broadcast is repeated then. See
-// RebroadcastOnReload for why the order matters.
-std::atomic<bool> g_rebroadcastOnReload{false};
+// 64-bit client: a reconcile owed to the next SLSsteam config reload. See
+// Reconcile() for why the broadcast must wait for it there.
+std::atomic<bool> g_onReload{false};
+void Broadcast(void* user);
 
 void SetUser(void* cuser) {
     if (!cuser) return;
@@ -119,15 +116,20 @@ void SetUser(void* cuser) {
                                      std::memory_order_relaxed);
 }
 
-// Fire a deferred reconcile. Only the plugin hand-over calls this: it runs on
-// SLSsteam's config-reload thread, outside any Steam call (measured on the
-// 64-bit client, 2026-10-24). The achievement guard also captures the pointer
-// but runs INSIDE a Steam call into SLSsteam, no place to call back into Steam.
-void FirePendingIfAny() {
-    if (g_pending.exchange(false, std::memory_order_acq_rel)) {
-        Log::Info("Reconcile: CUser arrived with a reconcile pending — firing now");
-        Reconcile();
-    }
+// SLSsteam has just finished reloading its config (reported by the plugin, on
+// SLSsteam's config-reload thread, outside any Steam call). Fire what is owed:
+// the 64-bit client's deferred broadcast, or one skipped for want of a CUser.
+// The achievement guard also captures the pointer but runs INSIDE a Steam call
+// into SLSsteam, no place to call back into Steam, so it never fires anything.
+void OnSlsConfigReload() {
+    void* user = g_pCUser.load(std::memory_order_acquire);
+    if (!user) return;
+    const bool owed = g_onReload.exchange(false, std::memory_order_acq_rel);
+    const bool pending = g_pending.exchange(false, std::memory_order_acq_rel);
+    if (!owed && !pending) return;
+    Log::Info("Reconcile: SLSsteam reloaded its config — broadcasting now%s",
+              pending ? " (a reconcile was waiting for the CUser)" : "");
+    Broadcast(user);
 }
 
 void NotifyKeysChanged() {
@@ -158,9 +160,45 @@ void WaitForKeysChangeOr(int timeoutSec) {
                       [] { return g_keysChanged.load(std::memory_order_acquire); });
 }
 
+// The actual call: NotifyLicensesUpdated(CUser). Unique-match-or-no-op: a
+// wrong-build pattern resolves to 0 and we degrade to a no-op instead of
+// calling garbage.
+void Broadcast(void* user) {
+    const uintptr_t addr = ResolveAddr();
+    if (!addr) {
+        Log::Warn("Reconcile: NotifyLicensesUpdated unresolved — no-op "
+                  "(restart still works)");
+        return;
+    }
+    reinterpret_cast<NotifyFn>(addr)(user);
+    Log::Info("Reconcile: broadcast LicensesUpdated_t (CUser=%p) — "
+              "appinfo/ownership refresh, no restart", user);
+}
+
+// Called by the package-0 finder right after it injected a freshly added
+// game's depots (keys.txt changed).
+//
+// 32-bit client: broadcast now (measured since v0.16.16: the install that
+// follows finds its depots, no restart).
+//
+// 64-bit client: NOT now. Adding a game writes SLSsteam's AdditionalApps and
+// keys.txt a millisecond apart and both react asynchronously; the finder is
+// faster than SLSsteam's YAML reload, so a broadcast here reaches Steam while
+// SLSsteam still answers "not owned" for the game. Steam evaluates a new
+// game ONCE per session and keeps that answer: with the early broadcast the
+// install ended in "0 target depots" and neither a broadcast at SLSsteam's
+// reload nor one minutes later changed it (2026-10-24, 17:02 and 17:05);
+// with no broadcast until SLSsteam's reload, the game downloaded at the
+// first try (14:39, 1/1 — and the earlier Lua-only experiments, 3/3). So here
+// the broadcast is only owed, and OnSlsConfigReload pays it when SLSsteam
+// says it has applied its config, the game listed. Without the plugin
+// (older installs) nothing fires: the restart path, as before this change.
 void Reconcile() {
     if (!Enabled()) return;
-
+#ifdef LUMA_X86_64
+    g_onReload.store(true, std::memory_order_release);
+    Log::Info("Reconcile: depots injected — broadcast owed to SLSsteam's next config reload");
+#else
     void* user = g_pCUser.load(std::memory_order_acquire);
     if (!user) {
         g_pending.store(true, std::memory_order_release);
@@ -168,42 +206,8 @@ void Reconcile() {
                   "(restart still works)");
         return;
     }
-
-    // Reuse the cached resolution (same address Resolve() reported to status).
-    // Unique-match-or-no-op: a wrong-build pattern is 0 here and we degrade to a
-    // no-op instead of calling garbage.
-    const uintptr_t addr = ResolveAddr();
-    if (!addr) {
-        Log::Warn("Reconcile: NotifyLicensesUpdated unresolved — no-op "
-                  "(restart still works)");
-        return;
-    }
-
-    reinterpret_cast<NotifyFn>(addr)(user);
-    g_rebroadcastOnReload.store(true, std::memory_order_release);
-    Log::Info("Reconcile: broadcast LicensesUpdated_t (CUser=%p) — "
-              "appinfo/ownership refresh, no restart", user);
-}
-
-// The SLSsteam plugin calls luma_set_cuser on every SLSsteam config reload.
-// LumaDeck adds a game in two writes: keys.txt first (the finder injects the
-// depots into package 0 and fires Reconcile() at once), SLSsteam's config a
-// moment later (AdditionalApps: from then on SLSsteam answers "owned" for the
-// game, and reloads). The order decides on the 64-bit client: a broadcast
-// before SLSsteam lists the game makes Steam settle on "not owned" and the
-// install ends in "0 target depots" (measured 2026-10-24, 1/1); the same
-// broadcast after the reload makes Steam process the licence (3/3). So every
-// broadcast arms a repeat, and the first reload the plugin reports after it
-// fires that repeat. No reload (a game added by something that does not touch
-// SLSsteam's config) leaves it armed for the next one, a harmless extra
-// broadcast. The 32-bit client, where the first broadcast already works, gets
-// the second one too (the Lua test posted three per add with no ill effect).
-void RebroadcastOnReload() {
-    if (g_rebroadcastOnReload.exchange(false, std::memory_order_acq_rel)) {
-        Log::Info("Reconcile: SLSsteam reloaded its config after a broadcast — broadcasting again");
-        Reconcile();
-        g_rebroadcastOnReload.store(false, std::memory_order_release);  // the repeat does not arm another
-    }
+    Broadcast(user);
+#endif
 }
 
 }  // namespace LicenseReconcile
@@ -226,6 +230,5 @@ void luma_set_cuser(void* cuser) {
     if (!cuser) return;
     Log::Debug("Reconcile: CUser %p handed over by the SLSsteam plugin", cuser);
     LicenseReconcile::SetUser(cuser);
-    LicenseReconcile::FirePendingIfAny();
-    LicenseReconcile::RebroadcastOnReload();
+    LicenseReconcile::OnSlsConfigReload();
 }
