@@ -15,14 +15,42 @@
 --
 -- SLSsteam exposes the object as SLS.steamEngine:getUser(0). LuaBridge 3 keeps
 -- the raw pointer right after the userdata's vtable (Userdata::m_p), which is
--- what lumalinux needs; LuaJIT's ffi reads it and calls lumalinux's exported
--- luma_set_cuser (lumalinux is in LD_PRELOAD, so ffi.C finds it). Fail-safe:
--- no engine yet, no user yet (not logged in), no lumalinux in this process ->
--- nothing happens and the next event tries again. Handed over once per pointer.
+-- what lumalinux needs. The hand-over is a call to lumalinux's luma_set_cuser
+-- at the ADDRESS lumalinux publishes in its status.json ("cuser_handover"):
+-- SLSsteam is an LD_AUDIT module and lives in the dynamic loader's audit
+-- namespace, where ffi.C / dlsym cannot see the application's libraries
+-- (measured 2026-10-24: "undefined symbol: luma_set_cuser" with lumalinux
+-- loaded); a raw address call works, same process memory. status.json is
+-- matched by pid so a stale file of an earlier Steam never gives an address.
+-- Fail-safe: no engine yet, no user yet (not logged in), no status.json of
+-- this process (lumalinux not loaded, or not yet) -> nothing happens and the
+-- next event tries again. Handed over once per pointer.
 LumaCUser = LumaCUser or { setup = false, sent = nil }
 
 local ffi = require("ffi")
-pcall(ffi.cdef, "void luma_set_cuser(void*);")   -- pcall: a re-run of this file must not fail on the redefinition
+pcall(ffi.cdef, "int getpid(void);")   -- pcall: a re-run of this file must not fail on the redefinition
+
+-- lumalinux's status.json of THIS process: /run/user/<uid>/lumalinux/ (32-bit
+-- client) or ~/.cache/lumalinux/ (64-bit client, inside the container), the
+-- same two places LumaDeck looks. Returns the hand-over address or nil.
+LumaCUser.handover = function()
+    local pid = tonumber(ffi.C.getpid())
+    local dirs = {}
+    local rt = os.getenv("XDG_RUNTIME_DIR")
+    if rt then dirs[#dirs + 1] = rt .. "/lumalinux" end
+    local home = os.getenv("HOME")
+    if home then dirs[#dirs + 1] = home .. "/.cache/lumalinux" end
+    for _, d in ipairs(dirs) do
+        local f = io.open(d .. "/status.json", "r")
+        if f then
+            local text = f:read("*a"); f:close()
+            if tonumber(text:match('"pid":%s*(%d+)')) == pid then
+                return text:match('"cuser_handover":%s*"(0x%x+)"')
+            end
+        end
+    end
+    return nil
+end
 
 LumaCUser.send = function(why)
     local engine = SLS.steamEngine
@@ -31,14 +59,14 @@ LumaCUser.send = function(why)
     if not user then return end
     local cuser = ffi.cast("void**", user)[1]
     if cuser == nil or cuser == LumaCUser.sent then return end
-    local ok, err = pcall(function() ffi.C.luma_set_cuser(cuser) end)
-    if not ok then
-        log.warn("lumalinux-cuser: lumalinux is not loaded in this process (" .. tostring(err) .. ")")
-        LumaCUser.sent = cuser   -- do not retry on every event; a restart reloads this file
+    local addr = LumaCUser.handover()
+    if not addr then
+        log.debug("lumalinux-cuser: no lumalinux status.json for this process yet (" .. why .. ")")
         return
     end
+    ffi.cast("void(*)(void*)", ffi.cast("uintptr_t", tonumber(addr)))(cuser)
     LumaCUser.sent = cuser
-    log.info(string.format("lumalinux-cuser: CUser %s handed to lumalinux (%s)", tostring(cuser), why))
+    log.info(string.format("lumalinux-cuser: CUser %s handed to lumalinux at %s (%s)", tostring(cuser), addr, why))
 end
 
 if not LumaCUser.setup then

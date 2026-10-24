@@ -263,7 +263,10 @@ arranque, donde Steam tramita todo el paquete 0 en el login. `NotifyLicensesUpda
 es justo el trámite forzado. Ahora el puntero lo da SLSsteam por su API de
 plugins: `SLS.steamEngine:getUser(0)` (LuaBridge 3 guarda el puntero crudo tras
 la vtable del userdata), y `res/plugins/lumalinux-cuser.lua` se lo pasa a
-lumalinux por `luma_set_cuser` (ffi, símbolo exportado); un Reconcile saltado
+lumalinux llamando a `luma_set_cuser` en la dirección que `status.json` publica
+(`cuser_handover`: SLSsteam es módulo `LD_AUDIT`, vive en el namespace de
+auditoría del cargador y desde ahí `dlsym` no ve nuestras librerías, medido:
+"undefined symbol" con lumalinux cargada; la llamada por dirección sí cruza); un Reconcile saltado
 por falta del puntero se dispara en cuanto llega. Con eso Into the Breach bajó
 a la primera (1/1), con el "full data" en el mismo segundo de la llamada.
 Descartado por el camino: publicar el callback 125 a pelo desde un plugin no

@@ -457,9 +457,11 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   `LicenseReconcile::SetUser`; 32-bit client only, the 64-bit SLSsteam build is
   stripped), and SLSsteam's plugin system: `res/plugins/lumalinux-cuser.lua`
   (installed by setup.sh) reads `SLS.steamEngine:getUser(0)`, takes the raw
-  pointer LuaBridge 3 keeps after the userdata's vtable, and calls the exported
-  `luma_set_cuser` through LuaJIT's ffi (2026-10-24; the only source on the
-  64-bit client, see `steam-rt3-x64.md` §1.3). A Reconcile() skipped for want
+  pointer LuaBridge 3 keeps after the userdata's vtable, and calls
+  `luma_set_cuser` through LuaJIT's ffi at the address status.json publishes
+  (`cuser_handover`; SLSsteam is an LD_AUDIT module, in the loader's audit
+  namespace, where a symbol lookup cannot see our library — 2026-10-24; the
+  only source on the 64-bit client, see `steam-rt3-x64.md` §1.3). A Reconcile() skipped for want
   of the pointer is remembered and fired from that hand-over (it runs on
   SLSsteam's config-reload thread, outside any Steam call); the guard never
   fires it, it runs inside a Steam call into SLSsteam. Without either source

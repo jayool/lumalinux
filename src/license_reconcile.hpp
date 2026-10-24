@@ -74,3 +74,10 @@ void WaitForKeysChangeOr(int timeoutSec);
 void Reconcile();
 
 }  // namespace LicenseReconcile
+
+// The hand-over entry SLSsteam's plugin calls (res/plugins/lumalinux-cuser.lua).
+// Its ADDRESS is published in status.json ("cuser_handover"): SLSsteam is an
+// LD_AUDIT module and lives in the dynamic loader's audit namespace, where a
+// dlsym() cannot see the application's libraries, lumalinux included; a raw
+// address call works across namespaces (same process memory).
+extern "C" void luma_set_cuser(void* cuser);

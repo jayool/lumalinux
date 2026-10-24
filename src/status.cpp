@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 jayool — https://github.com/jayool/lumalinux
 #include "status.hpp"
+#include <cstdint>
+#include "license_reconcile.hpp"
 #include "log.hpp"
 #include "version.hpp"
 
@@ -148,6 +150,11 @@ void Write() {
     std::fprintf(f, "{\n");
     std::fprintf(f, "  \"version\": \"%s\",\n", LUMALINUX_VERSION_STRING);
     std::fprintf(f, "  \"pid\": %d,\n", getpid());
+    // Where SLSsteam's plugin hands the CUser over (license_reconcile.hpp): a
+    // per-process address, so it is written every start. The plugin matches
+    // the pid above to be sure it reads this process's file.
+    std::fprintf(f, "  \"cuser_handover\": \"0x%lx\",\n",
+                 (unsigned long)reinterpret_cast<uintptr_t>(&luma_set_cuser));
     std::fprintf(f, "  \"started_at\": \"%s\",\n", IsoUtcNow().c_str());
     // "blocked": null when we got past the gate; a short reason ("hash_unverified")
     // when InstallHooks() refused to hook (no hook ever ran, so hooks={}).

@@ -184,8 +184,10 @@ void Reconcile() {
 // The CUser hand-over from SLSsteam's plugin system (res/plugins/lumalinux-cuser.lua,
 // installed by setup.sh). SLSsteam exposes Steam's CUser to its Lua plugins
 // (SLS.steamEngine:getUser(0)); the plugin passes the raw pointer here through
-// LuaJIT's ffi, which resolves this symbol in the process (lumalinux is in
-// LD_PRELOAD, hence in the global scope). On the 32-bit client the achievement
+// LuaJIT's ffi, calling the ADDRESS status.json publishes as "cuser_handover":
+// a symbol lookup from inside SLSsteam cannot find us (it is an LD_AUDIT
+// module, in the loader's audit namespace; measured 2026-10-24: "undefined
+// symbol: luma_set_cuser" with this library loaded). On the 32-bit client the achievement
 // guard patch captures the same pointer; on the 64-bit client that patch does
 // not apply (SLSsteam's build is stripped) and this is the only source. Without
 // it Reconcile never fires on the 64-bit client, and a game added without any
