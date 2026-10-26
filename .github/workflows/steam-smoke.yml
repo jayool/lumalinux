@@ -1,0 +1,93 @@
+# Steam smoke: boot a real Steam client with the stack in a container on the
+# runner and read what loaded. No Steam account: the client reaches its login
+# screen, which is after steamclient.so loads (hooks, feed, SLSsteam, plugin),
+# and before package 0 or a library exist. Manual; pick the channel and the
+# builds under test. The runners reach Valve's CDN (fetch-steamclient.yml does
+# the same download), the sandboxed agent environment does not.
+name: Steam smoke
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Steam channel: stable (32-bit client) or beta (64-bit steamrt64 client)"
+        type: choice
+        default: beta
+        options: [beta, stable]
+      lumalinux_so_url:
+        description: "32-bit liblumalinux.so URL (empty = releases/latest)"
+        type: string
+        default: ""
+      lumalinux64_so_url:
+        description: "64-bit liblumalinux-x86_64.so URL (empty = releases/latest)"
+        type: string
+        default: ""
+      slssteam64_url:
+        description: "64-bit SLSsteam 7z URL (empty = the preview hosted on release v0.22.4)"
+        type: string
+        default: "https://github.com/jayool/lumalinux/releases/download/v0.22.4/SLSsteam-Any-release.7z"
+      wait_min:
+        description: "Minutes to wait for the client (the beta downloads two packages)"
+        type: string
+        default: "15"
+permissions:
+  contents: read
+jobs:
+  smoke:
+    name: Steam ${{ inputs.channel }} + stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the smoke image (Arch + Steam, no desktop)
+        run: docker build -t steam-smoke:ci -f .github/smoke/Dockerfile .github/smoke
+
+      - name: Start the container
+        # Same flags as the SteamOS devcontainer: SYS_ADMIN + unconfined
+        # seccomp/apparmor for pressure-vessel (the 64-bit client's container),
+        # IPv6 off (the runner has none and Steam waits on it otherwise).
+        run: |
+          docker run -d --name smoke --hostname steamdeck \
+            --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
+            --security-opt=seccomp=unconfined --security-opt=apparmor=unconfined \
+            --sysctl net.ipv6.conf.all.disable_ipv6=1 --sysctl net.ipv6.conf.default.disable_ipv6=1 \
+            --shm-size=2g -v "$GITHUB_WORKSPACE:/work" steam-smoke:ci sleep infinity
+          docker exec smoke bash -c 'id; ldd --version | head -n 1; steam --version 2>/dev/null | head -n 1 || true'
+
+      - name: Run the smoke
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          LL32: ${{ inputs.lumalinux_so_url }}
+          LL64: ${{ inputs.lumalinux64_so_url }}
+          SLS64: ${{ inputs.slssteam64_url }}
+          WAIT_MIN: ${{ inputs.wait_min }}
+        run: |
+          set +e
+          docker exec \
+            -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
+            ${LL32:+-e LUMALINUX_SO_URL="$LL32"} ${LL64:+-e LUMALINUX64_SO_URL="$LL64"} ${SLS64:+-e SLSSTEAM64_URL="$SLS64"} \
+            -u deck smoke bash /work/.github/smoke/run.sh
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          echo "run.sh exit: $?"
+        id: run
+
+      - name: Report
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" smoke-out 2>/dev/null || true
+          { echo '## Steam smoke (${{ inputs.channel }})'; echo; echo '```'; cat smoke-out/report.md 2>/dev/null || echo "(no report)"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          cat smoke-out/report.md 2>/dev/null || true
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: steam-smoke-${{ inputs.channel }}
+          path: smoke-out/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Verdict
+        if: always()
+        run: |
+          grep -q -- '- verdict: PASS' smoke-out/report.md
