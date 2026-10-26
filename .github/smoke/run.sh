@@ -19,6 +19,8 @@ mkdir -p "$OUT"
 REPORT="$OUT/report.md"
 : > "$REPORT"
 say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
+now() { date +%s; }
+steam_alive() { pgrep -f 'steam\.sh|ubuntu12_32/steam|steamrt64/steam|/usr/bin/steam|steam-runtime' >/dev/null; }
 step() { printf '\n== %s\n' "$*" | tee -a "$REPORT"; }
 
 export HOME=/home/deck
@@ -42,7 +44,7 @@ dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
 for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
-say "- display: $(xdpyinfo >/dev/null 2>&1 && echo up || echo DOWN)"
+if xdpyinfo >/dev/null 2>&1; then say "- display: up"; else say "- display: DOWN — Xvfb log:"; sed 's/^/    /' "$OUT/xvfb.log" | tee -a "$REPORT"; say "- verdict: FAIL (no display)"; exit 1; fi
 say "- session bus: $(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1 && echo up || echo DOWN)"
 
 step "first Steam start (vanilla: bootstrap the client, no stack yet)"
@@ -52,17 +54,19 @@ step "first Steam start (vanilla: bootstrap the client, no stack yet)"
 mkdir -p "$HOME/.local/share/Steam/package"
 if [ "$CHANNEL" = beta ]; then echo publicbeta > "$HOME/.local/share/Steam/package/beta"; else rm -f "$HOME/.local/share/Steam/package/beta"; fi
 ( steam -no-cef-sandbox >"$OUT/steam-vanilla.log" 2>&1 & )
-for i in $(seq 1 "$((WAIT_MIN * 20))"); do
-    if [ -s "$HOME/.local/share/Steam/ubuntu12_32/steamclient.so" ] && pgrep -f 'ubuntu12_32/steam|steamrt64/steam' >/dev/null; then break; fi
-    pgrep -x steam >/dev/null || pgrep -f steam.sh >/dev/null || { sleep 3; pgrep -f steam >/dev/null || break; }
+DEADLINE=$(( $(now) + WAIT_MIN * 60 ))
+while [ "$(now)" -lt "$DEADLINE" ]; do
+    if [ -s "$HOME/.local/share/Steam/ubuntu12_32/steamclient.so" ] && pgrep -f 'ubuntu12_32/steam|steamrt64/steam' >/dev/null; then sleep 20; break; fi
+    steam_alive || { sleep 5; steam_alive || { say "- vanilla Steam exited early; tail of its output:"; tail -n 15 "$OUT/steam-vanilla.log" | sed 's/^/    /' | tee -a "$REPORT"; break; }; }
     sleep 3
 done
 say "- client dir: $(ls -d "$HOME"/.local/share/Steam/ubuntu12_32 "$HOME"/.local/share/Steam/steamrt64 2>/dev/null | tr '\n' ' ')"
 say "- vanilla processes: $(pgrep -af '(ubuntu12_32|steamrt64)/steam' | grep -oE '(ubuntu12_32|steamrt64)/steam' | sort | uniq -c | tr '\n' ' ')"
 steam -shutdown >/dev/null 2>&1 || true
-for i in $(seq 1 60); do pgrep -f 'ubuntu12_32/steam|steamrt64/steam|steam.sh' >/dev/null || break; sleep 1; done
-pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam.sh' 2>/dev/null || true
+for i in $(seq 1 60); do steam_alive || break; sleep 1; done
+pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam\.sh|/usr/bin/steam' 2>/dev/null || true
 rm -f "$HOME/.steam/steam.pid" "$HOME/.steam/steam.pipe" 2>/dev/null || true
+say "- vanilla output tail:"; tail -n 8 "$OUT/steam-vanilla.log" 2>/dev/null | sed 's/^/    /' | tee -a "$REPORT"
 say "- bootstrap log tail:"; tail -n 5 "$HOME/.local/share/Steam/logs/bootstrap_log.txt" 2>/dev/null | sed 's/^/    /' | tee -a "$REPORT"
 
 step "install the stack (setup.sh)"
@@ -70,6 +74,7 @@ say "- setup: $SETUP"
 say "- LUMALINUX_SO_URL=${LUMALINUX_SO_URL:-<default>} LUMALINUX64_SO_URL=${LUMALINUX64_SO_URL:-<default>} SLSSTEAM64_URL=${SLSSTEAM64_URL:-<none>}"
 bash "$SETUP" >"$OUT/setup.log" 2>&1; rc=$?
 say "- setup.sh exit: $rc"
+[ "$rc" = 0 ] || { say "- setup.sh output tail:"; tail -n 25 "$OUT/setup.log" | sed 's/^/    /' | tee -a "$REPORT"; }
 grep -E '^\[\+\]|^\[!\]|^\[X\]|Deployed|SLSsteam|plugin' "$OUT/setup.log" | sed 's/^/    /' | tail -n 25 | tee -a "$REPORT"
 say "- installed: $(ls "$HOME/.local/share/lumalinux/" 2>/dev/null | tr '\n' ' ')"
 say "- SLSsteam: $(ls "$HOME/.local/share/SLSsteam/SLSsteam.so" "$HOME/.local/share/SLSsteam/x86_64/SLSsteam.so" 2>/dev/null | tr '\n' ' ')"
@@ -84,11 +89,13 @@ T0=$(date +%s)
 ( "$LAUNCH" -no-cef-sandbox -cef-enable-debugging >"$OUT/steam-stack.log" 2>&1 & )
 LLLOG="$HOME/.cache/lumalinux/lumalinux.log"
 DONE=""
-for i in $(seq 1 "$((WAIT_MIN * 20))"); do
+DEADLINE=$(( $(now) + WAIT_MIN * 60 ))
+while [ "$(now)" -lt "$DEADLINE" ]; do
+    DONE=""
     if grep -qE 'Status: wrote|FAILED|installs nothing' "$LLLOG" 2>/dev/null; then DONE=lumalinux; fi
     if curl -fsS --max-time 2 http://127.0.0.1:8080/json/version >/dev/null 2>&1; then DONE="${DONE:+$DONE,}cef"; fi
-    [ -n "$DONE" ] && [[ "$DONE" == *cef* ]] && break
-    if ! pgrep -f 'ubuntu12_32/steam|steamrt64/steam|steam.sh' >/dev/null; then sleep 5; pgrep -f steam >/dev/null || { DONE="steam-exited"; break; }; fi
+    [[ "$DONE" == *cef* ]] && [[ "$DONE" == *lumalinux* ]] && break
+    steam_alive || { sleep 5; steam_alive || { DONE="steam-exited"; break; }; }
     sleep 3
 done
 sleep 10   # let the hooks' first pass and the plugin run settle
@@ -128,5 +135,5 @@ cp "$HOME/.SLSsteam.log" "$OUT/logs/SLSsteam.log" 2>/dev/null || true
 for f in bootstrap_log.txt console-linux.txt content_log.txt appinfo_log.txt; do cp "$HOME/.local/share/Steam/logs/$f" "$OUT/logs/" 2>/dev/null || true; done
 cp "$HOME/.config/SLSsteam/config.yaml" "$OUT/logs/slssteam-config.yaml" 2>/dev/null || true
 steam -shutdown >/dev/null 2>&1 || true
-sleep 5; pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam.sh' 2>/dev/null || true
+sleep 5; pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam\.sh|/usr/bin/steam' 2>/dev/null || true
 exit $V
