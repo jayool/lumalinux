@@ -47,6 +47,7 @@ jobs:
         # seccomp/apparmor for pressure-vessel (the 64-bit client's container),
         # IPv6 off (the runner has none and Steam waits on it otherwise).
         run: |
+          mkdir -p smoke-out && chmod 777 smoke-out   # written by uid 1000 inside the container
           docker run -d --name smoke --hostname steamdeck \
             --cap-add=SYS_PTRACE --cap-add=SYS_ADMIN \
             --security-opt=seccomp=unconfined --security-opt=apparmor=unconfined \
@@ -67,8 +68,8 @@ jobs:
             -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
             ${LL32:+-e LUMALINUX_SO_URL="$LL32"} ${LL64:+-e LUMALINUX64_SO_URL="$LL64"} ${SLS64:+-e SLSSTEAM64_URL="$SLS64"} \
             -u deck smoke bash /work/.github/smoke/run.sh
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
-          echo "run.sh exit: $?"
+          rc=$?
+          echo "run.sh exit: $rc"
         id: run
 
       - name: Report
