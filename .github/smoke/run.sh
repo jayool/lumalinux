@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+# Steam smoke: inside the smoke container, as `deck`. Installs the stack with
+# the repo's setup.sh, starts Steam headless on the requested channel, waits
+# until the client is up (login screen) or gives up, and writes a report plus
+# the logs to $OUT. No Steam account: everything that needs one (package 0,
+# library, adding a game) is out of scope; what is in scope is "the stack
+# loads in this Steam build and nothing dies": the library of the running
+# client mapped, hooks installed, the feed read, SLSsteam and its plugin up.
+#
+# Env (all optional): CHANNEL=stable|beta, SETUP=path to setup.sh,
+# LUMALINUX_SO_URL / LUMALINUX64_SO_URL / SLSSTEAM64_URL (setup.sh's own
+# overrides), WAIT_MIN (default 15), OUT (default /work/smoke-out).
+set -u
+CHANNEL="${CHANNEL:-beta}"
+SETUP="${SETUP:-/work/setup.sh}"
+WAIT_MIN="${WAIT_MIN:-15}"
+OUT="${OUT:-/work/smoke-out}"
+mkdir -p "$OUT"
+REPORT="$OUT/report.md"
+: > "$REPORT"
+say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
+step() { printf '\n== %s\n' "$*" | tee -a "$REPORT"; }
+
+export HOME=/home/deck
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DISPLAY=:1
+export LIBGL_ALWAYS_SOFTWARE=1
+export PATH="$HOME/.local/bin:$PATH"
+
+step "host"
+say "- glibc: $(ldd --version | head -n 1)"
+say "- os-release: $(grep -E '^(ID|VERSION_ID)=' /etc/os-release | tr '\n' ' ')"
+say "- kernel: $(uname -r)"
+say "- channel requested: $CHANNEL"
+
+step "session bus, display"
+sudo mkdir -p "$XDG_RUNTIME_DIR" /tmp/.X11-unix /run/dbus
+sudo chown "$(id -u):$(id -g)" "$XDG_RUNTIME_DIR"; chmod 700 "$XDG_RUNTIME_DIR"; sudo chmod 1777 /tmp/.X11-unix
+sudo dbus-daemon --system --fork 2>/dev/null || true
+sudo NetworkManager >/dev/null 2>&1 &
+dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+Xvfb :1 -screen 0 1280x800x24 -nolisten tcp >"$OUT/xvfb.log" 2>&1 &
+for i in $(seq 1 50); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.2; done
+say "- display: $(xdpyinfo >/dev/null 2>&1 && echo up || echo DOWN)"
+say "- session bus: $(dbus-send --session --dest=org.freedesktop.DBus --type=method_call --print-reply /org/freedesktop/DBus org.freedesktop.DBus.ListNames >/dev/null 2>&1 && echo up || echo DOWN)"
+
+step "first Steam start (vanilla: bootstrap the client, no stack yet)"
+# steam.sh needs the package dir to exist to honour the channel file; the
+# bootstrap creates ~/.local/share/Steam on first run. We run vanilla once so
+# setup.sh finds a Steam tree, then stop it.
+mkdir -p "$HOME/.local/share/Steam/package"
+if [ "$CHANNEL" = beta ]; then echo publicbeta > "$HOME/.local/share/Steam/package/beta"; else rm -f "$HOME/.local/share/Steam/package/beta"; fi
+( steam -no-cef-sandbox >"$OUT/steam-vanilla.log" 2>&1 & )
+for i in $(seq 1 "$((WAIT_MIN * 20))"); do
+    if [ -s "$HOME/.local/share/Steam/ubuntu12_32/steamclient.so" ] && pgrep -f 'ubuntu12_32/steam|steamrt64/steam' >/dev/null; then break; fi
+    pgrep -x steam >/dev/null || pgrep -f steam.sh >/dev/null || { sleep 3; pgrep -f steam >/dev/null || break; }
+    sleep 3
+done
+say "- client dir: $(ls -d "$HOME"/.local/share/Steam/ubuntu12_32 "$HOME"/.local/share/Steam/steamrt64 2>/dev/null | tr '\n' ' ')"
+say "- vanilla processes: $(pgrep -af '(ubuntu12_32|steamrt64)/steam' | grep -oE '(ubuntu12_32|steamrt64)/steam' | sort | uniq -c | tr '\n' ' ')"
+steam -shutdown >/dev/null 2>&1 || true
+for i in $(seq 1 60); do pgrep -f 'ubuntu12_32/steam|steamrt64/steam|steam.sh' >/dev/null || break; sleep 1; done
+pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam.sh' 2>/dev/null || true
+rm -f "$HOME/.steam/steam.pid" "$HOME/.steam/steam.pipe" 2>/dev/null || true
+say "- bootstrap log tail:"; tail -n 5 "$HOME/.local/share/Steam/logs/bootstrap_log.txt" 2>/dev/null | sed 's/^/    /' | tee -a "$REPORT"
+
+step "install the stack (setup.sh)"
+say "- setup: $SETUP"
+say "- LUMALINUX_SO_URL=${LUMALINUX_SO_URL:-<default>} LUMALINUX64_SO_URL=${LUMALINUX64_SO_URL:-<default>} SLSSTEAM64_URL=${SLSSTEAM64_URL:-<none>}"
+bash "$SETUP" >"$OUT/setup.log" 2>&1; rc=$?
+say "- setup.sh exit: $rc"
+grep -E '^\[\+\]|^\[!\]|^\[X\]|Deployed|SLSsteam|plugin' "$OUT/setup.log" | sed 's/^/    /' | tail -n 25 | tee -a "$REPORT"
+say "- installed: $(ls "$HOME/.local/share/lumalinux/" 2>/dev/null | tr '\n' ' ')"
+say "- SLSsteam: $(ls "$HOME/.local/share/SLSsteam/SLSsteam.so" "$HOME/.local/share/SLSsteam/x86_64/SLSsteam.so" 2>/dev/null | tr '\n' ' ')"
+say "- plugins: $(ls "$HOME/.config/SLSsteam/plugins/" 2>/dev/null | tr '\n' ' ')"
+grep -n "^Plugins:\|^MaxSchemaTries:\|^SafeMode:" "$HOME/.config/SLSsteam/config.yaml" 2>/dev/null | sed 's/^/    config: /' | tee -a "$REPORT"
+
+step "Steam with the stack ($CHANNEL)"
+WRAPPER="$HOME/.local/share/SLSsteam/path/steam"
+if [ -x "$WRAPPER" ]; then LAUNCH="$WRAPPER"; else LAUNCH="steam"; say "- WARNING: wrapper missing, launching vanilla steam"; fi
+: > "$HOME/.cache/lumalinux/lumalinux.log" 2>/dev/null || true
+T0=$(date +%s)
+( "$LAUNCH" -no-cef-sandbox -cef-enable-debugging >"$OUT/steam-stack.log" 2>&1 & )
+LLLOG="$HOME/.cache/lumalinux/lumalinux.log"
+DONE=""
+for i in $(seq 1 "$((WAIT_MIN * 20))"); do
+    if grep -qE 'Status: wrote|FAILED|installs nothing' "$LLLOG" 2>/dev/null; then DONE=lumalinux; fi
+    if curl -fsS --max-time 2 http://127.0.0.1:8080/json/version >/dev/null 2>&1; then DONE="${DONE:+$DONE,}cef"; fi
+    [ -n "$DONE" ] && [[ "$DONE" == *cef* ]] && break
+    if ! pgrep -f 'ubuntu12_32/steam|steamrt64/steam|steam.sh' >/dev/null; then sleep 5; pgrep -f steam >/dev/null || { DONE="steam-exited"; break; }; fi
+    sleep 3
+done
+sleep 10   # let the hooks' first pass and the plugin run settle
+T1=$(date +%s)
+say "- waited: $((T1 - T0)) s, outcome: ${DONE:-timeout}"
+say "- processes: $(pgrep -af '(ubuntu12_32|steamrt64)/steam' | grep -oE '(ubuntu12_32|steamrt64)/steam' | sort | uniq -c | tr '\n' ' ')"
+say "- mapped per steam pid:"
+for p in $(pgrep -x steam); do
+    say "    pid $p: $(grep -oE 'liblumalinux[^ ]*\.so|SLSsteam\.so|cloud_redirect[^ ]*\.so' /proc/$p/maps 2>/dev/null | sort -u | tr '\n' ' ') $(grep -qz '^PRESSURE_VESSEL_RUNTIME=' /proc/$p/environ 2>/dev/null && echo '[rt3 container]')"
+done
+say "- loader notices:"; grep -h 'ERROR: ld.so' "$OUT/steam-stack.log" 2>/dev/null | sed 's/^.*ERROR: ld.so/ld.so/' | sort -u | sed 's/^/    /' | tee -a "$REPORT"
+say "- CEF: $(curl -fsS --max-time 3 http://127.0.0.1:8080/json/version 2>/dev/null | jq -r '.Browser' 2>/dev/null || echo 'not responding')"
+
+step "lumalinux"
+grep -E 'hash is|RvaFeed|Hook install|licenses_check_off|PKG0_FINDER|Status: wrote|FAILED|installs nothing|Error|crash|Reconcile' "$LLLOG" 2>/dev/null | cut -c1-160 | sed 's/^/    /' | tee -a "$REPORT"
+ST=""; for f in "$XDG_RUNTIME_DIR/lumalinux/status.json" "$HOME/.cache/lumalinux/status.json"; do [ -s "$f" ] && ST="$f"; done
+if [ -n "$ST" ]; then say "- status.json ($ST): $(jq -c '{version, blocked, hooks: (.hooks | to_entries | map("\(.key)=\(.value)") | join(" "))}' "$ST" 2>/dev/null || head -c 300 "$ST")"; else say "- status.json: none"; fi
+
+step "SLSsteam"
+grep -nE 'SLSsteam|Ran |plugin|lumalinux|Error|error|crash|Failed|Config' "$HOME/.SLSsteam.log" 2>/dev/null | cut -c1-160 | tail -n 25 | sed 's/^/    /' | tee -a "$REPORT"
+
+step "verdict"
+V=0
+pgrep -f "$([ "$CHANNEL" = beta ] && echo steamrt64/steam || echo ubuntu12_32/steam)" >/dev/null && say "- OK   client for channel '$CHANNEL' is running" || { say "- FAIL expected client for '$CHANNEL' not running"; V=1; }
+grep -q 'Status: wrote' "$LLLOG" 2>/dev/null && say "- OK   lumalinux wrote status.json" || { say "- FAIL lumalinux did not reach Status: wrote"; V=1; }
+grep -q 'FAILED' "$LLLOG" 2>/dev/null && { say "- FAIL a hook FAILED"; V=1; } || say "- OK   no hook FAILED"
+if [ "$CHANNEL" = beta ]; then grep -q 'licenses_check_off' "$LLLOG" 2>/dev/null && say "- OK   feed carries licenses_check_off" || say "- WARN feed without licenses_check_off (fine on a build without the flags)"; fi
+grep -qE 'Ran .*lumalinux-cuser|lumalinux-cuser' "$HOME/.SLSsteam.log" 2>/dev/null && say "- OK   SLSsteam ran the lumalinux-cuser plugin" || say "- WARN no trace of the lumalinux-cuser plugin in SLSsteam's log"
+curl -fsS --max-time 3 http://127.0.0.1:8080/json/version >/dev/null 2>&1 && say "- OK   CEF responds (login screen reached)" || say "- WARN CEF not responding"
+say "- verdict: $([ $V = 0 ] && echo PASS || echo FAIL)"
+
+step "collect"
+mkdir -p "$OUT/logs"
+cp "$LLLOG" "$OUT/logs/lumalinux.log" 2>/dev/null || true
+cp "$HOME/.SLSsteam.log" "$OUT/logs/SLSsteam.log" 2>/dev/null || true
+[ -n "$ST" ] && cp "$ST" "$OUT/logs/status.json" 2>/dev/null || true
+for f in bootstrap_log.txt console-linux.txt content_log.txt appinfo_log.txt; do cp "$HOME/.local/share/Steam/logs/$f" "$OUT/logs/" 2>/dev/null || true; done
+cp "$HOME/.config/SLSsteam/config.yaml" "$OUT/logs/slssteam-config.yaml" 2>/dev/null || true
+steam -shutdown >/dev/null 2>&1 || true
+sleep 5; pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam.sh' 2>/dev/null || true
+exit $V
