@@ -9,7 +9,7 @@ FROM archlinux:latest
 RUN printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
 RUN pacman -Syu --noconfirm \
     base-devel git curl wget sudo which procps-ng \
-    python python-pip jq p7zip unzip \
+    python python-pip python-capstone python-yaml jq p7zip unzip \
     xorg-server-xvfb xorg-xdpyinfo \
     mesa lib32-mesa vulkan-swrast lib32-vulkan-swrast vulkan-mesa-layers \
     vulkan-icd-loader lib32-vulkan-icd-loader \

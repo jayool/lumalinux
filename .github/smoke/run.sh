@@ -9,11 +9,15 @@
 #
 # Env (all optional): CHANNEL=stable|beta, SETUP=path to setup.sh,
 # LUMALINUX_SO_URL / LUMALINUX64_SO_URL / SLSSTEAM64_URL (setup.sh's own
-# overrides), WAIT_MIN (default 15), OUT (default /work/smoke-out).
+# overrides), WAIT_MIN (default 15), OUT (default /work/smoke-out),
+# FEED=auto|derive (auto: use main's feed for this client build, derive one
+# with the repo's tool only when main has none; derive: always derive, and
+# compare with main's when it exists — a live check of the tool).
 set -u
 CHANNEL="${CHANNEL:-beta}"
 SETUP="${SETUP:-/work/setup.sh}"
 WAIT_MIN="${WAIT_MIN:-15}"
+FEED="${FEED:-auto}"
 OUT="${OUT:-/work/smoke-out}"
 mkdir -p "$OUT"
 REPORT="$OUT/report.md"
@@ -95,6 +99,52 @@ say "- SLSsteam: $(ls "$HOME/.local/share/SLSsteam/SLSsteam.so" "$HOME/.local/sh
 say "- plugins: $(ls "$HOME/.config/SLSsteam/plugins/" 2>/dev/null | tr '\n' ' ')"
 grep -n "^Plugins:\|^MaxSchemaTries:\|^SafeMode:" "$HOME/.config/SLSsteam/config.yaml" 2>/dev/null | sed 's/^/    config: /' | tee -a "$REPORT"
 
+step "feed for this client build ($FEED)"
+# The runtime fetches res/rvas/<sha>.yaml from main and reads its disk copy
+# first; a copy placed in the cache is what it uses. A build newer than the
+# last daily watch-steam run has no feed on main yet — the smoke must not
+# fail on that: derive one here with the same tool the daily job runs.
+if [ "$CHANNEL" = beta ]; then
+    SC="$HOME/.local/share/Steam/steamrt64/steamclient.so"; TOOL="python3 /work/tools/check_patterns_x64.py"
+else
+    SC="$HOME/.local/share/Steam/ubuntu12_32/steamclient.so"; TOOL="python3 /work/tools/check_patterns.py --hpp /work/src/patterns.hpp"
+fi
+FEED_SRC="none"
+if [ -s "$SC" ]; then
+    SHA="$(sha256sum "$SC" | cut -d' ' -f1)"
+    say "- steamclient.so: $SC"; say "- sha256: $SHA"
+    mkdir -p "$HOME/.cache/lumalinux/rvas" "$OUT/feed"
+    MAINYAML="$OUT/feed/main-$SHA.yaml"
+    if curl -fsSL -o "$MAINYAML" "https://raw.githubusercontent.com/jayool/lumalinux/main/res/rvas/$SHA.yaml" 2>/dev/null && grep -q '^hooks:' "$MAINYAML"; then
+        say "- main has a feed for this build"
+    else
+        rm -f "$MAINYAML"; say "- main has NO feed for this build yet (newer than the last watch-steam run)"
+    fi
+    if [ "$FEED" = derive ] || [ ! -s "$MAINYAML" ]; then
+        if $TOOL "$SC" --emit-rvas "$OUT/feed/derived" >"$OUT/feed/derive.log" 2>&1 && [ -s "$OUT/feed/derived/$SHA.yaml" ]; then
+            grep -E "licensechk|finder|VERDICT|CLEAN|BLOCKING|wrote" "$OUT/feed/derive.log" | tail -n 6 | sed 's/^/    /' | tee -a "$REPORT"
+            if [ -s "$MAINYAML" ]; then
+                if diff -q <(grep -v '^#' "$MAINYAML" | grep -v '^steam_version') <(grep -v '^#' "$OUT/feed/derived/$SHA.yaml" | grep -v '^steam_version') >/dev/null; then
+                    say "- derived feed MATCHES main's"; FEED_SRC="main (derived matches)"
+                else
+                    say "- derived feed DIFFERS from main's:"; diff <(grep -v '^#' "$MAINYAML") <(grep -v '^#' "$OUT/feed/derived/$SHA.yaml") | sed 's/^/    /' | tee -a "$REPORT"; FEED_SRC="main (derived differs!)"
+                fi
+                cp "$MAINYAML" "$HOME/.cache/lumalinux/rvas/$SHA.yaml"
+            else
+                cp "$OUT/feed/derived/$SHA.yaml" "$HOME/.cache/lumalinux/rvas/$SHA.yaml"; FEED_SRC="derived here (not on main yet)"
+            fi
+        else
+            say "- derivation FAILED; tool output tail:"; tail -n 15 "$OUT/feed/derive.log" | sed 's/^/    /' | tee -a "$REPORT"
+            [ -s "$MAINYAML" ] && { cp "$MAINYAML" "$HOME/.cache/lumalinux/rvas/$SHA.yaml"; FEED_SRC="main (derivation failed)"; }
+        fi
+    else
+        cp "$MAINYAML" "$HOME/.cache/lumalinux/rvas/$SHA.yaml"; FEED_SRC="main"
+    fi
+else
+    say "- no steamclient.so for the $CHANNEL client at $SC"
+fi
+say "- feed in use: $FEED_SRC"
+
 step "Steam with the stack ($CHANNEL)"
 WRAPPER="$HOME/.local/share/SLSsteam/path/steam"
 if [ -x "$WRAPPER" ]; then LAUNCH="$WRAPPER"; else LAUNCH="steam"; say "- WARNING: wrapper missing, launching vanilla steam"; fi
@@ -140,8 +190,15 @@ step "verdict"
 V=0
 pgrep -f "$([ "$CHANNEL" = beta ] && echo steamrt64/steam || echo ubuntu12_32/steam)" >/dev/null && say "- OK   client for channel '$CHANNEL' is running" || { say "- FAIL expected client for '$CHANNEL' not running"; V=1; }
 grep -q 'Status: wrote' "$LLLOG" 2>/dev/null && say "- OK   lumalinux wrote status.json" || { say "- FAIL lumalinux did not reach Status: wrote"; V=1; }
+case "$FEED_SRC" in
+    main) say "- OK   feed from main" ;;
+    "main (derived matches)") say "- OK   feed from main, and the tool derives the same one" ;;
+    "derived here (not on main yet)") say "- OK   feed derived here (main has none yet; the daily watch-steam will publish it)" ;;
+    "main (derived differs!)") say "- FAIL the tool derives a feed that differs from main's (see above)"; V=1 ;;
+    *) say "- FAIL no usable feed ($FEED_SRC)"; V=1 ;;
+esac
 if grep -q 'no feed for build' "$LLLOG" 2>/dev/null; then
-    say "- NOFEED this Steam build has no feed yet ($(grep -o 'no feed for build [0-9a-f]\{12\}' "$LLLOG" | head -n 1 | awk '{print $NF}')…): the 64-bit library installs nothing until watch-steam publishes one — expected on a build newer than the last daily run"
+    say "- FAIL the runtime found no feed for this build"
     V=1
 elif grep -q 'FAILED' "$LLLOG" 2>/dev/null; then say "- FAIL a hook FAILED"; V=1
 else say "- OK   no hook FAILED"; fi
