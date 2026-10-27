@@ -88,12 +88,15 @@ jobs:
             f="$(ls sls64/*.7z | head -n 1)"; chmod 644 "$f"
             SLS64="file:///work/$f"; echo "64-bit SLSsteam under test: $f (built from Ace's tree)"
           fi
-          docker exec \
+          # Hard ceiling: two Steam starts plus setup, whatever run.sh believes.
+          timeout -k 30 "$(( WAIT_MIN * 2 + 12 ))m" docker exec \
             -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
             ${LL32:+-e LUMALINUX_SO_URL="$LL32"} ${LL64:+-e LUMALINUX64_SO_URL="$LL64"} ${SLS64:+-e SLSSTEAM64_URL="$SLS64"} \
             -u deck smoke bash /work/.github/smoke/run.sh
           rc=$?
           echo "run.sh exit: $rc"
+          [ "$rc" = 124 ] && echo "::warning::run.sh hit the hard ceiling; see smoke-out/logs/ps.txt"
+          docker exec -u deck smoke bash -c 'ps -eo pid,etimes,comm,args --sort=pid | cut -c1-160' > smoke-out/ps-after.txt 2>/dev/null || true
         id: run
 
       - name: Report

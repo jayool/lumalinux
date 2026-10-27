@@ -23,6 +23,20 @@ now() { date +%s; }
 steam_alive() { pgrep -f 'steam\.sh|ubuntu12_32/steam|steamrt64/steam|/usr/bin/steam|steam-runtime' >/dev/null; }
 step() { printf '\n== %s\n' "$*" | tee -a "$REPORT"; }
 
+collect_logs() {
+    [ -n "${COLLECTED:-}" ] && return; COLLECTED=1
+    mkdir -p "$OUT/logs"
+    cp "$HOME/.cache/lumalinux/lumalinux.log" "$OUT/logs/lumalinux.log" 2>/dev/null || true
+    cp "$HOME/.SLSsteam.log" "$OUT/logs/SLSsteam.log" 2>/dev/null || true
+    for f in "$XDG_RUNTIME_DIR/lumalinux/status.json" "$HOME/.cache/lumalinux/status.json"; do [ -s "$f" ] && cp "$f" "$OUT/logs/status.json" 2>/dev/null; done
+    for f in bootstrap_log.txt console-linux.txt content_log.txt appinfo_log.txt; do cp "$HOME/.local/share/Steam/logs/$f" "$OUT/logs/" 2>/dev/null || true; done
+    cp "$HOME/.config/SLSsteam/config.yaml" "$OUT/logs/slssteam-config.yaml" 2>/dev/null || true
+    ps -eo pid,etimes,comm,args --sort=pid 2>/dev/null | cut -c1-160 > "$OUT/logs/ps.txt" || true
+    timeout 20 steam -shutdown >/dev/null 2>&1 || true
+    sleep 3; pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam\.sh|/usr/bin/steam' 2>/dev/null || true
+}
+trap 'collect_logs' EXIT
+
 export HOME=/home/deck
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DISPLAY=:1
@@ -62,7 +76,7 @@ while [ "$(now)" -lt "$DEADLINE" ]; do
 done
 say "- client dir: $(ls -d "$HOME"/.local/share/Steam/ubuntu12_32 "$HOME"/.local/share/Steam/steamrt64 2>/dev/null | tr '\n' ' ')"
 say "- vanilla processes: $(pgrep -af '(ubuntu12_32|steamrt64)/steam' | grep -oE '(ubuntu12_32|steamrt64)/steam' | sort | uniq -c | tr '\n' ' ')"
-steam -shutdown >/dev/null 2>&1 || true
+timeout 20 steam -shutdown >/dev/null 2>&1 || true
 for i in $(seq 1 60); do steam_alive || break; sleep 1; done
 pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam\.sh|/usr/bin/steam' 2>/dev/null || true
 rm -f "$HOME/.steam/steam.pid" "$HOME/.steam/steam.pipe" 2>/dev/null || true
@@ -128,12 +142,6 @@ curl -fsS --max-time 3 http://127.0.0.1:8080/json/version >/dev/null 2>&1 && say
 say "- verdict: $([ $V = 0 ] && echo PASS || echo FAIL)"
 
 step "collect"
-mkdir -p "$OUT/logs"
-cp "$LLLOG" "$OUT/logs/lumalinux.log" 2>/dev/null || true
-cp "$HOME/.SLSsteam.log" "$OUT/logs/SLSsteam.log" 2>/dev/null || true
-[ -n "$ST" ] && cp "$ST" "$OUT/logs/status.json" 2>/dev/null || true
-for f in bootstrap_log.txt console-linux.txt content_log.txt appinfo_log.txt; do cp "$HOME/.local/share/Steam/logs/$f" "$OUT/logs/" 2>/dev/null || true; done
-cp "$HOME/.config/SLSsteam/config.yaml" "$OUT/logs/slssteam-config.yaml" 2>/dev/null || true
-steam -shutdown >/dev/null 2>&1 || true
-sleep 5; pkill -9 -f 'steamwebhelper|ubuntu12_32/steam|steamrt64/steam|steam\.sh|/usr/bin/steam' 2>/dev/null || true
+collect_logs
 exit $V
+
