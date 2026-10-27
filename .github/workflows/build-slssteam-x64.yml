@@ -1,0 +1,72 @@
+# Build SLSsteam's 64-bit library from AceSLS/SLSsteam at a given ref with
+# Ace's own recipe (docker/build.sh -> make zips inside his debian:bookworm
+# image). Ace publishes no 64-bit binaries yet (previews go out by hand), so
+# this is how the smoke test gets one for any commit of his dev-X86_64
+# branch. The 7z rides a run artifact named by his short commit; nothing is
+# published. Manual, or called by steam-smoke.yml.
+name: Build SLSsteam x86_64
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "AceSLS/SLSsteam ref to build (branch, tag or commit)"
+        type: string
+        default: dev-X86_64
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: dev-X86_64
+    outputs:
+      artifact:
+        description: "Name of the artifact holding the 7z"
+        value: ${{ jobs.build.outputs.artifact }}
+      sha:
+        description: "Short commit built"
+        value: ${{ jobs.build.outputs.sha }}
+permissions:
+  contents: read
+jobs:
+  build:
+    name: SLSsteam @ ${{ inputs.ref }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    outputs:
+      artifact: ${{ steps.pack.outputs.artifact }}
+      sha: ${{ steps.pack.outputs.sha }}
+    steps:
+      - name: Check out AceSLS/SLSsteam
+        uses: actions/checkout@v5
+        with:
+          repository: AceSLS/SLSsteam
+          ref: ${{ inputs.ref }}
+          path: sls
+          fetch-depth: 1
+
+      - name: Build with Ace's recipe (docker/build.sh zips)
+        working-directory: sls
+        run: |
+          echo "commit: $(git rev-parse HEAD)"
+          [ -f docker/build.sh ] || { echo "::error::no docker/build.sh at this ref"; exit 1; }
+          bash docker/build.sh zips 2>&1 | tail -n 60
+          ls -la zips/ bin/
+
+      - name: Name the archive by commit
+        id: pack
+        working-directory: sls
+        run: |
+          sha="$(git rev-parse --short HEAD)"
+          f="$(ls zips/*.7z | head -n 1)"
+          [ -s "$f" ] || { echo "::error::no 7z produced"; exit 1; }
+          mkdir -p ../out && cp "$f" "../out/SLSsteam-x86_64-$sha.7z"
+          7z l "../out/SLSsteam-x86_64-$sha.7z" | tail -n 12
+          file bin/SLSsteam.so
+          echo "artifact=slssteam-x86_64-$sha" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.artifact }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 14

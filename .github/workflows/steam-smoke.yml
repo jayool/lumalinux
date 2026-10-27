@@ -21,10 +21,14 @@ on:
         description: "64-bit liblumalinux-x86_64.so URL (empty = releases/latest)"
         type: string
         default: ""
-      slssteam64_url:
-        description: "64-bit SLSsteam 7z URL (empty = the preview hosted on release v0.22.4)"
+      slssteam64_ref:
+        description: "Build the 64-bit SLSsteam from AceSLS/SLSsteam at this ref (empty = don't build; use slssteam64_url)"
         type: string
-        default: "https://github.com/jayool/lumalinux/releases/download/v0.22.4/SLSsteam-Any-release.7z"
+        default: dev-X86_64
+      slssteam64_url:
+        description: "64-bit SLSsteam 7z URL, used only when slssteam64_ref is empty (e.g. the v0.22.4 preview)"
+        type: string
+        default: ""
       wait_min:
         description: "Minutes to wait for the client (the beta downloads two packages)"
         type: string
@@ -32,12 +36,28 @@ on:
 permissions:
   contents: read
 jobs:
+  build64:
+    name: SLSsteam x86_64 from Ace's tree
+    if: inputs.slssteam64_ref != ''
+    uses: ./.github/workflows/build-slssteam-x64.yml
+    with:
+      ref: ${{ inputs.slssteam64_ref }}
+
   smoke:
     name: Steam ${{ inputs.channel }} + stack
+    needs: [build64]
+    if: always() && (needs.build64.result == 'success' || needs.build64.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
+
+      - name: Fetch the SLSsteam x86_64 build
+        if: needs.build64.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build64.outputs.artifact }}
+          path: sls64
 
       - name: Build the smoke image (Arch + Steam, no desktop)
         run: docker build -t steam-smoke:ci -f .github/smoke/Dockerfile .github/smoke
@@ -64,6 +84,10 @@ jobs:
           WAIT_MIN: ${{ inputs.wait_min }}
         run: |
           set +e
+          if ls sls64/*.7z >/dev/null 2>&1; then
+            f="$(ls sls64/*.7z | head -n 1)"; chmod 644 "$f"
+            SLS64="file:///work/$f"; echo "64-bit SLSsteam under test: $f (built from Ace's tree)"
+          fi
           docker exec \
             -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
             ${LL32:+-e LUMALINUX_SO_URL="$LL32"} ${LL64:+-e LUMALINUX64_SO_URL="$LL64"} ${SLS64:+-e SLSSTEAM64_URL="$SLS64"} \
