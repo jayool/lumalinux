@@ -1628,10 +1628,10 @@ runtime in both directions. All three are mechanical.
 
 Everything in §13.5.a was validated **on the SteamOS codespace, with Steam
 running and a logged-in session**, not only in CI. It matters to write it down because it is
-the only proof there is: `build.yml` compiles, `check_patterns.py` resolves on
-paper, and `verify-fix.yml` — the workflow that should start the `.so` — has
-never had a green run (its first real executions, that same day, all failed in
-the harness before reaching any assertion).
+the only proof there was then: `build.yml` compiles, `check_patterns.py`
+resolves on paper. Since 2026-10-26 `steam-smoke.yml` starts the `.so` in a
+real client on the runner up to the login screen (hooks, feed, SLSsteam, CEF;
+`maintenance.md` §C); PackageId 0 and installs still need a logged-in Steam.
 
 Recipe: SteamOS codespace, stack installed normally from LumaDeck
 (`setup.sh`), and then **only** `liblumalinux.so` replaced by the branch's
@@ -1666,8 +1666,9 @@ a synthetic ELF and agree. And to rule out that the tests were decorative,
 **mutation** was done: altering the predicates one by one, the tests fail
 (8/2/1 failures depending on the mutation) instead of passing green. A test
 that does not bite when you break what it guards is not a test, and that
-mistake had already been made in this repo — `verify-fix.yml` had been "green"
-for months because the run being cited belonged to a different workflow.
+mistake had already been made in this repo — the former `verify-fix.yml`
+(deleted 2026-10-27, never green) had been "green" for months because the run
+being cited belonged to a different workflow.
 
 #### 13.5.c The layout table (2026-09-22)
 

@@ -90,7 +90,8 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `tools/experiment_*`, `test_*.py` (16), `find_pic_xrefs.py`, `ghidra_find_gmrc.py`, `scan_signature.py`, `verify_gmrc_anchor.py`, `xlate_vaddr.py`, `zh_grep.py`, `bin_recon.sh`, `fetch_libmem.sh`, `fetch_steamclient.sh` | — | experimentos, tests unitarios (los corre `build.yml`), utilidades de RE, build | 1, 11 |
 | `.github/workflows/build.yml` | 127 | build 32-bit, tests, release en tag `v*` con `liblumalinux.so` + `res/version.txt` | 11, 12 |
 | `.github/workflows/watch-steam.yml` | 537 | cron diario: versión del cliente → descarga → `check_patterns` → PR de hash (auto-merge) o PR de rederivación o issue | 1, 11 |
-| `.github/workflows/probe-steam.yml`, `watch-steam-selftest.yml`, `verify-fix.yml` | 237+187+321 | sonda manual de cualquier canal; autotest de la cadena de rederivación; smoke test en runtime (**nunca ha pasado**, cabecera `:4-13`) | 1, 11 |
+| `.github/workflows/probe-steam.yml`, `watch-steam-selftest.yml` | 237+187 | sonda manual de cualquier canal; autotest de la cadena de rederivación | 1, 11 |
+| `.github/workflows/steam-smoke.yml`, `build-slssteam-x64.yml`, `.github/smoke/{Dockerfile,run.sh}` | 112+64+34+185 | humo en runtime, manual: un Steam real (estable o beta) en un contenedor Arch del runner con la pila instalada por `setup.sh`, hasta la pantalla de login (sin cuenta): cliente que corre, librerías mapeadas por proceso, hooks y feed de lumalinux (derivado en el job con nuestra herramienta si main no lo tiene, o siempre con `feed=derive` para compararlo), SLSsteam y su plugin, CEF; `build-slssteam-x64.yml` compila el SLSsteam de 64 desde la rama de Ace con su receta Docker y el humo lo encadena (`slssteam64_ref`). Verde en estable y beta el 2026-10-26/27 | 1, 11 |
 | `.devcontainer/` (Arch, `steamos/`, `port-testing/`) | 21+76+393 / 26+98+838 / 21+125+56+110+138 | entornos de prueba: Arch con Steam headless; SteamOS emulado (`deck` uid 1000, `steamos-session-select`, supervisor estilo gamescope); CachyOS real | 1, 11, 12 |
 
 ### 1.3 LumaDeck — backend (`main.py`, `backend/`)
@@ -1277,8 +1278,7 @@ lo incoherente, luego lo muerto.
     como prueba temporal (`downloads.py:1490-1500`).
 9. `PlayNotOwnedGames`: `setup.sh` la elimina (obsoleta upstream desde
     20260707), `steamidra_lite` la escribe `yes` si crea el config desde cero,
-    `installer._set_playnotowned_no` existe sin llamador, `verify-fix.yml` la
-    pone a `no`.
+    `installer._set_playnotowned_no` existe sin llamador.
 10. `keys.txt` sigue llevando gid y tamaño "para BuildDep", que está OFF; el
     `.lua` de `stplug-in` no se re-comenta al pinear/despinear
     (`_toggle_stplugin_pin` y `purge_depot_manifests` sin llamadores,
@@ -1287,9 +1287,9 @@ lo incoherente, luego lo muerto.
 11. `status.json.blocked` es siempre `null` (`Status::SetBlocked` sin
     llamador) y LumaDeck lo lee como causa `version` de `not_supported`: ese
     camino no puede dispararse desde lumalinux; solo desde SLSsteam por su log.
-12. `verify-fix.yml` nunca ha pasado, usa el tag `linux-test` de `h3adcr-b`
-    que `setup.sh` abandonó y un `config.yaml` con claves obsoletas; el
-    devcontainer instala SLSsteam vía headcrab y no vía `setup.sh`.
+12. Resuelto el 2026-10-27: `verify-fix.yml` (nunca pasó) borrado; su hueco
+    lo cubre `steam-smoke.yml` (§1.2). El devcontainer sigue instalando
+    SLSsteam vía headcrab y no vía `setup.sh`.
 13. pt-BR sin las claves de ayuda ni `showMoreResults` (las de align-up se
     quitaron el 10-15); cadenas en inglés fuera del diccionario (login de Ryuu
     y LuaTools en `Settings.tsx`, textos de fixes en `GameDetail.tsx`, toasts de
@@ -1937,7 +1937,8 @@ subir, "unable to sync" en cada cierre, sin bloquear) están en
 | sin fecha | build local (yaml-cpp) | Cuerpos HTTP 200 inesperados contra `YAML::Load` en SafeMode | Vacío o JSON de error: parsea con 0 entradas, envenena la caché y toastea; HTML, `Guru Meditation` o `Not Found`: lanza y no envenena; feed bueno: 1 entrada. De ahí la validación del cuerpo (`49e4279`, `51297c4`) | — |
 | 0.13.6 → 0.15.0 | Deck | SafeMode enlazado con libcurl y OpenSSL | El Steam Runtime quitó `CURL_OPENSSL_4` y el `reaper` de 32 bits no cargaba el `.so`: los juegos rebotaban. Hoy libcurl va por `dlopen` y no hay `NEEDED` de curl ni openssl | `CMakeLists.txt` |
 | 2026-08-19/20 | GitHub | Cambio de nombre del asset de SLSsteam (`-Any.7z` → `-release.7z`) | La instalación quedó en 404 ~44 h. CloudRedirect: cinco releases solo traen `.exe`; `cloud_redirect_cli` solo en el flatpak | §3.1 |
-| 2026-09-08 | CI | `verify-fix.yml` (smoke test en runtime) | Nunca ha dado verde: sus primeras ejecuciones reales fallaron en el arnés antes de cualquier aserción. El "verde" que se citaba era de otro workflow | maintenance §C |
+| 2026-09-08 | CI | `verify-fix.yml` (smoke test en runtime) | Nunca ha dado verde: sus primeras ejecuciones reales fallaron en el arnés antes de cualquier aserción. El "verde" que se citaba era de otro workflow. Borrado el 2026-10-27 | maintenance §C |
+| 2026-10-26/27 | CI (`steam-smoke.yml`) | Humo en runtime sin cuenta | Estable: cliente de 32 con `liblumalinux.so`, `SLSsteam.so` y `cloud_redirect.so` mapeadas, 3/3 hooks, finder resuelto, CEF. Beta: cliente de 64 (`c3247a95` y, el 27, el build nuevo `85c55e99`) con `liblumalinux-x86_64.so` y el SLSsteam de 64 (preview `d6797b37` y build propio del commit `9a4222e` de Ace), 3/3 hooks, feed con `licenses_check_off`, plugin corrido, CEF. 5 min por run. El monitor publicó solo el feed de `85c55e99` (80 s) | maintenance §C |
 | sin fecha | código | Regresión de sesión para CachyOS | Una revisión anterior metía CachyOS en la familia ChimeraOS y le enviaba `desktop`, que CachyOS rechaza; corregido (verificado en `CachyOS/gamescope-session`) | LumaDeck docs/porting-cachyos.md |
 | 2026-10-07 | Deck | Versiones de componentes que mostraba Settings | CloudRedirect: `.so` en `2.6.5+870afdb-dirty`, caché de releases en `v2.6.6`, pero Settings leía 2.6.3 porque tomaba la primera línea de un `cr_debug.log` acumulativo desde agosto. SLSsteam `20261001163836`, lumalinux v0.22.1. Corregido leyendo la versión del `.so` en disco | LumaDeck `c4776ce`, `be36d92` |
 | 2026-10-16 | GitHub, codespace | Desaparición de `Selectively11/CloudRedirect` | Repo, releases, raw y `gh-pages` en 404, la cuenta también; `setup.sh` moría en "Downloading CloudRedirect" y LumaDeck recibía 404 en cada refresco. El fork `huanyuejue/CloudRedirect` llega a `bc5e38a` (v2.6.5) y su release no trae el `.so`; Software Heritage, captura del 08-20, tags hasta v2.6.5. El 2.6.6 (`86a40032…`) estaba en la Deck y el codespace; el 19 apareció entero en `madoiscool/CloudRedirect` (`v2.6.6` = `00969da`, `gh-pages` `83100b8`), y el `.so` de su flatpak es byte a byte el archivado. `setup.sh` de `main` en el codespace con todo borrado: `exit=0`, `.so` con ese sha, app 2.6.5 del bundle, CLI copiado, remoto muerto eliminado | `cloudredirect.md` §0, §5.2 F8; `maintenance.md` §G |
