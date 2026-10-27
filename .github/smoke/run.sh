@@ -122,6 +122,11 @@ for p in $(pgrep -x steam); do
 done
 say "- loader notices:"; grep -h 'ERROR: ld.so' "$OUT/steam-stack.log" 2>/dev/null | sed 's/^.*ERROR: ld.so/ld.so/' | sort -u | sed 's/^/    /' | tee -a "$REPORT"
 say "- CEF: $(curl -fsS --max-time 3 http://127.0.0.1:8080/json/version 2>/dev/null | jq -r '.Browser' 2>/dev/null || echo 'not responding')"
+if ! pgrep -f 'ubuntu12_32/steam|steamrt64/steam' >/dev/null; then
+    say "- Steam is NOT running any more; tail of its output:"; tail -n 25 "$OUT/steam-stack.log" 2>/dev/null | cut -c1-160 | sed 's/^/    /' | tee -a "$REPORT"
+    say "- SLSsteam log tail:"; tail -n 15 "$HOME/.SLSsteam.log" 2>/dev/null | cut -c1-160 | sed 's/^/    /' | tee -a "$REPORT"
+    say "- processes:"; ps -eo pid,etimes,comm,args --sort=pid 2>/dev/null | grep -iE 'steam|bwrap|pressure|reaper|dbus|Xvfb' | grep -v grep | cut -c1-150 | sed 's/^/    /' | tee -a "$REPORT"
+fi
 
 step "lumalinux"
 grep -E 'hash is|RvaFeed|Hook install|licenses_check_off|PKG0_FINDER|Status: wrote|FAILED|installs nothing|Error|crash|Reconcile' "$LLLOG" 2>/dev/null | cut -c1-160 | sed 's/^/    /' | tee -a "$REPORT"
@@ -135,7 +140,11 @@ step "verdict"
 V=0
 pgrep -f "$([ "$CHANNEL" = beta ] && echo steamrt64/steam || echo ubuntu12_32/steam)" >/dev/null && say "- OK   client for channel '$CHANNEL' is running" || { say "- FAIL expected client for '$CHANNEL' not running"; V=1; }
 grep -q 'Status: wrote' "$LLLOG" 2>/dev/null && say "- OK   lumalinux wrote status.json" || { say "- FAIL lumalinux did not reach Status: wrote"; V=1; }
-grep -q 'FAILED' "$LLLOG" 2>/dev/null && { say "- FAIL a hook FAILED"; V=1; } || say "- OK   no hook FAILED"
+if grep -q 'no feed for build' "$LLLOG" 2>/dev/null; then
+    say "- NOFEED this Steam build has no feed yet ($(grep -o 'no feed for build [0-9a-f]\{12\}' "$LLLOG" | head -n 1 | awk '{print $NF}')…): the 64-bit library installs nothing until watch-steam publishes one — expected on a build newer than the last daily run"
+    V=1
+elif grep -q 'FAILED' "$LLLOG" 2>/dev/null; then say "- FAIL a hook FAILED"; V=1
+else say "- OK   no hook FAILED"; fi
 if [ "$CHANNEL" = beta ]; then grep -q 'licenses_check_off' "$LLLOG" 2>/dev/null && say "- OK   feed carries licenses_check_off" || say "- WARN feed without licenses_check_off (fine on a build without the flags)"; fi
 grep -qE 'Ran .*lumalinux-cuser|lumalinux-cuser' "$HOME/.SLSsteam.log" 2>/dev/null && say "- OK   SLSsteam ran the lumalinux-cuser plugin" || say "- WARN no trace of the lumalinux-cuser plugin in SLSsteam's log"
 curl -fsS --max-time 3 http://127.0.0.1:8080/json/version >/dev/null 2>&1 && say "- OK   CEF responds (login screen reached)" || say "- WARN CEF not responding"
