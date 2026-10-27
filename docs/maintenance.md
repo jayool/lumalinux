@@ -11,13 +11,17 @@ Log: `~/.cache/lumalinux/lumalinux.log`.
 finder report there, `outcome=` always last. Two lines summarise a healthy
 boot: DepotKey's `outcome=installed` and the finder's `outcome=resolved`.
 
-**Nothing in CI proves those two lines.** `build.yml` compiles and runs the
-`tools/test_*.py` unit tests; `check_patterns.py` resolves addresses on paper.
-Neither loads the `.so` into a Steam process. `verify-fix.yml` ("Runtime smoke
-test") is meant to, but by its own header (and its name, "WIP — has never
-passed, do not rely on it") **it has never produced a green run** — its first
-real executions (2026-09-08) all failed in the harness, before any assertion.
-Treat it as work-in-progress, not as a gate.
+**What CI proves.** `build.yml` compiles and runs the `tools/test_*.py` unit
+tests; `check_patterns.py` resolves addresses on paper. `steam-smoke.yml`
+(manual, since 2026-10-26) starts a real Steam client on the chosen channel
+in a container on the runner, with the stack installed by `setup.sh`, up to
+the login screen: it reports which client runs, which libraries each `steam`
+process mapped, lumalinux's hooks and feed (derived in the job with the
+repo's tool when main has none yet), SLSsteam and its plugin, and CEF. With
+`slssteam64_ref` it first builds SLSsteam's 64-bit library from Ace's tree
+(`build-slssteam-x64.yml`). No Steam account: PackageId 0, the library and an
+install never exist there, so the two lines above (DepotKey installed, finder
+resolved) are proven, injection and downloads are not.
 
 So after touching hooking code or a resolver, the validation that actually
 proves anything is **manual, on a SteamOS box with a logged-in Steam** — the
@@ -93,8 +97,8 @@ How it works (`src/main.cpp`, `src/update.cpp`, `src/rva_feed.cpp`,
 > the game `reaper` (the `CURL_OPENSSL_4` brick that forced the gate OFF by
 > default in 0.13.6–0.14.x). **Do NOT re-link libcurl/libcrypto** — keep the
 > dlopen/self-hash approach, or the reaper brick comes back. The `LUMA_NO_UPDATE`
-> option still defaults ON for check-less validation builds (`verify-fix.yml`),
-> and so does any manual `cmake` without the flag: such a build skips the hash
+> option still defaults ON for check-less validation builds, as does any
+> manual `cmake` without the flag: such a build skips the hash
 > check and logs `SafeMode update-check compiled out (LUMA_NO_UPDATE)`.
 
 Maintainer fix:
