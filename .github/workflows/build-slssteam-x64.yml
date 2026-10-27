@@ -43,12 +43,20 @@ jobs:
           path: sls
           fetch-depth: 1
 
-      - name: Build with Ace's recipe (docker/build.sh zips)
+      - name: Build with Ace's recipe (his Dockerfile, make zips inside)
         working-directory: sls
+        # docker/build.sh as he wrote it bind-mounts "../" (relative), which the
+        # runner's Docker 29 refuses ("mount path must be absolute"); same image,
+        # same command, absolute path. The checkout is handed to uid 1000, the
+        # image's `sls` user, so make can write bin/, zips/ and src/version.hpp.
         run: |
           echo "commit: $(git rev-parse HEAD)"
-          [ -f docker/build.sh ] || { echo "::error::no docker/build.sh at this ref"; exit 1; }
-          bash docker/build.sh zips 2>&1 | tail -n 60
+          [ -f docker/Dockerfile ] || { echo "::error::no docker/Dockerfile at this ref"; exit 1; }
+          docker build -t sls-host docker
+          sudo chown -R 1000:1000 .
+          docker run --rm --user=sls -e TRACE=0 -e DEBUG=0 -e NATIVE=0 \
+            --mount "type=bind,source=$PWD,target=/src" --workdir=/src sls-host:latest make zips 2>&1 | tail -n 80
+          sudo chown -R "$(id -u):$(id -g)" .
           ls -la zips/ bin/
 
       - name: Name the archive by commit
