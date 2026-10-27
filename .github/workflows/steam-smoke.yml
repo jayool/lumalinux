@@ -29,6 +29,11 @@ on:
         description: "64-bit SLSsteam 7z URL, used only when slssteam64_ref is empty (e.g. the v0.22.4 preview)"
         type: string
         default: ""
+      feed:
+        description: "Hook feed for the client build: auto (main's, derived here only when main has none) or derive (always derive with the repo's tool and compare with main's)"
+        type: choice
+        default: auto
+        options: [auto, derive]
       wait_min:
         description: "Minutes to wait for the client (the beta downloads two packages)"
         type: string
@@ -82,6 +87,7 @@ jobs:
           LL64: ${{ inputs.lumalinux64_so_url }}
           SLS64: ${{ inputs.slssteam64_url }}
           WAIT_MIN: ${{ inputs.wait_min }}
+          FEED: ${{ inputs.feed }}
         run: |
           set +e
           if ls sls64/*.7z >/dev/null 2>&1; then
@@ -90,7 +96,7 @@ jobs:
           fi
           # Hard ceiling: two Steam starts plus setup, whatever run.sh believes.
           timeout -k 30 "$(( WAIT_MIN * 2 + 12 ))m" docker exec \
-            -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
+            -e CHANNEL="$CHANNEL" -e WAIT_MIN="$WAIT_MIN" -e FEED="$FEED" -e OUT=/work/smoke-out -e SETUP=/work/setup.sh \
             ${LL32:+-e LUMALINUX_SO_URL="$LL32"} ${LL64:+-e LUMALINUX64_SO_URL="$LL64"} ${SLS64:+-e SLSSTEAM64_URL="$SLS64"} \
             -u deck smoke bash /work/.github/smoke/run.sh
           rc=$?
