@@ -71,6 +71,11 @@ SafeModeHashes:
     # arch: steamrt64
     # steamdeck_publicbeta steamrt64 (64-bit client): feed res/rvas/c3247a95….yaml, derived CLEAN + self-test PASS; 3/3 hooks live in the codespace 2026-10-23
     - c3247a95f38775a655e95d415ce9d56721e99d985389b87bcad89dee02573883
+    # steam_version: 1793056502
+    # caps: shader=ok reconcile=ok gmrc=ok
+    # arch: steamrt64
+    # auto-added by watch-steam.yml (x86-64 job) 2026-10-27: feed derived CLEAN + self-test PASS (steam_client_steamdeck_publicbeta_steamrt64 1793056502)
+    - 85c55e99bf04bc343a5c0b1aeba28f6078ecb0ed479e7c2ff2d74b45df420351
   20260611150000:
     - 64b86a11264c1f51e5573a7c25f7862d550622fab7595d89d511f8053b6217d9
     - 27edb4221f6f9a20ac56bf4e0c01e323d6f6f7cf1f874b1c99b64bc65e772b35
