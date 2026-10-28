@@ -973,7 +973,10 @@ Rules:
   in our release assets and on `cr-archive`.
   It sits in the same fork network as the deleted original;
   `madoiscool/CloudRedirect` is the second copy, `huanyuejue/CloudRedirect`
-  and Software Heritage (snapshot 2026-08-20) stop at v2.6.5. If something
+  and Software Heritage (snapshot 2026-08-20) stop at v2.6.5. Upstream now
+  lives at `crghofficial/cloudredirect` (same `v2.6.6`, no code change since
+  2026-10-03, no 64-bit branch); we do not follow it: our pinned assets and the
+  archive are what ships. If something
   must ever be changed, build `v2.6.6` from `jayool/CloudRedirect` with
   `-m32` from `src/platform/linux/` (`CMakeLists.txt`, `LINUX_32BIT=ON`).
 - CloudRedirect is 32-bit and cannot follow Steam's 64-bit client

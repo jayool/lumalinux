@@ -185,7 +185,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 
 | Programa | Cómo | Fuente |
 |---|---|---|
-| **nosotros** | CloudRedirect, cuyo upstream desapareció el 2026-10-16: `setup.sh` despliega el `.so` 2.6.6 y la app (bundle 2.6.5) desde nuestras releases con hash fijado y no aborta sin ellos. Drive/OneDrive/S3/R2/carpeta; app flatpak para el login. `DisableCloud: no` en SLSsteam. LumaDeck solo observa (`not_authed`, `disabled`) y avisa de que no hay mantenimiento. 32 bits: muere con el cliente de 64 bits. `libcurl_pin` para nuestras propias descargas. | `nosotros.md` §2.8 |
+| **nosotros** | CloudRedirect, cuyo upstream (`crghofficial/cloudredirect`) no publica código desde el 2026-10-03: `setup.sh` despliega el `.so` 2.6.6 y la app (bundle 2.6.5) desde nuestras releases con hash fijado y no aborta sin ellos. Drive/OneDrive/S3/R2/carpeta; app flatpak para el login. `DisableCloud: no` en SLSsteam. LumaDeck solo observa (`not_authed`, `disabled`) y avisa de que no hay mantenimiento. 32 bits: muere con el cliente de 64 bits. `libcurl_pin` para nuestras propias descargas. | `nosotros.md` §2.8 |
 | SLSsteam | `DisableCloud: yes` (default) → `IsCloudEnabledForApp` false para no poseídas de verdad; sin redirección ni proveedores; el YAML remite a CloudRedirect. | `slssteam.md` §2.8 |
 | SteaMidra/SFF | sin redirección: `DisableCloud: yes` en SLSsteam y **CloudRedirect recortado** del headcrab que ejecuta. Backup/restore de `userdata/<id>/<app>/remote`, emuladores, rutas custom (Ludusavi muerto por ruta) a local, rclone (ELF i386) o Google Drive (`_gc.py` gitignorado → off en el árbol público); auto backup cada 10 min; Steam reconcilia. | `steamidra.md` §2.8 |
 | LumaCore | sin redirección: **apaga** Steam Cloud para apps del `.lua` no poseídas ni compartidas (`IsCloudEnabledForApp` false, sync = 2, AutoCloud anulado); fuerza la nube en family sharing; en la ruta 480 lee los saves del juego real desde `userdata/<id>/<real>/remote` (hook sin instalar hoy). | `lumacore.md` §2.8 |
@@ -269,7 +269,7 @@ SteamFlipper, slsteam-moon, plugins de SLSsteam, CloudRedirect.
 | SteamFlipper | n/a: el proyecto ya no existe (2026-10-08); su doc se retiró sin releer | — |
 | slsteam-moon | Linux 32-bit, sin Flatpak, Deck por PATH; AGPL-3.0 + Steamless CC BY-NC-ND; un mantenedor (`unplausible`), 381 commits desde 05-31, 5 tags, `version.txt` congelado, zip 2.9 resubido cuatro veces; terceros luastools, Valve CM/CDN, steamcmd, steam-monitor, GitHub/jsDelivr, Wine; donación de códigos por defecto; detección: escribe `appinfo.vdf` y `config.vdf`, package 0, paquetes CM mutados, tickets derivados, parche parental. | `slsteam-moon.md` §2.12 |
 | plugins SLSsteam | API de AceSLS (AGPL-3.0); `download.lua` sin licencia ni cabecera, publicado por `ciscosweater/enter-the-wired` (autor de ACCELA) y redistribuido por ASSella; `spliced-tickets.lua` de Ace (Discord). | `slssteam-plugins.md` §2.12 |
-| CloudRedirect | un autor; MIT desde 2026-08-18; sin CI; binario de la release desde un árbol no público (`3434d9d`); Flatpak firmado con GPG en `gh-pages`. Fork cloudredirect-moon parado desde 2026-09-19. | `cloudredirect.md` §2.12 |
+| CloudRedirect | un autor; MIT desde 2026-08-18; sin CI; binario de la release desde un árbol no público (`3434d9d`); Flatpak firmado con GPG en `gh-pages`. Repo en `crghofficial/cloudredirect` (misma 2.6.6). Fork cloudredirect-moon parado desde 2026-09-19. | `cloudredirect.md` §2.12 |
 
 ---
 ## §3 Registro de huecos

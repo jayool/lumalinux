@@ -99,10 +99,9 @@ SLS_TAG=""
 SLS32_TAG="20261014151919"
 SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
-# CloudRedirect's upstream (Selectively11/CloudRedirect) was deleted on
-# 2026-10-16 together with its author's account; nothing is published there any
-# more and nobody expects it back (docs/cloudredirect.md §0). We ship the last
-# Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
+# CloudRedirect's upstream is crghofficial/cloudredirect: same 2.6.6, no code
+# since 2026-10-03, 32-bit only (docs/cloudredirect.md §0). We do not follow it;
+# we ship the last Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
 # archived off a Deck (sha256-pinned below; it still hooks the 2026-10-14 client,
 # measured on the Deck) and the sign-in app as a single .flatpak bundle built from
 # upstream's last gh-pages publish (2.6.6, commit 83100b8, preserved in
