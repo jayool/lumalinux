@@ -1,4 +1,4 @@
-# CloudRedirect (Selectively11/CloudRedirect) — leído desde el código
+# CloudRedirect (crghofficial/cloudredirect) — leído desde el código
 
 Leído desde el código el 2026-10-09: `master@00969da` (tag `v2.6.6`) entero en
 la parte de Linux (`src/platform/linux/`, `src/common/`, `src/providers/`,
@@ -11,17 +11,17 @@ instalamos y lo cargamos (wrapper, orden de `LD_PRELOAD`, salud en LumaDeck)
 está en `nosotros.md` §2.1, §2.7 y §2.8; aquí solo entra lo que hace
 CloudRedirect.
 
-**El repo ya no existe.** El 2026-10-16 desaparecieron `Selectively11/CloudRedirect`
-y la cuenta de su autor (§2.12, §5.3). Lo leído aquí sigue valiendo para el
-binario que corre en la Deck. La copia del repo al borrarse está en
-`jayool/CloudRedirect` (fork de `madoiscool/CloudRedirect` del 2026-10-19,
-solo `master`: lleva `00969da`, el `v2.6.6` upstream y el commit leído aquí,
-más un commit de madoiscool que solo toca la interfaz de Windows) (§2.12).
-Por detrás, `huanyuejue/CloudRedirect` y Software Heritage llegan solo a
-v2.6.5.
-Lo único que no existe en ningún sitio es el árbol privado `3434d9d` desde el
-que se compiló el binario; el binario sí, y lo distribuimos nosotros (§0
-"Hoy").
+**El repo está en `crghofficial/cloudredirect`** (organización `crghofficial`,
+autor Selectively11, solo `master`): `00969da` = `v2.6.6`, el commit leído aquí,
+más tres commits que solo apuntan las comprobaciones de actualización, el
+remote del Flatpak y la clave de firma a ese repo. Sin código nuevo desde el
+2026-10-03 y sin rama de 64 bits (§2.13). `Selectively11/CloudRedirect`, el
+repo original, no existe. Copias del mismo `v2.6.6`: `jayool/CloudRedirect`
+(fork de `madoiscool/CloudRedirect`, solo `master`, más un commit ajeno que solo
+toca la interfaz de Windows); `huanyuejue/CloudRedirect` y Software Heritage
+llegan solo a v2.6.5. Lo único que no existe en ningún sitio es el árbol
+privado `3434d9d` desde el que se compiló el binario; el binario sí, y lo
+distribuimos nosotros (§0 "Hoy").
 
 ---
 
@@ -32,7 +32,7 @@ que se compiló el binario; el binario sí, y lo distribuimos nosotros (§0
 | **Qué es** | Redirección de **Steam Cloud** para juegos sin licencia. En Linux, una biblioteca de 32 bits (`cloud_redirect.so`) que se carga en el proceso `steam` por `LD_PRELOAD`, engancha el transporte de servicios unificados de `steamclient.so` y **contesta ella** las RPC `Cloud.*` de los juegos de `AdditionalApps` de SLSsteam, guardando las partidas en el almacenamiento del usuario (Google Drive, OneDrive, S3, Cloudflare R2 o una carpeta). Opcionalmente sincroniza **logros, stats y tiempo de juego** con un blob propio por cuenta. Se completa con una **app Qt en Flatpak** (`org.cloudredirect.CloudRedirect`: login OAuth, despliegue del `.so`, copias, borrado, migración) y un **CLI de 32 bits** (`cloud_redirect_cli`). En Windows, una DLL que carga OpenSteamTool, con su UI WPF. |
 | **Repo y commits leídos** | `Selectively11/CloudRedirect` `master@00969da` (2026-09-27 autor, 2026-10-03 commit; tag ligero `v2.6.6`). 281 commits en todas las ramas. Desde `v2.6.5` (`bc5e38a`, 2026-08-18): 26 commits, todos rebasados el 2026-10-03. Nada en `master` ni `ost` después. `gh-pages` `83100b8` (2026-10-04, "Publish 2.6.6 to the flatpak repo"). |
 | **Release** | v2.6.6 publicaba `cloud_redirect.so` (7,5 MB, 32 bits, `strings` → `2.6.6+3434d9d`). **`3434d9d` no existió nunca en el repo público**: el binario se compilaba desde otro árbol (el `.flatpakrepo` apunta a `Selectively11/CloudRedirect-Unified`), con `release.sh`, `deps/` y `tools/` en `.gitignore` (`flatpak/build.sh:2-3`). El CLI no salía en las releases, solo dentro del Flatpak. |
-| **Hoy (2026-10-16)** | **Proyecto retirado**: repo y cuenta borrados; nadie espera que vuelva (§2.12). La 2.6.6 **sigue enganchando el cliente del 2026-10-14** (`1791918634`): en la Deck y en Windows con BST (§5.2 F8). Los "unable to sync" de Windows que anunció LuaTools son de quien carga la DLL con OpenSteamTools, que ese cliente dejó sin hooks. Lo distribuimos nosotros: `cloud_redirect.so` 2.6.6 (sha256 `86a40032…`, archivado de una Deck) y la app como bundle `cloudredirect-2.6.6.flatpak` (el flatpak 2.6.6 publicado, `gh-pages` `83100b8`, sha256 `bd361482…`, construido con `flatpak build-bundle`; lleva dentro ese mismo `.so` `86a40032…` y `cloud_redirect_cli`) son assets de la release `jayool/lumalinux` v0.22.3; los mismos ficheros están en la rama `cr-archive` de lumalinux (`vendor/cloudredirect/`, nunca se fusiona). `setup.sh` baja de ahí con el hash fijado y ya no aborta sin CloudRedirect (`nosotros.md` §2.8, `maintenance.md` §G). Es de 32 bits: con el cliente de 64 bits de Valve no carga; el port es nuestro, desde `jayool/CloudRedirect` (`steam-rt3-x64.md` §3). |
+| **Hoy (2026-10-28)** | Repo en `crghofficial/cloudredirect`, misma 2.6.6, sin código nuevo desde el 2026-10-03 y sin rama de 64 bits (§2.12, §2.13). La 2.6.6 **sigue enganchando el cliente del 2026-10-14** (`1791918634`): en la Deck y en Windows con BST (§5.2 F8). Los "unable to sync" de Windows que anunció LuaTools son de quien carga la DLL con OpenSteamTools, que ese cliente dejó sin hooks. Lo distribuimos nosotros: `cloud_redirect.so` 2.6.6 (sha256 `86a40032…`, archivado de una Deck) y la app como bundle `cloudredirect-2.6.6.flatpak` (el flatpak 2.6.6 publicado, `gh-pages` `83100b8`, sha256 `bd361482…`, construido con `flatpak build-bundle`; lleva dentro ese mismo `.so` `86a40032…` y `cloud_redirect_cli`) son assets de la release `jayool/lumalinux` v0.22.3; los mismos ficheros están en la rama `cr-archive` de lumalinux (`vendor/cloudredirect/`, nunca se fusiona). `setup.sh` baja de ahí con el hash fijado y ya no aborta sin CloudRedirect (`nosotros.md` §2.8, `maintenance.md` §G). Es de 32 bits: con el cliente de 64 bits de Valve no carga; el port es nuestro, desde `jayool/CloudRedirect` (`steam-rt3-x64.md` §3). |
 | **Plataforma** | Linux de 32 bits dentro del Steam nativo o Flatpak (SteamOS, escritorio); Windows 64 bits bajo OpenSteamTool. |
 | **Licencia y quién** | MIT desde `2c7f89e` (2026-08-18), "Copyright (c) 2026 Selectively11"; antes, sin licencia. Un único autor en `master`; la rama `ost` (7 commits de JanitorialMess, mayo) está parada. Sin CI en `master`. |
 | **Relación con los demás programas** | Lee la configuración de **SLSsteam** (`DisableCloud`, `AdditionalApps`) y solo funciona con ella. Lo inyecta **Headcrab** (`LD_PRELOAD` en `steam.sh`) en el flujo de su autor; en el nuestro, nuestro wrapper. Su fork **cloudredirect-moon** lo distribuye **SLSDeck** a la misma ruta que el nuestro (`slsdeck.md` §4.1-4). En Windows lo cargan OpenSteamTool, BetterSteamTools y opensteamtool-cn; LuaTools lo baja. La UI de Windows **bloquea** su instalación si detecta `LumaCore.dll` (`ui/Services/ThirdPartyDetector.cs:9-90`). |
@@ -417,11 +417,13 @@ instale; sin hash publicado salvo el OSTree firmado. Kill switch: fichero
   `stplug-in/*.lua` y `luaappids.yaml`, y un puente
   `slsteam_local_stats_epoch_v1` que solo responde slsteam-moon (sin él no
   sirve logros nunca). No ha adoptado nada de la 2.6.6.
-- **Retirado el 2026-10-16.** Repo y cuenta de GitHub borrados (404 en repo,
-  releases, raw y `gh-pages`; `git ls-remote` pide credenciales). El autor es
-  SelectivelyGood en el Discord de Hubcap, volcado en NotProton desde el
-  verano; su comunidad no sabe si borró la cuenta o se la cerró GitHub, y da
-  por muertos CloudRedirect y macsteam ("steam broke macsteam", 2026-10-15).
+- **Dónde vive.** `crghofficial/cloudredirect` (solo `master`, `v2.6.6`
+  intacto, tres commits de mudanza encima: update checks, remote del Flatpak en
+  un host de Pages nuevo, clave de firma del repo Flatpak rotada). El repo y la
+  cuenta originales (`Selectively11`) ya no existen; el autor es SelectivelyGood
+  en el Discord de Hubcap, volcado en NotProton desde el verano. Nosotros no
+  seguimos ese repo: `setup.sh` sirve nuestros assets con hash fijado (§0
+  "Hoy") y LumaDeck no lo consulta (C14).
   La 2.6.6 no está rota: sincroniza con el cliente del 2026-10-14
   (`1791918634`) en la Deck y en Windows bajo BST (§5.2 F8). El "cloud
   redirect doesn't work on latest steam update" que anunció LuaTools el
@@ -435,6 +437,32 @@ instale; sin hash publicado salvo el OSTree firmado. Kill switch: fichero
   (`master` = `bc5e38a` v2.6.5, un workflow para la DLL, su release v2.6.5
   sin `cloud_redirect.so`); Software Heritage (captura del 2026-08-20, tags
   hasta v2.6.5). El árbol `3434d9d` del binario no está en ninguno.
+
+### §2.13 Qué ata el código de Linux a 32 bits
+
+Lo que haría falta para un `cloud_redirect.so` de 64 bits, por si el autor lo
+emprende o por si lo tuviéramos que hacer desde `jayool/CloudRedirect`:
+
+- **Portable sin tocar**: toda la lógica de nube, proveedores, stats, colas,
+  servidor HTTP local, CLI y UI Qt (`src/common/`, `src/providers/`, `ui-linux/`):
+  sin layouts empaquetados ni punteros en enteros de 32. El anclaje principal,
+  la vtable de `CClientUnifiedServiceTransport` por su nombre RTTI
+  (`vtable_hook.cpp:12-280`), usa tamaño de puntero nativo y el nombre está
+  igual en el cliente de 64 (comprobado en `c3247a95`); los tres hooks de slots
+  5/7/8 son funciones C con `this` primero, igual en SysV de 64. Ya hay ramas
+  `#if __x86_64__` en el manejador de crashes (`init.cpp:317`).
+- **A rehacer**: (1) el build: `-m32` y libcurl/OpenSSL estáticas de 32
+  (`CMakeLists.txt:182-228`); (2) los dos helpers de protobuf
+  (`SerializeToArray`, `ParseFromArray`) resueltos por firmas de bytes i386
+  (`cloud_hooks.cpp:132-230`), esenciales ("cloud RPCs may fail" sin ellos);
+  (3) la validación del slot de `IsCloudEnabledForApp` en `CUserRemoteStorage`
+  por prólogo i386 (`vtable_hook.cpp:396-430`), opcional; (4) el observador de
+  `GamesPlayed` (stats y logros): desvío en línea `E9 rel32` + trampolín
+  (`gamesplayed_hook.cpp`), en 64 el trampolín tiene que caer a ±2 GB o usar
+  un salto de 14 bytes; (5) `live_playtime.cpp`: trampolín en ensamblador i386
+  escrito a mano (`pushad`, `push [ebp+8]`), a reescribir entero. (2) y (3) son
+  el mismo trabajo de derivación por build que nuestro `check_patterns_x64.py`;
+  (4) y (5) son lo que lleva tiempo.
 
 ---
 
@@ -484,9 +512,9 @@ instale; sin hash publicado salvo el OSTree firmado. Kill switch: fichero
 ### 4.1 Hallazgos pendientes de decisión
 
 Aparcados el 2026-10-09. Solo lo que le pasa a nuestra pila o a un usuario de
-LumaDeck, que lleva CloudRedirect instalado por `setup.sh`. Desde el
-2026-10-16 no hay upstream: nada de esto lo arreglará nadie más que nosotros,
-compilando el `v2.6.6` de `madoiscool/CloudRedirect`.
+LumaDeck, que lleva CloudRedirect instalado por `setup.sh`. El upstream no
+publica código desde el 2026-10-03: mientras siga así, nada de esto lo arregla
+nadie más que nosotros, compilando el `v2.6.6` desde `jayool/CloudRedirect`.
 
 1. **Steam se congela al salir de un juego con muchos ficheros nuevos.**
    `CompleteAppUploadBatchBlocking` espera en el hilo de Steam a que se suba
@@ -565,7 +593,7 @@ compilando el `v2.6.6` de `madoiscool/CloudRedirect`.
 | el formato de `config.yaml` de SLSsteam (lista en línea, `DisableCloud` anidado) | CloudRedirect deja de gestionar los juegos, en silencio |
 | `DisableCloud: yes` (lo escriba quien lo escriba) | sin nube para los juegos que SLSsteam no ve como poseídos; los nuestros van por package-0 y no les afecta (`slssteam.md` §2.8) |
 | los assets de `jayool/lumalinux` v0.22.3 (`.so` y `.flatpak`) inaccesibles o con otro hash | `setup.sh` conserva el `.so` instalado o instala sin nube, con aviso; la app no se instala; nunca aborta (`setup.sh:490-510,535-564,1112-1123`). Copia de respaldo en la rama `cr-archive` |
-| Valve lleva el cliente de 64 bits (`steamrt64`) al canal estable de SteamOS | `cloud_redirect.so` es de 32 bits y no carga (`wrong ELF class`); sin autor, un port a 64 bits sería nuestro, desde el `v2.6.6` de madoiscool (`steam-rt3-x64.md` §2) |
+| Valve lleva el cliente de 64 bits (`steamrt64`) al canal estable de SteamOS | `cloud_redirect.so` es de 32 bits y no carga (`wrong ELF class`); el upstream no tiene rama de 64. Qué ata el código a 32 bits y qué habría que rehacer: §2.13. Si lo hiciéramos nosotros, desde `jayool/CloudRedirect` (`steam-rt3-x64.md` §2) |
 | madoiscool borra su fork | nada: `jayool/CloudRedirect` tiene lo mismo. Si GitHub cerrase la red de forks entera, quedarían `cr-archive`, nuestros assets y la captura v2.6.5 de Software Heritage |
 | SLSDeck en la misma Deck | `cloud_redirect.so` sustituido por el de moon, que sin slsteam-moon no sirve logros (`slsdeck.md` §4.1-4) |
 | la retirada del endpoint de tienda que usa SLSsteam para los schemas (2026-10-22) | los juegos nuevos no consiguen schema hasta la release de SLSsteam con el arreglo; CloudRedirect solo guarda lo que Steam reciba |
