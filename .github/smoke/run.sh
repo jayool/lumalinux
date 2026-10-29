@@ -156,7 +156,7 @@ DONE=""
 DEADLINE=$(( $(now) + WAIT_MIN * 60 ))
 while [ "$(now)" -lt "$DEADLINE" ]; do
     DONE=""
-    if grep -qE 'Status: wrote|FAILED|installs nothing' "$LLLOG" 2>/dev/null; then DONE=lumalinux; fi
+    if grep -qE 'Status: wrote|installs nothing|outcome=hook_install_failed' "$LLLOG" 2>/dev/null; then DONE=lumalinux; fi
     if curl -fsS --max-time 2 http://127.0.0.1:8080/json/version >/dev/null 2>&1; then DONE="${DONE:+$DONE,}cef"; fi
     [[ "$DONE" == *cef* ]] && [[ "$DONE" == *lumalinux* ]] && break
     steam_alive || { sleep 5; steam_alive || { DONE="steam-exited"; break; }; }
@@ -200,8 +200,16 @@ esac
 if grep -q 'no feed for build' "$LLLOG" 2>/dev/null; then
     say "- FAIL the runtime found no feed for this build"
     V=1
-elif grep -q 'FAILED' "$LLLOG" 2>/dev/null; then say "- FAIL a hook FAILED"; V=1
-else say "- OK   no hook FAILED"; fi
+else
+    # A failed hook is one status.json reports as "failed" (Install() returned
+    # false), or an install line saying so. Not the word FAILED anywhere: the
+    # new-build notify ("...shows up as FAILED hooks below") carries it too.
+    if [ -n "$ST" ] && [ "$(jq -r '[.hooks[]? | select(. == "failed")] | length' "$ST" 2>/dev/null || echo 0)" != "0" ]; then
+        say "- FAIL a hook FAILED: $(jq -r '.hooks | to_entries | map(select(.value == "failed") | .key) | join(" ")' "$ST" 2>/dev/null)"; V=1
+    elif [ -z "$ST" ] && grep -qE 'outcome=(hook_install_failed|miss)' "$LLLOG" 2>/dev/null; then
+        say "- FAIL a hook FAILED (no status.json; from the log)"; V=1
+    else say "- OK   no hook FAILED"; fi
+fi
 if [ "$CHANNEL" = beta ]; then grep -q 'licenses_check_off' "$LLLOG" 2>/dev/null && say "- OK   feed carries licenses_check_off" || say "- WARN feed without licenses_check_off (fine on a build without the flags)"; fi
 grep -qE 'Ran .*lumalinux-cuser|lumalinux-cuser' "$HOME/.SLSsteam.log" 2>/dev/null && say "- OK   SLSsteam ran the lumalinux-cuser plugin" || say "- WARN no trace of the lumalinux-cuser plugin in SLSsteam's log"
 curl -fsS --max-time 3 http://127.0.0.1:8080/json/version >/dev/null 2>&1 && say "- OK   CEF responds (login screen reached)" || say "- WARN CEF not responding"
