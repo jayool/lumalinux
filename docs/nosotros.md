@@ -1479,6 +1479,20 @@ lo incoherente, luego lo muerto.
     (`GameDetail.tsx:1277-1283`). Ruido, no un fallo de datos. Opciones:
     ocultar la fila cuando el juego tiene `.acf`, o borrar el estado al ver la
     instalación. Sin decisión.
+35. **`setup.sh` instala desde repos ajenos sin copia.** El `.7z` de SLSsteam
+    de 32 bits se baja de las releases de `AceSLS/SLSsteam` y `fix.so` (netsock)
+    de `yesyes0649/steamnetsock-patch` "latest", en cada instalación y sin
+    espejo (§4.2). Si uno desaparece, renombra el asset (ya pasó con
+    `SLSsteam-Any.7z`) o cae un día, no hay instalación posible, como con
+    CloudRedirect hasta que pasó a nuestros assets. Diseño acordado, sin hacer:
+    una release `deps` nuestra con copia de cada pieza por versión y un
+    `deps.json` (nombre, versión, sha256, origen, fecha); un job diario que
+    resuelve las mismas URLs que `setup.sh`, baja, y sube solo lo que cambia de
+    hash, sin borrar versiones viejas (las fijadas siguen existiendo aunque el
+    origen borre releases); issue si el job falla, como `watch-steam`. En
+    `setup.sh`: origen primero, espejo si falla, y en ese caso log con la fecha
+    de la copia. Lo que no cubre: un origen roto se copia igual; eso lo filtra
+    la whitelist de SafeMode por hash, no el espejo.
 **Resuelto al leer** (no es hallazgo): el orden `liblumalinux.so:cloud_redirect.so`
 del `LD_PRELOAD` es intencional (`cr_stats_fix` interpone un símbolo de
 CloudRedirect; sin efecto desde CloudRedirect 2.6.6, que oculta sus símbolos); `target_library_path` se acepta y se ignora porque Steam elige
