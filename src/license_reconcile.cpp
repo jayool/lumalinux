@@ -231,6 +231,14 @@ bool RequestLicenseCheck(void* user, const char* why) {
 // second arming costs nothing and covers a check that ran too early).
 void Reconcile() {
     if (!Enabled()) return;
+    // Measurement switch: LUMA_NO_LICENCE_NUDGE keeps the keys.txt watcher and
+    // the injection (unlike LUMA_NO_RECONCILE) and only skips the broadcast and
+    // the request flags, so a run shows what Steam and SLSsteam's own config
+    // reload do with the injected depots on their own.
+    if (std::getenv("LUMA_NO_LICENCE_NUDGE") != nullptr) {
+        Log::Info("Reconcile: skipped (LUMA_NO_LICENCE_NUDGE) — depots injected, no broadcast, no request flags");
+        return;
+    }
     void* user = g_pCUser.load(std::memory_order_acquire);
     if (!user) {
         g_pending.store(true, std::memory_order_release);

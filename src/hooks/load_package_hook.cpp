@@ -172,8 +172,8 @@ static bool AppendIdsToVec(CUtlVector<uint32_t>* vec,
     return true;
 }
 
-// The ids lumalinux itself put into PackageId=0's AppIdVec (and not the ones
-// Steam had there already): the only ids RetireDepots may ever take out.
+// The ids lumalinux itself put into PackageId=0's target vector (and not the
+// ones Steam had there already): the only ids RetireDepots may ever take out.
 // Only the finder thread touches this, like the vector itself.
 static std::set<uint32_t>& Injected() {
     static std::set<uint32_t> instance;
@@ -186,12 +186,11 @@ bool InjectDepots(void* pInfo, const char* source) {
     auto depotIds = KeyStore::GetAllDepotIds();
     if (depotIds.empty()) return false;
 
-    // Seed everything into AppIdVec (+0x38) — Steam's per-depot license filter
-    // reads it (RESEARCH.md §3 step 3, §13). (The DepotIdVec experiment was
-    // removed: it did nothing without a license reconcile, which is the actual
-    // no-restart mechanism — see the reconcile path.)
+    // The target vector is per client class (DepotTargetVec in the header):
+    // AppIdVec on the 32-bit client (RESEARCH.md §3 step 3, §13), the
+    // package's DepotIdVec on the 64-bit one.
     std::vector<uint32_t> added;
-    bool wrote = AppendIdsToVec(AppIdVec(pInfo), depotIds, source, "AppIdVec", &added);
+    bool wrote = AppendIdsToVec(DepotTargetVec(pInfo), depotIds, source, kDepotTargetName, &added);
     for (uint32_t a : added) Injected().insert(a);
     return wrote;
 }
@@ -212,11 +211,11 @@ bool RetireDepots(void* pInfo, const char* source) {
     }
     if (stale.empty()) return false;
 
-    auto* vec = AppIdVec(pInfo);
+    auto* vec = DepotTargetVec(pInfo);
     uint32_t oldSize = vec ? vec->m_Size : 0;
     if (!vec || !vec->m_pMemory || oldSize > 4096) {
-        Log::Warn("LoadPackage[%s]: AppIdVec unusable for retire (mem=%p size=%u) — skipping",
-                  source, vec ? (void*)vec->m_pMemory : nullptr, oldSize);
+        Log::Warn("LoadPackage[%s]: %s unusable for retire (mem=%p size=%u) — skipping",
+                  source, kDepotTargetName, vec ? (void*)vec->m_pMemory : nullptr, oldSize);
         return false;
     }
 
@@ -238,14 +237,14 @@ bool RetireDepots(void* pInfo, const char* source) {
     // package since) are simply forgotten too.
     for (uint32_t sId : stale) injected.erase(sId);
     if (removed.empty()) {
-        Log::Debug("LoadPackage[%s]: %zu retired id(s) were already gone from AppIdVec",
-                   source, stale.size());
+        Log::Debug("LoadPackage[%s]: %zu retired id(s) were already gone from %s",
+                   source, stale.size(), kDepotTargetName);
         return false;
     }
-    Log::Info("LoadPackage[%s]: REMOVED %zu id(s) from PackageId=0 AppIdVec (size %u -> %u)",
-              source, removed.size(), oldSize, w);
+    Log::Info("LoadPackage[%s]: REMOVED %zu id(s) from PackageId=0 %s (size %u -> %u)",
+              source, removed.size(), kDepotTargetName, oldSize, w);
     for (uint32_t a : removed) {
-        Log::Info("LoadPackage[%s]:   - AppIdVec %u", source, a);
+        Log::Info("LoadPackage[%s]:   - %s %u", source, kDepotTargetName, a);
     }
     return true;
 }

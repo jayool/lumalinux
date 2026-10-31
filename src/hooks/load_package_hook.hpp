@@ -46,9 +46,11 @@ constexpr std::size_t kOffPackageId = 0x00;
 // pointers after the SHA-1 are 8 bytes each, so AppIdVec starts at +0x40
 // (CUtlVector<uint32_t> is 24 bytes there: m_pMemory +0, alloc +8, grow +0xc,
 // m_Size +0x10); DepotIdVec at +0x58.
-constexpr std::size_t kOffAppIdVec  = 0x40;
+constexpr std::size_t kOffAppIdVec   = 0x40;
+constexpr std::size_t kOffDepotIdVec = 0x58;
 #else
-constexpr std::size_t kOffAppIdVec  = 0x38;
+constexpr std::size_t kOffAppIdVec   = 0x38;
+constexpr std::size_t kOffDepotIdVec = 0x48;
 #endif
 
 inline uint32_t PkgId(void* pInfo) {
@@ -59,6 +61,28 @@ inline CUtlVector<uint32_t>* AppIdVec(void* pInfo) {
     return reinterpret_cast<CUtlVector<uint32_t>*>(
         static_cast<uint8_t*>(pInfo) + kOffAppIdVec);
 }
+inline CUtlVector<uint32_t>* DepotIdVec(void* pInfo) {
+    return reinterpret_cast<CUtlVector<uint32_t>*>(
+        static_cast<uint8_t*>(pInfo) + kOffDepotIdVec);
+}
+
+// Where lumalinux's depot ids go inside PackageId=0.
+//   32-bit client: AppIdVec. Measured since v0.8 (nosotros.md): depot ids there
+//   pass Steam's per-depot licence filter; the app id alone did not.
+//   64-bit client: DepotIdVec, the package's own depot list, as at0m's
+//   download.lua does for Assella. The beta rebuilds its licence table only
+//   from CUser::RunFrame's check (docs/steam-rt3-x64.md §1.3), and that check
+//   refuses while any id in AppIdVec has no settled appinfo record: a depot id
+//   never gets one (measured with gdb on ed794dda, 2026-10-31: one check, the
+//   depot id unsettled, no rebuild, "0 target"). In DepotIdVec there is no
+//   record to settle.
+#ifdef LUMA_X86_64
+inline CUtlVector<uint32_t>* DepotTargetVec(void* pInfo) { return DepotIdVec(pInfo); }
+constexpr const char* kDepotTargetName = "DepotIdVec";
+#else
+inline CUtlVector<uint32_t>* DepotTargetVec(void* pInfo) { return AppIdVec(pInfo); }
+constexpr const char* kDepotTargetName = "AppIdVec";
+#endif
 
 // =============================================================================
 // Reusable depot injection

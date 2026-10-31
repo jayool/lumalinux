@@ -78,7 +78,7 @@ constexpr std::size_t kNodePkgIdOff    = 0x10;
 // Root index / node array offsets (0x14b0 / 0x14c8 there) come from the feed.
 constexpr std::size_t kNodePkgInfoOff  = 0x18;
 constexpr std::size_t kNodeSize        = 0x20;
-constexpr std::size_t kPkgReadableSpan = 0x58;   // covers AppIdVec at +0x40..+0x58
+constexpr std::size_t kPkgReadableSpan = 0x70;   // covers AppIdVec +0x40..+0x58 and DepotIdVec +0x58..+0x70
 #else
 constexpr std::size_t kNodePkgInfoOff  = 0x14;
 constexpr std::size_t kNodeSize        = 0x18;
@@ -837,6 +837,18 @@ void Run() {
                                       k > 1 ? vec->m_pMemory[1] : 0,
                                       k > 2 ? vec->m_pMemory[2] : 0,
                                       k > 3 ? vec->m_pMemory[3] : 0);
+                        }
+                        auto* dvec = Hooks::LoadPackage::DepotIdVec(pkg);
+                        Log::Info("PKG0_FINDER:   DepotIdVec{mem=%p size=%u alloc=%d} (depots go to %s on this client)",
+                                  static_cast<void*>(dvec->m_pMemory), dvec->m_Size,
+                                  dvec->m_nAllocationCount, Hooks::LoadPackage::kDepotTargetName);
+                        if (dvec->m_pMemory && dvec->m_Size > 0 && dvec->m_Size <= 4096) {
+                            uint32_t k = dvec->m_Size < 4 ? dvec->m_Size : 4;
+                            Log::Info("PKG0_FINDER:   DepotIdVec[0..%u) = {%u, %u, %u, %u}", k,
+                                      k > 0 ? dvec->m_pMemory[0] : 0,
+                                      k > 1 ? dvec->m_pMemory[1] : 0,
+                                      k > 2 ? dvec->m_pMemory[2] : 0,
+                                      k > 3 ? dvec->m_pMemory[3] : 0);
                         }
                         foundOnce = true;
                     }
