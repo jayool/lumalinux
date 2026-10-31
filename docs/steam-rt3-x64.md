@@ -299,6 +299,26 @@ estable es el trabajo entero. Descartado por el camino: publicar el callback 125
 a pelo desde un plugin no tramita nada (Steam solo refresca la UI); ningún orden
 ni espera del broadcast cambiaba el resultado.
 
+**Los depots van al `DepotIdVec` del package 0 (2026-10-31).** Con los dos
+bytes en su sitio seguía `0 target` en CI (cuenta desechable). Sondas de gdb
+en `ed794dda` (breakpoints Python que no paran a Steam, en el smoke de login):
+el `CUser` que escribe lumalinux es el que corre `RunFrame`; la comprobación
+corre en el mismo segundo del flip; y se para en su puerta de fichas:
+recorre cada id del `AppIdVec` de cada paquete con licencia y exige ficha de
+appinfo asentada (`GetOrAddAppData` la crea vacía, `+0x14` es la marca); el id
+de depot que el finder metía en `AppIdVec` no la tiene nunca (`unsettled app
+4001891`), no hay `RebuildLicensesCache`, y nadie vuelve a armar la
+comprobación (el callback de appinfo solo arma con `apps updated > 0`, o con
+`+0x236d`/`+0x236e`/pendientes). Con los depots en el `DepotIdVec` del package
+(`+0x58`; 878 entradas que empiezan `{1, 2, 3, 4}`) la comprobación pasa a la
+primera, `Rebuild`, `1 mounted depots` y el juego arranca; la inyección sola,
+sin flip (`LUMA_NO_LICENCE_NUDGE`), deja `0 target`: hace falta el rebuild. Lo
+mismo en el estable de 32 el mismo día (`+0x48`). `RebuildLicensesCache` tiene
+cuatro llamadores en `ed794dda` y en `c3247a95` (la comprobación, el helper
+que retira licencias caducadas y dos rutas de login offline); la comprobación,
+solo `RunFrame`, que la salta mientras `+0x236c` (a 1 en el constructor, a 0
+en el handler de la lista de licencias) no sea 0.
+
 ## §2 Qué nos afecta
 
 | Pieza | Con el cliente de 64 |

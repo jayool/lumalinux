@@ -105,8 +105,9 @@ Clicking Install kicks off, roughly:
    **downstream** of Steam already knowing the depot list.
 3. **`PackageId == 0`** — the implicit "free apps everyone owns" package, which
    Steam's per-depot license filter consults. Our depot ids must be in its
-   `AppIdVec` or the content depots are dropped (→ "0 target depots" → instant
-   "Fully Installed"/Play). → **package-0 finder**
+   `DepotIdVec` (since 2026-10-31; in `AppIdVec` before, see §18) or the content
+   depots are dropped (→ "0 target depots" → instant "Fully Installed"/Play).
+   → **package-0 finder**
    (`src/hooks/package_zero_finder.cpp`), not a hook but a thread started at
    install time (`main.cpp:284-291`), and only if DepotKey installed — without
    keys a forced download cannot complete, so nothing is injected
@@ -332,10 +333,14 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   `+0x00 PackageId`, `+0x04 ChangeNumber`, `+0x08 u64 PICS_token`,
   `+0x10 BillingType`, `+0x14 LicenseType`, `+0x18 Status`, `+0x1C SHA_1_Hash[20]`,
   `+0x30 pPackageInfoNodeBegin`, `+0x34 pExtendNodeBegin`,
-  **`+0x38 AppIdVec`** (`CUtlVector<AppId_t>`), `+0x48 DepotIdVec`.
-  Only `PackageId` and `AppIdVec` are used. No tool verifies these offsets on a
-  new build; the finder's `PackageId` cross-check is what stops a write through
-  a wrong one (`package_zero_finder.cpp:86-99, 546-560`).
+  **`+0x38 AppIdVec`** (`CUtlVector<AppId_t>`), **`+0x48 DepotIdVec`** (the one
+  written since 2026-10-31; `+0x40`/`+0x58` on the 64-bit client, 24-byte
+  vectors). `PackageId` and both vectors are read for the finder's first-hit
+  log; `DepotIdVec` is the one written. No tool verifies these offsets on a
+  new build; the finder's `PackageId` cross-check and `AppendIdsToVec`'s
+  plausibility check of the existing entries (package 0's `DepotIdVec` starts
+  `{1, 2, 3, 4}`, 878 entries on 2026-10-31) are what stop a write through a
+  wrong one (`package_zero_finder.cpp:86-99, 546-560`).
 - **Not installed by default.** Only `LUMA_LOADPKG_DEBUG=1` adds it
   (`main.cpp:187-189`), and then it only logs `PackageId` + `AppIdVec{mem,size,alloc}`
   for the first 400 calls (`load_package_hook.cpp:40-53`). It never injects:
@@ -350,7 +355,8 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
 - The injection the finder performs lives in this file and is shared code
   (`load_package_hook.cpp:77-251`):
   - `InjectDepots` appends `KeyStore::GetAllDepotIds()` (the depot ids,
-    LumaCore's `GetAllDepotIds` equivalent — not the app id) to `AppIdVec`.
+    LumaCore's `GetAllDepotIds` equivalent — not the app id) to `DepotIdVec`
+    (`DepotTargetVec` in the header; `AppIdVec` until 2026-10-31, §18).
   - `AppendIdsToVec` bails if `m_Size > 4096` or if any of the first 8 existing
     entries is 0 or > 50 000 000 (offset wrong on this build; real entries look
     like `{5,7,8,90,…}`), filters out ids already present (idempotent), and grows
@@ -590,12 +596,14 @@ Re-deriving a pattern or feed value on a new build is CI's job (`check_patterns.
   (§13.10). This note stays as the historical diagnosis and still applies to a
   keyless *content* depot (only the shader depot is skippable).
 
-- **`DepotIdVec` is NOT the no-restart lever (tested, v0.16.14).** Seeding the
-  package's `DepotIdVec` (+0x48) in addition to `AppIdVec` changed nothing — a
-  game added mid-session still showed `0 target depots` until a restart. The
-  blocker is upstream (Steam's appinfo has no depot list until it re-fetches it);
-  depot eligibility is never reached. The actual fix is the **license reconcile**
-  (§18), not the vector. Don't re-try the `DepotIdVec` angle on its own.
+- **`DepotIdVec` alone is not the no-restart lever (tested, v0.16.14)**, and
+  it is the vector lumalinux writes since 2026-10-31. Seeding it in addition to
+  `AppIdVec`, without a reconcile, changed nothing — the blocker was upstream
+  (Steam's appinfo had no depot list until it re-fetched it), so eligibility
+  was never reached. With the **license reconcile** (§18) the vector matters
+  again: on the 64-bit client the reconcile's check refuses on any `AppIdVec`
+  id without a settled appinfo record, which a depot id never gets, so the
+  depots go to `DepotIdVec` (§18, 2026-10-31).
 
 ## 7. The GMRC endpoint(s)
 
@@ -2624,15 +2632,27 @@ downloads nothing. This is *upstream* of everything the gates do — the keys ar
 served and the depots are injected into package 0, but Steam never asks for them
 because it doesn't believe the app has any.
 
-**Dead end — `DepotIdVec` (tested, ruled out).** slsteam-moon populates the
-package's separate `DepotIdVec` (+0x48) and comments that "Steam's depot
-eligibility filter looks at pkg.DepotIdVec"; lumalinux always put everything in
-`AppIdVec` (+0x38). We shipped an experiment (v0.16.14, `LUMA_DEPOT_IDVEC`) that
-*also* seeds `DepotIdVec`. Result: **no change** — still `0 target depots` without
-a restart. Because the failure is upstream (empty appinfo depot list), eligibility
-(whichever vector it reads) is never consulted. So `DepotIdVec` is **not** the
-lever; it's only relevant *with* the reconcile, as moon's way of keeping `AppIdVec`
-clean (see below). Removed in v0.16.15.
+**`DepotIdVec` — where the depots go (since 2026-10-31).** slsteam-moon
+populates the package's separate `DepotIdVec` (+0x48) and comments that
+"Steam's depot eligibility filter looks at pkg.DepotIdVec"; at0m's
+`download.lua` (Assella) rewrites the same vector of package 0; lumalinux put
+everything in `AppIdVec` (+0x38) until 2026-10-31. Seeding `DepotIdVec` *in
+addition*, without a reconcile (v0.16.14, `LUMA_DEPOT_IDVEC`), changed
+nothing, because the failure then was upstream (empty appinfo depot list);
+removed in v0.16.15. With the reconcile the vector decides on the 64-bit
+client (`docs/steam-rt3-x64.md` §1.3): its licence table is rebuilt only by
+`BCheckUserLicensesUpdate` from `CUser::RunFrame`, and that check walks every
+id of every licensed package's `AppIdVec` and refuses while any has no settled
+appinfo record. A depot id never gets one (gdb on ed794dda, 2026-10-31: one
+check after a live add, `unsettled app 4001891`, no rebuild, `0 target`); with
+the depots in `DepotIdVec` the check passed at its first run, the table was
+rebuilt, the depot mounted and the game ran; without the check's rebuild
+(injection alone, `LUMA_NO_LICENCE_NUDGE`) the depot did not mount, so the
+reconcile stays. The 32-bit client (reconcile = `NotifyLicensesUpdated`, no
+such gate) was moved too, measured the same day (live add, install, launch),
+so both clients inject the same way and Steam no longer creates app records
+for depot ids. This is OST's hang (`GetOrAddAppData` → `bSkipFlag`, below),
+seen in the binary: the flag is the record's `+0x14`.
 
 **The fix — a license reconcile.** Broadcast the `LicensesUpdated_t` callback
 (ECallbackType `0x7d`) on the local `CUser` via `CUser::NotifyLicensesUpdated`.

@@ -65,7 +65,7 @@ vendorizadas (`include/libmem`, `include/yaml-cpp`) y las dependencias en
 | `src/steam_types.hpp`, `globals.*`, `version.hpp.in` | 40+13+16 | layouts `CUtlVector`/`DepotEntry`; módulo steamclient; versión | 2, 5, 11 |
 | `src/hooks/depot_key_hook.cpp` | 210 | hook del accessor KeyValues `…\Depots\<id>\DecryptionKey`; sirve la clave de KeyStore | 4, 1 |
 | `src/hooks/depot_dependency_hook.cpp` | 198 | hook `BuildDepotDependency`: PATCH del gid en `pDepotInfo` (OFF por defecto) | 5, 2 |
-| `src/hooks/load_package_hook.cpp/.hpp` | 289+88 | `InjectDepots`/`RetireDepots` en el `AppIdVec` del package 0; el hook `LoadPackage` solo diagnóstico | 2, 3, 9 |
+| `src/hooks/load_package_hook.cpp/.hpp` | 289+88 | `InjectDepots`/`RetireDepots` en el `DepotIdVec` del package 0 (en `AppIdVec` hasta 2026-10-31); el hook `LoadPackage` solo diagnóstico | 2, 3, 9 |
 | `src/hooks/package_zero_finder.cpp/.hpp` | 837+39 | hilo que localiza `CPackageInfoCache`, camina al package 0, inyecta y retira, dispara el reconcile | 2, 3, 9, 1 |
 | `src/hooks/gmrc_hook.cpp` | 125 | hook `BYieldingGetManifestRequestCode`: inyecta el código de la cascada | 4, 1 |
 | `src/hooks/shader_depot_hook.cpp` | 148 | hook `GetShaderCacheDepot`: 0 para juegos sin clave o sin proveedor vivo | 9, 4 |
@@ -418,8 +418,9 @@ tocamos: `AppIds`, `UseWhitelist`, `DisableFamilyShareLock`, `DlcData` salvo
 **Inyección de licencias: lumalinux.** Lo que SLSsteam no hace es que los
 **depots** de un juego no poseído pasen el filtro de licencia de
 `BuildDepotDependency`. lumalinux mete los **ids de depot** (no el appid) que
-hay en `keys.txt` en el `AppIdVec` (+0x38) del `PackageInfo` con
-`PackageId==0` (`load_package_hook.hpp:39-45`, `load_package_hook.cpp:183-197`):
+hay en `keys.txt` en el `DepotIdVec` (+0x48 en 32, +0x58 en 64) del `PackageInfo`
+con `PackageId==0` (`load_package_hook.hpp`, `load_package_hook.cpp`; en el
+`AppIdVec` hasta 2026-10-31, RESEARCH §18):
 sanity del vector (`m_Size ≤ 4096`, entradas 0 o >50M rechazadas), dedup,
 `realloc` doblando con el `realloc` de Steam. El finder lo hace cada 2 s hasta
 el primer HIT y luego cada 15 s (`package_zero_finder.cpp:139-140, 827`), y al
@@ -1786,6 +1787,7 @@ estático (análisis del binario sin ejecutarlo), red (sondas HTTP).
 | 2026-10-07 08:10 | codespace SteamOS (`4f8579c`) | Quitar una línea de `keys.txt` → `erase` del vector + reconcile | `- AppIdVec` ×12; un Verify ya no baja nada (`4 target`). "Your stuff" sigue mostrando el juego hasta reiniciar | — |
 | 2026-10-07 09:59 | codespace SteamOS, Brotato | Aparecer y desaparecer en caliente | Al añadir aparece (SLSsteam emite `AppLicensesChanged_t` solo para apps nuevas); al quitar, `Config reloaded!` ×6 sin callback y el `LicensesUpdated_t` de lumalinux no suelta la entrada; al reiniciar desaparece | — |
 | 2026-10-24 | codespace SteamOS, estable 32 (`c770a8b1`) y beta 64 (`c3247a95`) | Reconcile a mitad de sesión por cliente | En 32, Into the Breach (sin DLC) baja tras el broadcast: `1 mounted depots`. En la beta, 0/5 con el broadcast en cualquier momento (`app_status`: `Subscribed,Pending Gift`, sin `Legacy Free Sub`); al añadir Brotato (ficha de DLC nueva) Steam rehace su tabla y Into the Breach queda enganchado sin tocarlo. En el binario: la beta parte `NotifyLicensesUpdated` en `SendAppLicenseUpdates` + `RebuildLicensesCache`, este último solo desde `RunFrame` cuando `CUser+0x2370/0x2371` lo piden | `steam-rt3-x64.md` §1.3 |
+| 2026-10-31 | CI (smoke de login), estable 32 (`c770a8b1`) y beta 64 (`ed794dda`), How to Fish 4001890 | Dónde van los depots del package 0 | Con sondas de gdb en la beta: con los depots en `AppIdVec`, la comprobación de licencias corre una vez tras el add live, se para en la ficha del depot (`unsettled app 4001891`) y no rehace la tabla (`0 target`); con los depots en `DepotIdVec` pasa a la primera, Rebuild, `1 mounted depots`, el juego arranca; inyección sola sin el flip (`LUMA_NO_LICENCE_NUDGE`): `0 target`. En 32 con `DepotIdVec`: install, launch, stub pass. Desde entonces los dos clientes inyectan en `DepotIdVec` | RESEARCH §18; `steam-rt3-x64.md` §1.3 |
 
 #### Función 3 — DLC
 
