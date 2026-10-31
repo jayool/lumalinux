@@ -1,0 +1,128 @@
+{
+  "steamclient_sha256": "ed794dda63b8d47f3dfb050e51c3830656b2ca3cb3acae926f1ecba12282f42e",
+  "client_arch": "steamrt64",
+  "relocs_applied": 173720,
+  "functions": 143585,
+  "hooks": {
+    "DepotKey": {
+      "status": "UNIQUE",
+      "rva": "0x11efb90",
+      "method": "rtti-byname"
+    },
+    "GMRC": {
+      "status": "UNIQUE",
+      "rva": "0x13ae960",
+      "method": "string-xref",
+      "strings": [
+        "0xbe0458"
+      ],
+      "sites": [
+        "0x13aea81"
+      ]
+    },
+    "ShaderDepot": {
+      "status": "UNIQUE",
+      "rva": "0x10aa8e0",
+      "method": "string-xref",
+      "strings": [
+        "0xbabdcb"
+      ],
+      "sites": [
+        "0x10aa96f"
+      ]
+    },
+    "BuildDep": {
+      "status": "UNIQUE",
+      "rva": "0x1079400",
+      "method": "string-xref",
+      "strings": [
+        "0xba88d3"
+      ],
+      "sites": [
+        "0x107946f"
+      ]
+    },
+    "Reconcile": {
+      "status": "UNIQUE",
+      "rva": "0x18e5180",
+      "method": "callback-anchor",
+      "sites": 50,
+      "candidates": 40,
+      "kept": [
+        "0x18e5180"
+      ],
+      "member_disp": "0x23c4"
+    }
+  },
+  "rtti_byname": {
+    "status": "UNIQUE",
+    "class": "12CConfigStore",
+    "slot": 6,
+    "rva": "0x11efb90",
+    "overloads": [
+      6,
+      7
+    ],
+    "map_vtable": "0x319b120",
+    "impl_vtable": "0x316ba28"
+  },
+  "finder": {
+    "status": "UNIQUE",
+    "string_sites": [
+      "0x10545a4"
+    ],
+    "function": "0x1054520",
+    "cache_global_rva": "0x332cb30",
+    "cache_root_off": "0x14b0",
+    "cache_nodes_off": "0x14c8",
+    "node_stride": "0x20",
+    "node_pkginfo_off": "0x18",
+    "layout_matches_runtime": true
+  },
+  "pkginfo": {
+    "status": "UNIQUE",
+    "symbol_slot": "0x3311ad8",
+    "readers": [
+      "0x105bd60"
+    ],
+    "loadpackage": "0x105bd60",
+    "vector_candidates": [
+      "0x40",
+      "0x58",
+      "0x70"
+    ],
+    "appidvec_off": "0x40",
+    "layout_matches_runtime": true
+  },
+  "blocking": [],
+  "noncritical_moved": [],
+  "license_check": {
+    "status": "UNIQUE",
+    "runframe": {
+      "strings": 1,
+      "functions": [
+        "0x19169e0"
+      ]
+    },
+    "bcheck": {
+      "strings": 1,
+      "functions": [
+        "0x18ec250"
+      ]
+    },
+    "rebuild": {
+      "strings": 1,
+      "functions": [
+        "0x18e27c0"
+      ]
+    },
+    "request_off": "0x2370",
+    "rebuild_off": "0x2371",
+    "setter_sites": [
+      "0x18c3740"
+    ],
+    "licenses_check_off": "0x2370"
+  },
+  "verdict": "CLEAN",
+  "exit_code": 0
+}
