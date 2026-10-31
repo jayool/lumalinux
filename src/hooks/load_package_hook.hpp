@@ -66,23 +66,22 @@ inline CUtlVector<uint32_t>* DepotIdVec(void* pInfo) {
         static_cast<uint8_t*>(pInfo) + kOffDepotIdVec);
 }
 
-// Where lumalinux's depot ids go inside PackageId=0.
-//   32-bit client: AppIdVec. Measured since v0.8 (nosotros.md): depot ids there
-//   pass Steam's per-depot licence filter; the app id alone did not.
-//   64-bit client: DepotIdVec, the package's own depot list, as at0m's
-//   download.lua does for Assella. The beta rebuilds its licence table only
-//   from CUser::RunFrame's check (docs/steam-rt3-x64.md §1.3), and that check
-//   refuses while any id in AppIdVec has no settled appinfo record: a depot id
-//   never gets one (measured with gdb on ed794dda, 2026-10-31: one check, the
-//   depot id unsettled, no rebuild, "0 target"). In DepotIdVec there is no
-//   record to settle.
-#ifdef LUMA_X86_64
+// Where lumalinux's depot ids go inside PackageId=0: the package's own depot
+// list, DepotIdVec, on both clients (where at0m's download.lua puts Assella's
+// depots). Until 2026-10-31 they went into AppIdVec, measured since v0.8 to
+// pass the 32-bit client's per-depot licence filter where the app id alone did
+// not. The 64-bit client rebuilds its licence table only from CUser::RunFrame's
+// check (docs/steam-rt3-x64.md §1.3), and that check refuses while any id in
+// AppIdVec has no settled appinfo record: a depot id never gets one (gdb on
+// ed794dda: one check, the depot id unsettled, no rebuild, "0 target"). In
+// DepotIdVec there is no record to settle: with the depots there the check
+// passed at once, the depot mounted and the game ran (run 44); without the
+// check's rebuild it did not (run 43). The 32-bit client, whose reconcile has
+// no such gate, is moved for the same reason: the beta is the next stable, and
+// AppIdVec entries make Steam create app records for depot ids and ask Valve
+// for them.
 inline CUtlVector<uint32_t>* DepotTargetVec(void* pInfo) { return DepotIdVec(pInfo); }
 constexpr const char* kDepotTargetName = "DepotIdVec";
-#else
-inline CUtlVector<uint32_t>* DepotTargetVec(void* pInfo) { return AppIdVec(pInfo); }
-constexpr const char* kDepotTargetName = "AppIdVec";
-#endif
 
 // =============================================================================
 // Reusable depot injection

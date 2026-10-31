@@ -82,7 +82,7 @@ constexpr std::size_t kPkgReadableSpan = 0x70;   // covers AppIdVec +0x40..+0x58
 #else
 constexpr std::size_t kNodePkgInfoOff  = 0x14;
 constexpr std::size_t kNodeSize        = 0x18;
-constexpr std::size_t kPkgReadableSpan = 0x50;   // covers AppIdVec at +0x38..+0x48 with margin
+constexpr std::size_t kPkgReadableSpan = 0x58;   // covers AppIdVec +0x38..+0x48 and DepotIdVec +0x48..+0x58
 #endif
 
 constexpr int kMaxTreeDepth = 64;

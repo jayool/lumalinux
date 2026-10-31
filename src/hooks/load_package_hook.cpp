@@ -186,9 +186,8 @@ bool InjectDepots(void* pInfo, const char* source) {
     auto depotIds = KeyStore::GetAllDepotIds();
     if (depotIds.empty()) return false;
 
-    // The target vector is per client class (DepotTargetVec in the header):
-    // AppIdVec on the 32-bit client (RESEARCH.md §3 step 3, §13), the
-    // package's DepotIdVec on the 64-bit one.
+    // The package's DepotIdVec on both clients (DepotTargetVec in the header
+    // says why; RESEARCH.md §3 step 3 and §13 describe the AppIdVec years).
     std::vector<uint32_t> added;
     bool wrote = AppendIdsToVec(DepotTargetVec(pInfo), depotIds, source, kDepotTargetName, &added);
     for (uint32_t a : added) Injected().insert(a);
