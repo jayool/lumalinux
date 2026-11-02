@@ -198,7 +198,7 @@ inline constexpr const char* kGmrcFunctionPattern =
 // early-return 0). Verified UNIQUE in build 7c4ac73e both with and without the
 // global disp32 wildcarded.
 inline constexpr const char* kShaderCacheDepotPattern =
-    "FF FF FF FF FF FF FF FF FF FF FF FF";
+    "57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 8B 83 ?? ?? ?? ?? 8B 40 44 85 C0 75 0D 5B";
 
 
 // =============================================================================
