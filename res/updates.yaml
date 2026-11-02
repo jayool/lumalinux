@@ -25,6 +25,11 @@
 # Hashes are the ubuntu12_32 / steamdeck_stable_ubuntu12 binary actually LOADED at
 # runtime (NOT linux32). watch-steam.yml validates + appends them automatically.
 SafeModeHashes:
+  20261102141616:
+    # steam_version: 1792618285
+    # caps: shader=ok reconcile=ok gmrc=ok
+    # critical patterns re-derived by watch-steam.yml 2026-11-02; takes effect in the release built from this PR
+    - c770a8b13872fed128dd357eabc1d715260fadd9b16c627ae3395406e6ea37d4
   20260922150000:
     # v0.22.0 pattern set: finder layout table (0xc58 stable / 0xf90 beta),
     # frame-agnostic GMRC tail, register-agnostic Reconcile, frame-agnostic

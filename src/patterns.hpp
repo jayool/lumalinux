@@ -40,7 +40,7 @@ namespace Patterns {
 // mov eax,[esp+0x44]; mov ebp,[esp+0x38]; mov edi,[esp+0x3c]; mov esi,[esp+0x40];
 // mov [esp+0x10],eax; mov eax,[esp+0x48]; mov [esp+0x14],eax). Verified UNIQUE.
 inline constexpr const char* kDepotKeyFnPattern =
-    "FF FF FF FF FF FF FF FF FF FF FF FF";
+    "55 57 56 53 E8 ?? ?? ?? ?? 81 C3 ?? ?? ?? ?? 83 EC 24 8B 44 24 44 8B 6C 24 38 8B 7C 24 3C";
 
 
 // =============================================================================
