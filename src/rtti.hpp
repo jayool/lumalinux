@@ -14,7 +14,7 @@
 // None of {class name, slot index} is an address, so none moves per build; an
 // update is only needed if Valve reorders that class's virtuals (§15.4) — far
 // rarer than a prologue shift. Verified for DepotKey (CConfigStore slot 6 =
-// LoadDepotDecryptionKey) on multiple builds via tools/experiment_rtti_depotkey.py.
+// LoadDepotDecryptionKey) on multiple builds via luma-lab: tools/experiment_rtti_depotkey.py.
 //
 // Read-only: lumalinux resolves the ADDRESS this way, then installs its normal
 // function detour there (it does NOT swap the vtable slot). So this can never
@@ -32,7 +32,7 @@ uintptr_t ResolveVtableSlot(const char* mangledName, int slot);
 // Resolve by deriving the slot FROM THE METHOD NAME, reading no byte of the
 // target function. This is `download.lua`'s technique (SLSsteam's
 // VFTableInfo_t::init + Decompiler::parseInterfaceMapBase); see
-// docs/slssteam-plugins.md §4.4 (P3) for the decision and §5.2 for the
+// luma-lab: docs/slssteam-plugins.md §4.4 (P3) for the decision and §5.2 for the
 // on-binary verification.
 //
 //   1. `mapMangledName` is Steam's INTERFACE MAP class (e.g.

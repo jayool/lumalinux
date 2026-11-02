@@ -14,9 +14,9 @@
 // It maps:  rva -> file offset  (via the on-disk ELF program headers)
 //               -> runtime addr  (via the file-offset column of /proc/self/maps).
 //
-// This is the runtime half of the RVA-first feed (docs/design/rva-feed-design.md): the
+// This is the runtime half of the RVA-first feed (luma-lab: docs/design/rva-feed-design.md): the
 // cron publishes file vaddrs (what static analysis produces); the runtime feeds
-// each through ToRuntime() before hooking. Ports tools/xlate_vaddr.py, validated
+// each through ToRuntime() before hooking. Ports luma-lab: tools/xlate_vaddr.py, validated
 // live (a published DepotKey RVA 0x118c1f0 translated to the exact accessor
 // bytes in a running Steam).
 namespace VaddrXlate {

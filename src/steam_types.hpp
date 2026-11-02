@@ -9,7 +9,7 @@
 // is needed (volatile, bounds check, a new field), it's edited here once. The
 // static_asserts pin the sizes — the build fails if a layout assumption breaks.
 // They are the 32-bit client's layouts. The x86_64 (steamrt64) client's are
-// not derived yet (docs/steam-rt3-x64.md §3); the 64-bit build compiles these
+// not derived yet (luma-lab: docs/steam-rt3-x64.md §3); the 64-bit build compiles these
 // types unchecked and never touches them (src/main.cpp installs no hooks there).
 //
 // See issue #10.

@@ -154,7 +154,7 @@ bool Install() {
     // "BuildDepotDependency" (its own name, for a log/VProf scope), so it is
     // found wherever a rebuild put it — same locator GMRC has used since
     // 2026-09-07, same string CI derives the pattern from
-    // (tools/derive_bytext.py). Runs only when the two cheap resolvers came up
+    // (luma-lab: tools/derive_bytext.py). Runs only when the two cheap resolvers came up
     // empty.
     const char* method = "rva";
     uintptr_t target = RvaFeed::Resolve("BuildDep");

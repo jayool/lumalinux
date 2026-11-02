@@ -48,7 +48,7 @@ using NotifyFn = void (*)(void*);
 // RVA feed first (prologue-independent, keyed by the steamclient.so hash), else
 // the byte pattern. FindNotifyLicensesUpdatedFunction requires a UNIQUE match
 // and returns 0 otherwise, so a wrong-build pattern caches 0 -> the feature
-// no-ops rather than firing at a garbage address. docs/design/rva-feed-design.md.
+// no-ops rather than firing at a garbage address. luma-lab: docs/design/rva-feed-design.md.
 uintptr_t ResolveAddr() {
     static const uintptr_t addr = []() -> uintptr_t {
         if (uintptr_t feed = RvaFeed::Resolve("Reconcile")) {
@@ -59,7 +59,7 @@ uintptr_t ResolveAddr() {
         }
         if (uintptr_t p = Patterns::FindNotifyLicensesUpdatedFunction()) return p;
         // Last resort (2026-09-22): the callback-125 anchor — the same locator CI
-        // derives the pattern with (tools/derive_reconcile_byanchor.py), so a
+        // derives the pattern with (luma-lab: tools/derive_reconcile_byanchor.py), so a
         // rebuild that moves the prologue leaves add-without-restart working
         // until the monitor's PR lands. Unique or 0, like everything above.
         if (uintptr_t a = ReconcileAnchor::FindNotifyLicensesUpdated()) {

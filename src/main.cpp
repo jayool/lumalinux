@@ -175,7 +175,7 @@ void InstallHooks() {
     // are live providers with licensed accounts behind them (two pools, see
     // the table there). Validated end to end in the SteamOS codespace on
     // 2026-09-15/16: native install without local manifests, keyed shader
-    // pre-cache, dead provider, bogus code (docs/nosotros.md §5.2 F4, 2026-09-15/16).
+    // pre-cache, dead provider, bogus code (luma-lab: docs/nosotros.md §5.2 F4, 2026-09-15/16).
     // With no provider alive the hook falls through and Steam behaves as in
     // v0.20.x: installs from the manifests LumaDeck pre-seeds in depotcache/.
 #ifdef LUMA_X86_64
@@ -184,7 +184,7 @@ void InstallHooks() {
     // name) are 32-bit code shapes and return 0 on this build (patterns.cpp,
     // gmrc_xref.cpp, reconcile_anchor.cpp, rtti.cpp), so a build with no feed
     // file installs nothing and reports FAILED — the truth LumaDeck needs.
-    // Per-build values: docs/steam-rt3-x64.md §1.2.
+    // Per-build values: luma-lab: docs/steam-rt3-x64.md §1.2.
     Log::Info("Install: x86_64 build on the steamrt64 client — resolving via the RVA feed only");
 #endif
     std::vector<HookSpec> specs = {
@@ -237,7 +237,7 @@ void InstallHooks() {
             Status::RecordHook(s.name, Status::INSTALLED);
         } else {
             Log::Error("Install: %s hook FAILED (pattern not found? Steam may have "
-                       "updated — see docs/RESEARCH.md to re-derive patterns)", s.name);
+                       "updated — see luma-lab: docs/RESEARCH.md to re-derive patterns)", s.name);
             if (std::strcmp(s.name, "DepotKey") == 0)
                 criticalFailed = true;
             if (!failed.empty()) failed += ", ";
@@ -318,14 +318,14 @@ void InstallHooks() {
     // exists and the patch was dead code. The countermeasure now lives in
     // LumaDeck, which writes `DisableUpdates: no` into SLSsteam's config.yaml on
     // install and on every plugin start (ensure_slssteam_flags). See
-    // docs/slssteam.md §2.5.
+    // luma-lab: docs/slssteam.md §2.5.
 
     // Coexistence patch: scope SLSsteam's native-achievement "legit app" guard
     // so the schema borrow also fires for AdditionalApps (LumaDeck) games while
     // leaving genuinely-owned games untouched. Repoints two `call isSubscribed`
     // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check.
     // Fail-safe: no SLSsteam / missing symbols / moved codegen → no-op, native
-    // achievements just stay off. See docs/slssteam.md §2.7 and RESEARCH §17.
+    // achievements just stay off. See luma-lab: docs/slssteam.md §2.7 and RESEARCH §17.
     if (std::getenv("LUMA_NO_SLS_ACH_UNBLOCK")) {
         Status::RecordHook("SlsAchievementUnblock", Status::DISABLED);
     } else if (SlsAchievementUnblock::Apply()) {
@@ -344,7 +344,7 @@ void InstallHooks() {
     // at zero achievements forever. Pure LD_PRELOAD symbol interposition, no
     // bytes of CloudRedirect patched; self-checks instead of a version list.
     // Fail-safe: no CloudRedirect / a failed check → the stub forwards untouched.
-    // See docs/cloudredirect.md.
+    // See luma-lab: docs/cloudredirect.md.
     switch (CrStatsFix::Init()) {
         case CrStatsFix::Result::Applied:
             Status::RecordHook("CrStatsFix", Status::INSTALLED);

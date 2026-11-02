@@ -148,7 +148,7 @@ inline constexpr const char* kLoadPackagePattern =
 //                                          9cf4720f beta — locals only, so the
 //                                          imm32 is wildcarded since v0.22.0;
 //                                          measured UNIQUE on both builds by
-//                                          tools/derive_bytext.py, 2026-09-22)
+//                                          luma-lab: tools/derive_bytext.py, 2026-09-22)
 //   8B 7D 08            mov edi, [ebp+8]
 //   8B 4D 20            mov ecx, [ebp+0x20]
 inline constexpr const char* kGmrcFunctionPattern =

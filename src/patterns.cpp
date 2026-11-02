@@ -112,8 +112,8 @@ uintptr_t FindInSteamclient(const char* pattern, const char* logName) {
     uintptr_t found = SigScan(r.base, r.size, parsed);
     if (!found) {
         Log::Error("Patterns: %s — pattern NOT FOUND in steamclient.so. "
-                   "Steam likely updated; re-derive the patterns (see docs/RESEARCH.md "
-                   "section 8, and tools/ghidra_find_gmrc.py).",
+                   "Steam likely updated; re-derive the patterns (see luma-lab: docs/RESEARCH.md "
+                   "section 8, and luma-lab: tools/ghidra_find_gmrc.py).",
                    logName);
         return 0;
     }
@@ -214,7 +214,7 @@ uintptr_t FindDepotKeyFunction() {
     // resolver decide" instead of "hook whatever matched first". The vtable
     // constraint (exactly one CConfigStore slot matching this pattern) is
     // checked in CI before the feed publishes an RVA, not here
-    // (docs/design/rva-feed-design.md §8).
+    // (luma-lab: docs/design/rva-feed-design.md §8).
     return FindUniqueInSteamclient(kDepotKeyFnPattern, "depot key KeyValues accessor");
 }
 

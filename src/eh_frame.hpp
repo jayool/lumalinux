@@ -19,7 +19,7 @@
 // The binary already knows the answer. Every function compiled with unwind tables
 // has an FDE, and `.eh_frame_hdr` carries a binary-search table of their start
 // addresses, sorted. So instead of guessing the boundary from code shape, look it
-// up. Measured on build bc54101b29 (tools/experiment_eh_frame.py):
+// up. Measured on build bc54101b29 (luma-lab: tools/experiment_eh_frame.py):
 //
 //   version 1; encodings pcrel|sdata4 / udata4 / datarel|sdata4 (all fixed-size)
 //   133 049 functions, sorted, 1 MB table

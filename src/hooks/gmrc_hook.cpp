@@ -19,7 +19,7 @@ namespace {
 #ifdef LUMA_X86_64
 // steamrt64 client (SysV x86-64): the manifest id travels in ONE register (rcx),
 // so the function has six parameters: rdi=this, esi=app, edx=depot,
-// rcx=manifest, r8=branch, r9=out_code (docs/steam-rt3-x64.md §1.2).
+// rcx=manifest, r8=branch, r9=out_code (luma-lab: docs/steam-rt3-x64.md §1.2).
 using GmrcFn = int32_t (*)(void*, uint32_t, uint32_t, uint64_t, char*, uint64_t*);
 GmrcFn g_origFn = nullptr;
 

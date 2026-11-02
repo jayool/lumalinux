@@ -11,7 +11,7 @@
 // published RVA for THIS steamclient.so build (keyed by its SHA-256) and
 // translating it via VaddrXlate — or 0 to fall back to the byte pattern. Because
 // the RVA is a precomputed offset, it is robust to a recompile that shifts the
-// prologue (which breaks byte patterns). See docs/design/rva-feed-design.md.
+// prologue (which breaks byte patterns). See luma-lab: docs/design/rva-feed-design.md.
 //
 // The feed is fetched from the repo (hardcoded URL) with a disk cache, mirroring
 // update.cpp. A build with no feed file — or a hook not listed in it — resolves
