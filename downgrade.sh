@@ -7,7 +7,7 @@
 # SLSsteam/CloudRedirect/netsock/lumalinux — that is setup.sh's job.
 #
 # MECHANISM — what headcrab's dgsc/dlm era did, measured on a Deck on 2026-10-14
-# (docs/nosotros.md §5.2 F1), self-contained:
+# (luma-lab: docs/nosotros.md §5.2 F1), self-contained:
 #   1. fetch the target client manifest (Deadboy666/SteamTracking@headcrab) and
 #      download every package it lists from Valve's CDN (which keeps old client
 #      packages online) into a temp dir — BEFORE touching Steam, so a network

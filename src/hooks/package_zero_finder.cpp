@@ -43,12 +43,12 @@ namespace {
 // again.
 //
 //   stable  0xc58/0xc6c  verified by hand on 7c4ac73e and db0d79c2, and by
-//                        tools/experiment_cache_idiom.py on bc54101b (2 sites,
+//                        luma-lab: tools/experiment_cache_idiom.py on bc54101b (2 sites,
 //                        both disp32=0x3b7d4).
 //   beta    0xf90/0xfa4  9cf4720f (1790036264, 2026-09-22): Valve added an
 //                        0x338-byte member ahead of the trees; EVERY field of
 //                        the object moved by exactly 0x338 (26 fields matched
-//                        one-to-one with tools/experiment_cache_idiom_free.py,
+//                        one-to-one with luma-lab: tools/experiment_cache_idiom_free.py,
 //                        same site counts, same RBTree signature). 2 sites,
 //                        both disp32=0x3c7b0, same registers as on stable.
 //
@@ -56,9 +56,9 @@ namespace {
 // `lea r,[r+r*2]`, i.e. 0x18-byte nodes) is present on both builds, and
 // FindPackage0 cross-checks the object it reaches before anything is written.
 //
-// MIRRORED in tools/check_patterns.py (CACHE_LAYOUTS), tools/derive_patterns.py
-// and tools/experiment_cache_idiom.py — the four must change together
-// (tools/test_cache_idiom.py pins them).
+// MIRRORED in luma-lab: tools/check_patterns.py (CACHE_LAYOUTS), luma-lab: tools/derive_patterns.py
+// and luma-lab: tools/experiment_cache_idiom.py — the four must change together
+// (luma-lab: tools/test_cache_idiom.py pins them).
 struct CacheLayout {
     const char* name;
     std::size_t rootIdxOff;
@@ -73,7 +73,7 @@ constexpr std::size_t kNodeLeftOff     = 0x00;
 constexpr std::size_t kNodeRightOff    = 0x04;
 constexpr std::size_t kNodePkgIdOff    = 0x10;
 #ifdef LUMA_X86_64
-// steamrt64 client (CPackageInfoCache::GetPackage on 947e5a19…, docs/steam-rt3-x64.md
+// steamrt64 client (CPackageInfoCache::GetPackage on 947e5a19…, luma-lab: docs/steam-rt3-x64.md
 // §1.2): `shl rax,5` → 0x20-byte nodes, PackageInfo* at +0x18 (8-byte pointer).
 // Root index / node array offsets (0x14b0 / 0x14c8 there) come from the feed.
 constexpr std::size_t kNodePkgInfoOff  = 0x18;
@@ -215,7 +215,7 @@ uintptr_t DeriveGotBase(ScRange rx) {
     // the prologue changed. They are compared as "any value, high bytes still
     // 00 00" (a frame under 64 KB) instead of a literal, so a locals-only
     // change no longer takes the GOT derivation down. Measured with
-    // tools/experiment_cache_idiom_free.py (pass 4): with the wildcard the
+    // luma-lab: tools/experiment_cache_idiom_free.py (pass 4): with the wildcard the
     // tail still hits exactly ONE site on both builds — and even if a second
     // PIC prologue of this shape ever appears, the consensus rule below only
     // fails when the derived GOTs DISAGREE.
@@ -327,7 +327,7 @@ uintptr_t DeriveGotBase(ScRange rx) {
 //     lea eax,[eax+0x3b7d4]  @ rva 0x18964e5
 // so pinning it would have discarded a good site.
 //
-// Measured on bc54101b29 with tools/experiment_cache_idiom.py: 2 sites, both
+// Measured on bc54101b29 with luma-lab: tools/experiment_cache_idiom.py: 2 sites, both
 // chained, both disp32=0x3b7d4, both resolving to 0x2f85b20 in .bss. This build
 // is UNIQUE, so the change is a no-op on it — it closes the hole for a future
 // build, it does not fix a live failure.

@@ -104,7 +104,7 @@ bool Install() {
     // else (2026-09-22) the string anchor: the function is the ONE place that
     // loads "shadercachedepot" (the PICS key it reads), so it is found wherever a
     // rebuild put it — same locator GMRC has used since 2026-09-07, same string
-    // CI derives the pattern from (tools/derive_bytext.py). Runs only when the
+    // CI derives the pattern from (luma-lab: tools/derive_bytext.py). Runs only when the
     // two cheap resolvers came up empty.
     const char* method = "rva";
     uintptr_t target = RvaFeed::Resolve("ShaderDepot");

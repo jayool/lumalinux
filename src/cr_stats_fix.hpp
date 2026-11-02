@@ -17,7 +17,7 @@
 // game is stuck at zero forever. Field data (Deck, 2026-09-18/20): five launches
 // of one game, all answered `crc-only no-op (2 bytes)`, zero achievements; four
 // of five managed games in that state; the one that worked had been played with
-// the sync off first. See docs/cloudredirect.md.
+// the sync off first. See luma-lab: docs/cloudredirect.md.
 //
 // CloudRedirect's own code has the right branch: when the handler's body is
 // EMPTY, `TryHandleGetUserStats` returns false and the request goes on to

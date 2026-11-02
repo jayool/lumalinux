@@ -14,7 +14,7 @@
 
 // Runtime half of the string-xref locator: source the executable span and the
 // anchor string from /proc/self/maps (LOADED memory), then delegate the byte
-// scanning to GmrcXrefCore (shared with tools/gmrc_xref_selftest.cpp). GMRC's
+// scanning to GmrcXrefCore (shared with luma-lab: tools/gmrc_xref_selftest.cpp). GMRC's
 // job name is the original anchor; since 2026-09-22 the same steps serve any
 // string a hook can anchor on (FindFunctionByString).
 namespace {
@@ -96,7 +96,7 @@ uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool wal
 #ifdef LUMA_X86_64
     // steamrt64 client: the string is loaded `lea r64,[rip+disp32]`; no GOT and
     // no PIC prologue to walk back to, so the function entry comes from
-    // .eh_frame_hdr or not at all (docs/steam-rt3-x64.md §1.3).
+    // .eh_frame_hdr or not at all (luma-lab: docs/steam-rt3-x64.md §1.3).
     (void)walkBack;
     const uintptr_t site = GmrcXrefCore::ScanRipLeaUnique(rx, s);
     if (!site) {
@@ -135,7 +135,7 @@ uintptr_t Locate(const char* needle, std::size_t nlen, const char* tag, bool wal
     // the entry containing `site` is a binary search away — exact, ~17 comparisons
     // instead of a backward scan of up to 32 KB, and it REJECTS an address that is
     // in no function rather than returning the nearest thing that looks like one.
-    // Measured viable on build bc54101b29 (tools/experiment_eh_frame.py).
+    // Measured viable on build bc54101b29 (luma-lab: tools/experiment_eh_frame.py).
     uintptr_t ehStart = 0, ehEnd = 0;
     if (EhFrame::FindFunction(site, rx.addr + rx.size, ehStart, ehEnd)) {
         if (walkBack) {
@@ -192,7 +192,7 @@ GmrcXrefCore::Region SteamclientExecRegion() { return GetExecRegion(); }
 uintptr_t FindGmrcFunction() {
     // The bare job name, as before 2026-09-22: the string is unique in the
     // module either way, and keeping the exact needle keeps this path's
-    // behaviour byte-for-byte (verified by tools/gmrc_xref_selftest.cpp).
+    // behaviour byte-for-byte (verified by luma-lab: tools/gmrc_xref_selftest.cpp).
     return Locate(kJobName, std::strlen(kJobName), "GMRC xref", /*walkBack=*/true);
 }
 

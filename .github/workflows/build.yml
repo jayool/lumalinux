@@ -105,9 +105,7 @@ jobs:
             example/keys.txt
             README.md
             tools/steamidra_lite.py
-            tools/derive_patterns.py
             tools/vdf_inject_keys.py
-            tools/ghidra_find_gmrc.py
 
       - name: Create release on tag
         if: startsWith(github.ref, 'refs/tags/v')

@@ -42,7 +42,7 @@ void Uninstall();
 
 constexpr std::size_t kOffPackageId = 0x00;
 #ifdef LUMA_X86_64
-// steamrt64 client (measured on 947e5a19…, docs/steam-rt3-x64.md §1.2): the two
+// steamrt64 client (measured on 947e5a19…, luma-lab: docs/steam-rt3-x64.md §1.2): the two
 // pointers after the SHA-1 are 8 bytes each, so AppIdVec starts at +0x40
 // (CUtlVector<uint32_t> is 24 bytes there: m_pMemory +0, alloc +8, grow +0xc,
 // m_Size +0x10); DepotIdVec at +0x58.
@@ -71,7 +71,7 @@ inline CUtlVector<uint32_t>* DepotIdVec(void* pInfo) {
 // depots). Until 2026-10-31 they went into AppIdVec, measured since v0.8 to
 // pass the 32-bit client's per-depot licence filter where the app id alone did
 // not. The 64-bit client rebuilds its licence table only from CUser::RunFrame's
-// check (docs/steam-rt3-x64.md §1.3), and that check refuses while any id in
+// check (luma-lab: docs/steam-rt3-x64.md §1.3), and that check refuses while any id in
 // AppIdVec has no settled appinfo record: a depot id never gets one (gdb on
 // ed794dda: one check, the depot id unsettled, no rebuild, "0 target"). In
 // DepotIdVec there is no record to settle: with the depots there the check

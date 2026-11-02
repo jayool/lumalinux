@@ -4,7 +4,7 @@
 
 // Pure, address-space-agnostic scanners for the GMRC job-name xref locator.
 // Shared by the runtime locator (src/gmrc_xref.cpp, operating on LOADED memory
-// via /proc/self/maps) and the offline self-test (tools/gmrc_xref_selftest.cpp,
+// via /proc/self/maps) and the offline self-test (luma-lab: tools/gmrc_xref_selftest.cpp,
 // operating on the mmap'd file via ELF program headers). Both feed Regions whose
 // `addr` is the address-space value of `p[0]` (loaded address at runtime, file
 // vaddr offline); every returned/accepted address is in that same space, so the
@@ -185,7 +185,7 @@ inline uintptr_t WalkBackToPrologue(Region rx, uintptr_t site,
 // Turning the site into the function ENTRY is the caller's step 4 — at runtime
 // .eh_frame_hdr (exact), offline whatever the tool has. Nothing here depends on
 // the string being GMRC's: the same three steps locate "shadercachedepot" and
-// "BuildDepotDependency" (tools/derive_bytext.py is the Python mirror).
+// "BuildDepotDependency" (luma-lab: tools/derive_bytext.py is the Python mirror).
 inline uintptr_t FindUniqueLeaForString(Region rx, uintptr_t strAddr,
                                         uintptr_t* outGot = nullptr) {
     const uintptr_t got = DeriveGotBaseConsensus(rx);

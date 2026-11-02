@@ -17,7 +17,7 @@
 // single in-function reference} moves on a mere recompile, so the getter is
 // found wherever the rebuild put it.
 //
-// Derivation (i386 PIC, mirrors tools/verify_gmrc_anchor.py, which is ground-
+// Derivation (i386 PIC, mirrors luma-lab: tools/verify_gmrc_anchor.py, which is ground-
 // truth-validated against a real steamclient.so: xref entry == byte-pattern
 // entry on build 1c168d2f):
 //   1. find the job-name string in steamclient.so's readable mappings  -> S
@@ -54,11 +54,11 @@
 //
 // MEASURED 2026-09-07 — the name-derived resolver is NOT an option here, so
 // this walk-back cannot simply be replaced. Rtti::ResolveVtableSlotByName gave
-// DepotKey a resolver that reads no prologue at all (docs/slssteam-plugins.md
+// DepotKey a resolver that reads no prologue at all (luma-lab: docs/slssteam-plugins.md
 // §4.4 P3); the obvious follow-up was to do the same for GMRC and
 // retire step 4. It does not apply: "GetManifestRequestCode" exists exactly once
 // in build bc54101b29 and NONE of the 52 `*IClient…Map` interface-map vtables has
-// a slot referencing it (swept with tools/experiment_ifacemap_slot.py over every
+// a slot referencing it (swept with luma-lab: tools/experiment_ifacemap_slot.py over every
 // map class; control run with GetBinary/21IClientConfigStoreMap hit slots 6 and 7
 // as expected, so the sweep was sound). The getter is not an interface method —
 // that lone string is the IPC job name this locator already anchors on. So GMRC

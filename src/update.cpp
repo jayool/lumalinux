@@ -88,7 +88,7 @@ std::map<uint64_t, std::unordered_set<std::string>> Updater::clientHashMap = std
 // find() would match the word inside that very header. So: the key, anchored to
 // column 0. Accepts both layouts, ours and upstream's.
 //
-// Measured against yaml-cpp rather than assumed (tools/test_update_feed_guard.cpp):
+// Measured against yaml-cpp rather than assumed (luma-lab: tools/test_update_feed_guard.cpp):
 // an empty body and an API error JSON both parse WITHOUT throwing, leave
 // clientHashMap empty, and reach saveToCache() — overwriting a good cache with
 // garbage. HTML and plain text throw instead, so they never cached, but they

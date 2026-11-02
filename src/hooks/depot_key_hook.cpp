@@ -43,7 +43,7 @@ LoadDepotKeyFn g_origFn = nullptr;
 // addresses and not code bytes: `21IClientConfigStoreMap` is the interface-map
 // class whose virtuals each reference their own method name, and the slot found
 // there is applied to the concrete store. This is what `download.lua` does
-// (docs/slssteam-plugins.md §4.4 P3 and §5.2), verified on build bc54101b29:
+// (luma-lab: docs/slssteam-plugins.md §4.4 P3 and §5.2), verified on build bc54101b29:
 // "GetBinary" -> map slot 6 -> CConfigStore 0x11a4500, the byte pattern's answer.
 // NOTE there are TWO GetBinary overloads, in map slots 6 and 7, each with its own
 // string; slot 7 is a different function, so the bare name must take the lower.
@@ -114,7 +114,7 @@ bool Install() {
     // unique byte pattern → slot derived from the method name (RESEARCH §4,
     // issue #19). The RTTI-by-signature walk that used to come first is gone;
     // CI still runs it, as a constraint before it publishes the feed's RVA
-    // (docs/design/rva-feed-design.md §8).
+    // (luma-lab: docs/design/rva-feed-design.md §8).
     int derivedSlot = -1;
     uintptr_t target = 0;
     const char* method = "none";
@@ -123,7 +123,7 @@ bool Install() {
     // steamclient.so hash), and it is prologue-independent — it survives a
     // recompile that would break the byte pattern. The pattern and the name
     // resolver below are the fallback for builds the feed hasn't published yet.
-    // docs/design/rva-feed-design.md.
+    // luma-lab: docs/design/rva-feed-design.md.
     //
     // Each step runs ONLY if the previous came up empty. Resolution is a hot path
     // — it runs while Steam is starting — so a resolver that cannot change the

@@ -11,9 +11,9 @@
 // Pure, address-space-agnostic locator for CUser::NotifyLicensesUpdated — the
 // "Reconcile" function (src/license_reconcile.cpp). Shared by the runtime
 // rescue (src/reconcile_anchor.cpp, LOADED memory) and the offline self-test
-// (tools/reconcile_anchor_selftest.cpp, the mmap'd file). Port of
-// tools/derive_reconcile_byanchor.py, the CI locator that derives the byte
-// pattern; the two must keep giving the same answer (tools/test_reconcile_anchor.py
+// (luma-lab: tools/reconcile_anchor_selftest.cpp, the mmap'd file). Port of
+// luma-lab: tools/derive_reconcile_byanchor.py, the CI locator that derives the byte
+// pattern; the two must keep giving the same answer (luma-lab: tools/test_reconcile_anchor.py
 // runs both on the same synthetic bytes).
 //
 // Why an anchor at all: the function has no string, no RTTI reference and no
@@ -24,7 +24,7 @@
 // layout numbers — the member offset the function reads, its frame size — are
 // exactly what moved between bc54101b and 9cf4720f and are NOT criteria.)
 //
-// Criteria, measured on both builds (tools/experiment_reconcile_xref.py):
+// Criteria, measured on both builds (luma-lab: tools/experiment_reconcile_xref.py):
 //   c1  a `push 0x7d ; push eax ; call rel32` site  (6A 7D 50 E8)
 //       — 11 functions per build post that callback; c1 names candidates only
 //   c2  the function's head reads a field of `this` first:
@@ -97,7 +97,7 @@ inline std::size_t FindCallbackPostSites(Region rx, uintptr_t* out, std::size_t 
 // function containing `site` and returns true, or false if unknown. The head
 // inspected for c2/c3 is bounded by `end`, not just by kHeadBytes: a small
 // function's 96-byte window would otherwise run into its NEIGHBOUR and borrow
-// its this-read (reproduced with a gcc -m32 object, tools/reconcile_anchor_selftest.cpp).
+// its this-read (reproduced with a gcc -m32 object, luma-lab: tools/reconcile_anchor_selftest.cpp).
 // Returns the ONE function passing c1+c2+c3, else 0.
 template <class FnOf>
 inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = nullptr) {
@@ -141,7 +141,7 @@ inline uintptr_t LocateNotifyLicensesUpdated(Region rx, FnOf fnOf, Info* info = 
 
 // ── x86-64 ───────────────────────────────────────────────────────────────────
 // Same three criteria on the steamrt64 client (measured on 947e5a19…,
-// docs/steam-rt3-x64.md §1.3), in SysV shape:
+// luma-lab: docs/steam-rt3-x64.md §1.3), in SysV shape:
 //   c1  posts callback 125:        BE 7D 00 00 00 (mov esi,0x7d) with a CALL
 //       (E8) within the next kCallWindow64 bytes — 55 functions per build
 //   c2  reads a field of `this`:   [44] 8B modrm(mod=10, rm=rdi) disp32, i.e.

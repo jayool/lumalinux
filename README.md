@@ -117,7 +117,7 @@ game you configured locally:
   Steam's per-depot licence filter so content depots aren't dropped
 
 Per-hook signatures and the finder internals are in
-[`docs/RESEARCH.md`](docs/RESEARCH.md) (§4, §13).
+`luma-lab: luma-lab: docs/RESEARCH.md` (§4, §13).
 
 ### Alongside SLSsteam
 
@@ -129,7 +129,7 @@ ones (opt-out via env var):
 
 | Patch | What it does | Off with |
 |---|---|---|
-| **native achievements** (`sls_achievement_unblock`) | Scopes SLSsteam's native-achievement schema borrow to `isSubscribed && !isAddedAppId`, so LumaDeck games earn native Steam achievements while genuinely-owned games stay untouched ([RESEARCH §17](docs/RESEARCH.md)). | `LUMA_NO_SLS_ACH_UNBLOCK=1` |
+| **native achievements** (`sls_achievement_unblock`) | Scopes SLSsteam's native-achievement schema borrow to `isSubscribed && !isAddedAppId`, so LumaDeck games earn native Steam achievements while genuinely-owned games stay untouched (`luma-lab: luma-lab: docs/RESEARCH.md` §17). | `LUMA_NO_SLS_ACH_UNBLOCK=1` |
 
 ### Alongside CloudRedirect
 
@@ -142,13 +142,13 @@ interposition, no byte of CloudRedirect patched). CloudRedirect 2.6.6 fixed the 
 upstream and hides that symbol, so on current installs the fix logs
 `CR-stats: … patch not needed` and does nothing (`CrStatsFix: disabled` in
 `status.json`). Off with `LUMA_NO_CR_STATS_FIX=1`; details in
-[docs/cloudredirect.md](docs/cloudredirect.md) §4.4 C2.
+`luma-lab: luma-lab: docs/cloudredirect.md` §4.4 C2.
 
 > The old **update-unblock** (`sls_update_unblock`) patch was **removed in v0.16.18**:
 > SLSsteam reverted its update-block mechanism on `20260714131044`, so the
 > instruction it anchored on no longer exists. The countermeasure now lives in
 > LumaDeck, which writes `DisableUpdates: no` into SLSsteam's `config.yaml`. See
-> [slssteam.md §2.5](docs/slssteam.md).
+> [slssteam.md §2.5](luma-lab: docs/slssteam.md).
 
 ## Usage
 
@@ -206,7 +206,7 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
 ### Something's wrong
 
 Almost always a Steam client or SLSsteam update. The log tells the cases apart, and
-[`docs/maintenance.md`](docs/maintenance.md) has the fix per case:
+`luma-lab: luma-lab: docs/maintenance.md` has the fix per case:
 
 - **No startup toast at all**: the wrapper isn't being reached (coverage lost — e.g.
   a Steam update regenerated a `.desktop`, or the Game Mode `steam-launcher.service`
@@ -254,41 +254,22 @@ is reached by patched `*steam*.desktop` files (Desktop), a PATH drop-in (termina
 and a systemd drop-in on `steam-launcher.service` (Game Mode) — never by editing
 `steam.sh` or `/usr/bin/steam` — so those stay vanilla and coverage survives Steam
 self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and namespace detail in
-[RESEARCH §5](docs/RESEARCH.md).
+`luma-lab: luma-lab: docs/RESEARCH.md` §5.
 
 ### Related docs
 
-- [`docs/nosotros.md`](docs/nosotros.md): the whole stack (lumalinux + LumaDeck +
-  how SLSsteam is configured) read from the code, function by function, with
-  every dated measurement; replaces the old `method.md` and `owned-games-guide.md`
-- [`docs/ecosystem-matrix.md`](docs/ecosystem-matrix.md): the twelve functions
-  of the ecosystem, program by program, against ours
-- [`docs/slssteam.md`](docs/slssteam.md): SLSsteam itself, read from its code
-  function by function (hooks, config keys, what it does and does not do), with
-  every dated measurement of the old `slssteam-analysis.md`
-- [`docs/slsteam-moon.md`](docs/slsteam-moon.md): the slsteam-moon fork, read from
-  its code function by function against upstream, with every dated measurement
-  and every portability verdict of the old `slsteam-moon-findings.md`
-- [`docs/steamidra.md`](docs/steamidra.md): SteaMidra (the `drappula/SFF` fork), read from
-  the code: what it installs on Linux (headcrab, `steam.sh`, `steam-jupiter`,
-  SLSsteam's `config.yaml`), its key/manifest chain and what it leaves behind.
 - [`docs/manual-install.md`](docs/manual-install.md): driving `steamidra_lite` by
-  hand, every step, flag, and `keys.txt` format
-- [`docs/RESEARCH.md`](docs/RESEARCH.md): lumalinux internals at
-  reverse-engineering depth. Part I (§1-§10) is how it works today: each hook,
-  its signature and how it is located, Steam's install flow, loading, the RVA
-  feed and the re-derivation workflow. Part II (§11-§21) is the dated log of how
-  each piece was found and what broke. It opens with an index by topic; for the
-  whole stack read [`docs/nosotros.md`](docs/nosotros.md) (Spanish)
-- [`docs/cloudredirect.md`](docs/cloudredirect.md): what CloudRedirect does and
-  what it means for us; the `LD_PRELOAD` ordering is in `docs/nosotros.md` §2.1
-- [`docs/maintenance.md`](docs/maintenance.md): fixing things after a Steam client
-  or SteamOS update
+  hand, every step, flag, and `keys.txt` format.
+- Everything else (the research notes, the per-program analyses, the
+  maintenance guide, the derivation tools and the Steam-in-CI workflows) lives
+  in the private workshop **luma-lab** and is referenced from the source as
+  `luma-lab: docs/...` / `luma-lab: tools/...`. The derived data this repo
+  ships (`res/rvas/*.yaml`, `res/updates.yaml`) is published from there.
 
 ## Credits / notes
 
 - Hook design references **LumaCore** (Windows), reimplemented for Linux — see
-  [`docs/lumacore.md`](docs/lumacore.md) for LumaCore read from its code
+  `luma-lab: luma-lab: docs/lumacore.md` for LumaCore read from its code
   (shared seams, coexistence boundaries, and where each side leads).
 - Runs alongside **SLSsteam** (ownership / licensing layer); **never forks it**.
   Beyond coexisting, it applies one surgical, reversible in-memory patch to
@@ -307,7 +288,7 @@ self-updates (a guardian re-affirms the `.desktop` coverage). Exact anchor and n
   clause applies to the combined binary; in practice inert for lumalinux because it
   is not a network service.
 - Coexists with **CloudRedirect** (cloud-save RPC layer); see
-  [`docs/cloudredirect.md`](docs/cloudredirect.md) and `docs/nosotros.md` §2.1 for
+  `luma-lab: luma-lab: docs/cloudredirect.md` and `docs/nosotros.md` §2.1 for
   the `LD_PRELOAD` ordering.
 - Manifest request codes come from the provider cascade described in
   [What it does](#what-it-does) (`20770407.xyz`, `manifest.manifestdex.com`,
