@@ -6,7 +6,7 @@
 # injects it via a WRAPPER reached from the Steam launchers — never by patching
 # steam.sh. steam.sh is SHA-verified and re-extracted by Steam whenever its size
 # differs from the manifest, so a block there does not survive Steam self-updates
-# (see docs/slsteam-moon.md §5.2 M22, docs/nosotros.md §2.1).
+# (see luma-lab: docs/slsteam-moon.md §5.2 M22, luma-lab: docs/nosotros.md §2.1).
 #
 # What it does:
 #   1. Fetches SLSsteam.so + library-inject.so (AceSLS/SLSsteam release, .7z),
@@ -100,7 +100,7 @@ SLS32_TAG="20261014151919"
 SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # CloudRedirect's upstream is crghofficial/cloudredirect: same 2.6.6, no code
-# since 2026-10-03, 32-bit only (docs/cloudredirect.md §0). We do not follow it;
+# since 2026-10-03, 32-bit only (luma-lab: docs/cloudredirect.md §0). We do not follow it;
 # we ship the last Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
 # archived off a Deck (sha256-pinned below; it still hooks the 2026-10-14 client,
 # measured on the Deck) and the sign-in app as a single .flatpak bundle built from
@@ -108,7 +108,7 @@ SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # madoiscool/CloudRedirect; it embeds that same .so and cloud_redirect_cli — see
 # deploy_cloudredirect_cli). Both are assets of the v0.22.3 release and both are
 # on the `cr-archive` branch (vendor/cloudredirect/, never merged). See
-# docs/maintenance.md.
+# luma-lab: docs/maintenance.md.
 CR_SO_URL="${CLOUDREDIRECT_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloud_redirect-2.6.6%2B3434d9d.so}"
 CR_SO_SHA256="86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
@@ -612,7 +612,7 @@ record_slssteam_version() {
 # saves — the caller says which. DisableCloud stays `no` either way: SLSsteam only
 # applies it to apps it does not see as owned, and the package-0 injection makes
 # ours owned, so flipping it would change nothing for our games
-# (docs/slssteam.md §2.8).
+# (luma-lab: docs/slssteam.md §2.8).
 fetch_cloudredirect_so() {
     local tmp="${TMP_DIR}/cloud_redirect.so" sum
     if ! curl -fL --progress-bar -o "$tmp" "$CR_SO_URL"; then
