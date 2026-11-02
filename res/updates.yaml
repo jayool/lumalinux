@@ -77,12 +77,10 @@ SafeModeHashes:
     # caps: shader=ok reconcile=ok gmrc=ok
     # auto-added by watch-steam.yml 2026-11-02: patterns verified by CI
     # (Steam client version 1792618285). Live-install test on a Deck still recommended.
-    - c770a8b13872fed128dd357eabc1d715260fadd9b16c627ae3395406e6ea37d4
     # steam_version: 1792108788
     # caps: shader=ok reconcile=ok gmrc=ok
     # auto-added by watch-steam.yml 2026-11-02: patterns verified by CI
     # (Steam client version 1792108788). Live-install test on a Deck still recommended.
-    - 6a8aa9f194fa644bc55894a17514207aead6f9ed8d360b0cbbfae5a40ada904c
     # steam_version: 1793235415
     # caps: shader=ok reconcile=ok gmrc=ok
     # arch: steamrt64
