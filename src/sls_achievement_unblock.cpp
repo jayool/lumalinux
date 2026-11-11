@@ -36,9 +36,13 @@ constexpr const char* kGConfig        = "g_config";
 constexpr const char* kGetUserStats   = "_ZN12Achievements23sendAndRecvGetUserStatsE";
 constexpr const char* kGetPlayerStats = "_ZN12Achievements25sendAndRecvGetPlayerStatsE";
 
-// Resolved-at-init pointers the replacement guard calls. SLSsteam is x86-32 GCC:
-// non-static methods are cdecl with `this` as an explicit first stack arg, so a
-// plain cdecl free function pointer matches the ABI exactly.
+// Resolved-at-init pointers the replacement guard calls. On the 32-bit build
+// SLSsteam is x86-32 GCC: non-static methods are cdecl with `this` as an
+// explicit first stack arg, so a plain cdecl free function pointer matches the
+// ABI exactly. On the x86_64 build (the steamrt64 client, SLSsteam from
+// dev-multiarch) methods follow the SysV ABI: `this` in rdi, appid in esi,
+// result in al — which is exactly how a free `(void*, uint32_t)` function is
+// called, so the same declarations hold on both.
 using IsSubFn   = uint8_t (*)(void* cuser, uint32_t appid);   // CUser::isSubscribed
 using IsAddedFn = uint8_t (*)(void* cconfig, uint32_t appid); // CConfig::isAddedAppId
 IsSubFn   g_isSubscribed = nullptr;
@@ -116,23 +120,39 @@ bool FindSo(SoInfo& out) {
 struct Sym  { uintptr_t value = 0; uint32_t size = 0; bool found = false; };
 struct Want { const char* pat; bool prefix; };  // prefix (funcs) vs exact (g_config)
 
+// The ELF class this build patches: the SLSsteam.so loaded next to us has the
+// class of the client, which is the class of this library (the loader refuses
+// the other one). The 64-bit SLSsteam (dev-multiarch, built by luma-lab's
+// workflow for the smoke) ships the same five symbols under the same names.
+#if defined(__x86_64__)
+using ElfN_Ehdr = Elf64_Ehdr;
+using ElfN_Shdr = Elf64_Shdr;
+using ElfN_Sym  = Elf64_Sym;
+constexpr unsigned char kElfClass = ELFCLASS64;
+#else
+using ElfN_Ehdr = Elf32_Ehdr;
+using ElfN_Shdr = Elf32_Shdr;
+using ElfN_Sym  = Elf32_Sym;
+constexpr unsigned char kElfClass = ELFCLASS32;
+#endif
+
 // Scan ONE symbol table (.symtab or .dynsym) for each still-unresolved Want.
 // A prefix Want matches any symbol starting with its pattern, EXCEPT names that
 // carry a '.' (the LTO `.cold` / `.lto_priv` split-offs, which share the prefix
 // but aren't the real entry point). An exact Want matches the full name. A
 // defined, non-zero-sized hit wins and is never downgraded to a size-0 one (the
 // size bounds the later guard scan).
-void ScanSymTable(const std::vector<uint8_t>& buf, const Elf32_Shdr& tab,
-                  const Elf32_Shdr& str, const std::vector<Want>& want,
+void ScanSymTable(const std::vector<uint8_t>& buf, const ElfN_Shdr& tab,
+                  const ElfN_Shdr& str, const std::vector<Want>& want,
                   std::vector<Sym>& out) {
-    if (tab.sh_entsize < sizeof(Elf32_Sym)) return;
+    if (tab.sh_entsize < sizeof(ElfN_Sym)) return;
     if ((size_t)tab.sh_offset + tab.sh_size > buf.size()) return;
     if ((size_t)str.sh_offset + str.sh_size > buf.size()) return;
     const char*  strs = reinterpret_cast<const char*>(buf.data() + str.sh_offset);
     const size_t nstr = str.sh_size;
     const size_t nsym = tab.sh_size / tab.sh_entsize;
     for (size_t s = 0; s < nsym; ++s) {
-        const auto* sym = reinterpret_cast<const Elf32_Sym*>(
+        const auto* sym = reinterpret_cast<const ElfN_Sym*>(
             buf.data() + tab.sh_offset + s * tab.sh_entsize);
         if (sym->st_shndx == SHN_UNDEF) continue;  // undefined import: no address
         if (sym->st_name >= nstr) continue;
@@ -149,14 +169,14 @@ void ScanSymTable(const std::vector<uint8_t>& buf, const Elf32_Shdr& tab,
             }
             if (!hit) continue;
             if (out[k].found && !sym->st_size) continue;  // don't downgrade to size-0
-            out[k].value = sym->st_value;
-            out[k].size  = sym->st_size;
+            out[k].value = static_cast<uintptr_t>(sym->st_value);
+            out[k].size  = static_cast<uint32_t>(sym->st_size);
             out[k].found = true;
         }
     }
 }
 
-// Resolve every Want from the on-disk ELF32, scanning .symtab first (it carries
+// Resolve every Want from the on-disk ELF (the class of this build), scanning .symtab first (it carries
 // symbol sizes, needed to bound the guard scan) then .dynsym as a fallback for a
 // build that strips .symtab but keeps the dynamic table. Fail-closed: returns
 // false unless ALL Wants are found.
@@ -166,16 +186,16 @@ bool ResolveSymbols(const std::string& path, const std::vector<Want>& want,
     if (!f) return false;
     std::vector<uint8_t> buf((std::istreambuf_iterator<char>(f)),
                              std::istreambuf_iterator<char>());
-    if (buf.size() < sizeof(Elf32_Ehdr)) return false;
+    if (buf.size() < sizeof(ElfN_Ehdr)) return false;
 
-    const auto* eh = reinterpret_cast<const Elf32_Ehdr*>(buf.data());
+    const auto* eh = reinterpret_cast<const ElfN_Ehdr*>(buf.data());
     if (std::memcmp(eh->e_ident, ELFMAG, SELFMAG) != 0) return false;
-    if (eh->e_ident[EI_CLASS] != ELFCLASS32) return false;
-    if (eh->e_shentsize < sizeof(Elf32_Shdr) || eh->e_shoff == 0) return false;
+    if (eh->e_ident[EI_CLASS] != kElfClass) return false;
+    if (eh->e_shentsize < sizeof(ElfN_Shdr) || eh->e_shoff == 0) return false;
     if ((size_t)eh->e_shoff + (size_t)eh->e_shnum * eh->e_shentsize > buf.size())
         return false;
 
-    const auto* shs = reinterpret_cast<const Elf32_Shdr*>(buf.data() + eh->e_shoff);
+    const auto* shs = reinterpret_cast<const ElfN_Shdr*>(buf.data() + eh->e_shoff);
     out.assign(want.size(), Sym{});
 
     for (uint32_t kind : { (uint32_t)SHT_SYMTAB, (uint32_t)SHT_DYNSYM }) {
@@ -190,17 +210,33 @@ bool ResolveSymbols(const std::string& path, const std::vector<Want>& want,
 }
 
 // Within [fn, fn+size) find the single isSubscribed guard and return the address
-// of its `call` (E8), or 0 on zero/multiple matches (fail-safe). The guard is:
+// of its `call` (E8), or 0 on zero/multiple matches (fail-safe). The guard is,
+// on the 32-bit build (cdecl, the caller cleans the stack after the call):
 //   E8 rel32          call CUser::isSubscribed
 //   83 C4 imm8        add $imm,%esp   (cdecl caller cleanup — the byte I missed
 //                                      the first time; imm left wild so a build
 //                                      that cleans a different amount still hits)
 //   84 C0             test %al,%al
 //   75 rel8           jne <early return>
+// and on the x86_64 build (SysV: args in registers, nothing to clean):
+//   E8 rel32          call CUser::isSubscribed@plt
+//   84 C0             test %al,%al
+//   75 rel8           jne <early return>
+// (dev-multiarch@6ae6d18 built by luma-lab, 2026-11-11: exactly one match in
+// each of the two functions; both calls target the same PLT slot.)
 uintptr_t FindGuardCall(uintptr_t fn, uint32_t size) {
     const uint8_t* p = reinterpret_cast<const uint8_t*>(fn);
     uintptr_t hit = 0;
     int count = 0;
+#if defined(__x86_64__)
+    for (uint32_t i = 0; i + 9 <= size; ++i)
+        if (p[i] == 0xE8 &&
+            p[i + 5] == 0x84 && p[i + 6] == 0xC0 &&        // test %al,%al
+            p[i + 7] == 0x75) {                            // jne rel8
+            hit = fn + i;
+            ++count;
+        }
+#else
     for (uint32_t i = 0; i + 12 <= size; ++i)
         if (p[i] == 0xE8 &&
             p[i + 5] == 0x83 && p[i + 6] == 0xC4 &&        // add $imm8,%esp
@@ -209,6 +245,7 @@ uintptr_t FindGuardCall(uintptr_t fn, uint32_t size) {
             hit = fn + i;
             ++count;
         }
+#endif
     return count == 1 ? hit : 0;
 }
 
@@ -320,8 +357,11 @@ bool Apply() {
     g_isAddedAppId = reinterpret_cast<IsAddedFn>(so.base + syms[1].value);
     g_configPtr    = reinterpret_cast<void*>(so.base + syms[2].value);
 
-    // The rel32 cross-.so distance FITS on-device (~-23MB, well within +/-2GB),
-    // so the E8 rel32 repoint is sound. Kept as a one-line startup breadcrumb.
+    // The rel32 cross-.so distance FITS on-device on 32-bit (~-23MB, well within
+    // +/-2GB). On x86_64 both libraries are mmapped by ld.so in the same region
+    // (SLSsteam as the audit library, this one as the preload), so it is expected
+    // to fit too; if a layout ever puts them further apart the check below
+    // refuses and logs OVERFLOW rather than writing a truncated rel32.
     const long long distA = static_cast<long long>(combined) -
                             static_cast<long long>(guardA + 5);
     const long long distB = static_cast<long long>(combined) -
