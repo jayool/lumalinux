@@ -84,19 +84,21 @@ SLS_TAG=""
 # A 64-bit archive is never installed over the 32-bit file, whatever upstream
 # calls the asset.
 #
-# Upstream recompiled SLSsteam in 64-bit and dropped 32-bit support (release
-# notes of the first x86_64 build, 2026-10-22: "Recompile in 64 bit; dropped
-# 32 bit support"). So `latest` describes the 64-bit build from the day that
-# build is published, and the 32-bit client's SLSsteam is frozen at the last
-# 32-bit release, SLS32_TAG, the way CloudRedirect is frozen at 2.6.6: when
-# `latest` is not a 32-bit build, that tag is installed for the 32-bit client
-# (skipped when it is already in place). Bump SLS32_TAG only if upstream ever
-# publishes another 32-bit build; LumaDeck carries the same tag
-# (slssteam_version.LAST_32BIT_TAG) as the latest the 32-bit client is compared
-# against. SLSSTEAM32_URL overrides where the 32-bit archive comes from (a .7z
-# with a 32-bit bin/SLSsteam.so), SLSSTEAM64_URL where a 64-bit one comes from
-# (optional; what `latest` carries once upstream publishes the 64-bit build).
-SLS32_TAG="20261014151919"
+# Upstream is moving to 64-bit (branch dev-multiarch) and will at some point
+# publish `latest` as a 64-bit-only build; the 32-bit client then needs an
+# SLSsteam from an older release. SLS32_TAG is the newest 32-bit release we
+# know of, and it is a floor, not the truth: upstream kept publishing 32-bit
+# builds after we first pinned one (20261106120254 came out after
+# 20261014151919), so when `latest` is not a 32-bit build we install SLS32_TAG
+# for the 32-bit client only if what is installed is older than it, or not
+# 32-bit, or absent. Whatever newer 32-bit release `latest` installed earlier
+# stays. Bump SLS32_TAG when upstream publishes another 32-bit build; LumaDeck
+# carries the same tag (slssteam_version.LAST_32BIT_TAG) as the latest the
+# 32-bit client is compared against. SLSSTEAM32_URL overrides where the
+# 32-bit archive comes from (a .7z with a 32-bit bin/SLSsteam.so),
+# SLSSTEAM64_URL where a 64-bit one comes from (optional; what `latest`
+# carries once upstream publishes the 64-bit build).
+SLS32_TAG="20261106120254"
 SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # CloudRedirect's upstream is crghofficial/cloudredirect: same 2.6.6, no code
@@ -1208,8 +1210,10 @@ fi
 if [[ "$latest_class" != "1" ]]; then
     if [[ -n "$SLS32_7Z_URL" ]]; then
         install_slssteam_archive "$SLS32_7Z_URL" "" "32-bit, SLSSTEAM32_URL" 1 || true
-    elif [[ -s "${SLS_DIR}/SLSsteam.so" && "$(cat "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null)" == "$SLS32_TAG" ]]; then
-        ok "32-bit SLSsteam ${SLS32_TAG} already installed (the last 32-bit release)."
+    elif have32="$(cat "$SLS_CFG_DIR/.slssteam.version" 2>/dev/null)" \
+         && [[ "$have32" =~ ^[0-9]{14}$ && "$have32" -ge "$SLS32_TAG" \
+               && -s "${SLS_DIR}/SLSsteam.so" && "$(elf_class "${SLS_DIR}/SLSsteam.so")" == "1" ]]; then
+        ok "32-bit SLSsteam ${have32} already installed (not older than ${SLS32_TAG}); keeping it."
     else
         [[ "$latest_class" == "2" ]] && info "The latest SLSsteam release is 64-bit only: installing the last 32-bit release (${SLS32_TAG}) for the 32-bit client."
         if url32="$(slssteam_release_asset_url "$SLS32_TAG")"; then
