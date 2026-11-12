@@ -1050,11 +1050,16 @@ g_startup_crash() {
     _hit=""
     for _d in $(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name '*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null); do
         _n="$(basename "$_d")"
-        if grep -a -q -E ' r-xp ' "$_d" 2>/dev/null; then
-            if ! grep -a -q -E '/(ubuntu12_32|steamrt64)/steam$' "$_d" 2>/dev/null; then
+        # Only MAPS lines ("<from>-<to> <perms> <offset> <dev> <inode> <path>")
+        # decide: the dump also carries the environ, where LD_PRELOAD names our
+        # libraries whether or not the process ever mapped them (a 32-bit
+        # preload in a 64-bit process is named there and never loaded).
+        _maps='^[0-9a-f]+-[0-9a-f]+ [rwxps-]{4} [0-9a-f]+ [0-9a-f]+:[0-9a-f]+ [0-9]+ +'
+        if grep -a -q -E "$_maps" "$_d" 2>/dev/null; then
+            if ! grep -a -q -E "${_maps}/.*/(ubuntu12_32|steamrt64)/steam( \(deleted\))?\$" "$_d" 2>/dev/null; then
                 g_log "dump $_n in the startup window is not the Steam client's (maps) -> not counted"; continue
             fi
-            if ! grep -a -q -E '/(SLSsteam|liblumalinux[^/ ]*|cloud_redirect|netsock)\.so' "$_d" 2>/dev/null; then
+            if ! grep -a -q -E "${_maps}/.*/(SLSsteam|liblumalinux[^/ ]*|cloud_redirect|netsock)\.so( \(deleted\))?\$" "$_d" 2>/dev/null; then
                 g_log "dump $_n is the client's but none of our libraries was mapped -> not ours, not counted"; continue
             fi
             _hit="$_d"; break
