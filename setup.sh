@@ -1035,23 +1035,37 @@ g_startup_crash() {
     # assertion-failure crashes (and the time window already scopes this to dumps
     # created right after a launch), so a bad-inject crash-loop via an assertion is
     # caught too — otherwise the anti-brick fail-safe would miss it.
-    # ...but only a dump that names one of OUR libraries is our crash. A
-    # minidump carries its module list (paths, UTF-16 in Breakpad's format, so
-    # the NULs are dropped before matching). Steam, steamwebhelper or a game
-    # dumping within the window for their own reasons used to count: on the
-    # 2026-11-11 switch to the 64-bit client a user's guard latched on a dump
-    # that could not involve us (the 32-bit stack never maps into that
-    # client), and with "client changed -> first crash latches" that one dump
-    # paused the stack for good.
+    # ...but only a dump of the Steam CLIENT with one of OUR libraries mapped
+    # is our crash. Steam's crashhandler.so is Breakpad, whose Linux writer
+    # copies the crashed process's /proc/<pid>/maps, cmdline and environ into
+    # the dump as plain text (MD_LINUX_MAPS, MD_LINUX_CMD_LINE, MD_LINUX_ENVIRON):
+    # the maps say which process it was (its executable's mapping) and what it
+    # had mapped. Steam, steamwebhelper or a game dumping within the window for
+    # their own reasons used to count: on the 2026-11-11 switch to the 64-bit
+    # client a user's guard latched on one such dump while the 32-bit stack
+    # could not even map into that client, and with "client changed -> first
+    # crash latches" that one dump paused the stack for good. A dump without
+    # the maps text (not Breakpad's Linux layout) falls back to its UTF-16
+    # module names, NULs dropped.
     _hit=""
     for _d in $(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name '*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null); do
+        _n="$(basename "$_d")"
+        if grep -a -q -E ' r-xp ' "$_d" 2>/dev/null; then
+            if ! grep -a -q -E '/(ubuntu12_32|steamrt64)/steam$' "$_d" 2>/dev/null; then
+                g_log "dump $_n in the startup window is not the Steam client's (maps) -> not counted"; continue
+            fi
+            if ! grep -a -q -E '/(SLSsteam|liblumalinux[^/ ]*|cloud_redirect|netsock)\.so' "$_d" 2>/dev/null; then
+                g_log "dump $_n is the client's but none of our libraries was mapped -> not ours, not counted"; continue
+            fi
+            _hit="$_d"; break
+        fi
         if tr -d '\000' < "$_d" 2>/dev/null | grep -a -q -E 'SLSsteam\.so|liblumalinux|cloud_redirect\.so|netsock\.so'; then
             _hit="$_d"; break
         fi
-        g_log "dump $(basename "$_d") in the startup window names none of our libraries -> not ours, not counted"
+        g_log "dump $_n in the startup window names none of our libraries -> not ours, not counted"
     done
     rm -f "$_ref" 2>/dev/null
-    [ -n "$_hit" ] && g_log "dump $(basename "$_hit") names our libraries -> counted"
+    [ -n "$_hit" ] && g_log "dump $(basename "$_hit"): the client's, with our libraries mapped -> counted"
     [ -n "$_hit" ]
 }
 luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$STEAM_BIN" "$@"; }
