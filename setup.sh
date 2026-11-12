@@ -1248,10 +1248,17 @@ if [[ -n "$SLS64_7Z_URL" ]]; then
     install_slssteam_archive "$SLS64_7Z_URL" "" "64-bit, SLSSTEAM64_URL" 2 || true
 elif [[ "$latest_class" != "2" ]]; then
     # No 64-bit build from upstream yet: the pinned dev-multiarch build (see
-    # SLS64_FALLBACK_URL at the top). Recorded under a non-release name, which
-    # LumaDeck reads as "unknown" and never offers an update against.
+    # SLS64_FALLBACK_URL at the top). Recorded under the upstream release just
+    # checked and found 32-bit (or the last 32-bit one known when `latest` did
+    # not resolve): the record means "nothing newer than this release serves
+    # the 64-bit client", so LumaDeck, which compares the record with the
+    # latest release, offers nothing until upstream publishes a newer one.
+    # The next release, whatever its class, is then offered once; this run
+    # installs it where its class says and records it, and the offer ends.
+    # (A non-release name here made LumaDeck fall back to the VERSION inside
+    # the .so, 20261014151919, and offer the 32-bit release forever.)
     info "The latest SLSsteam release is 32-bit only: installing the ${SLS64_FALLBACK_REF} build for the 64-bit client."
-    install_slssteam_archive "$SLS64_FALLBACK_URL" "$SLS64_FALLBACK_REF" "64-bit, ${SLS64_FALLBACK_REF}" 2 "$SLS64_FALLBACK_SHA256" || true
+    install_slssteam_archive "$SLS64_FALLBACK_URL" "${SLS_TAG:-$SLS32_TAG}" "64-bit, ${SLS64_FALLBACK_REF}" 2 "$SLS64_FALLBACK_SHA256" || true
 fi
 [[ -s "${SLS_DIR}/SLSsteam.so" || -s "${SLS_DIR}/x86_64/SLSsteam.so" ]] \
     || die "No SLSsteam.so installed for either client."
