@@ -101,16 +101,6 @@ SLS_TAG=""
 SLS32_TAG="20261106120254"
 SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
-# Until upstream publishes a 64-bit release, the 64-bit client (steamrt64:
-# Valve's stable desktop and Deck client since 2026-11-11) gets a build of
-# upstream's dev-multiarch branch at commit 6ae6d18 (AGPL-3.0; the archive's
-# SOURCE.txt names the repository and the commit), carried as an asset of our
-# own release and pinned by hash. Installed only when `latest` is not a 64-bit
-# build and SLSSTEAM64_URL is not set, so the day upstream ships 64-bit the
-# release wins and this stops being used. Remove it then.
-SLS64_FALLBACK_URL="https://github.com/${REPO}/releases/download/v0.22.6/audit-x86_64.7z"
-SLS64_FALLBACK_SHA256="9ee52ac6a7664663d84f9bda03f77c1ec81df1a5ac0b524084f72c6f6e48ac57"
-SLS64_FALLBACK_REF="dev-multiarch-6ae6d18"
 # CloudRedirect's upstream is crghofficial/cloudredirect: same 2.6.6, no code
 # since 2026-10-03, 32-bit only (luma-lab: docs/cloudredirect.md §0). We do not follow it;
 # we ship the last Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
@@ -1266,7 +1256,7 @@ if resolve_slssteam_asset; then
     [[ -n "$SLS_TAG" ]] && info "SLSsteam release: ${SLS_TAG}"
     install_slssteam_archive "$SLS_7Z_URL" "$SLS_TAG" "latest" && latest_class="$SLS_INSTALLED_CLASS"
 else
-    warn "Could not resolve the latest SLSsteam release asset (tried: ${SLS_7Z_ASSETS[*]}). Upstream may have renamed it again — see SLS_7Z_ASSETS. Falling back to the last 32-bit release (${SLS32_TAG}) and the pinned 64-bit build."
+    warn "Could not resolve the latest SLSsteam release asset (tried: ${SLS_7Z_ASSETS[*]}). Upstream may have renamed it again — see SLS_7Z_ASSETS. Falling back to the last 32-bit release (${SLS32_TAG}); the 64-bit client gets no new SLSsteam."
 fi
 if [[ "$latest_class" != "1" ]]; then
     if [[ -n "$SLS32_7Z_URL" ]]; then
@@ -1289,19 +1279,6 @@ if [[ "$latest_class" != "1" ]]; then
 fi
 if [[ -n "$SLS64_7Z_URL" ]]; then
     install_slssteam_archive "$SLS64_7Z_URL" "" "64-bit, SLSSTEAM64_URL" 2 || true
-elif [[ "$latest_class" != "2" ]]; then
-    # No 64-bit build from upstream yet: the pinned dev-multiarch build (see
-    # SLS64_FALLBACK_URL at the top). Recorded under the upstream release just
-    # checked and found 32-bit (or the last 32-bit one known when `latest` did
-    # not resolve): the record means "nothing newer than this release serves
-    # the 64-bit client", so LumaDeck, which compares the record with the
-    # latest release, offers nothing until upstream publishes a newer one.
-    # The next release, whatever its class, is then offered once; this run
-    # installs it where its class says and records it, and the offer ends.
-    # (A non-release name here made LumaDeck fall back to the VERSION inside
-    # the .so, 20261014151919, and offer the 32-bit release forever.)
-    info "The latest SLSsteam release is 32-bit only: installing the ${SLS64_FALLBACK_REF} build for the 64-bit client."
-    install_slssteam_archive "$SLS64_FALLBACK_URL" "${SLS_TAG:-$SLS32_TAG}" "64-bit, ${SLS64_FALLBACK_REF}" 2 "$SLS64_FALLBACK_SHA256" || true
 fi
 [[ -s "${SLS_DIR}/SLSsteam.so" || -s "${SLS_DIR}/x86_64/SLSsteam.so" ]] \
     || die "No SLSsteam.so installed for either client."
