@@ -982,6 +982,7 @@ GDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lumalinux"
 G_LAST="$GDIR/last_launch"; G_COUNT="$GDIR/boot_fail_count"
 G_SAFE="$GDIR/safe_mode"; G_FP="$GDIR/safe_mode_fingerprint"
 G_CLIENT_LAST="$GDIR/last_client"; G_CLIENT_GOOD="$GDIR/good_client"; G_LOG="$GDIR/guard.log"
+G_LATCHES="$GDIR/latch_count"; G_LATCHED_CLIENT="$GDIR/latched_client"
 : "${LUMA_GUARD_MAX_FAILS:=3}"; : "${LUMA_GUARD_STARTUP_SECS:=180}"; : "${LUMA_GUARD_DUMPS_DIR:=/tmp/dumps}"
 : "${LUMA_GUARD_NO_COREDUMP:=0}"
 
@@ -1034,8 +1035,42 @@ g_startup_crash() {
     # assertion-failure crashes (and the time window already scopes this to dumps
     # created right after a launch), so a bad-inject crash-loop via an assertion is
     # caught too — otherwise the anti-brick fail-safe would miss it.
-    _hit="$(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name '*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null | head -n1)"
+    # ...but only a dump of the Steam CLIENT with one of OUR libraries mapped
+    # is our crash. Steam's crashhandler.so is Breakpad, whose Linux writer
+    # copies the crashed process's /proc/<pid>/maps, cmdline and environ into
+    # the dump as plain text (MD_LINUX_MAPS, MD_LINUX_CMD_LINE, MD_LINUX_ENVIRON):
+    # the maps say which process it was (its executable's mapping) and what it
+    # had mapped. Steam, steamwebhelper or a game dumping within the window for
+    # their own reasons used to count: on the 2026-11-11 switch to the 64-bit
+    # client a user's guard latched on one such dump while the 32-bit stack
+    # could not even map into that client, and with "client changed -> first
+    # crash latches" that one dump paused the stack for good. A dump without
+    # the maps text (not Breakpad's Linux layout) falls back to its UTF-16
+    # module names, NULs dropped.
+    _hit=""
+    for _d in $(find "$LUMA_GUARD_DUMPS_DIR" -maxdepth 1 -name '*.dmp' -newer "$1" ! -newer "$_ref" 2>/dev/null); do
+        _n="$(basename "$_d")"
+        # Only MAPS lines ("<from>-<to> <perms> <offset> <dev> <inode> <path>")
+        # decide: the dump also carries the environ, where LD_PRELOAD names our
+        # libraries whether or not the process ever mapped them (a 32-bit
+        # preload in a 64-bit process is named there and never loaded).
+        _maps='^[0-9a-f]+-[0-9a-f]+ [rwxps-]{4} [0-9a-f]+ [0-9a-f]+:[0-9a-f]+ [0-9]+ +'
+        if grep -a -q -E "$_maps" "$_d" 2>/dev/null; then
+            if ! grep -a -q -E "${_maps}/.*/(ubuntu12_32|steamrt64)/steam( \(deleted\))?\$" "$_d" 2>/dev/null; then
+                g_log "dump $_n in the startup window is not the Steam client's (maps) -> not counted"; continue
+            fi
+            if ! grep -a -q -E "${_maps}/.*/(SLSsteam|liblumalinux[^/ ]*|cloud_redirect|netsock)\.so( \(deleted\))?\$" "$_d" 2>/dev/null; then
+                g_log "dump $_n is the client's but none of our libraries was mapped -> not ours, not counted"; continue
+            fi
+            _hit="$_d"; break
+        fi
+        if tr -d '\000' < "$_d" 2>/dev/null | grep -a -q -E 'SLSsteam\.so|liblumalinux|cloud_redirect\.so|netsock\.so'; then
+            _hit="$_d"; break
+        fi
+        g_log "dump $_n in the startup window names none of our libraries -> not ours, not counted"
+    done
     rm -f "$_ref" 2>/dev/null
+    [ -n "$_hit" ] && g_log "dump $(basename "$_hit"): the client's, with our libraries mapped -> counted"
     [ -n "$_hit" ]
 }
 luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$STEAM_BIN" "$@"; }
@@ -1101,6 +1136,7 @@ luma_guard_run() {
             # "client changed -> latch on first crash" path).
             [ "$_fails" -ne 0 ] && g_log "previous boot ok -> reset fail count"
             _fails=0
+            rm -f "$G_LATCHES" "$G_LATCHED_CLIENT" 2>/dev/null || true
             _prev="$(cat "$G_CLIENT_LAST" 2>/dev/null || true)"
             [ -n "$_prev" ] && printf '%s' "$_prev" > "$G_CLIENT_GOOD" 2>/dev/null || true
         else
@@ -1109,7 +1145,14 @@ luma_guard_run() {
     fi
     printf '%s' "$_fails" > "$G_COUNT" 2>/dev/null || true
     if [ "$_fails" -ge "$LUMA_GUARD_MAX_FAILS" ] || { [ "$_client_changed" = 1 ] && [ "$_fails" -ge 1 ]; }; then
-        g_log "latching safe mode (fails=${_fails} client_changed=${_client_changed}) -> vanilla ($STEAM_BIN)"
+        # How many times this client has latched in a row (LumaDeck reads it:
+        # one latch is "try again", a second on the same client is evidence the
+        # build is not supported).
+        _latches=$(( $(g_int "$G_LATCHES") + 1 ))
+        [ "$(cat "$G_LATCHED_CLIENT" 2>/dev/null)" = "$_client_cur" ] || _latches=1
+        printf '%s' "$_latches" > "$G_LATCHES" 2>/dev/null || true
+        printf '%s' "$_client_cur" > "$G_LATCHED_CLIENT" 2>/dev/null || true
+        g_log "latching safe mode (fails=${_fails} client_changed=${_client_changed} latches_on_this_client=${_latches}) -> vanilla ($STEAM_BIN)"
         printf '%s' "$_cur_fp" > "$G_FP" 2>/dev/null || true
         : > "$G_SAFE" 2>/dev/null || true
         for _r in "$HOME/.steam/steam" "$HOME/.steam/debian-installation" "$HOME/.local/share/Steam"; do
