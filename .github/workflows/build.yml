@@ -121,7 +121,6 @@ jobs:
           files: |
             build/liblumalinux.so
             res/version.txt
-          generate_release_notes: true
           fail_on_unmatched_files: true
 
   # The 64-bit library for Valve's steamrt3 client (steamrt64/steam, Steam Deck
