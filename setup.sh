@@ -121,7 +121,7 @@ CR_SO_SHA256="86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b"
 # like SLSsteam: each client's ld.so keeps the one of its class and skips the
 # other. CLOUDREDIRECT64_URL overrides the source (skips the pin).
 CR64_SO_URL="${CLOUDREDIRECT64_URL:-https://github.com/jayool/cloudredirect/releases/download/v2.6.6-linux64.1/cloud_redirect-x86_64.so}"
-CR64_SO_SHA256="__FILL_WHEN_RELEASED__"
+CR64_SO_SHA256="68406c6d083333fe06d8139cd0c8275cd29f5580fac83c8c4e4d88176076b343"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
 NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
