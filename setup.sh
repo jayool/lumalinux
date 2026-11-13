@@ -10,7 +10,8 @@
 #
 # What it does:
 #   1. Fetches SLSsteam.so + library-inject.so (AceSLS/SLSsteam release, .7z),
-#      cloud_redirect.so (Selectively11), liblumalinux.so (this repo), and the
+#      cloud_redirect.so (32-bit: Selectively11's 2.6.6; 64-bit: our port in
+#      jayool/cloudredirect), liblumalinux.so (this repo), and the
 #      netsock.so online-route lib (yesyes0649/steamnetsock-patch).
 #   2. Installs the .NET 9 runtime (Steamless needs it; LumaDeck did this too) and
 #      the CloudRedirect GUI app (flatpak) for provider sign-in. Both best-effort;
@@ -113,6 +114,14 @@ SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # luma-lab: docs/maintenance.md.
 CR_SO_URL="${CLOUDREDIRECT_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloud_redirect-2.6.6%2B3434d9d.so}"
 CR_SO_SHA256="86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b"
+# The 64-bit client (steamrt64, Valve's default since 2026-11-11) needs a 64-bit
+# build: ours, from jayool/cloudredirect (upstream's 2.6.6 Linux hooks ported to
+# x86_64, built by that repo's release workflow; luma-lab: docs/cloudredirect.md),
+# pinned here. Installed next to the 32-bit one, under x86_64/, by ELF class
+# like SLSsteam: each client's ld.so keeps the one of its class and skips the
+# other. CLOUDREDIRECT64_URL overrides the source (skips the pin).
+CR64_SO_URL="${CLOUDREDIRECT64_URL:-https://github.com/jayool/cloudredirect/releases/download/v2.6.6-linux64.1/cloud_redirect-x86_64.so}"
+CR64_SO_SHA256="__FILL_WHEN_RELEASED__"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
 NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
@@ -640,6 +649,31 @@ fetch_cloudredirect_so() {
     ok "Deployed ${CR_DIR}/cloud_redirect.so"
 }
 
+# The 64-bit cloud_redirect.so for the steamrt64 client: same shape (pinned,
+# non-fatal), placed under x86_64/ after checking its ELF class.
+fetch_cloudredirect64_so() {
+    local tmp="${TMP_DIR}/cloud_redirect-x86_64.so" sum cls
+    if ! curl -fL --progress-bar -o "$tmp" "$CR64_SO_URL"; then
+        warn "CloudRedirect (64-bit) download failed ($CR64_SO_URL)."
+        return 1
+    fi
+    if [[ -z "${CLOUDREDIRECT64_URL:-}" ]]; then
+        sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
+        if [[ "$sum" != "$CR64_SO_SHA256" ]]; then
+            warn "CloudRedirect (64-bit) download does not match the pinned sha256 (got ${sum:0:12}…, expected ${CR64_SO_SHA256:0:12}…) — not installing it."
+            return 1
+        fi
+    fi
+    cls="$(elf_class "$tmp")"
+    if [[ "$cls" != "2" ]]; then
+        warn "CloudRedirect (64-bit) download is not a 64-bit ELF (class ${cls:-?}) — not installing it."
+        return 1
+    fi
+    mkdir -p "${CR_DIR}/x86_64"
+    install -m 0755 "$tmp" "${CR_DIR}/x86_64/cloud_redirect.so"
+    ok "Deployed ${CR_DIR}/x86_64/cloud_redirect.so (64-bit client)"
+}
+
 # cloud_redirect_cli — the 32-bit shim the CloudRedirect UI uses to reach the
 # 32-bit .so from a 64-bit process. It is not published in the releases, but the
 # flatpak bundles it next to the .so from the same build, so we take it from
@@ -965,6 +999,7 @@ write_guard_lib() {
 # any probe failing degrades to "proceed", never latches by accident.
 SLS_DIR="$HOME/.local/share/SLSsteam"
 CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
+CR64_SO="$HOME/.local/share/CloudRedirect/x86_64/cloud_redirect.so"
 LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
 LL64_SO="$HOME/.local/share/lumalinux/liblumalinux-x86_64.so"
 SLS64_SO="$SLS_DIR/x86_64/SLSsteam.so"
@@ -991,7 +1026,7 @@ g_client_fp() {
     done; printf ''
 }
 g_fingerprint() {
-    for _f in "$SLS_DIR/SLSsteam.so" "$SLS64_SO" "$CR_SO" "$LL_SO" "$LL64_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
+    for _f in "$SLS_DIR/SLSsteam.so" "$SLS64_SO" "$CR_SO" "$CR64_SO" "$LL_SO" "$LL64_SO" "$HOME/.config/SLSsteam/tools/netsock/netsock.so"; do
         if [ -e "$_f" ]; then stat -c '%s:%Y' "$_f" 2>/dev/null || stat -f '%z:%m' "$_f" 2>/dev/null || printf '?'; else printf -- '-'; fi
         printf '|'
     done
@@ -1077,9 +1112,10 @@ luma_exec_vanilla() { exec env -u LD_AUDIT -u LD_PRELOAD -u LD_LIBRARY_PATH "$ST
 # actually meant for the three .so files WE install and name. The libextest test
 # below stays -f on purpose: that one is the distro's, not ours to second-guess.
 luma_set_injection_env() {
-    # LL_SO (i386) and LL64_SO (x86_64) both named: each process's ld.so keeps
-    # the one of its ELF class and skips the other with a one-line warning.
-    for _p in "$CR_SO" "$LL_SO" "$LL64_SO"; do [ -s "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
+    # Both classes of each library named (CR_SO/LL_SO i386, CR64_SO/LL64_SO
+    # x86_64): each process's ld.so keeps the ones of its ELF class and skips
+    # the others with a one-line warning.
+    for _p in "$CR_SO" "$CR64_SO" "$LL_SO" "$LL64_SO"; do [ -s "$_p" ] && LD_PRELOAD="$_p${LD_PRELOAD:+:$LD_PRELOAD}"; done
     [ -n "${LD_PRELOAD:-}" ] && export LD_PRELOAD
     if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
         for _e in /usr/lib/extest/libextest.so /usr/lib64/extest/libextest.so \
@@ -1306,6 +1342,14 @@ if ! fetch_cloudredirect_so; then
         warn "No CloudRedirect on this machine: added games will show Steam's cloud sync error until it is installed (re-run setup.sh, or set CLOUDREDIRECT_URL)."
     fi
 fi
+# The 64-bit build next to it, for the steamrt64 client. Same non-fatal rule.
+if ! fetch_cloudredirect64_so; then
+    if [[ -s "${CR_DIR}/x86_64/cloud_redirect.so" ]]; then
+        warn "Keeping the 64-bit CloudRedirect already installed at ${CR_DIR}/x86_64/cloud_redirect.so."
+    else
+        warn "No 64-bit CloudRedirect on this machine: on the 64-bit client, added games will show Steam's cloud sync error until it is installed (re-run setup.sh, or set CLOUDREDIRECT64_URL)."
+    fi
+fi
 # The app first: it is where cloud_redirect_cli comes from, so the copy below
 # needs it in place.
 install_cloudredirect_app
@@ -1392,6 +1436,7 @@ cat > "$WRAPPER" <<'WRAP'
 # heap). Reached via the patched *steam*.desktop Exec= lines and the PATH drop-in.
 SLS_DIR="$HOME/.local/share/SLSsteam"
 CR_SO="$HOME/.local/share/CloudRedirect/cloud_redirect.so"
+CR64_SO="$HOME/.local/share/CloudRedirect/x86_64/cloud_redirect.so"
 LL_SO="$HOME/.local/share/lumalinux/liblumalinux.so"
 
 # Resolve the REAL steam binary, skipping this wrapper. The patched .desktop
