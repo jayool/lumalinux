@@ -25,6 +25,15 @@
 // AdditionalApps — i.e. real purchases stay untouched, LumaDeck games get the
 // borrow. The `test al,al; jne` that follows is left exactly as-is.
 //
+// SLSsteam 20261112 added a third place with the same guard: Achievements::sendMsg,
+// which decides whether the new Steam UI's achievements page
+// (Player.GetUserAchievements#1) is answered from the local stats store instead
+// of by Valve — again only `if (!isSubscribed(appId))`, so again never for our
+// games, whose page then reads "not in your library" with everything locked
+// while the unlocks themselves are fine (Post-Game Summary, appcache/stats).
+// That site gets the same repoint when the build has it; a build without it
+// (or without the pattern) keeps the two sites above and logs why.
+//
 // All three callees (CUser::isSubscribed, CConfig::isAddedAppId, g_config) are
 // resolved from SLSsteam.so's on-disk symbol table (the release .so is NOT
 // stripped), so this survives -flto -O3 codegen shifts far better than a raw
@@ -34,8 +43,9 @@
 // and native achievements simply fall back to off — never a crash.
 namespace SlsAchievementUnblock {
 
-// Locate + repoint the two achievement guards in the loaded SLSsteam.so. Safe to
-// call once at startup. Returns true only if BOTH guards were repointed.
+// Locate + repoint the achievement guards in the loaded SLSsteam.so. Safe to
+// call once at startup. Returns true only if BOTH schema-borrow guards were
+// repointed; the optional achievements-page site is reported in the log.
 bool Apply();
 
 } // namespace SlsAchievementUnblock
