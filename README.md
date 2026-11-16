@@ -186,8 +186,9 @@ Log: `~/.cache/lumalinux/lumalinux.log`. The startup toast shows `X/Y hooks acti
   unaffected.
 - `LUMA_NO_PKG0_FINDER=1`: disable the package-0 finder (the sole depot injector, on
   by default). `LUMA_PKG0_FINDER=diag` runs it log-only.
-- `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam native-achievement patch.
-  `LUMA_SLS_ACH_TRACE=1` traces the achievement guard. (The former
+- `LUMA_NO_SLS_ACH_UNBLOCK=1`: disable the SLSsteam native-achievement patch
+  (unlocks for added games and, on SLSsteam ≥ 20261112, their achievements page
+  rebuilt from the local stats). `LUMA_SLS_ACH_TRACE=1` traces the achievement guard. (The former
   `LUMA_NO_SLS_UNBLOCK` was removed with the update-unblock patch in v0.16.18.)
 - `LUMA_NO_CR_STATS_FIX=1`: disable the CloudRedirect ≤ 2.6.5 stats-sync
   cold-start fix. Inert on CloudRedirect ≥ 2.6.6 anyway (fixed upstream; the log

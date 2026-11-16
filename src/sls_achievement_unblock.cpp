@@ -35,6 +35,16 @@ constexpr const char* kIsAddedAppId   = "_ZN7CConfig12isAddedAppIdE";
 constexpr const char* kGConfig        = "g_config";
 constexpr const char* kGetUserStats   = "_ZN12Achievements23sendAndRecvGetUserStatsE";
 constexpr const char* kGetPlayerStats = "_ZN12Achievements25sendAndRecvGetPlayerStatsE";
+// Third site, OPTIONAL (SLSsteam 20261112 and later): Achievements::sendMsg,
+// the outgoing-packet observer that decides whether the client's
+// Player.GetUserAchievements#1 request (the achievements page of the new Steam
+// UI) gets its answer rebuilt from the local stats store. Same guard shape
+// (`if (!isSubscribed(appId))`), same meaning for us: without the patch our
+// games read as owned, Ace leaves Valve's answer alone, and the page says
+// "not in your library" with every achievement locked. Older builds don't have
+// the function (the 20261106 32-bit release has no such symbol): then this
+// site is simply skipped and the two above are patched as before.
+constexpr const char* kSendMsg        = "_ZN12Achievements7sendMsgE";
 
 // Resolved-at-init pointers the replacement guard calls. On the 32-bit build
 // SLSsteam is x86-32 GCC: non-static methods are cdecl with `this` as an
@@ -61,6 +71,10 @@ bool g_trace = false;
 //   subscribed && !added  → 1 → skip borrow  (real purchase, untouched)
 //   subscribed &&  added  → 0 → run borrow    (LumaDeck game → native cheevos)
 //   !subscribed           → 0 → run borrow    (unchanged from stock)
+// At the third site (Achievements::sendMsg) the same value means: 1 → Ace leaves
+// the achievements-page answer to Valve (owned game); 0 → Ace records the
+// request and rebuilds the page from the local stats (our games, and stock
+// SLSsteam's not-owned ones).
 // Receives the same (this, appid) the original call site pushed. Never called
 // unless Apply() succeeded (the call is only repointed on success).
 extern "C" uint8_t sls_ach_combined_guard(void* cuser, uint32_t appid) {
@@ -345,11 +359,36 @@ bool Apply() {
 
     // Cross-check: both guards must call the SAME target (isSubscribed@plt). This
     // confirms we found the isSubscribed guards and not some other call+test+jne.
-    if (CallTarget(guardA) != CallTarget(guardB)) {
+    const uintptr_t isSubTarget = CallTarget(guardA);  // before any rel32 is rewritten
+    if (isSubTarget != CallTarget(guardB)) {
         Log::Warn("SLS-ach: the two guard calls target different addresses "
                   "(0x%lx vs 0x%lx) — refusing to patch.",
-                  (unsigned long)CallTarget(guardA), (unsigned long)CallTarget(guardB));
+                  (unsigned long)isSubTarget, (unsigned long)CallTarget(guardB));
         return false;
+    }
+
+    // Third site (optional, see kSendMsg): resolved on its own so a build without
+    // it still gets the two sites above. Located and cross-checked now, against
+    // the still-original isSubscribed target; written after A and B.
+    uintptr_t guardC = 0;
+    {
+        std::vector<Want> wantC = { {kSendMsg, true} };
+        std::vector<Sym>  symC;
+        if (!ResolveSymbols(so.path, wantC, symC)) {
+            Log::Info("SLS-ach: Achievements::sendMsg not in this SLSsteam build — "
+                      "the achievements-page rewrite stays stock (older SLSsteam, or inlined)");
+        } else {
+            guardC = FindGuardCall(so.base + symC[0].value, symC[0].size);
+            if (!guardC) {
+                Log::Warn("SLS-ach: guard pattern not found exactly once in "
+                          "Achievements::sendMsg — leaving that site stock");
+            } else if (CallTarget(guardC) != isSubTarget) {
+                Log::Warn("SLS-ach: the sendMsg guard calls 0x%lx, not isSubscribed "
+                          "(0x%lx) — leaving that site stock",
+                          (unsigned long)CallTarget(guardC), (unsigned long)isSubTarget);
+                guardC = 0;
+            }
+        }
     }
 
     // Wire the callees combined_guard invokes (direct, bypassing the PLT).
@@ -399,6 +438,22 @@ bool Apply() {
               "GetPlayerStats@0x%lx) -> combined_guard 0x%lx. AdditionalApps games "
               "get native achievements; owned games untouched.",
               (unsigned long)guardA, (unsigned long)guardB, (unsigned long)combined);
+
+    // Third site: same rewrite, its own range check, never fatal for the two
+    // above (already written and working by now).
+    if (guardC) {
+        const long long distC = static_cast<long long>(combined) -
+                                static_cast<long long>(guardC + 5);
+        if (distC < -2147483648LL || distC > 2147483647LL) {
+            Log::Warn("SLS-ach: sendMsg rel32 OUT OF RANGE (dist=%lld) — leaving that "
+                      "site stock", distC);
+        } else if (WriteRel32(guardC + 1, static_cast<uint32_t>(combined - (guardC + 5)))) {
+            Log::Info("SLS-ach: scoped the achievements-page guard too (sendMsg@0x%lx, "
+                      "dist=%lld). The achievements page of AdditionalApps games is "
+                      "rebuilt from the local stats; owned games untouched.",
+                      (unsigned long)guardC, distC);
+        }
+    }
     return true;
 }
 

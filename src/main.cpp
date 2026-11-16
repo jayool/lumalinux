@@ -323,7 +323,8 @@ void InstallHooks() {
     // Coexistence patch: scope SLSsteam's native-achievement "legit app" guard
     // so the schema borrow also fires for AdditionalApps (LumaDeck) games while
     // leaving genuinely-owned games untouched. Repoints two `call isSubscribed`
-    // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check.
+    // sites in SLSsteam.so to a combined `isSubscribed && !isAddedAppId` check
+    // (three on SLSsteam >= 20261112: also the achievements-page rewrite).
     // Fail-safe: no SLSsteam / missing symbols / moved codegen → no-op, native
     // achievements just stay off. See luma-lab: docs/slssteam.md §2.7 and RESEARCH §17.
     if (std::getenv("LUMA_NO_SLS_ACH_UNBLOCK")) {
