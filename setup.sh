@@ -104,30 +104,34 @@ SLS32_7Z_URL="${SLSSTEAM32_URL:-}"
 SLS64_7Z_URL="${SLSSTEAM64_URL:-}"
 # CloudRedirect's upstream is crghofficial/cloudredirect: same 2.6.6, no code
 # since 2026-10-03, 32-bit only (luma-lab: docs/cloudredirect.md §0). We do not follow it;
-# we ship the last Linux build ourselves, from our own release assets: the 2.6.6 cloud_redirect.so
+# we ship the last Linux build ourselves, from our fork's releases: the 2.6.6 cloud_redirect.so
 # archived off a Deck (sha256-pinned below; it still hooks the 2026-10-14 client,
 # measured on the Deck) and the sign-in app as a single .flatpak bundle built from
 # upstream's last gh-pages publish (2.6.6, commit 83100b8, preserved in
 # madoiscool/CloudRedirect; it embeds that same .so and cloud_redirect_cli — see
-# deploy_cloudredirect_cli). Both are assets of the v0.22.3 release and both are
-# on the `cr-archive` branch (vendor/cloudredirect/, never merged). See
-# luma-lab: docs/maintenance.md.
-CR_SO_URL="${CLOUDREDIRECT_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloud_redirect-2.6.6%2B3434d9d.so}"
+# deploy_cloudredirect_cli). Both are assets of the fork's 2.6.6-linux32 release
+# (an archive: no tag of its own to build, so no leading "v", which keeps the
+# release workflow out of it; the same files are also assets of this repo's
+# v0.22.3 release and on the `cr-archive` branch, vendor/cloudredirect/, never
+# merged). See luma-lab: docs/maintenance.md.
+CR_SO_URL="${CLOUDREDIRECT_URL:-https://github.com/jayool/cloudredirect/releases/download/2.6.6-linux32/cloud_redirect-2.6.6%2B3434d9d.so}"
 CR_SO_SHA256="86a40032168da2739a6633bdeae795b95c1464b3414998fbfd703b5bb1795f8b"
 # The 64-bit client (steamrt64, Valve's default since 2026-11-11) needs a 64-bit
 # build: ours, from jayool/cloudredirect (upstream's 2.6.6 Linux hooks ported to
-# x86_64, built by that repo's release workflow; luma-lab: docs/cloudredirect.md),
-# pinned here. Installed next to the 32-bit one, under x86_64/, by ELF class
-# like SLSsteam: each client's ld.so keeps the one of its class and skips the
-# other. CLOUDREDIRECT64_URL overrides the source (skips the pin).
-CR64_SO_URL="${CLOUDREDIRECT64_URL:-https://github.com/jayool/cloudredirect/releases/download/v2.6.6-linux64.1/cloud_redirect-x86_64.so}"
-CR64_SO_SHA256="68406c6d083333fe06d8139cd0c8275cd29f5580fac83c8c4e4d88176076b343"
+# x86_64, built by that repo's release workflow; luma-lab: docs/cloudredirect.md).
+# Taken from that repo's latest release, like liblumalinux from this one: a
+# release there reaches the next setup.sh run on its own, no pin to move here
+# (the 32-bit .so and the flatpak above stay pinned: archived upstream binaries
+# that never change). Installed next to the 32-bit one, under x86_64/, by ELF
+# class like SLSsteam: each client's ld.so keeps the one of its class and skips
+# the other. CLOUDREDIRECT64_URL overrides the source.
+CR64_SO_URL="${CLOUDREDIRECT64_URL:-https://github.com/jayool/cloudredirect/releases/latest/download/cloud_redirect-x86_64.so}"
 NETSOCK_SO_URL="${NETSOCK_SO_URL:-https://github.com/yesyes0649/steamnetsock-patch/releases/latest/download/fix.so}"
 NETSOCK_DIR="${SLS_CFG_DIR}/tools/netsock"
 
 CR_FLATPAK_ID="org.cloudredirect.CloudRedirect"
 CR_FLATPAK_RUNTIME="${CR_FLATPAK_RUNTIME:-org.kde.Platform//6.10}"
-CR_FLATPAK_URL="${CLOUDREDIRECT_FLATPAK_URL:-https://github.com/${REPO}/releases/download/v0.22.3/cloudredirect-2.6.6.flatpak}"
+CR_FLATPAK_URL="${CLOUDREDIRECT_FLATPAK_URL:-https://github.com/jayool/cloudredirect/releases/download/2.6.6-linux32/cloudredirect-2.6.6.flatpak}"
 CR_FLATPAK_SHA256="bd361482c990ebdd9f05db25846b9b1d0545599d09e269c22be6a04fcb96f52c"
 FLATHUB_REPO="https://dl.flathub.org/repo/flathub.flatpakrepo"
 
@@ -652,17 +656,10 @@ fetch_cloudredirect_so() {
 # The 64-bit cloud_redirect.so for the steamrt64 client: same shape (pinned,
 # non-fatal), placed under x86_64/ after checking its ELF class.
 fetch_cloudredirect64_so() {
-    local tmp="${TMP_DIR}/cloud_redirect-x86_64.so" sum cls
+    local tmp="${TMP_DIR}/cloud_redirect-x86_64.so" cls
     if ! curl -fL --progress-bar -o "$tmp" "$CR64_SO_URL"; then
         warn "CloudRedirect (64-bit) download failed ($CR64_SO_URL)."
         return 1
-    fi
-    if [[ -z "${CLOUDREDIRECT64_URL:-}" ]]; then
-        sum="$(sha256sum "$tmp" | cut -d' ' -f1)"
-        if [[ "$sum" != "$CR64_SO_SHA256" ]]; then
-            warn "CloudRedirect (64-bit) download does not match the pinned sha256 (got ${sum:0:12}…, expected ${CR64_SO_SHA256:0:12}…) — not installing it."
-            return 1
-        fi
     fi
     cls="$(elf_class "$tmp")"
     if [[ "$cls" != "2" ]]; then
