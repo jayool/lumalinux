@@ -8,10 +8,12 @@
 #
 # MECHANISM — what headcrab's dgsc/dlm era did, measured on a Deck on 2026-10-14
 # (luma-lab: docs/nosotros.md §5.2 F1), self-contained:
-#   1. fetch the target client manifest (Deadboy666/SteamTracking@headcrab) and
-#      download every package it lists from Valve's CDN (which keeps old client
-#      packages online) into a temp dir — BEFORE touching Steam, so a network
-#      failure aborts with Steam intact
+#   1. fetch the target client manifest — the public tracker commits the
+#      manifest of every client Valve ships (SteamDatabase/SteamTracking), so
+#      the build's own commit serves it; headcrab's branch is the fallback —
+#      and download every package it lists from Valve's CDN (which keeps old
+#      client packages online) into a temp dir — BEFORE touching Steam, so a
+#      network failure aborts with Steam intact
 #   2. stop Steam and wait until it is really gone
 #   3. stage the manifest in $STEAM/package, write the steam.cfg pin
 #      (BootStrapperInhibitAll / BootStrapperForceSelfUpdate)
@@ -19,7 +21,17 @@
 #      relaunch Steam headless against it:
 #        steam -forcesteamupdate -forcepackagedownload \
 #          -overridepackageurl http://127.0.0.1:1666/ -exitsteam
-#   5. verify by the SHA-256 of ubuntu12_32/steamclient.so; undo on failure
+#   5. verify by the SHA-256 of the line's steamclient.so (ubuntu12_32/ for
+#      the 32-bit client, steamrt64/ for the 64-bit one); undo on failure
+#
+# TWO CLIENT LINES. Valve ships two clients from one version number: the
+# 32-bit ubuntu12_32/steam (manifest suffix `ubuntu12`) and, default since
+# 2026-11-11, the 64-bit steamrt64/steam (suffix `steamrt64`). The bootstrapper
+# asks for `steam_client_<branch>_<suffix>` and installs that line only; a
+# manifest of the other line is ignored (a Deck, 2026-11-12). CLIENT_LINE picks
+# the line (detected from the install when empty) and every name, flag and
+# hash below follows it; `-forcemanifestsuffix` tells the bootstrapper the
+# line explicitly (SteamRollbackrLite's flag, 2026-11-19).
 #
 # WHY A LOCAL SERVER. With -forcesteamupdate the bootstrapper does NOT use the
 # manifest staged in package/: it downloads the branch manifest
@@ -44,7 +56,8 @@
 #
 # Must run in Desktop (Steam is stopped and relaunched headless). No root.
 #
-# Env overrides (all optional): DECK_MANIFEST_URL LINUX_MANIFEST_URL PACKAGE_CDN
+# Env overrides (all optional): CLIENT_LINE TARGET_VERSION MANIFEST_URL
+#   TRACKER_REPO DECK_MANIFEST_URL LINUX_MANIFEST_URL PACKAGE_CDN
 #   PACKAGE_CDN_FALLBACK UPDATES_YAML_URL EXPECTED_SHA256 STEAM_DIR_OVERRIDE
 #   LOCAL_PORT STEAM_STOP_TIMEOUT STEAM_START_TIMEOUT STEAM_UPDATE_TIMEOUT
 #
@@ -58,6 +71,16 @@ set -uo pipefail
 # ── config ───────────────────────────────────────────────────────────────────
 DECK_MANIFEST_URL="${DECK_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12}"
 LINUX_MANIFEST_URL="${LINUX_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12}"
+# The client line (steamrt64 | ubuntu12; empty = detect from the install), the
+# build to land on (empty = the newest build the whitelist annotates for the
+# line below the installed one; LumaDeck passes the newest one the released
+# stack hooks), and where its manifest comes from: MANIFEST_URL verbatim, else
+# the tracker's git history (the commit that recorded that build), else the
+# headcrab-branch URLs above (whatever build they hold).
+CLIENT_LINE="${CLIENT_LINE:-}"
+TARGET_VERSION="${TARGET_VERSION:-}"
+MANIFEST_URL="${MANIFEST_URL:-}"
+TRACKER_REPO="${TRACKER_REPO:-SteamDatabase/SteamTracking}"
 # Where the packages the manifest lists are fetched from. Valve's own CDN keeps
 # old client packages online (verified 2026-10-14 for the 1788291500 set); the
 # akamai host is the same CDN. headcrab's package mirror is the last resort.
@@ -199,33 +222,104 @@ manifest_package_files() {
 
 sha256_of() { sha256sum "$1" 2>/dev/null | cut -d' ' -f1; }
 
-# The steamclient.so SHA-256 lumalinux's res/updates.yaml records for build $2:
-# the first `- <64 hex>` entry after a `# steam_version: $2` annotation. A build
-# may carry several annotations on one hash (Valve relabels builds without
-# changing the file: 1788291500 == 1788652215), which this handles because an
-# unrelated annotation in between does not clear the match. Empty when unknown.
-# (No {n} interval in the regex: mawk lacks them; gawk on SteamOS has them.)
-hash_for_build() {  # hash_for_build FILE BUILD  (ubuntu12_32 entries only)
-    # An entry annotated `# arch: steamrt64` is the 64-bit client's hash: same
-    # steam_version as the 32-bit one (one manifest, two packages), different
-    # file. This script pins the ubuntu12_32 tree, so those entries are skipped
-    # (the `arch` flag resets at every hash line). Same rule as LumaDeck's
-    # headcrab_compat._hash_for_build — keep the two in step.
-    awk -v b="$2" '
+# The steamclient.so SHA-256 lumalinux's res/updates.yaml records for build $2
+# on client line $3: the first `- <64 hex>` entry after a `# steam_version: $2`
+# annotation whose `# arch:` mark matches the line (entries without a mark are
+# the ubuntu12_32 client's; the 64-bit client's carry `# arch: steamrt64`, same
+# steam_version, different file). A build may carry several annotations on one
+# hash (Valve relabels builds without changing the file: 1788291500 ==
+# 1788652215), which this handles because an unrelated annotation in between
+# does not clear the match, while an entry of the other line consumes its
+# annotations. Empty when unknown. Same rule as LumaDeck's
+# headcrab_compat._hash_for_build — keep the two in step. (No {n} interval in
+# the regex: mawk lacks them; gawk on SteamOS has them.)
+hash_for_build() {  # hash_for_build FILE BUILD LINE
+    local want_arch="ubuntu12_32"
+    [[ "$3" == steamrt64 ]] && want_arch="steamrt64"
+    awk -v b="$2" -v wa="$want_arch" '
         /^[[:space:]]*#[[:space:]]*steam_version:[[:space:]]*[0-9]+/ {
             if ($0 ~ ("steam_version:[[:space:]]*" b "([^0-9]|$)")) want = 1
             next
         }
-        /^[[:space:]]*#[[:space:]]*arch:/ { arch = 1; next }
+        /^[[:space:]]*#[[:space:]]*arch:/ { arch = $0; sub(/^[[:space:]]*#[[:space:]]*arch:[[:space:]]*/, "", arch); sub(/[[:space:]].*$/, "", arch); next }
         /^[[:space:]]*-[[:space:]]*[0-9a-f]+/ {
-            if (want && !arch) {
+            a = (arch == "") ? "ubuntu12_32" : arch
+            if (want && a == wa) {
                 sub(/^[[:space:]]*-[[:space:]]*/, "")
                 h = substr($0, 1, 64)
                 if (length(h) == 64 && h ~ /^[0-9a-f]+$/) { print h; exit }
             }
-            arch = 0
+            want = 0; arch = ""   # annotations belong to the entry just seen
         }
     ' "$1" 2>/dev/null
+}
+
+# The builds the whitelist annotates for a line, newest first (one per line).
+whitelisted_builds() {  # whitelisted_builds FILE LINE
+    local want_arch="ubuntu12_32"
+    [[ "$2" == steamrt64 ]] && want_arch="steamrt64"
+    awk -v wa="$want_arch" '
+        /^[[:space:]]*#[[:space:]]*steam_version:[[:space:]]*[0-9]+/ { v = $0; sub(/^[[:space:]]*#[[:space:]]*steam_version:[[:space:]]*/, "", v); sub(/[^0-9].*$/, "", v); vs = vs " " v; next }
+        /^[[:space:]]*#[[:space:]]*arch:/ { arch = $0; sub(/^[[:space:]]*#[[:space:]]*arch:[[:space:]]*/, "", arch); sub(/[[:space:]].*$/, "", arch); next }
+        /^[[:space:]]*-[[:space:]]*[0-9a-f]+/ {
+            a = (arch == "") ? "ubuntu12_32" : arch
+            if (a == wa) { n = split(vs, parts, " "); for (i = 1; i <= n; i++) if (parts[i] != "") print parts[i] }
+            vs = ""; arch = ""
+        }
+    ' "$1" 2>/dev/null | sort -urn
+}
+
+# Which client line this install runs: the 64-bit client when its binary is
+# there and Valve's opt-out marker is not (steam.sh's own rule).
+detect_line() {
+    if [[ -x "$STEAM_DIR/steamrt64/steam" && ! -f "$STEAM_DIR/.steam-disable-steamrt64-client" ]]; then
+        printf 'steamrt64'
+    else
+        printf 'ubuntu12'
+    fi
+}
+
+# The tracker's file for a line on this platform. SteamDatabase/SteamTracking
+# names them `steam_client_<channel>_<line>` for desktop and
+# `steamdeck_<channel>_<line>` for the Deck (`steamdeck_<channel>` for the
+# 32-bit line); headcrab's branch keeps a `steam_client_steamdeck_...` naming.
+tracker_file() {  # tracker_file LINE CHANNEL(stable|publicbeta) DECK(0|1)
+    local line="$1" chan="$2" deck="$3"
+    if [[ "$deck" == 1 ]]; then
+        if [[ "$line" == steamrt64 ]]; then printf 'steamdeck_%s_steamrt64' "$chan"; else printf 'steamdeck_%s' "$chan"; fi
+    else
+        if [[ "$chan" == stable ]]; then printf 'steam_client_%s' "$line"; else printf 'steam_client_%s_%s' "$chan" "$line"; fi
+    fi
+}
+
+# The manifest of build $2 for tracker file $1, from the commit that recorded it:
+# the tracker commits every manifest Valve publishes, so the commits touching the
+# file within three days of the build's timestamp (the version IS a Unix time)
+# hold it. GitHub's commits API first, its Atom feed as the fallback (no token
+# either way; a handful of requests). Writes the manifest to $3; fails when no
+# commit in that window carries the version.
+tracker_manifest_for_version() {  # tracker_manifest_for_version FILE VERSION DEST
+    local file="$1" ver="$2" dest="$3" since until shas sha
+    since="$(date -u -d "@$(( ver - 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
+    until="$(date -u -d "@$(( ver + 3 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
+    shas="$(curl -fsSL "https://api.github.com/repos/${TRACKER_REPO}/commits?path=ClientManifest/${file}&since=${since}&until=${until}&per_page=100" 2>/dev/null \
+            | python3 -c 'import json,sys
+try:
+    for c in json.load(sys.stdin): print(c["sha"])
+except Exception: pass' 2>/dev/null)"
+    if [[ -z "$shas" ]]; then
+        shas="$(curl -fsSL "https://github.com/${TRACKER_REPO}/commits/master/ClientManifest/${file}.atom" 2>/dev/null \
+                | grep -oE 'commit/[0-9a-f]{40}' | cut -d/ -f2 | awk '!seen[$0]++')"
+    fi
+    [[ -n "$shas" ]] || return 1
+    for sha in $shas; do
+        if fetch "https://raw.githubusercontent.com/${TRACKER_REPO}/${sha}/ClientManifest/${file}" "$dest" 2>/dev/null \
+           && [[ "$(manifest_version "$dest")" == "$ver" ]]; then
+            return 0
+        fi
+    done
+    rm -f "$dest" 2>/dev/null
+    return 1
 }
 
 # Local package server (headcrab's dgsc, minus the binary): python3's http.server
@@ -249,65 +343,97 @@ stop_server() { [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null; SERVER
 STEAM_DIR="$(resolve_steam_dir)" || die "Steam install dir not found"
 PKG_DIR="${STEAM_DIR}/package"
 STEAM_CFG="${STEAM_DIR}/steam.cfg"
-CLIENT_SO="${STEAM_DIR}/ubuntu12_32/steamclient.so"
 BOOT_LOG="${STEAM_DIR}/logs/bootstrap_log.txt"
 info "Steam dir: $STEAM_DIR"
+[[ -n "$CLIENT_LINE" ]] || CLIENT_LINE="$(detect_line)"
+case "$CLIENT_LINE" in
+    steamrt64) CLIENT_SO="${STEAM_DIR}/steamrt64/steamclient.so" ;;
+    ubuntu12)  CLIENT_SO="${STEAM_DIR}/ubuntu12_32/steamclient.so" ;;
+    *) die "CLIENT_LINE must be steamrt64 or ubuntu12 (got '$CLIENT_LINE')" ;;
+esac
+info "Client line: $CLIENT_LINE ($(basename "$(dirname "$CLIENT_SO")")/steamclient.so)"
 if ! { [[ -d "$FLATPAK_STEAM_DIR" ]] && command -v flatpak >/dev/null 2>&1; }; then
     STEAM_REAL="$(resolve_real_steam)" || die "real steam binary not found — Steam left untouched"
     info "Steam launcher: $STEAM_REAL"
 fi
 command -v python3 >/dev/null 2>&1 || die "python3 is required (for the local package server) — Steam left untouched"
 
-# Pick the manifest for this platform (Deck vs generic Linux). The bootstrapper
-# asks its download host for `steam_client_<branch>_ubuntu12` where <branch> is
-# the package/beta file (steam-jupiter writes `steamdeck_stable` there), or
-# `steam_client_ubuntu12` with no branch — that is the name the local server
-# must answer to. package/ keeps the staged copy under the .manifest name Steam
-# reads for its installed version.
-if is_steamos; then
-    info "SteamOS/Deck detected — deck client manifest."
-    MANIFEST_URL="$DECK_MANIFEST_URL"; MANIFEST_NAME="steam_client_steamdeck_stable_ubuntu12.manifest"
-else
-    info "Generic Linux — linux client manifest."
-    MANIFEST_URL="$LINUX_MANIFEST_URL"; MANIFEST_NAME="steam_client_ubuntu12.manifest"
-fi
+# Names. The bootstrapper asks its download host for
+# `steam_client_<branch>_<line>` where <branch> is the package/beta file
+# (steam-jupiter writes `steamdeck_stable` there), or `steam_client_<line>`
+# with no branch — that is the name the local server must answer to. package/
+# keeps the staged copy under the `.manifest` name Steam reads for its
+# installed version (the same name).
+DECK=0; is_steamos && DECK=1
 BRANCH="$(tr -d '[:space:]' < "$PKG_DIR/beta" 2>/dev/null || true)"
-if [[ -n "$BRANCH" ]]; then MANIFEST_HOST_NAME="steam_client_${BRANCH}_ubuntu12"; else MANIFEST_HOST_NAME="steam_client_ubuntu12"; fi
-
-# 1. Fetch the target manifest to a temp and verify it BEFORE touching anything,
-#    so a network failure aborts with Steam completely intact.
-info "Downloading target client manifest..."
+if [[ -n "$BRANCH" ]]; then MANIFEST_HOST_NAME="steam_client_${BRANCH}_${CLIENT_LINE}"; else MANIFEST_HOST_NAME="steam_client_${CLIENT_LINE}"; fi
+MANIFEST_NAME="${MANIFEST_HOST_NAME}.manifest"
+CHANNEL=stable; case "$BRANCH" in *publicbeta*) CHANNEL=publicbeta ;; esac
 TMP_DIR="$(mktemp -d)"
 trap 'stop_server; rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
 TMP_MANIFEST="$TMP_DIR/manifest"
-fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+
+# Installed build and binary, before anything is chosen.
+CURRENT_VERSION=""
+for m in "$PKG_DIR"/steam_client_*_"${CLIENT_LINE}".manifest "$PKG_DIR"/steam_client_"${CLIENT_LINE}".manifest; do
+    [[ -f "$m" ]] && { CURRENT_VERSION="$(manifest_version "$m")"; break; }
+done
+BEFORE_SHA="$(sha256_of "$CLIENT_SO")"
+[[ -n "$BEFORE_SHA" ]] || warn "no $CLIENT_SO on disk yet — the result can only be checked against the whitelist hash."
+info "Installed client: ${CURRENT_VERSION:-unknown} (steamclient.so ${BEFORE_SHA:0:12}…)"
+
+# The whitelist, fetched first: it names the target when none was given and
+# the hash the result is checked against.
+HAVE_YAML=0
+if fetch "$UPDATES_YAML_URL" "$TMP_DIR/updates.yaml" && grep -q '^SafeModeHashes:' "$TMP_DIR/updates.yaml"; then HAVE_YAML=1; fi
+
+# 1. The target build and its manifest, to a temp, BEFORE touching anything, so
+#    a network failure aborts with Steam completely intact.
+if [[ -z "$TARGET_VERSION" && -z "$MANIFEST_URL" ]]; then
+    if [[ "$HAVE_YAML" == 1 ]]; then
+        for v in $(whitelisted_builds "$TMP_DIR/updates.yaml" "$CLIENT_LINE"); do
+            if [[ -z "$CURRENT_VERSION" || "$v" -lt "$CURRENT_VERSION" ]]; then TARGET_VERSION="$v"; break; fi
+        done
+    fi
+    [[ -n "$TARGET_VERSION" ]] && info "Target: the newest whitelisted $CLIENT_LINE build below the installed one ($TARGET_VERSION)."
+fi
+TRACKER_FILE="$(tracker_file "$CLIENT_LINE" "$CHANNEL" "$DECK")"
+if [[ -n "$MANIFEST_URL" ]]; then
+    info "Downloading target client manifest ($MANIFEST_URL)..."
+    fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+elif [[ -n "$TARGET_VERSION" ]]; then
+    info "Fetching the manifest of build $TARGET_VERSION from the tracker's history (${TRACKER_REPO}, ${TRACKER_FILE})..."
+    tracker_manifest_for_version "$TRACKER_FILE" "$TARGET_VERSION" "$TMP_MANIFEST" \
+        || die "no commit of ${TRACKER_REPO} carries ${TRACKER_FILE} at version ${TARGET_VERSION} (or GitHub unreachable) — Steam left untouched"
+else
+    # Last resort: whatever build headcrab's branch holds for the line.
+    if [[ "$DECK" == 1 ]]; then MANIFEST_URL="${DECK_MANIFEST_URL/steam_client_steamdeck_stable_ubuntu12/steam_client_steamdeck_stable_${CLIENT_LINE}}"
+    else MANIFEST_URL="${LINUX_MANIFEST_URL/steam_client_ubuntu12/steam_client_${CLIENT_LINE}}"; fi
+    warn "No TARGET_VERSION and no whitelist annotation for the $CLIENT_LINE line: falling back to the headcrab branch ($MANIFEST_URL)."
+    fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+fi
 [[ -s "$TMP_MANIFEST" ]] || die "manifest is empty — Steam left untouched"
-TARGET_VERSION="$(manifest_version "$TMP_MANIFEST")"
-[[ -n "$TARGET_VERSION" ]] || die "manifest looks invalid (no \"version\" line) — Steam left untouched"
+MANIFEST_VERSION="$(manifest_version "$TMP_MANIFEST")"
+[[ -n "$MANIFEST_VERSION" ]] || die "manifest looks invalid (no \"version\" line) — Steam left untouched"
+if [[ -n "$TARGET_VERSION" && "$MANIFEST_VERSION" != "$TARGET_VERSION" ]]; then
+    die "the manifest carries build $MANIFEST_VERSION, not the requested $TARGET_VERSION — Steam left untouched"
+fi
+TARGET_VERSION="$MANIFEST_VERSION"
+grep -q "_${CLIENT_LINE}\\b\\|\"${CLIENT_LINE}\"" "$TMP_MANIFEST" || warn "the manifest does not look like a $CLIENT_LINE one (no $CLIENT_LINE package names)."
 info "Target client build: $TARGET_VERSION"
 
 # 2. What the result must look like. The expected steamclient.so hash comes from
 #    lumalinux's whitelist (overridable with EXPECTED_SHA256 for testing); when
 #    the feed has no annotation for the target, fall back to "the file changed".
-CURRENT_VERSION=""
-for m in "$PKG_DIR"/steam_client_*.manifest; do
-    [[ -f "$m" ]] && { CURRENT_VERSION="$(manifest_version "$m")"; break; }
-done
-BEFORE_SHA="$(sha256_of "$CLIENT_SO")"
-[[ -n "$BEFORE_SHA" ]] || warn "no $CLIENT_SO on disk yet — the result can only be checked against the whitelist hash."
 EXPECTED_SHA="${EXPECTED_SHA256:-}"
-if [[ -z "$EXPECTED_SHA" ]]; then
-    if fetch "$UPDATES_YAML_URL" "$TMP_DIR/updates.yaml" && grep -q '^SafeModeHashes:' "$TMP_DIR/updates.yaml"; then
-        EXPECTED_SHA="$(hash_for_build "$TMP_DIR/updates.yaml" "$TARGET_VERSION")"
-    fi
+if [[ -z "$EXPECTED_SHA" && "$HAVE_YAML" == 1 ]]; then
+    EXPECTED_SHA="$(hash_for_build "$TMP_DIR/updates.yaml" "$TARGET_VERSION" "$CLIENT_LINE")"
 fi
 if [[ -n "$EXPECTED_SHA" ]]; then
     info "Expected steamclient.so for $TARGET_VERSION: ${EXPECTED_SHA:0:12}…"
 else
     warn "No whitelist hash for build $TARGET_VERSION — will only check that steamclient.so changed."
 fi
-info "Installed client: ${CURRENT_VERSION:-unknown} (steamclient.so ${BEFORE_SHA:0:12}…)"
-
 # Already on the target binary: nothing to download, just make sure it stays.
 if [[ -n "$EXPECTED_SHA" && -n "$BEFORE_SHA" && "$EXPECTED_SHA" == "$BEFORE_SHA" ]]; then
     ok "steamclient.so already matches build $TARGET_VERSION — no download needed."
@@ -346,6 +472,7 @@ stop_steam || die "Could not stop Steam — nothing changed. Close it and retry.
 
 # Roll package/ back to its exact pre-downgrade state. Used on any failure below.
 rollback_pkg() {
+    chmod -R u+w "$PKG_DIR" 2>/dev/null || true
     rm -rf "$PKG_DIR" 2>/dev/null || true
     if [[ "$had_pkg" == 1 ]]; then
         mv -f "$BAK" "$PKG_DIR" 2>/dev/null || true
@@ -371,19 +498,25 @@ restore_cfg() {
 write_pin() {
     local kept=""
     if [[ -f "$STEAM_CFG" ]]; then
-        kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
+        kept="$(grep -viE '^[[:space:]]*(BootStrapper(InhibitAll|ForceSelfUpdate|InhibitUpdateOnLaunch)[[:space:]]*=|#[[:space:]]*lumalinux[[:space:]]*$)' "$STEAM_CFG" 2>/dev/null || true)"
     fi
     {
         [[ -n "$kept" ]] && printf '%s\n' "$kept"
-        printf '# lumalinux\nBootStrapperInhibitAll=enable\nBootStrapperForceSelfUpdate=disable\n'
+        printf '# lumalinux\nBootStrapperInhibitAll=enable\nBootStrapperInhibitUpdateOnLaunch=enable\nBootStrapperForceSelfUpdate=disable\n'
     } > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
 }
+
+# A second lock on package/: read-only, so nothing (a background update check
+# that slips past the cfg, steam-jupiter's `beta` drop) writes a pending update
+# there. LumaDeck's lift_freeze() restores the write bit with the cfg lines.
+lock_pkg()   { chmod a-w "$PKG_DIR" 2>/dev/null || true; }
 
 [[ -f "$STEAM_CFG" ]] && cp -f "$STEAM_CFG" "$TMP_DIR/steam.cfg.before" 2>/dev/null
 
 if [[ "$ALREADY_THERE" == 1 ]]; then
     write_pin || die "could not write pin at $STEAM_CFG — nothing else changed"
-    ok "Pin written at $STEAM_CFG. Steam is held at build $TARGET_VERSION."
+    lock_pkg
+    ok "Pin written at $STEAM_CFG (package/ read-only). Steam is held at build $TARGET_VERSION."
     exit 0
 fi
 
@@ -394,6 +527,7 @@ BAK="${PKG_DIR}.lumalinux.bak"
 had_pkg=0
 if [[ -d "$PKG_DIR" ]]; then
     had_pkg=1
+    chmod u+w "$PKG_DIR" 2>/dev/null || true   # a previous pin may have left it read-only
     rm -rf "$BAK" 2>/dev/null || true          # drop any stale backup from an interrupted run
     mv -f "$PKG_DIR" "$BAK" || die "could not back up $PKG_DIR — Steam left untouched"
 fi
@@ -417,7 +551,9 @@ start_server || { restore_cfg; rollback_pkg; die "could not start the local pack
 #    steamclient.so final.
 OVERRIDE_URL="http://127.0.0.1:${LOCAL_PORT}/"
 LD_AUDIT_ARG=""
-if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
+if [[ "$CLIENT_LINE" == steamrt64 ]]; then
+    [[ -s "$SLS_DIR/x86_64/SLSsteam.so" ]] && LD_AUDIT_ARG="$SLS_DIR/x86_64/SLSsteam.so"
+elif [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
     if [[ -s "$SLS_DIR/library-inject.so" ]]; then
         LD_AUDIT_ARG="$SLS_DIR/library-inject.so:$SLS_DIR/SLSsteam.so"
     else
@@ -426,11 +562,13 @@ if [[ -s "$SLS_DIR/SLSsteam.so" ]]; then
 fi
 info "Relaunching Steam to install build $TARGET_VERSION from the local server (headless)..."
 log_mark
+# -forcemanifestsuffix names the line, so the bootstrapper asks for exactly the
+# manifest the local server holds whatever marker state the install is in.
 if [[ -n "$LD_AUDIT_ARG" ]]; then
-    LD_AUDIT="$LD_AUDIT_ARG" steam_cmd -forcesteamupdate -forcepackagedownload \
+    LD_AUDIT="$LD_AUDIT_ARG" steam_cmd -forcemanifestsuffix "$CLIENT_LINE" -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
 else
-    steam_cmd -forcesteamupdate -forcepackagedownload \
+    steam_cmd -forcemanifestsuffix "$CLIENT_LINE" -forcesteamupdate -forcepackagedownload \
         -overridepackageurl "$OVERRIDE_URL" -exitsteam >/dev/null 2>&1 || true
 fi
 # Appear: the bootstrapper logged its start, or a steam process exists.
@@ -484,7 +622,8 @@ if [[ "$verified" -ne 1 ]]; then
 fi
 
 rm -rf "$BAK" 2>/dev/null || true
+lock_pkg
 ok "steamclient.so now matches build $TARGET_VERSION (${AFTER_SHA:0:12}…)."
-ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION."
+ok "Downgrade + pin applied (steam.cfg; package/ read-only). Steam is held at build $TARGET_VERSION ($CLIENT_LINE)."
 warn "Steam is NOT running: the bootstrapper exits after installing (-exitsteam). Start it yourself (or let the LumaDeck hand-off return to Game Mode)."
 info "Next: setup.sh re-establishes the wrapper, then start Steam; the QAM offers the update once the stack supports a newer build."
