@@ -58,7 +58,7 @@
 #
 # Must run in Desktop (Steam is stopped and relaunched headless). No root.
 #
-# Env overrides (all optional): CLIENT_LINE TARGET_VERSION MANIFEST_URL
+# Env overrides (all optional): CLIENT_LINE TARGET_VERSION TARGET_VERSIONS MANIFEST_URL
 #   TRACKER_REPO DECK_MANIFEST_URL LINUX_MANIFEST_URL PACKAGE_CDN
 #   PACKAGE_CDN_FALLBACK UPDATES_YAML_URL EXPECTED_SHA256 STEAM_DIR_OVERRIDE
 #   LOCAL_PORT STEAM_STOP_TIMEOUT STEAM_START_TIMEOUT STEAM_UPDATE_TIMEOUT
@@ -74,13 +74,18 @@ set -uo pipefail
 DECK_MANIFEST_URL="${DECK_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12}"
 LINUX_MANIFEST_URL="${LINUX_MANIFEST_URL:-https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12}"
 # The client line (steamrt64 | ubuntu12; empty = detect from the install), the
-# build to land on (empty = the newest build the whitelist annotates for the
-# line below the installed one; LumaDeck passes the newest one the released
-# stack hooks), and where its manifest comes from: MANIFEST_URL verbatim, else
-# the tracker's git history (the commit that recorded that build), else the
-# headcrab-branch URLs above (whatever build they hold).
+# builds to land on, newest first (TARGET_VERSIONS, space separated: LumaDeck
+# passes every build the released stack hooks below the installed one;
+# TARGET_VERSION is the one-build form older plugins send; empty = the builds
+# the whitelist annotates for the line below the installed one), and where a
+# build's manifest comes from: MANIFEST_URL verbatim, else the tracker's git
+# history of THIS INSTALL'S BRANCH (the commit that recorded the build there:
+# the first candidate the branch ever served wins, so a stable install lands
+# on a build stable shipped and a beta one on a beta build; one the branch
+# never served is skipped), else the headcrab-branch URLs above.
 CLIENT_LINE="${CLIENT_LINE:-}"
 TARGET_VERSION="${TARGET_VERSION:-}"
+TARGET_VERSIONS="${TARGET_VERSIONS:-}"
 MANIFEST_URL="${MANIFEST_URL:-}"
 TRACKER_REPO="${TRACKER_REPO:-SteamDatabase/SteamTracking}"
 # Where the packages the manifest lists are fetched from. Valve's own CDN keeps
@@ -390,28 +395,37 @@ HAVE_YAML=0
 if fetch "$UPDATES_YAML_URL" "$TMP_DIR/updates.yaml" && grep -q '^SafeModeHashes:' "$TMP_DIR/updates.yaml"; then HAVE_YAML=1; fi
 
 # 1. The target build and its manifest, to a temp, BEFORE touching anything, so
-#    a network failure aborts with Steam completely intact.
-if [[ -z "$TARGET_VERSION" && -z "$MANIFEST_URL" ]]; then
-    if [[ "$HAVE_YAML" == 1 ]]; then
-        for v in $(whitelisted_builds "$TMP_DIR/updates.yaml" "$CLIENT_LINE"); do
-            if [[ -z "$CURRENT_VERSION" || "$v" -lt "$CURRENT_VERSION" ]]; then TARGET_VERSION="$v"; break; fi
-        done
-    fi
-    [[ -n "$TARGET_VERSION" ]] && info "Target: the newest whitelisted $CLIENT_LINE build below the installed one ($TARGET_VERSION)."
+#    a network failure aborts with Steam completely intact. The candidates in
+#    order; the first one this install's branch ever served (its tracker file
+#    has a commit with that version) is the target.
+CANDIDATES="$TARGET_VERSIONS"
+[[ -z "$CANDIDATES" && -n "$TARGET_VERSION" ]] && CANDIDATES="$TARGET_VERSION"
+if [[ -z "$CANDIDATES" && -z "$MANIFEST_URL" && "$HAVE_YAML" == 1 ]]; then
+    for v in $(whitelisted_builds "$TMP_DIR/updates.yaml" "$CLIENT_LINE"); do
+        if [[ -z "$CURRENT_VERSION" || "$v" -lt "$CURRENT_VERSION" ]]; then CANDIDATES="$CANDIDATES $v"; fi
+    done
+    CANDIDATES="${CANDIDATES# }"
+    [[ -n "$CANDIDATES" ]] && info "Candidates: the whitelisted $CLIENT_LINE builds below the installed one ($CANDIDATES)."
 fi
 TRACKER_FILE="$(tracker_file "$CLIENT_LINE" "$CHANNEL" "$DECK")"
+TARGET_VERSION=""
 if [[ -n "$MANIFEST_URL" ]]; then
     info "Downloading target client manifest ($MANIFEST_URL)..."
     fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
-elif [[ -n "$TARGET_VERSION" ]]; then
-    info "Fetching the manifest of build $TARGET_VERSION from the tracker's history (${TRACKER_REPO}, ${TRACKER_FILE})..."
-    tracker_manifest_for_version "$TRACKER_FILE" "$TARGET_VERSION" "$TMP_MANIFEST" \
-        || die "no commit of ${TRACKER_REPO} carries ${TRACKER_FILE} at version ${TARGET_VERSION} (or GitHub unreachable) — Steam left untouched"
+elif [[ -n "$CANDIDATES" ]]; then
+    n=0
+    for v in $CANDIDATES; do
+        n=$((n + 1)); (( n > 8 )) && break        # a handful of API calls at most
+        info "Looking for build $v in the history of ${TRACKER_REPO}'s ${TRACKER_FILE} (this install's branch)..."
+        if tracker_manifest_for_version "$TRACKER_FILE" "$v" "$TMP_MANIFEST"; then TARGET_VERSION="$v"; break; fi
+        info "  not served on this branch (or GitHub unreachable); next candidate."
+    done
+    [[ -n "$TARGET_VERSION" ]] || die "none of the candidate builds ($CANDIDATES) was served on this install's branch (${TRACKER_FILE}), or GitHub is unreachable — Steam left untouched"
 else
     # Last resort: whatever build headcrab's branch holds for the line.
     if [[ "$DECK" == 1 ]]; then MANIFEST_URL="${DECK_MANIFEST_URL/steam_client_steamdeck_stable_ubuntu12/steam_client_steamdeck_stable_${CLIENT_LINE}}"
     else MANIFEST_URL="${LINUX_MANIFEST_URL/steam_client_ubuntu12/steam_client_${CLIENT_LINE}}"; fi
-    warn "No TARGET_VERSION and no whitelist annotation for the $CLIENT_LINE line: falling back to the headcrab branch ($MANIFEST_URL)."
+    warn "No target build and no whitelist annotation for the $CLIENT_LINE line: falling back to the headcrab branch ($MANIFEST_URL)."
     fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
 fi
 [[ -s "$TMP_MANIFEST" ]] || die "manifest is empty — Steam left untouched"
