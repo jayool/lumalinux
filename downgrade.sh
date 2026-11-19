@@ -31,7 +31,9 @@
 # manifest of the other line is ignored (a Deck, 2026-11-12). CLIENT_LINE picks
 # the line (detected from the install when empty) and every name, flag and
 # hash below follows it; `-forcemanifestsuffix` tells the bootstrapper the
-# line explicitly (SteamRollbackrLite's flag, 2026-11-19).
+# line explicitly (SteamRollbackrLite's flag, 2026-11-19). The pin is the
+# three steam.cfg keys only: package/ stays writable (a read-only package/
+# would outlive a pin lifted by hand and leave Steam unable to update).
 #
 # WHY A LOCAL SERVER. With -forcesteamupdate the bootstrapper does NOT use the
 # manifest staged in package/: it downloads the branch manifest
@@ -472,7 +474,6 @@ stop_steam || die "Could not stop Steam — nothing changed. Close it and retry.
 
 # Roll package/ back to its exact pre-downgrade state. Used on any failure below.
 rollback_pkg() {
-    chmod -R u+w "$PKG_DIR" 2>/dev/null || true
     rm -rf "$PKG_DIR" 2>/dev/null || true
     if [[ "$had_pkg" == 1 ]]; then
         mv -f "$BAK" "$PKG_DIR" 2>/dev/null || true
@@ -506,17 +507,11 @@ write_pin() {
     } > "${STEAM_CFG}.tmp" && mv -f "${STEAM_CFG}.tmp" "$STEAM_CFG"
 }
 
-# A second lock on package/: read-only, so nothing (a background update check
-# that slips past the cfg, steam-jupiter's `beta` drop) writes a pending update
-# there. LumaDeck's lift_freeze() restores the write bit with the cfg lines.
-lock_pkg()   { chmod a-w "$PKG_DIR" 2>/dev/null || true; }
-
 [[ -f "$STEAM_CFG" ]] && cp -f "$STEAM_CFG" "$TMP_DIR/steam.cfg.before" 2>/dev/null
 
 if [[ "$ALREADY_THERE" == 1 ]]; then
     write_pin || die "could not write pin at $STEAM_CFG — nothing else changed"
-    lock_pkg
-    ok "Pin written at $STEAM_CFG (package/ read-only). Steam is held at build $TARGET_VERSION."
+    ok "Pin written at $STEAM_CFG. Steam is held at build $TARGET_VERSION."
     exit 0
 fi
 
@@ -527,7 +522,6 @@ BAK="${PKG_DIR}.lumalinux.bak"
 had_pkg=0
 if [[ -d "$PKG_DIR" ]]; then
     had_pkg=1
-    chmod u+w "$PKG_DIR" 2>/dev/null || true   # a previous pin may have left it read-only
     rm -rf "$BAK" 2>/dev/null || true          # drop any stale backup from an interrupted run
     mv -f "$PKG_DIR" "$BAK" || die "could not back up $PKG_DIR — Steam left untouched"
 fi
@@ -622,8 +616,7 @@ if [[ "$verified" -ne 1 ]]; then
 fi
 
 rm -rf "$BAK" 2>/dev/null || true
-lock_pkg
 ok "steamclient.so now matches build $TARGET_VERSION (${AFTER_SHA:0:12}…)."
-ok "Downgrade + pin applied (steam.cfg; package/ read-only). Steam is held at build $TARGET_VERSION ($CLIENT_LINE)."
+ok "Downgrade + pin applied. Steam is held at build $TARGET_VERSION ($CLIENT_LINE)."
 warn "Steam is NOT running: the bootstrapper exits after installing (-exitsteam). Start it yourself (or let the LumaDeck hand-off return to Game Mode)."
 info "Next: setup.sh re-establishes the wrapper, then start Steam; the QAM offers the update once the stack supports a newer build."
