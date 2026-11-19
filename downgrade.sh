@@ -371,8 +371,11 @@ command -v python3 >/dev/null 2>&1 || die "python3 is required (for the local pa
 # with no branch — that is the name the local server must answer to. package/
 # keeps the staged copy under the `.manifest` name Steam reads for its
 # installed version (the same name).
-DECK=0; is_steamos && DECK=1
 BRANCH="$(tr -d '[:space:]' < "$PKG_DIR/beta" 2>/dev/null || true)"
+# Deck or desktop tracker files: by the branch the install follows (a
+# `steamdeck_*` branch asks for the Deck manifests wherever it runs), SteamOS
+# only when the branch file is missing.
+DECK=0; case "$BRANCH" in steamdeck*) DECK=1 ;; "") is_steamos && DECK=1 ;; esac
 if [[ -n "$BRANCH" ]]; then MANIFEST_HOST_NAME="steam_client_${BRANCH}_${CLIENT_LINE}"; else MANIFEST_HOST_NAME="steam_client_${CLIENT_LINE}"; fi
 MANIFEST_NAME="${MANIFEST_HOST_NAME}.manifest"
 CHANNEL=stable; case "$BRANCH" in *publicbeta*) CHANNEL=publicbeta ;; esac
