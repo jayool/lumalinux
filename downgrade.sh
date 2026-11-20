@@ -87,6 +87,11 @@ CLIENT_LINE="${CLIENT_LINE:-}"
 TARGET_VERSION="${TARGET_VERSION:-}"
 TARGET_VERSIONS="${TARGET_VERSIONS:-}"
 MANIFEST_URL="${MANIFEST_URL:-}"
+# A manifest given by URL wins over any build list (a hand test, the offline
+# harness). The headcrab-era DECK_/LINUX_MANIFEST_URL overrides, when set
+# explicitly, mean the same thing.
+_DEF_DECK_MANIFEST_URL="https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12"
+_DEF_LINUX_MANIFEST_URL="https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12"
 TRACKER_REPO="${TRACKER_REPO:-SteamTracking/SteamTracking}"
 # Where the packages the manifest lists are fetched from. Valve's own CDN keeps
 # old client packages online (verified 2026-10-14 for the 1788291500 set); the
@@ -428,9 +433,14 @@ if [[ -z "$CANDIDATES" && -z "$MANIFEST_URL" && "$HAVE_YAML" == 1 ]]; then
 fi
 TRACKER_FILE="$(tracker_file "$CLIENT_LINE" "$CHANNEL" "$DECK")"
 TARGET_VERSION=""
+if [[ -z "$MANIFEST_URL" ]]; then
+    if [[ "$DECK" == 1 && "$DECK_MANIFEST_URL" != "$_DEF_DECK_MANIFEST_URL" ]]; then MANIFEST_URL="$DECK_MANIFEST_URL"
+    elif [[ "$DECK" == 0 && "$LINUX_MANIFEST_URL" != "$_DEF_LINUX_MANIFEST_URL" ]]; then MANIFEST_URL="$LINUX_MANIFEST_URL"; fi
+fi
 if [[ -n "$MANIFEST_URL" ]]; then
     info "Downloading target client manifest ($MANIFEST_URL)..."
     fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+    [[ -n "$CANDIDATES" ]] && TARGET_VERSION="${CANDIDATES%% *}"   # a given build is still checked against the manifest
 elif [[ -n "$CANDIDATES" ]]; then
     n=0
     for v in $CANDIDATES; do
