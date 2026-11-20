@@ -87,7 +87,12 @@ CLIENT_LINE="${CLIENT_LINE:-}"
 TARGET_VERSION="${TARGET_VERSION:-}"
 TARGET_VERSIONS="${TARGET_VERSIONS:-}"
 MANIFEST_URL="${MANIFEST_URL:-}"
-TRACKER_REPO="${TRACKER_REPO:-SteamDatabase/SteamTracking}"
+# A manifest given by URL wins over any build list (a hand test, the offline
+# harness). The headcrab-era DECK_/LINUX_MANIFEST_URL overrides, when set
+# explicitly, mean the same thing.
+_DEF_DECK_MANIFEST_URL="https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_steamdeck_stable_ubuntu12"
+_DEF_LINUX_MANIFEST_URL="https://raw.githubusercontent.com/Deadboy666/SteamTracking/refs/heads/headcrab/ClientManifest/steam_client_ubuntu12"
+TRACKER_REPO="${TRACKER_REPO:-SteamTracking/SteamTracking}"
 # Where the packages the manifest lists are fetched from. Valve's own CDN keeps
 # old client packages online (verified 2026-10-14 for the 1788291500 set); the
 # akamai host is the same CDN. headcrab's package mirror is the last resort.
@@ -299,31 +304,47 @@ tracker_file() {  # tracker_file LINE CHANNEL(stable|publicbeta) DECK(0|1)
     fi
 }
 
-# The manifest of build $2 for tracker file $1, from the commit that recorded it:
-# the tracker commits every manifest Valve publishes, so the commits touching the
-# file within three days of the build's timestamp (the version IS a Unix time)
-# hold it. GitHub's commits API first, its Atom feed as the fallback (no token
-# either way; a handful of requests). Writes the manifest to $3; fails when no
-# commit in that window carries the version.
-tracker_manifest_for_version() {  # tracker_manifest_for_version FILE VERSION DEST
-    local file="$1" ver="$2" dest="$3" since until shas sha
-    since="$(date -u -d "@$(( ver - 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
-    until="$(date -u -d "@$(( ver + 3 * 86400 ))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 1
-    shas="$(curl -fsSL "https://api.github.com/repos/${TRACKER_REPO}/commits?path=ClientManifest/${file}&since=${since}&until=${until}&per_page=100" 2>/dev/null \
-            | python3 -c 'import json,sys
+# The manifest of build $2 for tracker file $1: the tracker commits the file
+# every time Valve changes it, so its history is the list of builds that
+# branch served, newest first. Walk it from the newest commit reading each
+# manifest's "version": the build id itself ends the search (found), a smaller
+# id ends it too (everything older is older still: not served on this
+# branch), a bigger one or an unreadable file means keep walking. No date
+# window: the id IS the key (a stable promotion can land days after the build
+# date; the 1-day/+3-day window missed that). The commits API in pages of 50
+# (SteamRollbackrLite's reading), the Atom feed as the first-page fallback;
+# no token either way. Writes the manifest to $3.
+TRACKER_API="${TRACKER_API:-https://api.github.com/repos/${TRACKER_REPO}/commits}"
+TRACKER_RAW="${TRACKER_RAW:-https://raw.githubusercontent.com/${TRACKER_REPO}}"
+TRACKER_ATOM="${TRACKER_ATOM:-https://github.com/${TRACKER_REPO}/commits/HEAD/ClientManifest}"
+TRACKER_MAX_PAGES="${TRACKER_MAX_PAGES:-10}"
+tracker_commits_page() {  # tracker_commits_page FILE PAGE -> shas, newest first (empty on failure)
+    curl -fsSL "${TRACKER_API}?path=ClientManifest/${1}&per_page=50&page=${2}" 2>/dev/null \
+        | python3 -c 'import json,sys
 try:
     for c in json.load(sys.stdin): print(c["sha"])
-except Exception: pass' 2>/dev/null)"
-    if [[ -z "$shas" ]]; then
-        shas="$(curl -fsSL "https://github.com/${TRACKER_REPO}/commits/master/ClientManifest/${file}.atom" 2>/dev/null \
-                | grep -oE 'commit/[0-9a-f]{40}' | cut -d/ -f2 | awk '!seen[$0]++')"
-    fi
-    [[ -n "$shas" ]] || return 1
-    for sha in $shas; do
-        if fetch "https://raw.githubusercontent.com/${TRACKER_REPO}/${sha}/ClientManifest/${file}" "$dest" 2>/dev/null \
-           && [[ "$(manifest_version "$dest")" == "$ver" ]]; then
-            return 0
+except Exception: pass' 2>/dev/null
+}
+tracker_manifest_for_version() {  # tracker_manifest_for_version FILE VERSION DEST
+    local file="$1" ver="$2" dest="$3" page=1 shas sha v n
+    while (( page <= TRACKER_MAX_PAGES )); do
+        shas="$(tracker_commits_page "$file" "$page")"
+        if [[ -z "$shas" && "$page" == 1 ]]; then
+            shas="$(curl -fsSL "${TRACKER_ATOM}/${file}.atom" 2>/dev/null \
+                    | grep -oE 'commit/[0-9a-f]{40}' | cut -d/ -f2 | awk '!seen[$0]++')"
         fi
+        [[ -n "$shas" ]] || break
+        n=0
+        for sha in $shas; do
+            n=$((n + 1))
+            fetch "${TRACKER_RAW}/${sha}/ClientManifest/${file}" "$dest" 2>/dev/null || continue
+            v="$(manifest_version "$dest")"
+            [[ -n "$v" ]] || continue                 # an empty or odd capture: keep walking
+            [[ "$v" == "$ver" ]] && return 0          # found
+            (( v < ver )) && { rm -f "$dest"; return 1; }   # passed it: older commits are older builds
+        done
+        (( n < 50 )) && break                         # last page
+        page=$((page + 1))
     done
     rm -f "$dest" 2>/dev/null
     return 1
@@ -412,9 +433,14 @@ if [[ -z "$CANDIDATES" && -z "$MANIFEST_URL" && "$HAVE_YAML" == 1 ]]; then
 fi
 TRACKER_FILE="$(tracker_file "$CLIENT_LINE" "$CHANNEL" "$DECK")"
 TARGET_VERSION=""
+if [[ -z "$MANIFEST_URL" ]]; then
+    if [[ "$DECK" == 1 && "$DECK_MANIFEST_URL" != "$_DEF_DECK_MANIFEST_URL" ]]; then MANIFEST_URL="$DECK_MANIFEST_URL"
+    elif [[ "$DECK" == 0 && "$LINUX_MANIFEST_URL" != "$_DEF_LINUX_MANIFEST_URL" ]]; then MANIFEST_URL="$LINUX_MANIFEST_URL"; fi
+fi
 if [[ -n "$MANIFEST_URL" ]]; then
     info "Downloading target client manifest ($MANIFEST_URL)..."
     fetch "$MANIFEST_URL" "$TMP_MANIFEST" || die "manifest download failed — Steam left untouched"
+    [[ -n "$CANDIDATES" ]] && TARGET_VERSION="${CANDIDATES%% *}"   # a given build is still checked against the manifest
 elif [[ -n "$CANDIDATES" ]]; then
     n=0
     for v in $CANDIDATES; do
