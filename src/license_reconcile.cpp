@@ -192,10 +192,13 @@ void Broadcast(void* user) {
 }
 
 // The beta client's licence re-check request. CUser carries two flag bytes
-// (offset from the feed, reconcile.licenses_check_off; 0x2370 on c3247a95):
-//   [off]   "re-check licences": CUser::RunFrame clears it and runs the check
-//           ("CUser::RunFrame - BCheckUserLicensesUpdate");
-//   [off+1] "rebuild the table": the check clears it and calls
+// (offsets from the feed, reconcile.licenses_request_off / licenses_rebuild_off;
+// +0x2370/+0x2371 on c3247a95 and up to 1794536281, +0x24b8/+0x24c8 from
+// 1795048523, where they stopped being adjacent):
+//   [req]   "re-check licences": CUser::RunFrame clears it and runs the check
+//           ("CUser::RunFrame - BCheckUserLicensesUpdate"; from 1795048523
+//           three callers of the check do, the label is gone);
+//   [reb]   "rebuild the table": the check clears it and calls
 //           RebuildLicensesCache, then SendAppLicenseUpdates (the function
 //           Broadcast calls) — once every package of the licence list is
 //           loaded and every app record it lists is settled.
@@ -207,18 +210,20 @@ void Broadcast(void* user) {
 // (empty) records, nothing changed, no rebuild, "0 target depots" — while a
 // DLC record arriving for ANY added game rebuilt the table for all of them
 // (Brotato added 18:06 → Into the Breach "Legacy Free Sub" without being
-// touched). So after injecting we store the same two bytes Steam would, and
+// touched). So after injecting we store the same two bytes Steam would (its
+// own setter stores 1 to each, rebuild then request is our order), and
 // Steam's own main loop does the rest, in order, on its thread. Byte stores
-// on x86: no tearing, no lock. A build without the key (the stable client
-// today) has no such flags: there Broadcast is the whole job, as before.
+// on x86: no tearing, no lock. A build without the keys (the stable client
+// of 2026-10) has no such flags: there Broadcast is the whole job, as before.
 bool RequestLicenseCheck(void* user, const char* why) {
-    static const std::size_t off = RvaFeed::LicensesCheckOff();
-    if (!off) return false;
-    volatile uint8_t* flags = static_cast<volatile uint8_t*>(user) + off;
-    flags[1] = 1;    // rebuild the table...
-    flags[0] = 1;    // ...on the next frame's check
-    Log::Info("Reconcile: licence re-check requested (CUser=%p +0x%zx, %s) — Steam "
-              "rebuilds its app/package table on its next frame", user, off, why);
+    static const std::size_t req = RvaFeed::LicensesCheckOff();
+    static const std::size_t reb = RvaFeed::LicensesRebuildOff();
+    if (!req || !reb) return false;
+    volatile uint8_t* base = static_cast<volatile uint8_t*>(user);
+    base[reb] = 1;    // rebuild the table...
+    base[req] = 1;    // ...on the next frame's check
+    Log::Info("Reconcile: licence re-check requested (CUser=%p +0x%zx/+0x%zx, %s) — Steam "
+              "rebuilds its app/package table on its next frame", user, req, reb, why);
     return true;
 }
 

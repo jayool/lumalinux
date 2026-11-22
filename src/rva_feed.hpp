@@ -73,13 +73,18 @@ uintptr_t CacheGlobalAddr();
 
 // The CUser offset of the client's licence re-check request flags for THIS
 // build (feed key `reconcile.licenses_check_off`), or 0 when the feed has no
-// value. Two adjacent bytes: [off] "re-check licences on the next frame" (read
-// by CUser::RunFrame), [off+1] "rebuild the app<->package table" (read by the
-// check RunFrame runs). The beta client (1792711043, 2026-10) consults them;
-// the stable client has none and the key is absent for it. A struct offset, not
-// an address: no translation, no mapping check, same kind of number as
-// CacheGlobalDisp().
+// value. Two bytes: [LicensesCheckOff()] "re-check licences on the next frame"
+// (read by CUser::RunFrame), [LicensesRebuildOff()] "rebuild the app<->package
+// table" (read by the check RunFrame runs). Adjacent (+0x2370/+0x2371) on the
+// clients up to 1794536281, 16 apart (+0x24b8/+0x24c8) from 1795048523: the
+// feed names both (reconcile.licenses_request_off / licenses_rebuild_off) and,
+// only where they are adjacent, the older single key licenses_check_off, from
+// which the rebuild byte is request + 1. The beta client (1792711043, 2026-10)
+// consults them; the stable client of 2026-10 had none and the keys are absent
+// for it. Struct offsets, not addresses: no translation, no mapping check, same
+// kind of number as CacheGlobalDisp(). Both 0 or both set.
 std::size_t LicensesCheckOff();
+std::size_t LicensesRebuildOff();
 
 // When load() served the feed from the disk copy, fetch the published one and
 // replace the copy for the next start. Network only; touches nothing that the
