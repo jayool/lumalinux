@@ -34,7 +34,8 @@ std::size_t                      g_cacheRootOff = 0;     // finder.cache_root_of
 std::size_t                      g_cacheNodesOff = 0;    // finder.cache_nodes_off
 uintptr_t                        g_gotRva = 0;          // file vaddr, untranslated
 uintptr_t                        g_cacheGlobalRva = 0;  // finder.cache_global_rva (steamrt64)
-std::size_t                      g_licensesCheckOff = 0; // reconcile.licenses_check_off
+std::size_t                      g_licensesCheckOff = 0;   // reconcile.licenses_request_off (or licenses_check_off)
+std::size_t                      g_licensesRebuildOff = 0; // reconcile.licenses_rebuild_off (or licenses_check_off + 1)
 
 std::string cacheDir() {
     const char* home = std::getenv("HOME");
@@ -168,13 +169,24 @@ void load() {
             }
         }
         const YAML::Node reconcile = root["reconcile"];
-        if (reconcile && reconcile.IsMap() && reconcile["licenses_check_off"]) {
-            const unsigned long v = std::strtoul(
-                reconcile["licenses_check_off"].as<std::string>().c_str(), nullptr, 16);
-            if (v) {
-                g_licensesCheckOff = static_cast<std::size_t>(v);
-                Log::Info("RvaFeed: reconcile licenses_check_off = 0x%zx from the feed",
-                          g_licensesCheckOff);
+        if (reconcile && reconcile.IsMap()) {
+            const auto off = [&](const char* key) -> std::size_t {
+                if (!reconcile[key]) return 0;
+                return static_cast<std::size_t>(std::strtoul(
+                    reconcile[key].as<std::string>().c_str(), nullptr, 16));
+            };
+            // The pair first (every feed derived since 2026-11-22); the single
+            // key alone means the flags are adjacent on that build.
+            std::size_t req = off("licenses_request_off"), reb = off("licenses_rebuild_off");
+            if (!req || !reb) {
+                req = off("licenses_check_off");
+                reb = req ? req + 1 : 0;
+            }
+            if (req && reb && reb != req) {
+                g_licensesCheckOff = req;
+                g_licensesRebuildOff = reb;
+                Log::Info("RvaFeed: reconcile licence flags request=0x%zx rebuild=0x%zx from the feed",
+                          g_licensesCheckOff, g_licensesRebuildOff);
             }
         }
         YAML::Node hooks = root["hooks"];
@@ -193,6 +205,7 @@ void load() {
         g_gotRva = 0;
         g_cacheGlobalRva = 0;
         g_licensesCheckOff = 0;
+        g_licensesRebuildOff = 0;
         return;
     }
     if (g_hooks.empty()) { Log::Info("RvaFeed: feed has no hooks for %s", hash.c_str()); return; }
@@ -258,6 +271,11 @@ bool CacheLayout(std::size_t* rootIdxOff, std::size_t* nodesOff) {
 std::size_t LicensesCheckOff() {
     std::call_once(g_once, load);
     return g_licensesCheckOff;     // no g_loaded gate: see the note on g_hooks
+}
+
+std::size_t LicensesRebuildOff() {
+    std::call_once(g_once, load);
+    return g_licensesRebuildOff;
 }
 
 uintptr_t GotBase() {
