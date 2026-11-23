@@ -720,8 +720,8 @@ install_cloudredirect_app() {
         fi
     fi
     flatpak remote-add --user --if-not-exists flathub "$FLATHUB_REPO" 2>/dev/null || true
-    if flatpak install --user -y --noninteractive flathub "$CR_FLATPAK_RUNTIME" 2>/dev/null \
-       && flatpak install --user -y --noninteractive --reinstall "$bundle" 2>/dev/null; then
+    if flatpak install --user -y flathub "$CR_FLATPAK_RUNTIME" 2>&1 \
+       && flatpak install --user -y --reinstall "$bundle" 2>&1; then
         command -v update-desktop-database &>/dev/null \
             && update-desktop-database "${XDG_DATA_HOME:-$HOME/.local/share}/applications" 2>/dev/null || true
         ok "CloudRedirect app installed (sign into your provider from Desktop)."
